@@ -20,6 +20,33 @@ import { until } from "./helpers.js";
 import { DELEGATION_TARGETS } from "../src/mcp/targets.js";
 import { closeMetadataDb } from "../src/core/metadata-db.js";
 
+// Delegate bookkeeping may probe ancestors/identities in the background while approvals await answers.
+// Keep those OS queries outside this fixture so the process guard measures the real approval path.
+vi.mock("../src/core/procinfo.js", async (original) => {
+  const real = await original<typeof import("../src/core/procinfo.js")>();
+  return {
+    ...real,
+    lookup: vi.fn(async () => null),
+    antigravityAncestor: vi.fn(async () => null),
+    inspectClaudeLaunch: vi.fn(async () => ({ channel: false, print: false, interactive: false })),
+  };
+});
+vi.mock("../src/core/process-identity.js", async (original) => {
+  const real = await original<typeof import("../src/core/process-identity.js")>();
+  const identity = (pid: number) => pid === process.pid ? "fixture-own-identity" : undefined;
+  return {
+    ...real,
+    // Seed the synchronous own-identity path too: a cold/failed OS query starts an internal async refresh.
+    processIdentity: vi.fn(identity),
+    ownProcessIdentity: vi.fn(async () => identity(process.pid)),
+    parentProcessIdentity: vi.fn(async () => null),
+    readProcessIdentity: vi.fn(async (pid: number) => identity(pid) ?? null),
+    readProcessIdentities: vi.fn(async (pids: number[]) => new Map(
+      pids.filter(pid => pid === process.pid).map(pid => [pid, identity(pid)!]),
+    )),
+  };
+});
+
 // Every process start and Git call is counted: the approval path must run none (AB-402).
 vi.mock("node:child_process", async (original) => {
   const real = await original<typeof import("node:child_process")>();
@@ -501,7 +528,8 @@ describe("identical approval reuse within a job (AB-402)", () => {
         for (const r of [command("npm test"), command("npm test"), hook("claude", "mcp__other__lookup", {}), hook("claude", "Edit", { file_path: join(repo, "a.ts"), old_string: "a", new_string: "b" }), command("npm test")]) {
           expect((await req.approve!(r)).allow).toBe(true);
         }
-        expect(spawned.map((fn) => fn.mock.calls.length)).toEqual(spawned.map(() => 0));
+        const execFileCalls = vi.mocked(childProcess.execFile).mock.calls.map(([file, args]) => ({ file, args }));
+        expect(spawned.map((fn) => fn.mock.calls.length), `execFile calls: ${JSON.stringify(execFileCalls)}`).toEqual(spawned.map(() => 0));
         return { sessionId: "saved", text: "done", isError: false, details: {} };
       });
       await runDelegate(rc, "codex", { title: "reuse", prompt: "task", access: "read" }, j.controller.signal, undefined, true, j);
