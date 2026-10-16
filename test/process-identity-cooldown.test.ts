@@ -3,6 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 
+// This file drives the PowerShell probe (the fallback path); the native host (AB-427) must not answer instead.
+vi.mock("../src/core/windows-process-identity.js", () => ({ readNativeIdentities: () => undefined, readNativeIdentitiesSync: () => undefined }));
 const probes = vi.hoisted(() => ({ sync: vi.fn(), async: vi.fn() }));
 vi.mock("node:child_process", async original => {
   const actual = await original<typeof import("node:child_process")>();
