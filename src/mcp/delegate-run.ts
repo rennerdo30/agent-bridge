@@ -23,7 +23,7 @@ import { approvalHint, DESK_READ_PATTERNS, effectiveAllowTools, isAutoApproved, 
 import { codexDriveMappings, codexPathReport } from "../core/codex-paths.js";
 import { displayPath, displayPathText } from "../core/display-paths.js";
 import { scanWorktreeLinks, WORKTREE_LINK_HINT, worktreeLinkWarning } from "../core/worktree-links.js";
-import { changedFiles, createWorktree, finishWorktree, git, trustArgs, gitChangeSnapshot, gitDirsOutside, handoffWarning, subagentCommitMessage, worktreeReport, type Worktree } from "../core/worktree.js";
+import { changedFilesNote, codexHookObservation, createWorktree, finishWorktree, git, trustArgs, gitChangeSnapshot, snapshotChanges, gitDirsOutside, handoffWarning, subagentCommitMessage, worktreeReport, type Worktree } from "../core/worktree.js";
 import { formatSiblingMessages, formatUsage } from "./format.js";
 import { SiblingLink } from "./siblings.js";
 import { denyPendingApprovals, waitForApproval, type Job, type RunResult } from "./jobs.js";
@@ -588,19 +588,28 @@ async function runDelegateInner(
     }
   } else if (before) {
     const after = await gitChangeSnapshot(workdir, dlog);
-    const changed = after ? changedFiles(before, after) : [];
+    // Unknown (null) when the later snapshot was refused or failed: never reported as "No files changed" (AB-422).
+    const changed = snapshotChanges(before, after);
     if (access === "ask" && target === "codex" && forwarding && codexHash) {
-      if (relayCalls > 0) recordCodexHookObservation(rc.home, codexHash, "verified");
-      else if (changed.length) {
+      const observation = codexHookObservation(relayCalls, changed);
+      if (observation) recordCodexHookObservation(rc.home, codexHash, observation);
+      if (observation === "failed" && changed === null) {
+        // Comparable before the job, refused or failing after it: the job changed repository state. Err safe.
+        log.warn("the working copy could not be compared after a Codex ask-mode job; forwarding disabled for this hook version");
+        notes.push(t("ask.hookBypassed", { files: "unknown: the working copy could not be compared after the job" }));
+      } else if (observation === "failed") {
         // Files changed in a read-only sandbox without the hook asking: Codex's reviewer approved.
-        recordCodexHookObservation(rc.home, codexHash, "failed");
         log.warn("codex changed files without the permission hook asking; forwarding disabled for this hook version", { changed });
-        notes.push(t("ask.hookBypassed", { files: changed.join(", ") }));
+        notes.push(t("ask.hookBypassed", { files: changed!.join(", ") }));
       }
     }
-    if (access === "edit" || changed.length) notes.push(changed.length ? `Files changed in your working copy:\n${changed.join("\n")}` : "No files changed.");
-    const warning = handoffWarning(changed);
+    const changeNote = changedFilesNote(changed, access);
+    if (changeNote) notes.push(changeNote);
+    const warning = handoffWarning(changed ?? []);
     if (warning) notes.push(warning);
+  } else if (watchChanges) {
+    // No before snapshot (not a repository, or git refused it): what changed is unknown, never "No files changed".
+    notes.push(changedFilesNote(null, access)!);
   }
   if (wt) notes.unshift(worktreeBaseReport(wt));
   return { ...res, workdir, worktree: wt ?? undefined, text: displayPathText(notes.length ? `${res.text}\n\n---\n${notes.join("\n\n")}` : res.text) };
