@@ -1,7 +1,7 @@
 {
   "base": "0fed680017e823197b1fb3344598632f5cd219ed",
   "uiSha256": "876fbc073c419e55a05c806b75c4993d254510c444cbd81d70098efbd22fb98c",
-  "pageSha256": "d9a044934fe344c992959ae60a469b6f0d2d6463db34424c28b084ce417a6506",
+  "pageSha256": "ada5841415d85d720503ae64054452d1d8f97aa36e5c5477d6231826900c5749",
   "updates": {
     "PR-20": {
       "base": "0761d56fe4c36e505550f9b889841fdf8e82c80a",
@@ -11,6 +11,11 @@
       "base": "9d604d1eb571b432f4d0b47563dcb72d20a5790c",
       "reason": "AB-383: the dashboard subscribes to GET /api/events while the tab is visible and reads the shown chat or run at once when the history store reports new lines; pushes coalesce into one render and interval polling stays as the safety net; after an error, a visible tab retries the stream (1c75687f, page re-pinned). The optional mobile page and default mobile activation behavior are unchanged.",
       "commit": "f41bf1ed8ee42f27df95f9536de7a63da6752aa4"
+    },
+    "AB-400": {
+      "base": "e7c4583f0e92caab9029c2917df18c169442a9ea",
+      "reason": "AB-400 (PR #92): outcomeChip adds a constant-text \"result stored\" / \"result stored, not delivered\" / \"delivered\" chip from state.jobs[job].resultStored and the job outcome's delivery receipt; poll() and loadOlder() merge job flags from older /api/runs pages (olderJobs). Page re-pinned from d9a04493 to ada58414. The optional mobile page and default mobile activation behavior are unchanged.",
+      "commit": "7b35f4e240efcf41bdbfd543b161ac0ec93373ba"
     }
   }
 }

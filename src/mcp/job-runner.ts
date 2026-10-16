@@ -7,7 +7,7 @@ import { readStore } from "./jobs.js";
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { settleUsageAttempt, usageRefused, usageSubmissionReceipt } from "../core/usage.js";
-import { COMPLETION_DEDUPE_PREFIX } from "../core/completion.js";
+import { completionMessageId, COMPLETION_DEDUPE_PREFIX } from "../core/completion.js";
 import { takeRunnerSpec } from "../core/runner-store.js";
 import { failureCause } from "../core/delegate.js";
 import { createLogger } from "../core/logger.js";
@@ -30,9 +30,12 @@ import { acquireStartup } from "../core/startup-admission.js";
 import { refreshStorePeerIdentities } from "../core/store-compatibility.js";
 import { guardRunnerErrors } from "./job-runner-errors.js";
 import { configurePathDisplay } from "../core/display-paths.js";
+import { deliverFinalResult, PERMANENT_DELIVERY_CODES } from "./final-result.js";
 
 /** Delivering a message to the session: tries for several minutes (the bridge may be changing hands, or no session hosts it). */
 const SEND_ATTEMPTS = 30;
+/** deliverFinalResult retries a final result itself, with backoff, and then leaves it to the session fallback. */
+const FINAL_SEND_ATTEMPTS = 1;
 const SEND_RETRY_MAX_MS = 10_000;
 /** Progress lines come fast: the state file is written at most this often for them. */
 const PROGRESS_SAVE_MS = 1_000;
@@ -148,7 +151,7 @@ export async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: Wi
   let closing = false;
 
   let extra: Partial<RunnerState> = { status: "running" };
-  const save = (patch: Partial<RunnerState> = {}) => {
+  const save = (patch: Partial<RunnerState> = {}, required = false) => {
     extra = { ...extra, ...patch };
     try {
       refreshOwner();
@@ -175,6 +178,7 @@ export async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: Wi
       });
     } catch (err) {
       log.warn("could not write the job runner state", { err: (err as Error).message });
+      if (required) throw err;
     }
   };
 
@@ -206,25 +210,21 @@ export async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: Wi
 
   // Messages to the session, in order. Each is tried until the bridge takes it (the session may be offline:
   // then it waits in the store for the session's next server).
-  let chain: Promise<unknown> = Promise.resolve();
-  const deliver = async (body: string, replyTo: string | null, note = false, key?: string, question = false): Promise<SendResult | null> => {
+  const deliver = async (body: string, replyTo: string | null, note = false, key?: string, question = false, final = false): Promise<SendResult | null> => {
     // One key for all attempts: a send that timed out here may still be queued at a slow broker.
     const dedupeKey = key ?? randomUUID();
     // AB-380: a body over the message limit can never be sent: once its full text is in a file, send a stub.
     body = quarantineMessage(home, { id: dedupeKey, body }).body;
+    // deliverFinalResult retries a final result with bounded attempts; a permanent refusal starts the session fallback at once.
     return deliverWithRetry(() => {
       // A retry may cross a handoff or reload. Routing changes never replace the active delegate.
       refreshOwner();
       // A question is marked so the broker can route it to the project main while the parent is offline (AB-249).
       const suffix = isPureAcknowledgement(body) ? ACK_CONVERSATION_SUFFIX : question ? QUESTION_CONVERSATION_SUFFIX : note ? NOTE_CONVERSATION_SUFFIX : "";
       return node.send({ to: owner, body, conversationId: `job-${job.id}${suffix}`, ...(replyTo ? { replyTo } : {}), dedupeKey }, { quiet: true });
-    }, log, owner);
+    }, log, owner, final ? FINAL_SEND_ATTEMPTS : SEND_ATTEMPTS, final ? PERMANENT_DELIVERY_CODES : undefined);
   };
-  const inOrder = (body: string, replyTo: string | null, note: boolean, key?: string, question = false): Promise<SendResult | null> => {
-    const sent = chain.then(() => deliver(body, replyTo, note, key, question));
-    chain = sent;
-    return sent;
-  };
+  const inOrder = inSendOrder(deliver);
   const post = (body: string, replyTo: string | null = null, note = false, key?: string): Promise<boolean> =>
     inOrder(body, replyTo, note, key).then((result) => result !== null);
   /** Send a question and say where the broker put it: the parent, the project main, or a queue. */
@@ -331,7 +331,10 @@ export async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: Wi
     });
   };
   node.on("message", onControl);
+  // Runner shutdown (SIGTERM/SIGINT) ends final-result retries; a turn cancel never does.
+  const shutdown = new AbortController();
   const stop = () => {
+    shutdown.abort();
     job.queue = [];
     job.controller.abort();
     setTimeout(() => process.exit(1), STOP_DEADLINE_MS).unref();
@@ -420,6 +423,7 @@ export async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: Wi
       if (args.model !== undefined) job.model = args.model;
       job.startedAt = Date.now();
       job.progress = null;
+      extra = { status: "running" };
       save();
       continue;
     }
@@ -427,10 +431,18 @@ export async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: Wi
     if (saveTimer) clearTimeout(saveTimer);
     // The state first: once the report arrives, the session must find the job finished.
     const reportId = randomUUID();
-    save({ status, report, reportId, delivered: false, finishedAt: Date.now() });
-    const delivered = await post(report, null, false, `${COMPLETION_DEDUPE_PREFIX}${reportId}`);
-    save({ delivered });
-    log.info("job runner done", { status, delivered });
+    const final = { report, reportId, delivered: false };
+    const finishedAt = Date.now();
+    await deliverFinalResult(final,
+      (stored) => save({ status, ...stored, finishedAt }, true),
+      async (body, id) => {
+        const result = await inOrder(body, null, false, `${COMPLETION_DEDUPE_PREFIX}${id}`, false, true);
+        return result && { stored: result.messages.length > 0 };
+      },
+      async (ms) => { await delay(ms); },
+      shutdown.signal,
+      async (id) => (await node.sendState(completionMessageId(`job:${job.id}`, id))).state === "stored");
+    log.info("job runner done", { status, delivered: extra.delivered === true });
     break;
   }
   clearInterval(heartbeat);
@@ -446,20 +458,34 @@ export async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: Wi
  * Tries a send until the bridge takes it. A too_large refusal is final (AB-380): retrying cannot make it fit, and the
  * caller keeps what it sent (a finished report stays in the runner state for the session to collect).
  */
-export async function deliverWithRetry<T>(send: () => Promise<T>, log: Logger, owner: string, attempts = SEND_ATTEMPTS): Promise<T | null> {
+export async function deliverWithRetry<T>(send: () => Promise<T>, log: Logger, owner: string, attempts = SEND_ATTEMPTS,
+  rethrow?: ReadonlySet<string>): Promise<T | null> {
   for (let attempt = 1; attempt <= attempts; attempt++) {
     try {
       return await send();
     } catch (err) {
+      // The caller handles these refusals itself (a final result hands over to the session fallback).
+      if (rethrow?.has((err as { code?: string } | null)?.code ?? "")) throw err;
       if ((err as { code?: string } | null)?.code === "too_large") {
         log.error("message too large to deliver; not retried", { owner, err: (err as Error).message });
         return null;
       }
       log.warn("could not deliver to the session; retrying", { owner, attempt, err: (err as Error).message });
+      if (attempt === attempts) break;
       await new Promise((r) => setTimeout(r, Math.min(attempt * 1_000, SEND_RETRY_MAX_MS)));
     }
   }
   return null;
+}
+
+/** Sends one at a time in call order. A failed send never blocks the sends queued after it. */
+export function inSendOrder<A extends unknown[], T>(send: (...args: A) => Promise<T>): (...args: A) => Promise<T> {
+  let chain: Promise<unknown> = Promise.resolve();
+  return (...args: A) => {
+    const sent = chain.then(() => send(...args));
+    chain = sent.catch(() => undefined);
+    return sent;
+  };
 }
 
 /** Legacy 0.29.10 control mail also carries its original broker timestamp. */

@@ -6,8 +6,11 @@ import { worktreeLease } from "../src/core/worktree-state.js";
 import { closeMetadataDbs } from "../src/core/metadata-db.js";
 import { readRunnerState, type RunnerSpec } from "../src/mcp/job-host.js";
 import { runJobRunner } from "../src/mcp/job-runner.js";
+import { COMPLETION_DEDUPE_PREFIX } from "../src/core/completion.js";
 
 const mocks = vi.hoisted(() => ({ delegate: vi.fn(), node: null as any }));
+// A broker send result always carries the stored messages (SendResult.messages is required by the protocol).
+const stored = vi.hoisted(() => ({ messages: [{ id: "stored" }], deliveredTo: [], queuedFor: [] }));
 vi.mock("../src/mcp/delegate-run.js", async original => ({ ...await original<typeof import("../src/mcp/delegate-run.js")>(), runDelegate: mocks.delegate }));
 vi.mock("../src/core/windows-job-scope.js", async original => ({ ...await original<typeof import("../src/core/windows-job-scope.js")>(), establishWindowsJobScope: async () => null }));
 vi.mock("../src/core/worktree-processes.js", async original => ({
@@ -21,7 +24,7 @@ vi.mock("../src/core/node.js", async () => {
     peers = vi.fn().mockRejectedValueOnce(new Error("broker request timed out: peers")).mockResolvedValue([]);
     markRead = vi.fn().mockImplementationOnce(() => { throw new Error("broker request timed out: ack"); });
     updateJob = vi.fn().mockRejectedValue(new Error("broker request timed out: updateJob"));
-    send = vi.fn().mockResolvedValue({});
+    send = vi.fn().mockResolvedValue(stored);
     constructor(options: { name: string }) { super(); this.name = options.name; mocks.node = this; }
     async start() {}
     async stop() {}
@@ -62,6 +65,30 @@ it("fences an old-turn cancel after the runner starts a queued continuation and 
   expect(readRunnerState(home, spec.job.id)?.stopping).toBe(true);
   expect(await running).toBe(0);
   expect(readRunnerState(home, spec.job.id)).toMatchObject({ status: "cancelled", sessionId: "native-context", stopping: true });
+});
+
+it("persists and delivers a cancelled hosted job's final report to the parent", async () => {
+  home = mkdtempSync(join(process.env.AGENT_BRIDGE_TEST_ROOT!, "runner-cancel-report-"));
+  const args = { prompt: "Cancelled turn", title: "Cancelled report", session_id: "cancel-context" };
+  const spec: RunnerSpec = { home, target: "codex", args, base: args, owner: "parent", byAgent: "claude", cwd: home, cfg: DEFAULT_CONFIG,
+    job: { id: "cancelreport", name: "codex-job-cancelreport", owner: "parent", agent: "codex", model: null, prompt: args.prompt, startedAt: Date.now() - 1_000, sessionId: "cancel-context", workdir: home, worktree: null, allowedServers: [] } };
+  writeFileSync(join(home, "jobs.json"), JSON.stringify({ version: 4, jobs: [{ ...spec.job, status: "running", args }] }));
+  const file = join(home, "runner.spec.json"); writeFileSync(file, JSON.stringify(spec));
+  let signal!: AbortSignal;
+  mocks.delegate.mockImplementationOnce((_rc, _target, _args, active: AbortSignal) => {
+    signal = active;
+    return new Promise((_, reject) => active.addEventListener("abort", () => reject(new Error("partial output before cancel")), { once: true }));
+  });
+  const running = runJobRunner(file);
+  while (!signal) await new Promise(resolve => setTimeout(resolve, 10));
+  mocks.node.markRead.mockReset(); mocks.node.updateJob.mockResolvedValue({});
+  mocks.node.emit("message", { id: "cancel", from: { id: "parent-session", name: "parent", agent: "claude" }, body: JSON.stringify({ type: "cancel" }), conversationId: "jobctl-cancelreport", createdAt: Date.now() + 1 });
+  expect(await running).toBe(0);
+  expect(signal.aborted).toBe(true);
+  const state = readRunnerState(home, spec.job.id);
+  expect(state).toMatchObject({ status: "cancelled", delivered: true, reportId: expect.any(String), report: expect.stringContaining("cancelled") });
+  const sent = mocks.node.send.mock.calls.at(-1)?.[0];
+  expect(sent).toMatchObject({ to: "parent", body: state?.report, dedupeKey: `${COMPLETION_DEDUPE_PREFIX}${state?.reportId}` });
 });
 
 it("reports surviving worktree tools to the supervisor when a cancelled runner has degraded containment", async () => {
@@ -150,7 +177,7 @@ it("keeps the main owner's turn usable through a slow second-session control tim
   await vi.waitFor(() => expect(finish).toBeTypeOf("function"), { timeout: 10_000 });
   let rejectPeers!: (error: Error) => void;
   mocks.node.peers.mockReset().mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectPeers = reject; })).mockResolvedValue([]);
-  mocks.node.markRead.mockReset(); mocks.node.send.mockReset().mockResolvedValue({});
+  mocks.node.markRead.mockReset(); mocks.node.send.mockReset().mockResolvedValue(stored);
   const control = (id: string, from: string) => ({ id, from: { id: from, name: from, agent: "claude" }, body: JSON.stringify({ type: "message", cid: id, body: id }), conversationId: "jobctl-secondsession", createdAt: Date.now(), replyTo: null, hop: 0, to: spec.job.name });
   mocks.node.emit("message", control("secondary-control", "claude-main-2"));
   await vi.waitFor(() => expect(rejectPeers).toBeTypeOf("function"));

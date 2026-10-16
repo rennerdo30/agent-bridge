@@ -147,6 +147,12 @@ export interface Job {
   /** While it runs: delivers a message into the running subagent (see parent-link.ts). */
   live?: { post: (message: string, sibling?: BridgeMessage, controlId?: string) => void } | null;
   finishedAt?: number;
+  /** Terminal report of this process's turn (memory only; jobs.json keeps just resultStored and reportId). */
+  report?: string;
+  /** A terminal report is retained in the runner state or message store, independently of delivery. */
+  resultStored?: boolean;
+  /** Message id of the terminal report: the runner's completion id, or the id this session posted it under. */
+  reportId?: string;
   /** Runs in a detached job runner, so it outlives a restart of this session's server (see job-host.ts). */
   host?: JobHostInfo | null;
   /** Messages forwarded to its runner that it has not confirmed yet; they become a follow-up if it never saw them. */
@@ -1661,6 +1667,10 @@ export class JobManager {
       job.executionOwner = this.node.name;
       job.executionPid = process.pid;
       job.startedAt = Math.max(Date.now(), job.startedAt + 1);
+      job.report = undefined;
+      job.resultStored = undefined;
+      job.reportId = undefined;
+      job.finishedAt = undefined;
       job.cancellingTurn = undefined;
       job.host = null;
       job.waitingForStart = undefined;
@@ -1962,6 +1972,8 @@ export class JobManager {
     const pid = job.host?.pid;
     job.host = null;
     if (final) {
+      if (typeof final.report === "string") job.report = final.report;
+      if (typeof final.finishedAt === "number") job.finishedAt = final.finishedAt;
       this.finish(job, final.status === "done" ? "done" : final.status === "cancelled" ? "cancelled" : "failed", "", final.sessionId ?? null, null, final.delivered ? null : final.report,
         final.reportId ? completionMessageId(`job:${job.id}`, final.reportId) : undefined);
       return;
@@ -2225,13 +2237,17 @@ export class JobManager {
     job.etaAt = undefined;
     job.etaReportedAt = undefined;
     job.status = status;
-    job.finishedAt = Date.now();
+    job.finishedAt ??= Date.now();
     job.sessionId = sessionId ?? job.sessionId;
-    this.persist();
     const seconds = Math.round((Date.now() - job.startedAt) / 1000);
+    const message = report === undefined ? jobReport(job, status, seconds, text, cause, this.bridgeHome()) : report;
+    // jobs.json is re-read on every heartbeat: it records only where the report is, never its text.
+    messageId ??= randomUUID();
+    if (message !== null) job.report = message;
+    if (message !== null || job.report !== undefined) { job.resultStored = true; job.reportId = messageId; }
+    this.persist();
     this.log.info("subagent finished", { job: job.name, status, seconds, sessionId: job.sessionId, cause });
     if (this.storePath && !job.host) notifyJobEvent(dirname(this.storePath), status === "done" ? "finish" : "fail", this.log);
-    const message = report === undefined ? jobReport(job, status, seconds, text, cause, this.bridgeHome()) : report;
 
     // Follow-ups that arrived meanwhile go out right away, into the same session (it keeps its slot).
     if (job.queue.length && job.resume && job.sessionId && !job.controller.signal.aborted && this.isMine(job.owner) && job.continuationFailure?.turn !== job.startedAt && !usageRefused(job)) {
@@ -2337,7 +2353,7 @@ function executorOffline(err: unknown): boolean {
   return (err as { code?: string } | null)?.code === "unknown_target";
 }
 
-type StoredJob = Pick<Job, "usageRunId" | "usagePendingControls" | "usagePendingHeld" | "usageAdmittedControls" | "providerUsage" | "executionPid" | "cancellingTurn" | "continuationFailure" | "waitingForStart" | "projectRoot" | "deliveryHistory" | "ownershipHistory" | "masters" | "executionOwner" | "queuedMessages" | "forwarded" | "id" | "name" | "agent" | "model" | "prompt" | "startedAt" | "status" | "sessionId" | "workdir" | "worktree" | "args" | "owner" | "supervisor" | "finishedAt" | "host" | "remote" | "metadataVersion" | "parentJob" | "rootSession" | "rootName" | "percent" | "progressNote" | "etaAt" | "etaReportedAt">;
+type StoredJob = Pick<Job, "usageRunId" | "usagePendingControls" | "usagePendingHeld" | "usageAdmittedControls" | "providerUsage" | "executionPid" | "cancellingTurn" | "continuationFailure" | "waitingForStart" | "projectRoot" | "deliveryHistory" | "ownershipHistory" | "masters" | "executionOwner" | "queuedMessages" | "forwarded" | "id" | "name" | "agent" | "model" | "prompt" | "startedAt" | "status" | "sessionId" | "workdir" | "worktree" | "args" | "owner" | "supervisor" | "finishedAt" | "resultStored" | "reportId" | "host" | "remote" | "metadataVersion" | "parentJob" | "rootSession" | "rootName" | "percent" | "progressNote" | "etaAt" | "etaReportedAt">;
 
 /** Unknown fields survive upgrades; known next-turn settings also honor deletion. */
 function mergeJobFields(previous: Record<string, unknown>, next: Record<string, unknown>): Record<string, unknown> {
@@ -2392,6 +2408,8 @@ function toStored(j: Job): StoredJob {
     etaAt: j.etaAt,
     etaReportedAt: j.etaReportedAt,
     finishedAt: j.finishedAt,
+    resultStored: j.resultStored,
+    reportId: j.reportId,
     host: j.host ?? null,
     remote: j.remote,
   };

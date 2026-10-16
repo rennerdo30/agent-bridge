@@ -23,10 +23,11 @@ function page() {
   const fetch = vi.fn(() => new Promise(() => {}));
   const document = { getElementById: element, documentElement: { dataset: {} }, addEventListener() {}, querySelectorAll: () => [] };
   const api = new Function("document", "window", "location", "localStorage", "setInterval", "fetch",
-    `${script}\nreturn { pill, esc, renderPaired, poll, setNet: (n) => { net = n; } };`)(
+    `${script}\nreturn { pill, esc, renderPaired, poll, outcomeChip, setNet: (n) => { net = n; }, setOutcomeState: (s, o) => { state = s; outcomes = o; } };`)(
     document, { addEventListener() {} }, { hash: "" }, { setItem() {}, removeItem() {} }, () => 0, fetch) as {
     pill: (status: unknown, percent?: unknown) => string; esc: (s: unknown) => string;
     renderPaired: () => void; poll: () => Promise<void>; setNet: (n: unknown) => void;
+    outcomeChip: (g: unknown) => string; setOutcomeState: (s: unknown, o: unknown) => void;
   };
   return { ...api, fetch };
 }
@@ -67,4 +68,15 @@ describe("dashboard polling (AB-233)", () => {
     void p.poll(); void p.poll();
     expect(stateCalls()).toBe(1);
   });
+});
+
+it("does not claim a stored result was undelivered before outcome evidence loads", () => {
+  const p = page();
+  const job = "codex-job-12345678";
+  const run = { job, status: "done" };
+  p.setOutcomeState({ jobs: { [job]: { resultStored: true } } }, null);
+  expect(p.outcomeChip(run)).toBe("");
+  p.setOutcomeState({ jobs: { [job]: { resultStored: true } } }, { [job]: { outcome: { delivery: { status: "unknown" } } } });
+  expect(p.outcomeChip(run)).toContain("result stored");
+  expect(p.outcomeChip(run)).not.toContain("not delivered");
 });

@@ -15,7 +15,7 @@
     "src/cli/dashboard.ts:ensure": "d19ca8a9485ccc07d588997e3497bc11545e730a264e9a6f59bf1ceb0dfcda49",
     "src/cli/dashboard.ts:close": "534d315c24ff13f59aa4082abf2fb66906e6bee9b979a6348979cbaef89ec7b4"
   },
-  "uiSha256": "e0bdfcaa546e1d956c2038f6d8ca99e089d3da08bebf59c216798a4993fda577",
+  "uiSha256": "1c24d9cb6ac04fdfe34896b7ed2342b835a72c9f793b908563353ccc7361f817",
   "updates": {
     "AB-280": {
       "base": "00cbe6efced0293804ae0ea50bc4a9caef1d5a7b",
@@ -268,8 +268,16 @@
       "reason": "AB-407 (PR #86): Broker.startServices adds only `if (this.jobsPath) void startBrokerJobRunIndex(dirname(this.jobsPath)).catch(...)` (eager job run index backfill); abortStartup and close each add only `if (this.jobsPath) await stopJobRunBackfill(dirname(this.jobsPath));` before the history/archive workers close. startUi's jobOwner wraps the synchronous recoverJobRecord call so a retryable job_index_preparing becomes a JobControlError(\"timeout\") (dashboard 504/409) instead of an unhandled error. No other control-flow change; node.ts and dashboard pins, normalizer and assertions are unchanged.",
       "commit": "a9721b08"
     },
+    "AB-400-result-delivery": {
+      "base": "e7c4583f",
+      "changes": [],
+      "previousUiSha256": "e0bdfcaa546e1d956c2038f6d8ca99e089d3da08bebf59c216798a4993fda577",
+      "uiSha256": "1c24d9cb6ac04fdfe34896b7ed2342b835a72c9f793b908563353ccc7361f817",
+      "reason": "AB-400 (PR #92): startUi's /api/state job map adds only `...(j.resultStored ? { resultStored: true } : {})` so the dashboard can show \"result stored, not delivered\". No control-flow change; broker, node.ts and dashboard method pins, normalizer and assertions are unchanged.",
+      "commit": "7b35f4e2"
+    },
     "AB-399-peer-liveness": {
-      "base": "7f5bb535",
+      "base": "99fc3ba3",
       "changes": [
         {
           "method": "src/core/broker.ts:constructor",
