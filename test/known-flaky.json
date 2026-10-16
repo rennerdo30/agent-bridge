@@ -270,6 +270,24 @@
       "added": "2026-10-16",
       "recheckBy": "2026-10-23",
       "seen": "Windows Node 24 shard 3/6 (main run 38873872600): expected message to contain 'fake answer: finished' at job-runner.test.ts:437"
+    },
+    {
+      "file": "test/broker-overload.test.ts",
+      "test": "broker overload survival > refills a consuming node past 500 queued messages without any hook or inbox calls",
+      "issue": "AB-410",
+      "owner": "muse-claude-codex-comm",
+      "added": "2026-10-16",
+      "recheckBy": "2026-10-23",
+      "seen": "Windows Node 22 shard 6/6 (main run 38877634285 at f25782cf, the current main head when listed)"
+    },
+    {
+      "file": "test/mobile-identity.test.ts",
+      "test": "owner-private mobile PC identity > generates one P-256 key, correct IP/DNS SANs, a self-signature and canonical SPKI hash; persists across changed origins/renewal",
+      "issue": "AB-410",
+      "owner": "muse-claude-codex-comm",
+      "added": "2026-10-16",
+      "recheckBy": "2026-10-23",
+      "seen": "Windows Node 24 shard 2/6 (main run 38877634285 at f25782cf, the current main head when listed)"
     }
   ]
 }
