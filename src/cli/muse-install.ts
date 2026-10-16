@@ -18,10 +18,13 @@ export const publishMuseBundle = (source: string): string => publishPlugin(sourc
  * The exact Muse plugin commands for each installer action. Approval trusts the bundle's capabilities.
  * An update installs the new bundle over the old one: `muse plugins update` only re-reads the recorded source,
  * which can be Muse's own cached copy of the old version. A reinstall keeps the plugin's enabled state.
+ * The scope is always explicit: run inside a Git project, Muse 1.4.9 otherwise refuses a user-scope plugin with
+ * "already installed from a different source".
  */
 export function musePluginArgs(action: Action, source: string): string[][] {
-  if (action === "install") return [["plugins", "install", source], ["plugins", "approve", "agent-bridge"]];
-  if (action === "update") return [["plugins", "install", source], ["plugins", "inspect", "agent-bridge"]];
+  const install = ["plugins", "install", source, "--scope", "user"];
+  if (action === "install") return [install, ["plugins", "approve", "agent-bridge"]];
+  if (action === "update") return [install, ["plugins", "inspect", "agent-bridge"]];
   return [["plugins", "remove", "agent-bridge"]];
 }
 

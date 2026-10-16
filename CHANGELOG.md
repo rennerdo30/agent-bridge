@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Updater: Muse installs always use user scope.** Run inside a Git project (for example the agent-bridge checkout), Muse refused the 0.30.23 update with "plugin `agent-bridge` is already installed from a different source", because `muse plugins install` without `--scope` targets that project. The installer now passes `--scope user`.
+
 ## 0.30.23
 
 - **Updater: a running Claude Code session no longer makes `update` fail** with "Immutable plugin version differs". Claude Code writes `.in_use/<pid>` markers into the installed version folder; the immutable-version comparison now ignores that top-level folder, so an identical build is recognized as already installed. A real content difference is still refused.

@@ -149,8 +149,8 @@ describe("Muse delegation", () => {
   it("plans Muse installation through its own plugin manager", () => {
     expect(planFor("muse", "install")).toEqual([{ kind: "muse", action: "install" }]);
     expect(describeStep({ kind: "muse", action: "install" })).toContain("approve");
-    expect(musePluginArgs("install", "/src/muse")).toEqual([["plugins", "install", "/src/muse"], ["plugins", "approve", "agent-bridge"]]);
-    expect(musePluginArgs("update", "/src/muse")).toEqual([["plugins", "install", "/src/muse"], ["plugins", "inspect", "agent-bridge"]]);
+    expect(musePluginArgs("install", "/src/muse")).toEqual([["plugins", "install", "/src/muse", "--scope", "user"], ["plugins", "approve", "agent-bridge"]]);
+    expect(musePluginArgs("update", "/src/muse")).toEqual([["plugins", "install", "/src/muse", "--scope", "user"], ["plugins", "inspect", "agent-bridge"]]);
     expect(musePluginArgs("uninstall", "/src/muse")).toEqual([["plugins", "remove", "agent-bridge"]]);
     expect(historyFiltersSchema.parse({ agent: "muse" }).agent).toBe("muse");
   });
