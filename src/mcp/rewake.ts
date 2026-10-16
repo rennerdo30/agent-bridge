@@ -9,6 +9,7 @@ import type { BridgeNode } from "../core/node.js";
 import { AGENT_KINDS, BROADCAST, isQuietMessage, type BridgeMessage } from "../core/protocol.js";
 import { tokensEqual } from "../core/token.js";
 import { formatMessages } from "./format.js";
+import type { ClaudeMailScopes } from "./claude-mail-scope.js";
 
 /**
  * Wake an idle Claude Code session when something it is waiting for arrives: a background subagent's
@@ -82,11 +83,24 @@ export class RewakeEndpoint {
     private readonly shouldWake: (m: BridgeMessage) => boolean,
     private readonly log: Logger,
     private readonly activity?: (event: import("./hook-ownership.js").ModActivity) => boolean,
+    private readonly mailScopes?: ClaudeMailScopes,
   ) {}
 
   async start(): Promise<void> {
     this.server = createServer((req, res) => {
       const url = new URL(req.url ?? "/", `http://${HOST}`);
+      if (url.pathname === "/mail-scope" && tokensEqual(String(req.headers.authorization ?? "").replace(/^Bearer /, ""), this.secret)) {
+        const session = url.searchParams.get("session_id");
+        if (req.method !== "POST" || this.retired || !this.mailScopes || !session || session !== this.registered || session !== this.node.currentSessionId) {
+          res.writeHead(409).end(); return;
+        }
+        res.setHeader("cache-control", "no-store");
+        try {
+          const token = this.mailScopes.issue(url.searchParams.get("tool") ?? "", session, url.searchParams.get("agent_id") ?? undefined);
+          res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ token }));
+        } catch { res.writeHead(403).end(); }
+        return;
+      }
       if (url.pathname === "/activity" && tokensEqual(String(req.headers.authorization ?? "").replace(/^Bearer /, ""), this.secret)) {
         const accepted = !this.retired && this.activity?.({ sessionId: url.searchParams.get("session_id") ?? "", turnId: url.searchParams.get("turn_id") ?? "", sequence: Number(url.searchParams.get("sequence")), busy: url.searchParams.get("busy") === "1", instance: url.searchParams.get("instance") ?? undefined });
         if (accepted) this.modSeen = true;

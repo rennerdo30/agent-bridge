@@ -80,6 +80,7 @@ import { askOwnerSchema, type AskOwnerArgs } from "../core/owner-questions.js";
 import { guardServerErrors } from "./job-runner-errors.js";
 import { NODE_STOP_MS, runShutdownSteps, SHUTDOWN_DEADLINE_MS, shouldYieldTo, watchParent, type ShutdownStep } from "./server-lifecycle.js";
 import { parentProcessIdentity } from "../core/process-identity.js";
+import { ClaudeMailScopes, isClaudeMailTool } from "./claude-mail-scope.js";
 
 export { DELEGATED_JOB_NOTE } from "./delegate-run.js";
 
@@ -166,6 +167,8 @@ function describeError(err: unknown): string {
 
 /** Everything the tool and hook handlers share. */
 export interface ServerContext {
+  /** In-memory, authenticated Claude host-mod mail capabilities. */
+  claudeMailScopes?: ClaudeMailScopes;
   childInbox?: LocalCoordinator;
   agent: AgentKind;
   cfg: BridgeConfig;
@@ -448,7 +451,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
       // Running-job notes remain in explicit inbox reads and history (see JobManager.fromSubagent).
       !ctx.jobs?.isNote(m) &&
       shouldWakeClaudeMessage(node, cfg, m);
-    rewake = new RewakeEndpoint(home, node, shouldWake, log.child("rewake"), (event) => reportModActivity(ctx, event));
+    rewake = new RewakeEndpoint(home, node, shouldWake, log.child("rewake"), (event) => reportModActivity(ctx, event), ctx.claudeMailScopes);
     try {
       await rewake.start();
       ctx.rewakeAvailable = true;
@@ -639,6 +642,8 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
     return jobs.find(ref, false);
   };
   const { node, log, cfg, home } = ctx;
+  const mailScopes = ctx.agent === "claude" && node ? ctx.claudeMailScopes ??= new ClaudeMailScopes() : undefined;
+  const mailScopeSchema: Record<string, z.ZodOptional<z.ZodString>> = mailScopes ? { _bridge_scope: z.string().optional().describe("Internal host-mod capability; never supply manually") } : {};
   const waits = new MessageWaitStore(ctx.home);
   if (node) waits.attach(node);
   // Nested supervisors keep private child tools without independent-session bridge privileges.
@@ -663,17 +668,45 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
   const guarded =
     <A>(name: string, fn: (args: A, extra: ToolExtra) => Promise<CallToolResult>) =>
     async (args: A, extra: ToolExtra): Promise<CallToolResult> => {
+      // Strip the host capability before logging or forwarding arguments to any broker/store.
+      const { _bridge_scope: scopeToken, ...safeArgs } = args as Record<string, unknown>;
+      args = safeArgs as A;
       log.debug("tool call", { tool: name, args: args as Record<string, unknown> });
       if (ctx.admitCodex && !ctx.admitCodex(extra._meta)) return text("Native Codex child or unverified thread: use the parent session's bridge. Missing main-thread lineage may be retried once its rollout header is available.", true);
-      // Claude's ordinary tools/call has no documented native agent identity. Use the id
-      // issued by SubagentStart explicitly; never infer a caller from the last child hook.
+      // Ordinary Claude MCP calls do not attest the calling loop. While a native child
+      // route is live, only a mod-issued capability proves parent or child; without a
+      // live child an unscoped call can only be the parent (CLAUDE-MAIL-SCOPES.md).
       const a = args as Record<string, unknown>;
       const metaChildId = extra._meta?.agent_id ?? extra._meta?.agentId;
-      const childId = metaChildId ?? a.native_child;
+      let childId = metaChildId ?? a.native_child;
+      let authenticatedMail = false;
+      if (mailScopes && isClaudeMailTool(name)) {
+        // A replaced server that is called is the one the session uses: take it back first.
+        if (node!.wasReplaced) await node!.reclaim().catch((err) => log.warn("could not take the bridge back", { err: (err as Error).message }));
+        try {
+          if (scopeToken !== undefined) {
+            // A presented capability is always validated: forged, replayed or wrong-tool fails.
+            const scope = mailScopes.take(scopeToken, name, node!.currentSessionId);
+            if (childId !== undefined && childId !== scope.agentId) throw new BridgeError("unauthorized", "Claimed native_child conflicts with authenticated host scope; no mail accessed.");
+            childId = scope.agentId;
+            authenticatedMail = true;
+          } else if (childId === undefined) {
+            // A broker without native child routes (older release) cannot have a live child.
+            const children = await node!.nativeChildren().catch(err => {
+              if (isUnsupportedOperation(err, "nativeChildren")) return [];
+              throw err;
+            });
+            // Unscoped while a child is live: the caller is ambiguous. Give a read-only
+            // status, never parent message bodies, history, receipts or wait registration.
+            if (children.length) return text(["Ambiguous caller while native children are live. Mail remains queued for parent hooks; use an explicit native_child inbox for child mail.",
+              ...children.map(child => `Native child address: ${child.address}`)].join("\n"));
+          }
+        } catch (err) { return text(describeError(err), true); }
+      }
       if (childId !== undefined) {
         try {
           if (metaChildId !== undefined && a.native_child !== undefined && metaChildId !== a.native_child) throw new BridgeError("unauthorized", "native_child conflicts with host-provided agent identity.");
-          if (ctx.agent !== "claude" || !node || node.wasReplaced || typeof childId !== "string" || !["peers", "inbox", "send"].includes(name)) throw new BridgeError("unauthorized", "Scoped native children may use peers, inbox and send only on their current Claude parent connection.");
+          if (ctx.agent !== "claude" || !node || node.wasReplaced || typeof childId !== "string" || !["peers", "inbox", "send", "search_history"].includes(name)) throw new BridgeError("unauthorized", "Scoped native children may use peers, inbox, send and search_history only on their current Claude parent connection.");
           const children = await node.nativeChildren(), child = children.find(c => c.agentId === childId);
           if (!child) throw new BridgeError("unauthorized", "No live scoped native child; wait for its SubagentStart hook.");
           if (name === "send" && a.mode !== undefined) {
@@ -690,6 +723,12 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
             const jobs = (await node.projectJobs()).filter(j => j.owner === child.parent && j.supervisor === node.currentSessionId);
             return text([identity, ...jobs.map(j => `${j.name} (${j.agent}, ${j.status})`), `Explicit send_to grants: ${child.sendTo.join(", ") || "none"}`].join("\n"));
           }
+          if (name === "search_history") {
+            // Only the child's own mail: its address pins the session filter, and messages only.
+            const result = await node.searchHistory({ query: String(a.query), limit: a.limit as number | undefined,
+              filters: { ...(a.filters as HistorySearch["filters"]), session: child.address, kind: "message" } });
+            return text(`${identity}\n${JSON.stringify(result)}`);
+          }
           if (name === "inbox") {
             const messages = (await node.nativeChildPending(childId)).filter(m => (a.include_quiet ?? a.mark_read === false) || !isQuietMessage(m)).slice(0, typeof a.limit === "number" ? a.limit : HOOK_MAX_MESSAGES);
             if (a.mark_read !== false && messages.length) await node.nativeChildAck(childId, messages.map(m => m.id));
@@ -701,7 +740,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
       }
       // Replaced by another server of this session, yet called: this is the one the session uses (see reclaim).
       if (name !== "health" && ctx.node?.wasReplaced) await ctx.node.reclaim().catch((err) => log.warn("could not take the bridge back", { err: (err as Error).message }));
-      await ctx.observeMeta?.(extra._meta);
+      if (!authenticatedMail) await ctx.observeMeta?.(extra._meta);
       if (ctx.agent === "antigravity" && name !== "health" && name !== "hook_event") {
         if (name === "inbox") {
           if (a.mark_read !== false) releaseAntigravityStopDelivery(ctx);
@@ -748,7 +787,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
     {
       title: "Search bridge and CLI history",
       description: HISTORY_SEARCH_TOOL_DESCRIPTION,
-      inputSchema: historySearchToolInput,
+      inputSchema: { ...historySearchToolInput, ...mailScopeSchema },
       annotations: { readOnlyHint: true },
     },
     guarded("search_history", async (a: HistorySearch & { answer?: boolean }) => {
@@ -761,7 +800,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
   register("get_conversation", {
     title: "Read a retained conversation",
     description: "Fetch a complete locally retained conversation by the conversation id returned in search_history. Pages contain exact raw bytes (base64) and text chunks with source offsets. Pass next as after; concatenate chunks per source/generation to reconstruct JSONL or SQLite snapshots. No model calls or network export.",
-    inputSchema: conversationPageSchema.shape,
+    inputSchema: { ...conversationPageSchema.shape, ...mailScopeSchema },
     annotations: { readOnlyHint: true },
   }, guarded("get_conversation", async (args: ConversationRequest) => text(JSON.stringify(ctx.node ? await ctx.node.getConversation(args) : (await import("../core/conversations.js")).readConversationFile(resolveDbPath(ctx.home),args)))));
 
@@ -1129,6 +1168,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
       description: "Read unread messages from other agents, with quiet transfer progress, sibling copies and acknowledgements excluded by default. Use include_quiet=true (or a read-only mark_read=false peek) to inspect retained copies. Messages are marked read unless mark_read is false. Peeking with mark_read=false does not produce a read receipt.",
       inputSchema: {
         include_quiet: z.boolean().optional().describe("Include historical quiet coordination copies (default false)"),
+        ...mailScopeSchema,
         native_child: z.string().optional().describe("Your scoped native Claude agent_id; read only that child's inbox"),
         mark_read: z.boolean().optional().describe("Mark returned messages as read (default true); false also permits inspecting retained quiet copies"),
         limit: z.number().int().min(1).max(100).optional(),
@@ -1165,6 +1205,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
         "read_receipt_of supports block only and confirms bridge consumption, not a reply or completed work. Nested child waits support block only.",
       inputSchema: {
         mode: z.enum(["notify", "block", "cancel"]).optional().describe("Default notify; block for a bounded synchronous result; cancel a saved wait with resume_id"),
+        ...mailScopeSchema,
         timeout_sec: z.number().int().min(1).max(MAX_WAIT_SEC).optional().describe(`Block only: default and single-call cap ${SINGLE_WAIT_SEC}; without mode selects legacy block. Ignored in notify`),
         from: z.string().optional().describe("Only accept messages from this peer name or agent kind"),
         reply_to: z.string().optional().describe("Only accept replies to this message id"),
