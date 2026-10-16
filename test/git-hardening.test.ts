@@ -5,8 +5,8 @@ import { delimiter, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { nullLogger } from "../src/core/logger.js";
 import { closeMetadataDb } from "../src/core/metadata-db.js";
-import { changedFilesNote, codexHookObservation, createWorktree, finishWorktree, gitChangeSnapshot, gitStatusSnapshot, snapshotChanges } from "../src/core/worktree.js";
-import { repositoryGuards } from "../src/core/git-safety.js";
+import { changedFilesNote, codexHookObservation, createWorktree, git as bridgeGit, finishWorktree, gitChangeSnapshot, gitStatusSnapshot, snapshotChanges } from "../src/core/worktree.js";
+import { NO_LAZY_FETCH_ARGS, repositoryGuards, resetGitFeatureCache } from "../src/core/git-safety.js";
 import { cleanupWorktrees } from "../src/core/worktree-cleanup.js";
 
 /**
@@ -74,10 +74,9 @@ function plantRepositoryConfig(): void {
   set("commit.gpgSign", "true");
   set("gpg.program", planted("gpg"));
   set("log.showSignature", "true");
-  // core.fsmonitor arrives through an included file the job wrote.
-  const included = join(evil, "included.gitconfig");
-  writeFileSync(included, `[core]\n\tfsmonitor = ${planted("fsmonitor")}\n\tuntrackedCache = true\n`);
-  set("include.path", slash(included));
+  set("core.fsmonitor", planted("fsmonitor"));
+  set("core.untrackedCache", "true");
+  // Includes (plain or conditional) make filter-capable calls refuse (round 3), so they have their own tests below.
 }
 
 /** Make a file stat-dirty with unchanged content, so git re-reads it (and would run its clean filter). */
@@ -359,12 +358,12 @@ describe("bridge git calls: nested repositories, target worktrees and Git LFS (A
 describe("AB-422 guard decisions", () => {
   /** A runner that answers `git config --list` with the given entries (scope, key, value) and lists no gitlinks. */
   const configured = (entries: [string, string, string][]) => async (args: string[]) =>
-    args[0] === "config" ? entries.map(([scope, key, value]) => `${scope}\0file:x\0${key}\n${value}\0`).join("") : "";
+    args[0] === "--version" ? "git version 2.55.0\n" : args[0] === "config" ? entries.map(([scope, key, value]) => `${scope}\0file:x\0${key}\n${value}\0`).join("") : "";
 
   it("keeps the canonical local filter.lfs driver and neutralises any other value of it", async () => {
     const canonical: [string, string, string][] = [["local", "filter.lfs.clean", "git-lfs clean -- %f"], ["local", "filter.lfs.smudge", "git-lfs smudge -- %f"],
       ["local", "filter.lfs.process", "git-lfs filter-process"], ["local", "filter.lfs.required", "true"]];
-    expect((await repositoryGuards(["status"], root, configured(canonical))).args).toEqual([]);
+    expect((await repositoryGuards(["status"], root, configured(canonical))).args).toEqual(NO_LAZY_FETCH_ARGS);
     for (const value of ["git-lfs.exe filter-process", "/tmp/git-lfs filter-process", "git-lfs filter-process --verbose", "evil"]) {
       const guards = await repositoryGuards(["status"], root, configured([...canonical, ["local", "filter.lfs.process", value]]));
       expect(guards.args).toContain("filter.lfs.process=");
@@ -389,14 +388,14 @@ describe("AB-422 guard decisions", () => {
       }
       // Clean-only commands never download, so the owner's local credential or http settings do not block them.
       for (const command of [["status", "--porcelain"], ["add", "-A"], ["commit", "-m", "x"], ["diff"], ["rm", "x"], ["mv", "a", "b"], ["update-index", "--refresh"], ["worktree", "remove", "x"]]) {
-        expect((await repositoryGuards(command, root, configured(activeLfs(key)))).args, command.join(" ")).toEqual([]);
+        expect((await repositoryGuards(command, root, configured(activeLfs(key)))).args, command.join(" ")).toEqual(NO_LAZY_FETCH_ARGS);
       }
     });
 
   it("sets no-prompt variables for the guarded command while Git LFS is active, and only then", async () => {
     const active = await repositoryGuards(["status"], root, configured([["global", "filter.lfs.process", "git-lfs filter-process"]]));
-    expect(active.env).toEqual({ GIT_TERMINAL_PROMPT: "0", GCM_INTERACTIVE: "Never" });
-    expect((await repositoryGuards(["status"], root, configured([]))).env).toEqual({});
+    expect(active.env).toEqual({ GIT_TERMINAL_PROMPT: "0", GCM_INTERACTIVE: "Never", GIT_NO_LAZY_FETCH: "1" });
+    expect((await repositoryGuards(["status"], root, configured([]))).env).toEqual({ GIT_NO_LAZY_FETCH: "1" });
   });
 
   it("records a failed hook observation when the working copy could be compared before the job but not after it", () => {
@@ -423,5 +422,102 @@ describe("AB-422 guard decisions", () => {
     expect(note).not.toMatch(/No files changed/);
     expect(changedFilesNote(snapshotChanges(before, new Map(before)), "edit")).toBe("No files changed.");
     expect(changedFilesNote([], "ask")).toBeNull();
+  });
+
+  it("reads effective config with --includes", async () => {
+    const reads: string[][] = [];
+    await repositoryGuards(["status"], root, async (args) => { reads.push(args); return args[0] === "--version" ? "git version 2.55.0\n" : ""; });
+    expect(reads.find((args) => args[0] === "config")).toContain("--includes");
+  });
+
+  it.each(["include.path", "includeIf.onbranch:agent-bridge/**.path", "includeIf.gitdir:**/worktrees/**.path"])(
+    "refuses every filter-capable command when a reached repository's local config has %s", async (key) => {
+      for (const command of [["status"], ["diff"], ["add", "-A"], ["checkout", "main"], ["worktree", "add", "x"], ["worktree", "remove", "x"]]) {
+        await expect(repositoryGuards(command, root, configured([["local", key, "/tmp/x.gitconfig"]])), command.join(" ")).rejects.toThrow(/include/);
+      }
+      // Commands that run no filter are unaffected; the owner's global includes are trusted.
+      expect((await repositoryGuards(["rev-parse", "HEAD"], root, configured([["local", key, "/tmp/x"]]))).args).toEqual(NO_LAZY_FETCH_ARGS);
+      expect((await repositoryGuards(["status"], root, configured([["global", key, "/tmp/x"]]))).args).toEqual(NO_LAZY_FETCH_ARGS);
+    });
+
+  it("blocks lazy fetches for every command that is not an intended network command", async () => {
+    for (const command of [["status"], ["diff"], ["show", "HEAD"], ["log", "-p"], ["rev-parse", "HEAD"], ["cat-file", "-p", "x"], ["worktree", "add", "x"]]) {
+      const guards = await repositoryGuards(command, root, configured([]));
+      expect(guards.env.GIT_NO_LAZY_FETCH, command.join(" ")).toBe("1");
+      for (const value of ["protocol.allow=never", "protocol.ext.allow=never", "protocol.file.allow=never", "protocol.git.allow=never",
+        "protocol.http.allow=never", "protocol.https.allow=never", "protocol.ssh.allow=never"]) expect(guards.args).toContain(value);
+    }
+    const fetch = await repositoryGuards(["fetch"], root, configured([]));
+    expect(fetch.args).toEqual([]);
+    expect(fetch.env.GIT_NO_LAZY_FETCH).toBeUndefined();
+  });
+
+  it("refuses promisor repositories when git cannot disable lazy fetching (before 2.44)", async () => {
+    const promisor: [string, string, string][] = [["local", "remote.evil.promisor", "true"]];
+    const at = (version: string, entries: [string, string, string][]) => async (args: string[]) =>
+      args[0] === "--version" ? `git version ${version}\n` : configured(entries)(args);
+    try {
+      for (const entries of [promisor, [["local", "extensions.partialclone", "evil"]], [["local", "remote.evil.partialclonefilter", "blob:none"]]] as [string, string, string][][]) {
+        resetGitFeatureCache();
+        await expect(repositoryGuards(["rev-parse", "HEAD"], root, at("2.43.0.windows.1", entries))).rejects.toThrow(/lazy/);
+      }
+      resetGitFeatureCache();
+      expect((await repositoryGuards(["rev-parse", "HEAD"], root, at("2.43.0", []))).args).toEqual(NO_LAZY_FETCH_ARGS);
+      resetGitFeatureCache();
+      expect((await repositoryGuards(["show", "HEAD"], root, at("2.44.0", promisor))).env.GIT_NO_LAZY_FETCH).toBe("1");
+    } finally { resetGitFeatureCache(); }
+  });
+
+  it("network commands also refuse local protocol keys and ext::/fd:: URL rewrites", async () => {
+    for (const [key, value] of [["protocol.ext.allow", "always"], ["protocol.allow", "always"], ["url.ext::sh -c evil.insteadof", "https://"], ["url.fd::3.pushinsteadof", "ssh://"]] as const) {
+      await expect(repositoryGuards(["fetch"], root, configured([["local", key, value]])), key).rejects.toThrow(/refused/);
+    }
+  });
+});
+
+describe("AB-422 round 3: conditional includes and lazy fetches", () => {
+  it("refuses worktree creation when repository config has an include that activates only in the new worktree", async () => {
+    const included = join(evil, "onbranch.gitconfig");
+    writeFileSync(included, `[filter "evil"]\n\tsmudge = ${planted("include-smudge")}\n\tclean = ${planted("include-clean")}\n`);
+    git(repo, "config", "includeIf.onbranch:agent-bridge/**.path", slash(included));
+    // Control: inactive on the source branch, active in the checkout of a new agent-bridge/ worktree.
+    touch(join(repo, "a.txt"));
+    git(repo, "status", "--porcelain");
+    expect(markerText()).toBe("");
+    git(repo, "worktree", "add", "-q", "-b", "agent-bridge/control", join(root, "control"));
+    expect(markerText()).toMatch(/include-smudge/);
+    rmSync(markers);
+    await expect(createWorktree({ cwd: repo, home, jobId: "ab422inc", log: nullLogger })).rejects.toThrow(/include/);
+    expect(markerText()).toBe("");
+  });
+
+  it("refuses filter-capable calls with an active plain include.path", async () => {
+    const included = join(evil, "included.gitconfig");
+    writeFileSync(included, `[core]\n\tfsmonitor = ${planted("fsmonitor")}\n`);
+    git(repo, "config", "include.path", slash(included));
+    touch(join(repo, "a.txt"));
+    expect(await gitChangeSnapshot(repo, nullLogger)).toBeNull();
+    expect(await bridgeGit(["rev-parse", "HEAD"], repo, nullLogger)).toMatch(/^[0-9a-f]{40}$/);
+    expect(markerText()).toBe("");
+  });
+
+  it("an ordinary read never lazily fetches a missing object from a planted promisor remote", async () => {
+    writeFileSync(join(repo, "lazy.txt"), "lazy blob content\n");
+    git(repo, "add", "lazy.txt");
+    git(repo, "commit", "-q", "-m", "lazy");
+    const blob = git(repo, "rev-parse", "HEAD:lazy.txt");
+    rmSync(join(repo, ".git", "objects", blob.slice(0, 2), blob.slice(2)));
+    git(repo, "config", "core.repositoryformatversion", "1");
+    git(repo, "config", "extensions.partialClone", "evil");
+    git(repo, "config", "remote.evil.url", `ext::node ${slash(join(evil, "marker.js"))} lazy-fetch`);
+    git(repo, "config", "remote.evil.promisor", "true");
+    git(repo, "config", "protocol.ext.allow", "always");
+    // Control: plain git lazily fetches through the planted transport.
+    try { git(repo, "cat-file", "-p", blob); } catch { /* the fake transport fails after it ran */ }
+    expect(markerText()).toMatch(/lazy-fetch/);
+    rmSync(markers);
+    await expect(bridgeGit(["show", "HEAD:lazy.txt"], repo, nullLogger)).rejects.toThrow();
+    await expect(bridgeGit(["diff", "HEAD~1", "HEAD"], repo, nullLogger)).rejects.toThrow();
+    expect(markerText()).toBe("");
   });
 });

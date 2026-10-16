@@ -7,7 +7,7 @@ import { DelegateError, runProcess } from "./delegate.js";
 import { nullLogger, type Logger } from "./logger.js";
 import { resolveWorktreeRemovalPath, unlinkLinks } from "./worktree-links.js";
 import { displayPathText } from "./display-paths.js";
-import { diffSafety, GitSafetyRefusal, gitSafetyArgs, repositoryGuards, splitGitArgs } from "./git-safety.js";
+import { diffSafety, GitSafetyRefusal, gitSafetyArgs, NO_LAZY_FETCH_ARGS, repositoryGuards, splitGitArgs } from "./git-safety.js";
 
 /**
  * Git worktrees for editing subagents: each one works on its own branch in its own checkout, so
@@ -76,7 +76,7 @@ export async function git(args: string[], cwd: string, log: Logger, timeoutMs = 
   const read = (argv: string[], dir: string | null) => new Promise<string>((done, fail) => {
     const left = deadline - Date.now();
     if (left <= 0) { fail(new Error(`git ${argv[0]} not started: the guard checks used up ${Math.round(timeoutMs / 1000)}s`)); return; }
-    execFile(GIT, [...prefix, ...(dir ? ["-C", dir] : []), ...argv], { cwd, env, timeout: left, windowsHide: true, encoding: "utf8", maxBuffer: GUARD_READ_MAX_BYTES },
+    execFile(GIT, [...prefix, ...NO_LAZY_FETCH_ARGS, ...(dir ? ["-C", dir] : []), ...argv], { cwd, env: { ...env, GIT_NO_LAZY_FETCH: "1" }, timeout: left, windowsHide: true, encoding: "utf8", maxBuffer: GUARD_READ_MAX_BYTES },
       (err, stdout, stderr) => err ? fail(new Error(`git ${argv[0]} failed: ${(stderr || err.message).trim().slice(0, 500)}`)) : done(stdout));
   });
   // Every guard failure is a refusal (GitSafetyRefusal), whatever text from git it quotes.
