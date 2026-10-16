@@ -186,9 +186,14 @@ export async function restoreMuseContext(env: NodeJS.ProcessEnv = process.env): 
     // Only positively identified interactive native hosts may start a main peer
     // without an adapter-owned handoff. SDK/shim/exec/serve ancestry is untrusted.
     if (museHostCommand(info.cmdline)) {
+      const delegationMarked = !!(env.AGENT_BRIDGE_INTERNAL || env.AGENT_BRIDGE_DELEGATE_DEPTH || env.AGENT_BRIDGE_PARENT_URL);
       if (!/(?:^|\s)(?:exec|serve)(?:\s|$)/.test(info.cmdline) && env.MUSE_SESSION_ID) {
-        return env.AGENT_BRIDGE_INTERNAL || env.AGENT_BRIDGE_DELEGATE_DEPTH || env.AGENT_BRIDGE_PARENT_URL ? refuse() : false;
+        return delegationMarked ? refuse() : false;
       }
+      // Every host Bridge starts (childEnv) carries these markers. A `muse serve` without them was started by
+      // another client (T3 Code and other MSP frontends): it is an interactive owner session, not a job awaiting
+      // a handoff. Treating it as one marked it internal, so its hooks denied every write ("gate unavailable").
+      if (!delegationMarked && /(?:^|\s)serve(?:\s|$)/.test(info.cmdline)) return false;
       env.AGENT_BRIDGE_INTERNAL = "1";
       // Its handoff must win; walking farther could restore another job's
       // authenticated ancestor while this host's registration is still pending.
