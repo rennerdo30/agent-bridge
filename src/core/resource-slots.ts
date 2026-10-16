@@ -12,7 +12,7 @@ export const SLOT_PID_ENV = "AGENT_BRIDGE_SLOT_PID";
 export const SLOT_LEASE_MS = 6 * 60 * 60_000;
 export const SLOT_RENEW_MS = 60_000;
 const SLOT_POLL_MS = 250;
-const SLOT_DB_NAME = "resource-slots.sqlite";
+export const SLOT_DB_NAME = "resource-slots.sqlite";
 const LOCK_WAIT_MS = 3_000;
 /** Busy retries of a release, each after the full busy timeout: about 30 s in total. */
 const RELEASE_ATTEMPTS = 10;

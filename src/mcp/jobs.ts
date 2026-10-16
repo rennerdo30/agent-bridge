@@ -1071,6 +1071,17 @@ export class JobManager {
     return [...this.waitingJobs.values()];
   }
 
+  /**
+   * AB-401: a job held back by this session's job limit: its place in line and the jobs counted against the limit.
+   * In-memory only, no store read or process probe; null when it is not in this session's queue.
+   */
+  limitWait(job: Pick<Job, "id">): import("../core/job-waiting.js").WaitingFor | null {
+    const position = [...this.waitingJobs.keys()].indexOf(job.id) + 1;
+    if (!position) return null;
+    const holders = this.runningCount() + [...this.foreground.values()].filter((j) => this.isMine(j.owner)).length;
+    return { kind: "job-limit", position, holders, capacity: this.maxJobs };
+  }
+
   /** Recently finished subagents, newest first (they can still be messaged). */
   /**
    * Whether a job belongs to this session. A session briefly runs under a "-N" stand-in of its name when a

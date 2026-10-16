@@ -1,4 +1,5 @@
-import { describeResourceSlots, formatResourceSlots, ResourceSlots } from "../core/resource-slots.js";
+import { describeResourceSlots, formatResourceSlots, ResourceSlots, type SlotEntry } from "../core/resource-slots.js";
+import { readSlotSnapshot, slotWaitFor, waitingText } from "../core/job-waiting.js";
 import { bundleDirectory } from "../core/bundle-directory.js";
 import { MAX_HOLD_REASON_CHARS, setJobOutcome, deriveJobOutcome, readResultDelivery } from "../core/job-outcomes.js";
 import { readJobReport, resultDeliveryLabel } from "./final-result.js";
@@ -952,7 +953,9 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
         if (!job || job.name !== a.job) return text("No job with that name is owned by this session.", true);
         const report = job.report ?? (job.status === "running" ? null : readJobReport(ctx.home, job));
         const receipt = report ? readResultDelivery(ctx.home, job) : null;
-        return text(JSON.stringify({ job: job.name, status: job.status, resultStored: typeof report === "string",
+        // AB-401: what it is queued for on this machine (null: not queued; a running job without a wait is working or stalled).
+        const waitingFor = ctx.jobs?.limitWait(job) ?? (job.status === "running" ? slotWaitFor(readSlotSnapshot(ctx.home), job.name, cfg.resourceSlots) : null);
+        return text(JSON.stringify({ job: job.name, status: job.status, waitingFor, resultStored: typeof report === "string",
           delivery: report ? resultDeliveryLabel({ report }, receipt?.status === "read") : null, receipt, report: report ?? null }));
       }
       if (!node && ctx.parent) {
@@ -1010,23 +1013,29 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
         lines.push("Latest unread file-transfer progress (retained notes, not live status):");
         for (const message of transferNotes.values()) lines.push(`- ${message.body}`);
       }
+      let slotSnapshot: SlotEntry[] = [];
       try {
         const slots = new ResourceSlots(ctx.home);
         let slotLines: string[];
-        try { slotLines = formatResourceSlots(slots.snapshot(), cfg.resourceSlots); } finally { slots.close(); }
+        try { slotSnapshot = slots.snapshot(); slotLines = formatResourceSlots(slotSnapshot, cfg.resourceSlots); } finally { slots.close(); }
         if (slotLines.length) lines.push("Resource slots (holders, then the queue in order):", ...slotLines);
       } catch { /* Slot state is advisory in peers; the slot CLI reports its own errors. */ }
       const jobs = ctx.jobs?.list() ?? [];
       if (jobs.length) {
         lines.push(t("peers.jobs", { count: jobs.length }));
         for (const j of jobs) {
-          lines.push(j.status === "paused" ? `- ${j.name}: paused since ${new Date(j.pausedAt ?? Date.now()).toISOString()} (${j.pauseReason ?? "supervisor request"})` : t("peers.job", { name: j.name + (j.args?.title ? ` "${j.args.title}"` : " (untitled: name it with message_subagent(job, title=...))"), model: (j.model ?? "default") + (typeof j.args?.effort === "string" ? `, effort ${j.args.effort}` : ""), duration: formatDuration(Date.now() - j.startedAt), progress: (j.percent !== undefined ? `${j.percent}% (${j.progressNote || "reported"}) · ` : "") + (j.etaAt !== undefined ? t("peers.eta", { minutes: Math.max(0, Math.ceil((j.etaAt - Date.now()) / 60_000)) }) + " · " : "") + (j.progress ?? "starting") }));
+          // AB-401: a job queued for a machine slot says so, with its place and the holders, instead of a bare progress line.
+          const wait = ctx.jobs?.limitWait(j) ?? (j.status === "running" ? slotWaitFor(slotSnapshot, j.name, cfg.resourceSlots) : null);
+          lines.push(j.status === "paused" ? `- ${j.name}: paused since ${new Date(j.pausedAt ?? Date.now()).toISOString()} (${j.pauseReason ?? "supervisor request"})` : t("peers.job", { name: j.name + (j.args?.title ? ` "${j.args.title}"` : " (untitled: name it with message_subagent(job, title=...))"), model: (j.model ?? "default") + (typeof j.args?.effort === "string" ? `, effort ${j.args.effort}` : ""), duration: formatDuration(Date.now() - j.startedAt), progress: (j.percent !== undefined ? `${j.percent}% (${j.progressNote || "reported"}) · ` : "") + (j.etaAt !== undefined ? t("peers.eta", { minutes: Math.max(0, Math.ceil((j.etaAt - Date.now()) / 60_000)) }) + " · " : "") + (wait ? waitingText(wait) : j.progress ?? "starting") }));
         }
       }
       const waiting = ctx.jobs?.waiting() ?? [];
       if (waiting.length) {
         lines.push(t("peers.waiting", { count: waiting.length, max: ctx.jobs!.limit }));
-        for (const j of waiting) lines.push(t("peers.waitingJob", { name: j.name + (j.args?.title ? ` "${j.args.title}"` : ""), messages: j.queue.length }));
+        for (const j of waiting) {
+          const wait = ctx.jobs!.limitWait(j);
+          lines.push(t("peers.waitingJob", { name: j.name + (j.args?.title ? ` "${j.args.title}"` : ""), messages: j.queue.length }) + (wait ? ` (${waitingText(wait)})` : ""));
+        }
       }
       const recent = ctx.jobs?.recent() ?? [];
       if (recent.length) {
