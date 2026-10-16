@@ -137,6 +137,8 @@ export class RewakeEndpoint {
     private readonly activity?: (event: import("./hook-ownership.js").ModActivity) => boolean,
     private readonly mailScopes?: ClaudeMailScopes,
     private readonly oversized?: OversizedMessages,
+    /** How long the standby waits before taking a message (tests shorten it). */
+    private readonly standbyGraceMs = STANDBY_GRACE_MS,
   ) {}
 
   /**
@@ -176,7 +178,7 @@ export class RewakeEndpoint {
         // The mod acknowledges a hand-out it submitted before (older mods: a turn started after its submission):
         // it is in Claude Code's prompt queue or was shown. Confirmed here, where it was handed out, so it is
         // never handed out again, even when the session's hooks reach another server of it.
-        if (busy) { this.confirmDelivery(); this.confirmMod([...this.modHandedOut.keys()]); this.confirmNotes(this.modNotes.keys()); }
+        if (busy) { this.confirmDelivery(); this.confirmMod([...this.modHandedOut.keys()]); this.acknowledgeNotes(); }
         this.setBusy(busy);
         res.writeHead(204).end();
         return;
@@ -293,7 +295,7 @@ export class RewakeEndpoint {
             if (this.waiter || this.pendingWake()) return loop();
             this.log.info("waking the session (standby)", { reason: "no other hook waiting" });
             this.standby?.wake();
-          }, STANDBY_GRACE_MS).unref();
+          }, this.standbyGraceMs).unref();
         });
     loop();
   }
@@ -305,6 +307,9 @@ export class RewakeEndpoint {
    */
   private waitMod(res: ServerResponse): void {
     this.modSeen = true;
+    // AB-404: a Stop-hook wake-up's notes are not confirmed by the mod's turns, and wakeable() would keep them from
+    // the mod: they go back to the hand-outs (at worst one duplicate note). Stop-hook wake-ups end once the mod polls.
+    this.handedNotes.clear();
     // The mod polls again while idle: when no turn started since a note was handed to it, that wake-up started
     // no turn, so the note goes out again (AB-404). After a turn start it is queued and waits for its own prompt.
     for (const [id, at] of this.modNotes) if (at.starts === this.turnStarts) this.modNotes.delete(id);
@@ -353,6 +358,21 @@ export class RewakeEndpoint {
     if (shown.length) this.node.markRead(shown);
   }
 
+  /**
+   * AB-404: the mod acknowledged a hand-out (its message ids were all submitted before), so it did not submit this
+   * text. A note in it counts as shown only when its hand-out came before a real turn start: an earlier hand-out the
+   * mod submitted, queued behind that turn. A note handed out since (no turn started) was in the acknowledged text
+   * only, so it is not confirmed but handed out again on the mod's re-poll, as a note-only wake-up it submits.
+   */
+  private acknowledgeNotes(): void {
+    const queued: string[] = [];
+    for (const [id, at] of this.modNotes) {
+      if (at.starts < this.turnStarts) queued.push(id);
+      else this.modNotes.delete(id);
+    }
+    this.confirmNotes(queued);
+  }
+
   /** AB-404: these oversized-message notes were shown; the messages themselves stay unread. */
   private confirmNotes(ids: Iterable<string>): void {
     const noted = [...ids];
@@ -397,7 +417,8 @@ export class RewakeEndpoint {
   /** A turn's prompt: a wake-up's own prompt shows its messages, wherever they were handed out. */
   confirmPrompt(prompt: string): void {
     if (!prompt.includes(WAKE_HEADER)) return;
-    this.confirmNotes(new Set(wakeNoteIds(prompt)));
+    // AB-404: only notes this endpoint handed out and awaits; a marker for any other id is not one of its notes.
+    this.confirmNotes([...new Set([...this.handedNotes, ...this.modNotes.keys()])].filter((id) => prompt.includes(oversizedNoteMarker(id))));
     const ids = new Set(wakeMessageIds(prompt));
     if (!ids.size) return;
     for (const id of ids) { this.handedOut.delete(id); this.modHandedOut.delete(id); }
@@ -422,8 +443,9 @@ export class RewakeEndpoint {
   /** The first wake-up was not confirmed: give the same messages to the standby hook. */
   private retryWake(): void {
     if (!this.pendingWake()) return;
-    // The mod polls again by itself when its wake-up started no turn, and gets the same messages.
-    if (this.modSeen) return;
+    // The mod polls again by itself when its wake-up started no turn, and gets the same messages. AB-404: the notes
+    // go to it too; kept here they would be kept from its hand-outs and confirmed by its turns unshown.
+    if (this.modSeen) { this.handedNotes.clear(); return; }
     if (!this.standby) {
       this.log.warn("a wake-up was not taken and no standby hook waits; the messages go out with the next prompt", { count: this.handedOut.size });
       return;

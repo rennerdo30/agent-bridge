@@ -15,10 +15,15 @@ function escapeAttr(v: string): string {
   return v.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-/** Prevent a peer from closing our wrapper tag early and smuggling text outside it. */
-function neutralizeBody(body: string): string {
-  return body.replace(new RegExp(`</?${TAG}`, "gi"), (m) => m.replace("<", "&lt;"));
+/**
+ * Prevent peer-controlled text from carrying agent-bridge markup: closing our wrapper tag early and smuggling text
+ * outside it, or forging a marker the bridge reads back (AB-404: `<agent-bridge-oversized id=.../>` would confirm a
+ * note for another message). Every `<agent-bridge-` and `</agent-bridge-` prefix is escaped.
+ */
+export function neutralizeMarkup(text: string): string {
+  return text.replace(/<(?=\/?agent-bridge-)/gi, "&lt;");
 }
+const neutralizeBody = neutralizeMarkup;
 
 export function formatMessage(m: BridgeMessage): string {
   return formatTagged(m, false);

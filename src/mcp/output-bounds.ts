@@ -1,5 +1,6 @@
 import { realpathSync } from "node:fs";
 import { discoverDriveAliases, type DriveMapping } from "../core/display-paths.js";
+import { neutralizeMarkup } from "./format.js";
 
 /**
  * AB-404: one MCP tool result (or hook context) stays below this many UTF-8 bytes of its serialized content array,
@@ -194,8 +195,9 @@ export function selectForDelivery<T>(messages: readonly T[], render: (shown: T[]
 /** Notes for messages that stay unread because they were not shown in full. */
 export function unshownMessageNotes(oversized: readonly { id: string; from: { name: string }; body: string }[], deferred: number,
   pageCall: (id: string) => string): string[] {
-  const notes = oversized.map((m) => `[agent-bridge] Message ${m.id} from ${m.from.name} (${m.body.length} characters) is too large to show in one result; ` +
-    `it stays unread. Read it in pages with ${pageCall(m.id)}.`);
+  // The sender's name and the id come from a peer: no agent-bridge markup may pass through them (AB-404).
+  const notes = oversized.map((m) => neutralizeMarkup(`[agent-bridge] Message ${m.id} from ${m.from.name} (${m.body.length} characters) is too large to show in one result; ` +
+    `it stays unread. Read it in pages with ${pageCall(m.id)}.`));
   if (deferred > 0) notes.push(`[agent-bridge] ${deferred} more unread message(s) did not fit this result; they stay unread for the next call.`);
   return notes;
 }
