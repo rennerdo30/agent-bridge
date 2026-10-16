@@ -60,6 +60,8 @@ interface ChildSummary {
   mark?: Buffer;
   /** Offset and stop state of the last assistant record before `scannedTo`, or -1. */
   lastAssistant: number; done: boolean;
+  /** Head and tail were both read: a failed or headless read is answered once and retried next time. */
+  cacheable: boolean;
 }
 /** Legacy inline sidechains folded per child, in first-appearance order. */
 interface LegacyChild { title: string; startedAt: number; updatedAt: number; done: boolean }
@@ -106,11 +108,14 @@ function childSummary(id: string, file: string, st: Stats, saved: ChildSummary |
     if (!page.rewritten && scannedTo >= 0 && (page.entries.length === 0 || page.entries[0]!.offset === saved.scannedTo)) {
       const last = lastAssistantIn(page.entries) ?? (saved.lastAssistant >= window ? { offset: saved.lastAssistant, done: saved.done } : null);
       const head = saved.headFound ? undefined : headSummary(id, file, st);
-      return { ...(head ?? { title: saved.title, startedAt: saved.startedAt, headFound: true }), signature, size: st.size, ino: st.ino, scannedTo, mark: page.mark, lastAssistant: last?.offset ?? -1, done: last?.done ?? false };
+      const summary = head ?? { title: saved.title, startedAt: saved.startedAt, headFound: true };
+      return { ...summary, signature, size: st.size, ino: st.ino, scannedTo, mark: page.mark, lastAssistant: last?.offset ?? -1, done: last?.done ?? false, cacheable: summary.headFound };
     }
   }
-  const tail = readJsonlChunk(file, String(window), MAX_TRANSCRIPT_CHUNK_BYTES, { mark: true }), last = lastAssistantIn(tail.entries);
-  return { ...headSummary(id, file, st), signature, size: st.size, ino: st.ino, scannedTo: endOf(tail.next), mark: tail.mark, lastAssistant: last?.offset ?? -1, done: last?.done ?? false };
+  // A successful read always returns its mark; none means the read failed (readJsonlChunk swallows the error).
+  const tail = readJsonlChunk(file, String(window), MAX_TRANSCRIPT_CHUNK_BYTES, { mark: true }), last = lastAssistantIn(tail.entries), head = headSummary(id, file, st);
+  return { ...head, signature, size: st.size, ino: st.ino, scannedTo: endOf(tail.next), mark: tail.mark, lastAssistant: last?.offset ?? -1, done: last?.done ?? false,
+    cacheable: head.headFound && tail.mark !== undefined };
 }
 function headSummary(id: string, file: string, st: Stats): Pick<ChildSummary, "title" | "startedAt" | "headFound"> {
   const head = readHead(file);
@@ -126,11 +131,13 @@ function* legacyChildren(main: string, st: Stats | null): Generator<void, Map<st
   let resume = saved && saved.ino === st.ino && st.size >= saved.size ? saved.committed : empty();
   // Resume only when the bytes before the committed offset are unchanged; otherwise rescan from byte 0.
   if (resume.mark && readJsonlChunk(main, resume.from, 0, { expect: resume.mark }).rewritten) resume = empty();
-  let committed: LegacyFold = { ...resume, children: cloneChildren(resume.children) }, children = committed.children, tentative = false, from = committed.from;
+  let committed: LegacyFold = { ...resume, children: cloneChildren(resume.children) }, children = committed.children, tentative = false, from = committed.from, failed = false;
   for (let iteration = committed.iteration; iteration * MAX_TRANSCRIPT_CHUNK_BYTES < MAX_DISCOVERY_BYTES; iteration++) {
     yield;
     claudeSubagentScanCounters.legacyChunks++;
     const page = readJsonlChunk(main, from, MAX_TRANSCRIPT_CHUNK_BYTES, { mark: true });
+    // A successful read always has a mark; a failed one answers this request like the uncached scan, uncached.
+    if (!page.mark) { failed = true; break; }
     if (page.next === from) break;
     // A short read reached the current end of file; its chunk boundary moves as the file grows.
     if (!tentative && page.length < page.maxBytes) { tentative = true; children = cloneChildren(children); }
@@ -143,12 +150,10 @@ function* legacyChildren(main: string, st: Stats | null): Generator<void, Map<st
       children.set(r.agentId, { title: preview(contentText(object(r.message).content) || `Subagent ${r.agentId}`, MAX_TITLE_CHARS), startedAt: at, updatedAt: at, done });
     }
     from = page.next;
-    // A failed read has no mark; the fold then stays tentative so the next change rescans this chunk.
-    if (!tentative && !page.mark) { tentative = true; children = cloneChildren(children); }
     if (!tentative) committed = { from, iteration: iteration + 1, children, mark: page.mark };
   }
   // Cached maps are never mutated afterwards: a later resume clones its committed fold first.
-  remember(legacyCache, main, { signature, size: st.size, ino: st.ino, committed, children });
+  if (!failed) remember(legacyCache, main, { signature, size: st.size, ino: st.ino, committed, children });
   return children;
 }
 
@@ -184,7 +189,7 @@ function* claudeSubagentSteps(session: TranscriptSession, paths: TranscriptPaths
     }
     if (!st) { out.set(id, { id, title: preview(`Subagent ${id}`, MAX_TITLE_CHARS), status: "unknown", startedAt: 0, updatedAt: 0 }); continue; }
     const summary = { ...childSummary(id, file, st, saved?.file === file ? saved : undefined), file };
-    current.set(listed, summary);
+    if (summary.cacheable) current.set(listed, summary);
     out.set(id, { id, title: summary.title, status: summary.done ? "done" : "unknown", startedAt: summary.startedAt, updatedAt: st.mtimeMs || 0 });
   }
   // Files no longer listed leave the cache with the previous generation.

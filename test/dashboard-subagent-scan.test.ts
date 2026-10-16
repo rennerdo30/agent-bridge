@@ -8,11 +8,16 @@ import type { PeerInfo } from "../src/core/protocol.js";
 import { claudeSessionFile, claudeSubagentScanCounters, listClaudeSubagents } from "../src/core/transcripts/claude.js";
 import { contentText, fileStat, MAX_NATIVE_SUBAGENTS, MAX_TITLE_CHARS, MAX_TRANSCRIPT_CHUNK_BYTES, object, preview, readHead, readTail, safeFile, scanJsonl, time, TRANSCRIPT_ID, directory, type NativeSubagent, type TranscriptPaths, type TranscriptSession } from "../src/core/transcripts/common.js";
 
-// Count every transcript file the subagent scan opens.
+// Count every transcript file the subagent scan opens; `failOpen` lets `skip` opens of a file pass, then fails the next one.
 const opened: string[] = [];
+const failOpen = new Map<string, { skip: number }>();
 vi.mock("node:fs", async (original) => {
   const fs = await original<typeof import("node:fs")>();
-  return { ...fs, openSync: (...args: Parameters<typeof fs.openSync>) => { opened.push(String(args[0])); return fs.openSync(...args); } };
+  return { ...fs, openSync: (...args: Parameters<typeof fs.openSync>) => {
+    const file = String(args[0]), plan = failOpen.get(file);
+    if (plan && plan.skip-- === 0) { failOpen.delete(file); throw Object.assign(new Error("transient"), { code: "EBUSY" }); }
+    opened.push(file); return fs.openSync(...args);
+  } };
 });
 
 /** The pre-AB-382 listing, kept verbatim as the reference result. */
@@ -114,6 +119,25 @@ describe("dashboard native-subagent scan (AB-382)", () => {
     opened.length = 0;
     check();
     expect(listClaudeSubagents(session, paths).slice(-1).map((s) => s.id)).toEqual(["legacy_four"]);
+  });
+
+  it("never caches a summary or legacy fold from a failed read; an unchanged retry recovers", () => {
+    const expected = uncachedList(session, paths);
+    try {
+      // A cold parse reads a child's tail, then its head: fail child 3's tail, child 8's head, and the parent's first chunk once.
+      failOpen.set(realpathSync.native(child(3)), { skip: 0 });
+      failOpen.set(realpathSync.native(child(8)), { skip: 1 });
+      failOpen.set(realpathSync.native(main), { skip: 0 });
+      const degraded = listClaudeSubagents(session, paths);
+      expect(degraded).not.toEqual(expected);
+      expect(failOpen.size).toBe(0);
+      // Nothing is wrong with the files any more and none of them changed: the next read is the uncached answer.
+      expect(listClaudeSubagents(session, paths)).toEqual(expected);
+      // Now cached: an unchanged refresh opens nothing.
+      opened.length = 0;
+      expect(listClaudeSubagents(session, paths)).toEqual(expected);
+      expect(scanReads()).toEqual([]);
+    } finally { failOpen.clear(); }
   });
 
   it("serves dashboard subagent reads through the history reader with the same cache", async () => {
