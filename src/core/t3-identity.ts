@@ -1,4 +1,5 @@
 import { z } from "zod";
+export { withoutT3Context } from "./job-environment.js";
 
 /** Frontend scope is a digest, never an endpoint or a credential. Provider sessionId stays separate. */
 export const t3BindingSchema = z.object({
@@ -12,10 +13,4 @@ export function sameFrontend(a: { frontend?: T3Binding }, b: { frontend?: T3Bind
   if (!a.frontend && !b.frontend) return true;
   return Boolean(a.frontend && b.frontend && a.frontend.scope === b.frontend.scope &&
     a.frontend.threadId === b.frontend.threadId && a.frontend.providerInstanceId === b.frontend.providerInstanceId);
-}
-
-/** Used at every normal Bridge child boundary, including detached runner launches. */
-export function withoutT3Context(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  return Object.fromEntries(Object.entries(env).filter(([key]) =>
-    key.toUpperCase() !== "AGENT_BRIDGE_HOST" && !key.toUpperCase().startsWith("T3_ACP_MCP_")));
 }

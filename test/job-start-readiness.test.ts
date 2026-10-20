@@ -16,7 +16,21 @@ import type { BridgeNode } from "../src/core/node.js";
 import { until } from "./helpers.js";
 
 const { spawn } = vi.hoisted(() => ({ spawn: vi.fn() }));
-vi.mock("node:child_process", async original => ({ ...await original<typeof import("node:child_process")>(), spawn }));
+vi.mock("node:child_process", async original => {
+  const actual = await original<typeof import("node:child_process")>();
+  const { promisify } = await import("node:util");
+  // Only this fixture's own identity is synthetic; peer refreshes keep the scoped spy below.
+  const ownQuery = (file: string, args: readonly string[]) => {
+    if (file === "powershell.exe" && args.at(-1)?.includes("[Diagnostics.Process]::GetProcessById(" + process.pid + ")"))
+      return "638950000000000001";
+    if (file === "ps" && args[0] === "-p" && args[1] === String(process.pid)) return "Wed Oct 21 12:00:00 2026";
+    throw new Error("Unexpected OS query in the runner readiness fixture");
+  };
+  return { ...actual, spawn, execFileSync: vi.fn(ownQuery),
+    execFile: Object.assign(vi.fn(), { [promisify.custom]: async (file: string, args: readonly string[]) => ({ stdout: ownQuery(file, args), stderr: "" }) }) };
+});
+// Count runner launches only; native host integration has its own tests.
+vi.mock("../src/core/windows-process-identity.js", () => ({ readNativeIdentities: () => undefined, readNativeIdentitiesSync: () => undefined }));
 let home: string;
 let nextPid = process.pid + 1_000_000;
 beforeEach(() => {

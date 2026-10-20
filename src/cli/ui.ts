@@ -26,6 +26,8 @@ import { ConnectionActivity } from "../core/connection-activity.js";
 import { DEFAULT_CODEX_SUBAGENTS, MAX_CODEX_SUBAGENTS, APP_VERSION, MAX_BODY_CHARS, PROTOCOL_VERSION } from "../core/constants.js";
 import type { Logger } from "../core/logger.js";
 import { BridgeNode, type BridgeNodeOptions } from "../core/node.js";
+import { ownProcessIdentity } from "../core/process-identity.js";
+import { retainedUiSender } from "./ui-sender.js";
 import { resolveDbPath } from "../core/paths.js";
 import { BridgeError, CODING_AGENTS, isUnsupportedOperation, type PeerInfo } from "../core/protocol.js";
 import { brokerFailureState } from "../core/health.js";
@@ -244,36 +246,31 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
   const dbPath = resolveDbPath(opts.home);
   const chatReceipts = new Set<string>();
   const queueChat = opts.chatQueue ?? codexQueue(loadConfig(opts.home, "other", opts.log).codexBin, opts.log);
-  /** The lazily started "you" peer; one shared start, so concurrent sends never start two. */
-  let sender: Promise<BridgeNode> | null = null;
-  let senderNode: BridgeNode | null = null;
-  const getSender = (): Promise<BridgeNode> => {
-    senderNode ??= new BridgeNode({ pipePath: opts.pipe, token, dbPath, agent: "other", name: UI_PEER_NAME, cwd: opts.home, autoWake: false, log: opts.log,
+  // Prewarm asynchronously; construction still retains metadata and restores
+  // durable read state before election. Unknown identity stays unknown.
+  const sender = retainedUiSender(ownProcessIdentity, () =>
+    new BridgeNode({ pipePath: opts.pipe, token, dbPath, agent: "other", name: UI_PEER_NAME, cwd: opts.home, autoWake: false, log: opts.log,
       daemon: opts.brokerDaemon,
-      network: { home: opts.home, config: loadConfig(opts.home, "other", opts.log).network } });
-    sender ??= (async () => {
-      try {
-        await senderNode!.start();
-        return senderNode!;
-      } catch (err) {
-        // A later send retries discovery through the SAME node/unknown-launch
-        // latch. It never creates a second node or competing daemon attempt.
-        sender = null;
-        throw err;
-      }
-    })();
-    return sender;
-  };
+      network: { home: opts.home, config: loadConfig(opts.home, "other", opts.log).network } }));
 
-  const networkRequest = async <O extends Op>(op: O, args: RequestMap[O][0]): Promise<RequestMap[O][1]> => {
+  const networkRequest = async <O extends Op>(op: O, args: RequestMap[O][0], signal?: AbortSignal): Promise<RequestMap[O][1]> => {
+    signal?.throwIfAborted();
     const client = await BridgeClient.connect(opts.pipe, opts.log);
     try {
+      signal?.throwIfAborted();
       await client.request("auth", { protocol: PROTOCOL_VERSION, token });
+      signal?.throwIfAborted();
       return await client.request(op, args, op === "dashboardRead" ? DASHBOARD_TIMEOUT_MS + 2_000 : undefined);
     } finally { client.close(); }
   };
-  const dashboardControl = async (node: BridgeNode, owner: string, job: string, command: DashboardJobCommand) =>
-    controlDashboardJob(node, owner, job, command, args => networkRequest("dashboardJobSend", { ...args, senderId: node.id }));
+  const dashboardControl = async (node: BridgeNode, owner: string, job: string, command: DashboardJobCommand, signal: AbortSignal) => {
+    // Owner selection and controlDashboardJob's own peer lookup may both await.
+    signal.throwIfAborted();
+    return controlDashboardJob(node, owner, job, command, args => {
+      signal.throwIfAborted();
+      return networkRequest("dashboardJobSend", { ...args, senderId: node.id }, signal);
+    });
+  };
 
   const remoteRead = async (host: string, request: DashboardReadRequest): Promise<DashboardReadResult> => {
     try {
@@ -322,7 +319,14 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
 
   // Pushes "this conversation moved" to open dashboards as soon as the history worker retains new lines (AB-383).
   const historyFeed = new HistoryChangeFeed(opts.home);
-  const handle = async (req: IncomingMessage, res: ServerResponse) => {
+  const handle = async (req: IncomingMessage, res: ServerResponse, signal: AbortSignal) => {
+    const getSender = () => sender.get(signal);
+    const sendMessage = async (args: Parameters<BridgeNode["send"]>[0]) => {
+      const node = await getSender();
+      signal.throwIfAborted();
+      // Once invoked, submission may already be accepted. Never retry on abort.
+      return node.send(args);
+    };
     const host = String(req.headers.host ?? "").replace(/:\d+$/, "");
     if (!ALLOWED_HOSTS.has(host)) return send(res, 403, { error: "forbidden host" });
     const url = new URL(req.url ?? "/", `http://${UI_HOST}`);
@@ -669,7 +673,7 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
         if (!run?.by) return send(res, 409, { error: "parent job has no local owning session" });
         try {
           const sender = await getSender();
-          const result = await dashboardControl(sender, await jobOwner(opts.home, name, run.by, sender), name, { type: "message", body: childNote(child.id, child.title, body.body.trim()) });
+          const result = await dashboardControl(sender, await jobOwner(opts.home, name, run.by, sender), name, { type: "message", body: childNote(child.id, child.title, body.body.trim()) }, signal);
           return send(res, result.isError ? 409 : 200, { state: result.isError ? "not-supported" : "queued", transport: "parent", text: result.text });
         } catch (err) {
           if (err instanceof JobControlError) return send(res, 409, { error: err.message });
@@ -678,8 +682,9 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
       }
       if (!local) return send(res, 409, { error: "This local session is not connected. Reopen it before sending." });
       if (!["claude", "codex", "opencode", "antigravity", "muse"].includes(local.agent)) return send(res, 409, { state: "not-supported", transport: "bridge", text: "Owner chat is not supported for this CLI." });
-      const result = await deliverDashboardChat(local, body.body.trim(), { child, parent: body.target === "parent", queue: queueChat,
-        send: async (text) => (await getSender()).send({ to: local.name, body: text }) });
+      const result = await deliverDashboardChat(local, body.body.trim(), { child, parent: body.target === "parent",
+        queue: (...args) => { signal.throwIfAborted(); return queueChat(...args); },
+        send: (text) => sendMessage({ to: local.name, body: text }) });
       if (result.receipt) {
         chatReceipts.add(result.receipt);
         if (chatReceipts.size > 2_000) chatReceipts.delete(chatReceipts.values().next().value!);
@@ -702,7 +707,7 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
       const text = String(body.body ?? "").trim();
       if (!to || !text) return send(res, 400, { error: "to and body are required" });
       try {
-        const r = await (await getSender()).send({ to, body: text });
+        const r = await sendMessage({ to, body: text });
         return send(res, 200, { id: r.messages[0]?.id, deliveredTo: r.deliveredTo, queuedFor: r.queuedFor, replyRestrictions: r.replyRestrictions, replyGuidance: formatReplyRestrictions(r) });
       } catch (err) {
         if (err instanceof BridgeError && err.code === "bad_request") return send(res, 400, { error: err.message });
@@ -715,7 +720,7 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
       const parsed = handoffSchema.safeParse({ to: body.to, jobs: body.jobs, note: body.note, switch_project_main: body.switch_project_main });
       if (!parsed.success || typeof body.from !== "string" || body.from.includes("/")) return send(res, 400, { error: "An exact local source and valid handoff arguments are required." });
       try {
-        const result = await dashboardControl(await getSender(), body.from, "", { type: "handoff", ...parsed.data });
+        const result = await dashboardControl(await getSender(), body.from, "", { type: "handoff", ...parsed.data }, signal);
         return send(res, result.isError ? 409 : 200, result);
       } catch (err) {
         if (err instanceof JobControlError) return send(res, err.reason === "offline" ? 409 : 504, { error: err.message });
@@ -733,7 +738,8 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
       if (!meta) return send(res, 404, { error: "no such run" });
       if (!meta.by || !meta.job) return send(res, 409, { error: "This run has no owning session or job recorded." });
       try {
-        const result = await dashboardControl(await getSender(), await jobOwner(opts.home, meta.job, meta.by, await getSender()), meta.job, command);
+        const sender = await getSender();
+        const result = await dashboardControl(sender, await jobOwner(opts.home, meta.job, meta.by, sender), meta.job, command, signal);
         return send(res, result.isError ? 409 : 200, result);
       } catch (err) {
         if (err instanceof JobControlError) return send(res, err.reason === "offline" ? 409 : 504, { error: err.message });
@@ -744,9 +750,16 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
   };
 
   const server = createServer((req, res) => {
-    handle(req, res).catch((err) => {
+    const request = new AbortController();
+    const cancel = () => request.abort();
+    req.once("aborted", cancel);
+    res.once("close", cancel);
+    handle(req, res, request.signal).catch((err) => {
       opts.log.warn("ui request failed", { err: (err as Error).message });
-      if (!res.headersSent) send(res, 500, { error: String((err as Error).message) });
+      if (!res.headersSent && !res.destroyed) send(res, 500, { error: String((err as Error).message) });
+    }).finally(() => {
+      req.off("aborted", cancel);
+      res.off("close", cancel);
     });
   });
   // Open browser connections (event streams included) keep a broker daemon from exiting idle.
@@ -762,11 +775,11 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
     port,
     activity,
     close: async () => {
+      const stopped = sender.close();
       // End only the event streams; every other connection closes as before.
       historyFeed.close();
       server.closeIdleConnections();
-      await sender?.catch(() => null);
-      await senderNode?.stop();
+      await stopped;
       await new Promise<void>((r) => server.close(() => r()));
     },
   };

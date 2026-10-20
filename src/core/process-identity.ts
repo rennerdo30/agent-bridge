@@ -3,12 +3,25 @@ import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { promisify } from "node:util";
 import { isMainThread, workerData } from "node:worker_threads";
+import { readNativeIdentities, readNativeIdentitiesSync } from "./windows-process-identity.js";
 
 const exec = promisify(execFile);
 let parentIdentity: Promise<string | null> | undefined;
 // Use the same Process.StartTime UTC ticks as Get-Process, without loading the
 // Management cmdlet module in a sanitized native plugin environment (AB-330).
 const windowsIdentityCommand = (pid: number) => `try { [Console]::Write([Diagnostics.Process]::GetProcessById(${pid}).StartTime.ToUniversalTime().Ticks) } catch { exit 1 }; exit 0`;
+/** The single-PID PowerShell probe budget; a native read and its PowerShell fallback share it. */
+const SINGLE_QUERY_TIMEOUT_MS = 5_000;
+/**
+ * A ready native host answers in about a millisecond (AB-427). It gets this slice of the caller's budget; on a
+ * failure or no answer the PowerShell probe runs with what remains, so the total bound is unchanged.
+ */
+const NATIVE_QUERY_TIMEOUT_MS = 1_000;
+function remaining(budget: number, started: number): number {
+  const left = budget - (performance.now() - started);
+  if (left <= 0) throw new Error("process identity query budget exhausted");
+  return Math.max(1, Math.ceil(left));
+}
 
 /** A PID alone can be reused. Bind reload recovery to the CLI process's creation time. */
 export function parentProcessIdentity(): Promise<string | null> {
@@ -23,9 +36,17 @@ export async function readProcessIdentity(pid: number, signal?: AbortSignal): Pr
       const start = stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19];
       return start ? `${boot.trim()}:${start}` : null;
     }
+    const started = performance.now();
+    if (process.platform === "win32") {
+      // Native first: "" (running, times unreadable) and a missing entry (not running) both stay unknown/null.
+      const pending = readNativeIdentities([pid], NATIVE_QUERY_TIMEOUT_MS, signal);
+      const native = pending && await pending;
+      if (native) return native.get(pid) || null;
+      if (signal?.aborted) return null;
+    }
     const { stdout } = process.platform === "win32"
-      ? await exec("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", windowsIdentityCommand(pid)], { windowsHide: true, timeout: 5_000, signal })
-      : await exec("ps", ["-p", String(pid), "-o", "lstart="], { timeout: 5_000, env: { ...process.env, LC_ALL: "C" }, signal });
+      ? await exec("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", windowsIdentityCommand(pid)], { windowsHide: true, timeout: remaining(SINGLE_QUERY_TIMEOUT_MS, started), signal })
+      : await exec("ps", ["-p", String(pid), "-o", "lstart="], { timeout: SINGLE_QUERY_TIMEOUT_MS, env: { ...process.env, LC_ALL: "C" }, signal });
     return stdout.trim() || null;
   } catch { return null; }
 }
@@ -45,9 +66,18 @@ export async function readProcessIdentities(pids: number[]): Promise<Map<number,
   const result = new Map<number, string>();
   if (!valid.length) return result;
   if (process.platform === "win32") {
+    const started = performance.now();
+    // One native request for the whole batch. As with Get-Process, a running process whose start time cannot
+    // be read is left out of this (asynchronous) result.
+    const pending = readNativeIdentities(valid, NATIVE_QUERY_TIMEOUT_MS);
+    const native = pending && await pending;
+    if (native) {
+      for (const [pid, identity] of native) if (identity) result.set(pid, identity);
+      return result;
+    }
     let stdout: string;
     try {
-      ({ stdout } = await exec("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", `Get-Process -Id @(${valid.join(",")}) -ErrorAction SilentlyContinue | ForEach-Object { try { [string]$_.Id + '|' + [string]$_.StartTime.ToUniversalTime().Ticks } catch {} }; exit 0`], { windowsHide: true, timeout: BATCH_QUERY_TIMEOUT_MS }));
+      ({ stdout } = await exec("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", `Get-Process -Id @(${valid.join(",")}) -ErrorAction SilentlyContinue | ForEach-Object { try { [string]$_.Id + '|' + [string]$_.StartTime.ToUniversalTime().Ticks } catch {} }; exit 0`], { windowsHide: true, timeout: remaining(BATCH_QUERY_TIMEOUT_MS, started) }));
     } catch (error) {
       throw Object.assign(new Error(`process identity query failed: ${(error as Error).message}`), { code: IDENTITY_QUERY_FAILED, cause: error });
     }
@@ -73,9 +103,13 @@ export function readProcessIdentitiesSync(pids: number[]): Map<number, string> |
     for (const pid of valid) { const identity = processIdentity(pid); if (identity) result.set(pid, identity); }
     return result;
   }
+  const started = performance.now();
+  // Native: the same shape as below ("" = running, start time unreadable; no entry = not running).
+  const native = readNativeIdentitiesSync(valid, NATIVE_QUERY_TIMEOUT_MS);
+  if (native) return native;
   let stdout: string;
   try {
-    stdout = execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", `Get-Process -Id @(${valid.join(",")}) -ErrorAction SilentlyContinue | ForEach-Object { $p = $_; try { [string]$p.Id + '|' + [string]$p.StartTime.ToUniversalTime().Ticks } catch { [string]$p.Id + '|' } }; exit 0`], { windowsHide: true, timeout: BATCH_QUERY_TIMEOUT_MS, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+    stdout = execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", `Get-Process -Id @(${valid.join(",")}) -ErrorAction SilentlyContinue | ForEach-Object { $p = $_; try { [string]$p.Id + '|' + [string]$p.StartTime.ToUniversalTime().Ticks } catch { [string]$p.Id + '|' } }; exit 0`], { windowsHide: true, timeout: remaining(BATCH_QUERY_TIMEOUT_MS, started), encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
   } catch { return undefined; }
   // A listed process whose start time cannot be read (elevated or protected) maps to "": present, identity unknown.
   // A PID not listed at all does not exist as a running process (an exited one, even if a handle keeps its PID).
@@ -167,9 +201,12 @@ export function processIdentity(pid: number): string | undefined {
       const start = stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19];
       if (start) identity = `${readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim()}:${start}`;
     } else {
-      identity = (process.platform === "win32"
-        ? execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", windowsIdentityCommand(pid)], { windowsHide: true, timeout: 5_000, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] })
-        : execFileSync("ps", ["-p", String(pid), "-o", "lstart="], { timeout: 5_000, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], env: { ...process.env, LC_ALL: "C" } })).trim() || undefined;
+      const started = performance.now();
+      const native = process.platform === "win32" ? readNativeIdentitiesSync([pid], NATIVE_QUERY_TIMEOUT_MS) : undefined;
+      if (native) identity = native.get(pid) || undefined;
+      else identity = (process.platform === "win32"
+        ? execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", windowsIdentityCommand(pid)], { windowsHide: true, timeout: remaining(SINGLE_QUERY_TIMEOUT_MS, started), encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] })
+        : execFileSync("ps", ["-p", String(pid), "-o", "lstart="], { timeout: SINGLE_QUERY_TIMEOUT_MS, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], env: { ...process.env, LC_ALL: "C" } })).trim() || undefined;
     }
     if (pid === process.pid) {
       ownIdentity = identity;
@@ -197,7 +234,9 @@ export function processStartMs(pid: number): number | undefined {
   if (!Number.isSafeInteger(pid) || pid <= 0) return undefined;
   try {
     if (process.platform === "win32") {
-      const ticks = execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", `(Get-Process -Id ${pid} -ErrorAction Stop).StartTime.ToUniversalTime().Ticks`], { windowsHide: true, timeout: 5_000, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+      const started = performance.now();
+      const native = readNativeIdentitiesSync([pid], NATIVE_QUERY_TIMEOUT_MS);
+      const ticks = native ? native.get(pid) ?? "" : execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", `(Get-Process -Id ${pid} -ErrorAction Stop).StartTime.ToUniversalTime().Ticks`], { windowsHide: true, timeout: remaining(SINGLE_QUERY_TIMEOUT_MS, started), encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
       if (!/^\d+$/.test(ticks)) return undefined;
       // .NET ticks are 100 ns units since 0001-01-01 UTC.
       return Number(BigInt(ticks) / 10_000n - 62_135_596_800_000n);
