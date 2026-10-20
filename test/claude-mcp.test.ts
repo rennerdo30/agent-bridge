@@ -13,6 +13,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { until } from "./helpers.js";
 import { readProcessIdentity } from "../src/core/process-identity.js";
 import { OwnedMcpStdio } from "../src/core/owned-mcp-stdio.js";
+import { stopFixtureChild } from "./fixture-process-generation.js";
 
 // Lets a test force the job MCP cleanup to fail; every other test gets the real view unchanged.
 const jobMcp = vi.hoisted(() => ({ failStop: false }));
@@ -268,7 +269,7 @@ describe("granted plugin MCP exposure in headless Claude jobs", () => {
       expect(child.signalCode).toBeNull();
     } finally {
       // Fixture cleanup only for this test-created root with its recorded identity.
-      if (identity && await readProcessIdentity(child.pid!) === identity) process.kill(child.pid!, "SIGKILL");
+      await stopFixtureChild(child, identity, "Cannot prove plugin MCP fixture root exit");
     }
   });
 

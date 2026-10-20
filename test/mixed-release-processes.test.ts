@@ -13,7 +13,7 @@ import { APP_VERSION } from "../src/core/constants.js";
 import { SQLITE_STORE_VERSION } from "../src/core/store.js";
 import { until } from "./helpers.js";
 import { readProcessIdentity } from "../src/core/process-identity.js";
-import { fixtureProcessGeneration } from "./fixture-process-generation.js";
+import { fixtureProcessGeneration, signalFixtureProcess } from "./fixture-process-generation.js";
 import { captureFixtureBroker } from "./fixture-teardown.js";
 
 const textOf = (result: any): string => result.content.map((part: any) => part.text ?? "").join("\n");
@@ -61,7 +61,7 @@ it("keeps released and current MCP processes talking until the older reader exit
     const identity = await readProcessIdentity(pid); expect(identity).toBeTruthy(); daemonIdentities.set(pid, identity!);
   };
   const stopFixtureDaemon = async (pid: number) => {
-    if (await fixtureProcessGeneration(pid, daemonIdentities.get(pid)!, "Mixed fixture daemon identity changed; no signal sent")) process.kill(pid, "SIGTERM");
+    await signalFixtureProcess(pid, daemonIdentities.get(pid)!, "Mixed fixture daemon identity changed; no signal sent", "SIGTERM");
     await until(() => exited(pid), 3_000); daemonIdentities.delete(pid);
   };
   try {
