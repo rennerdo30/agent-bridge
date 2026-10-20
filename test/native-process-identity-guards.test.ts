@@ -41,7 +41,7 @@ vi.mock("node:worker_threads", async original => {
     },
   };
 });
-const spawned = vi.hoisted(() => ({ succeed: false, calls: [] as string[], hosts: [] as FakeHost[] }));
+const spawned = vi.hoisted(() => ({ succeed: false, failStdin: false, calls: [] as string[], hosts: [] as FakeHost[] }));
 vi.mock("node:child_process", async original => {
   const actual = await original<typeof import("node:child_process")>();
   const { EventEmitter } = await import("node:events");
@@ -51,7 +51,7 @@ vi.mock("node:child_process", async original => {
     const stdout = Object.assign(new EventEmitter(), { setEncoding() { return this; }, unref: vi.fn(), destroy: vi.fn() });
     const host = Object.assign(new EventEmitter(), { pid: 900_427 + spawned.hosts.length,
       exitCode: null as number | null, signalCode: null, stdout,
-      stdin: Object.assign(new EventEmitter(), { end: vi.fn(), destroy: vi.fn() }), unref: vi.fn(),
+      stdin: Object.assign(new EventEmitter(), { end: vi.fn(() => { if (spawned.failStdin) throw new Error("SIMULATED stdin setup failure"); }), destroy: vi.fn() }), unref: vi.fn(),
       kill: vi.fn(() => { host.exitCode = 0; host.emit("exit", 0); return true; }),
     });
     spawned.hosts.push(host); return host;
@@ -63,7 +63,7 @@ let native: typeof import("../src/core/windows-process-identity.js");
 beforeEach(async () => {
   vi.resetModules(); vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout", "performance"] }); vi.setSystemTime(new Date("2026-10-21T00:00:00Z"));
   thread.main = true; thread.workers = []; thread.ports = []; thread.post = undefined; thread.afterEmpty = undefined;
-  spawned.succeed = false; spawned.calls = []; spawned.hosts = [];
+  spawned.succeed = false; spawned.failStdin = false; spawned.calls = []; spawned.hosts = [];
   Object.defineProperty(process, "platform", { ...platform, value: "win32" });
   native = await import("../src/core/windows-process-identity.js");
 });
@@ -167,4 +167,11 @@ it("worker failure closes its port and tracked host and ignores retired stdout a
   expect(worker.messages).toHaveLength(before); expect(native.nativeIdentityHostPid()).toBeUndefined();
   // No real child exists; clean the fake resources even on the broken baseline.
   if (!host.kill.mock.calls.length) host.kill();
+});
+it("returns fallback and releases owned resources on a startup I/O exception", () => {
+  spawned.succeed = true; spawned.failStdin = true;
+  expect(native.readNativeIdentitiesSync([4], 1_000)).toBeUndefined();
+  expect(spawned.hosts[0]!.kill).toHaveBeenCalledTimes(1);
+  expect(thread.workers[0]!.terminate).toHaveBeenCalledTimes(1);
+  expect(thread.ports[0]!.close).toHaveBeenCalledTimes(1);
 });

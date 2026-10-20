@@ -270,6 +270,11 @@ function settleStart(current: Helper, ready: boolean): void {
 
 /** Start the host on THIS (the main) thread. Its readiness arrives asynchronously; callers do not wait for it. */
 function startHost(current: Helper): void {
+  try { launchHost(current); }
+  catch { startFailed(); retire(current); }
+}
+
+function launchHost(current: Helper): void {
   if (current.retired || current.host) return;
   const pipe = "\\\\.\\pipe\\agent-bridge-identity-" + process.pid + "-" + randomUUID();
   // Windows PowerShell 5.1 (.NET Framework): its System.dll NativeMethods and the legacy StartTime semantics.
@@ -328,9 +333,9 @@ function retire(dead: Helper): void {
   if (host && host.pid !== undefined && host.exitCode === null && host.signalCode === null) {
     closingHost = host;
     host.once("exit", () => { if (closingHost === host) closingHost = undefined; });
-    host.kill();
+    host.kill?.();
   }
-  host?.stdin?.destroy(); host?.stdout?.destroy();
+  host?.stdin?.destroy?.(); host?.stdout?.destroy?.();
   dead.syncPort.close();
   dead.stopped = dead.worker.terminate().catch(() => -1);
   for (const resolve of dead.pending.values()) resolve({ id: -1, error: "identity worker exited" });
