@@ -34,11 +34,13 @@ import {
   MAX_WAIT_SEC,
 } from "../core/constants.js";
 import { runRemoteAsk } from "./remote-ask.js";
-import { bundledCli, currentDelegateDepth, DelegateError, failureCause, killAllDelegates, PARENT_JOB_ENV, ROOT_NAME_ENV, ROOT_SESSION_ENV, resolveBinary } from "../core/delegate.js";
+import { bundledCli, checkDepth, currentDelegateDepth, DelegateError, failureCause, killAllDelegates, PARENT_JOB_ENV, ROOT_NAME_ENV, ROOT_SESSION_ENV, resolveBinary } from "../core/delegate.js";
 import { readUsage, codexAppServerCall, checkUsagePreflight, usageAdmissionText, type UsageAdmission } from "../core/usage.js";
 import { t } from "../core/i18n.js";
 import { createLogger, type Logger } from "../core/logger.js";
 import { BridgeNode } from "../core/node.js";
+import { T3Host, T3HostError, t3DelegateInput, t3Mode, t3RequestId, t3TransportFromEnv, type T3DelegateInput } from "../core/t3-host.js";
+import { T3Waker } from "./t3-wake.js";
 import { formatHealth, probeBrokerHealth } from "../core/health.js";
 import { isInternalBridgeProcess, isPluginCacheCwd } from "../core/session-visibility.js";
 import { MAX_TRANSFER_ENTRIES } from "../network/files.js";
@@ -100,7 +102,7 @@ export function channelPusher(ctx: ServerContext, enabled: () => boolean,
   const inFlight = new Set<string>();
   return async (m) => {
     const node = ctx.node, cfg = ctx.cfg, log = ctx.log;
-    if (!enabled() || !node || completionAwaitingReceipt(ctx, m.id) || m.hop >= cfg.maxHops || ctx.jobs?.isNote(m) || isQuietMessage(m)) return;
+    if (ctx.t3Host || !enabled() || !node || completionAwaitingReceipt(ctx, m.id) || m.hop >= cfg.maxHops || ctx.jobs?.isNote(m) || isQuietMessage(m)) return;
     // Messages excluded from waking use hooks even during an active turn, avoiding a channel/hook race.
     if (!shouldWakeClaudeMessage(node, cfg, m)) return;
     if (oversizedMessageNoted(ctx, m.id)) return;
@@ -251,6 +253,7 @@ function describeError(err: unknown): string {
 
 /** Everything the tool and hook handlers share. */
 export interface ServerContext {
+  t3Host?: T3Host;
   /** In-memory, authenticated Claude host-mod mail capabilities. */
   claudeMailScopes?: ClaudeMailScopes;
   childInbox?: LocalCoordinator;
@@ -383,6 +386,14 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
   const mobilePortAtStartup = cfg.dashboardPort;
   const delegated = currentDelegateDepth() > 0;
   const internal = isInternalBridgeProcess();
+  const t3Transport = t3TransportFromEnv();
+  if (t3Transport && (delegated || internal)) throw new T3HostError("refused", "inherited host context");
+  const t3Host = t3Transport ? new T3Host(t3Transport) : undefined;
+  // Establish frontend identity before the first Bridge hello, including tool-triggered registration.
+  const t3Detected = await t3Host?.capabilities();
+  if (t3Detected && (!t3Detected.capabilities.features.threadManagement || !t3Detected.tools.includes("t3_thread_send"))) {
+    await t3Host?.close(); throw new T3HostError("unavailable", "messaging");
+  }
   log.info("starting MCP server", { agent, cwd, cwdKnown, delegated, internal, version: APP_VERSION, node: process.version });
   // A stray rejection (e.g. a refused background broker request) must not end the session or its hosted broker.
   guardServerErrors(log);
@@ -397,6 +408,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
           config: () => ({ network: cfg.network, mobile: mobileAtStartup, dashboardPort: mobilePortAtStartup }) } : undefined,
         network: { home, config: cfg.network },
         agent,
+        ...(t3Host ? { frontend: t3Host.binding } : {}),
         // Until the project dir is known, the folder name would be the plugin version.
         name: cfg.name ?? defaultPeerName(agent, cwdKnown ? cwd : ""),
         cwd,
@@ -405,10 +417,12 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
         log,
       });
 
-  let channel = agent === "claude" && cfg.delivery === "channel";
+  let channel = !t3Host && agent === "claude" && cfg.delivery === "channel";
   let launchInspected: () => void = () => {};
   const launchKnown = new Promise<void>((r) => (launchInspected = r));
-  const ctx: ServerContext = { agent, cfg, node, log, home, cwd: () => node?.cwd ?? cwd, channelActive: () => channel, parent: delegated ? parentFromEnv() : null, launchKnown };
+  const ctx: ServerContext = { agent, cfg, node, log, home, t3Host, cwd: () => node?.cwd ?? cwd, channelActive: () => channel, parent: delegated ? parentFromEnv() : null, launchKnown };
+  const t3Waker = t3Host && node ? new T3Waker(t3Host, node, cfg, log.child("t3-wake")) : undefined;
+  if (t3Host && node) await node.setWakePolicy(cfg.wakeOnDirect, true, cfg.maxHops);
   if (!node && ctx.parent && process.env[PARENT_JOB_ENV] && process.env[ROOT_SESSION_ENV]) {
     const parentJob = process.env[PARENT_JOB_ENV]!;
     const rootSession = process.env[ROOT_SESSION_ENV]!;
@@ -438,7 +452,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
       const limitChanged = next.maxJobs !== cfg.maxJobs;
       Object.assign(cfg, next);
       if (limitChanged) jobs.setLimit(next.maxJobs);
-      void node.setWakePolicy(["claude", "codex", "opencode"].includes(agent) && next.wakeOnDirect, (agent === "claude" && Boolean(ctx.rewakeAvailable || ctx.channelActive())) || agent === "opencode" || (agent === "codex" && Boolean(node.currentSessionId)), next.maxHops).catch(() => {});
+      void node.setWakePolicy((Boolean(t3Host) || ["claude", "codex", "opencode"].includes(agent)) && next.wakeOnDirect, Boolean(t3Host) || (agent === "claude" && Boolean(ctx.rewakeAvailable || ctx.channelActive())) || agent === "opencode" || (agent === "codex" && Boolean(node.currentSessionId)), next.maxHops).catch(() => {});
     };
     watchConfig(home, agent, log, applyConfig, () => cwdSettled ? projectConfigRoot(node.cwd) ?? "" : "");
     ctx.activity = (s) => node.setActivity(s);
@@ -455,16 +469,16 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
   }
   if (agent === "codex" && node) {
     ctx.admitCodex = codexMainThreadAdmission();
-    const waker = new CodexWaker(node, cfg, log.child("wake"));
+    const waker = t3Host ? undefined : new CodexWaker(node, cfg, log.child("wake"));
     ctx.activity = (s) => {
       node.setActivity(s);
-      waker.setActivity(s);
+      waker?.setActivity(s);
     };
     ctx.observeMeta = async (meta) => {
       // Codex attaches the thread id to every tools/call as _meta.threadId ...
       const id = meta?.threadId;
       if (typeof id === "string" && id) {
-        waker.setThreadId(id);
+        waker?.setThreadId(id);
         await node.setSessionId(id).catch(() => {});
         await node.setWakePolicy(cfg.wakeOnDirect, true, cfg.maxHops).catch(() => {});
       }
@@ -496,7 +510,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
   const pushChannel = channelPusher(ctx, () => channel, (params) => mcp.server.notification({ method: CHANNEL_NOTIFICATION, params }));
   node?.on("message", (m) => void pushChannel(m));
   node?.on("notification_waits_changed", () => { for (const m of node.unread()) void pushChannel(m); });
-  if (agent === "opencode" && node) {
+  if (!t3Host && agent === "opencode" && node) {
     await node.setWakePolicy(cfg.wakeOnDirect, true, cfg.maxHops);
     // The opencode plugin is our MCP client; tell it about new mail so it can wake or feed the session.
     node.on("message", (m) => {
@@ -509,7 +523,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
 
   // Claude Code: wake for direct session messages, subagent results and awaited replies (see rewake.ts).
   let rewake: RewakeEndpoint | null = null;
-  if (agent === "claude" && node) {
+  if (!t3Host && agent === "claude" && node) {
     // With the channel active, messages already arrive as channel events: waking too would deliver them twice.
     const shouldWake = (m: BridgeMessage) => claudeWakeCandidate(ctx, m);
     rewake = new RewakeEndpoint(home, node, shouldWake, log.child("rewake"), (event) => reportModActivity(ctx, event), ctx.claudeMailScopes,
@@ -565,8 +579,8 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
   };
 
   const transport = new StdioServerTransport();
-  const antigravityHooks = agent === "antigravity" ? new AntigravityHooks(ctx) : null;
-  const museHooks = agent === "muse" ? new MuseHooks(ctx) : null;
+  const antigravityHooks = !t3Host && agent === "antigravity" ? new AntigravityHooks(ctx) : null;
+  const museHooks = !t3Host && agent === "muse" ? new MuseHooks(ctx) : null;
   let shuttingDown = false;
   let closeSweepBusy = false;
   const closeSweep = setInterval(() => {
@@ -591,6 +605,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
     if (shuttingDown) return;
     shuttingDown = true;
     clearInterval(closeSweep);
+    t3Waker?.stop();
     stopParentWatch();
     log.info("shutting down", { reason });
     // AB-385: every step is bounded (runShutdownSteps); this backstop also covers one that blocks synchronously.
@@ -605,6 +620,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
     const steps: ShutdownStep[] = [
       // Stop every delegated CLI this process runs itself, with its whole process tree; nothing may keep working unobserved.
       { name: "delegates", run: () => killAllDelegates() },
+      { name: "T3 host transport", run: () => t3Host?.close() },
       { name: "mcp transport", run: () => mcp.close() },
       { name: "local endpoints", run: () => Promise.allSettled([
         dashboard?.then(controller => controller.close()),
@@ -643,7 +659,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
   log.info("MCP transport connected");
 
   // Slow work happens after the handshake so the host never times out waiting for us.
-  if (agent === "claude" && node) {
+  if (!t3Host && agent === "claude" && node) {
     const launch = await inspectClaudeLaunch(APP_NAME, log);
     ctx.headless = launch.print;
     ctx.restoreEligible = launch.interactive;
@@ -652,7 +668,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
       log.info("delivery mode resolved", { delivery: channel ? "channel" : "hooks" });
     }
   }
-  if (agent === "claude" && node) await node.setWakePolicy(cfg.wakeOnDirect, Boolean(ctx.rewakeAvailable || channel), cfg.maxHops)
+  if (!t3Host && agent === "claude" && node) await node.setWakePolicy(cfg.wakeOnDirect, Boolean(ctx.rewakeAvailable || channel), cfg.maxHops)
     .catch((err) => log.warn("startup wake policy update failed; retained locally for the next peer update or connection", { err: (err as Error).message }));
   launchInspected();
   await antigravityHooks?.start().catch((err) => log.warn("Antigravity hooks unavailable", { err: String(err) }));
@@ -926,12 +942,39 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
       }
     };
 
+  if (ctx.t3Host && node) {
+    const host = ctx.t3Host;
+    register("t3_capabilities", {
+      title: "T3 host capabilities", description: "Experimental opt-in T3 host binding and live composer provider/model catalog. No native CLI fallback.",
+      inputSchema: {}, annotations: { readOnlyHint: true },
+    }, guarded("t3_capabilities", async (_args, extra) => text(JSON.stringify(await host.capabilities(extra.signal)))));
+    register("t3_delegate", {
+      title: "Delegate a T3-owned task", description: "Create an async T3-owned child task with a stable clientRequestId. Default isolation is worktree. Choose provider/model/options from t3_capabilities. Permissions inherit; this never creates a Bridge job. Each independent review uses a fresh task and ID. Completion wakes this T3 thread; do not poll or add watchers.",
+      inputSchema: t3DelegateInput,
+    }, guarded("t3_delegate", async (args: T3DelegateInput, extra) => {
+      checkDepth(cfg.maxDelegateDepth);
+      return text(JSON.stringify(await host.delegate(args, extra.signal)));
+    }));
+    register("t3_task_status", {
+      title: "Read a T3-owned task", description: "Read this T3 parent's task handle only when its result is needed mid-turn. workState and hasPendingChildRuns remain distinct from turn status. Reading terminal results acknowledges T3 parent delivery. No Bridge job receipt is created.",
+      inputSchema: { taskId: z.string().min(1).max(512) },
+    }, guarded("t3_task_status", async (args: { taskId: string }, extra) => text(JSON.stringify(await host.status(args.taskId, extra.signal)))));
+    register("t3_task_cancel", {
+      title: "Cancel a T3-owned task", description: "Request cancellation through T3, including later child turns. Requires a stable clientRequestId. This never stops OS processes or Bridge jobs.",
+      inputSchema: { taskId: z.string().min(1).max(512), clientRequestId: t3RequestId, reason: z.string().max(1000).optional() },
+    }, guarded("t3_task_cancel", async (args: { taskId: string; clientRequestId: string; reason?: string }, extra) => text(JSON.stringify(await host.cancel(args.taskId, args.clientRequestId, args.reason, extra.signal)))));
+    register("t3_send", {
+      title: "Send into an existing T3 thread", description: "Send to this exact bound T3 thread, or an owned child's thread selected by taskId. queue is the default. Requires a stable clientRequestId; dispatch acceptance does not mean Bridge inbox consumption. No top-level thread launch or arbitrary thread target.",
+      inputSchema: { message: z.string().min(1).max(64_000), clientRequestId: t3RequestId, mode: t3Mode.optional(), taskId: z.string().min(1).max(512).optional() },
+    }, guarded("t3_send", async (args: Parameters<T3Host["send"]>[0], extra) => text(JSON.stringify(await host.send(args, extra.signal)))));
+  }
+
   register("health", {
     title: "Bridge health",
     description: "Cheap broker health: round-trip latency, event-loop delay, cached history-import phase, estimated percent and ETA, backup phase and last verification time, and recent error codes. Uses no log or archive reads. If tools are slow, use health or peers instead of reading live bridge log files. Retry a timeout once; report the exact tool error if it persists.",
     inputSchema: {},
     annotations: { readOnlyHint: true },
-  }, guarded("health", async () => text(JSON.stringify({ ...await probeBrokerHealth(resolvePipePath(home), log), nodeHosting: ctx.node?.hostingEvidence() ?? null }))));
+  }, guarded("health", async () => text(JSON.stringify({ ...await probeBrokerHealth(resolvePipePath(home), log), nodeHosting: ctx.node?.hostingEvidence() ?? null, ...(ctx.t3Host ? { frontend: ctx.t3Host.binding } : {}) }))));
 
   register("ask_owner", {
     title: "Ask the owner a decision question",
@@ -1166,13 +1209,14 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
             name: n.name,
             broker: n.isBroker ? t("common.yes") : t("common.no"),
             autoWake: n.autoWakeEnabled ? t("common.on") : t("common.off"),
-            delivery: ctx.agent === "claude" ? (ctx.channelActive() ? "channel" : "hooks") : "hooks",
+            delivery: ctx.t3Host ? "t3-scoped-mcp" : ctx.agent === "claude" ? (ctx.channelActive() ? "channel" : "hooks") : "hooks",
             unread: n.unread().filter((m) => !isQuietMessage(m)).length,
           }) },
           others.length ? { header: t("peers.header", { count: others.length }), category: "peers" }
             : { info: filtered ? "No other peers match the filters." : t("peers.none") },
-          ...sorted(sort, others, (p) => p.name).map((p) => ({ category: "peers", entry: formatPeer(p) })),
+          ...sorted(sort, others, (p) => p.name).map((p) => ({ category: "peers", entry: formatPeer(p) + (p.frontend ? `; T3 thread ${p.frontend.threadId} (provider instance ${p.frontend.providerInstanceId})` : "") })),
         ];
+        if (ctx.t3Host) lines.push({ info: `T3 host binding: ${JSON.stringify(ctx.t3Host.binding)}. Provider session: ${n.currentSessionId ?? "unknown"}.` });
         if (nativeChildren.length) lines.push({ header: nativeChildren[0]!, category: "native" }, ...nativeChildren.slice(1).map((entry) => ({ category: "native", entry })));
         if (health) lines.push({ info: formatHealth(health) });
         if (quietCount) lines.push({ info: `${quietCount} retained quiet message(s), available with inbox(include_quiet=true) or history; excluded from actionable unread mail.` });
@@ -2122,6 +2166,17 @@ ${res.text || t("delegate.empty")}`, res.isError);
         if ((a.event === "SubagentStart" || a.event === "SubagentStop") && !nativeId) return text("{}");
         const identity = codexCallIdentity(extra._meta, { threadId: given(a.session_id), agentId: nativeId, transcript: given(a.transcript_path) });
         if ((ctx.agent !== "claude" && nativeId) || (ctx.admitCodex && !ctx.admitCodex(extra._meta, identity))) return text("{}");
+        if (ctx.t3Host) {
+          // Preserve native identity/child admission where trusted hooks exist, but never hand out mail
+          // or confirm read receipts through a second delivery route in hosted mode.
+          const sessionId = ctx.agent === "codex" ? identity.threadId : given(a.session_id);
+          if (!nativeId && sessionId && a.event === "SessionStart") await ctx.node?.setSessionId(sessionId);
+          if (nativeId && ctx.agent === "claude" && sessionId && sessionId === ctx.node?.currentSessionId &&
+            (a.event === "SubagentStart" || a.event === "SubagentStop")) {
+            await ctx.node.nativeChild({ agentId: nativeId, action: a.event === "SubagentStart" ? "start" : "end", maxHops: cfg.maxHops });
+          }
+          return text("{}");
+        }
         const out = await buildHookResponse(ctx, {
           event: a.event as HookEvent,
           sessionId: ctx.agent === "codex" ? identity.threadId ?? null : given(a.session_id),

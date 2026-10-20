@@ -43,8 +43,10 @@ import type { RemoteJobSnapshot } from "../network/remote-jobs.js";
 import type { HistorySearch, HistoryResult } from "./history.js";
 import type { TransferStarted } from "../network/transfers.js";
 import type { DecideArgs, DecisionsArgs, OwnerDecision } from "./decisions.js";
+import { sameFrontend, type T3Binding } from "./t3-identity.js";
 
 export interface BridgeNodeOptions {
+  frontend?: T3Binding;
   pipePath: string;
   /** Shared secret (see token.ts). */
   token: string;
@@ -510,11 +512,14 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     // Older brokers publish hello capabilities directly to their observers,
     // which then rewrite each foreign PID record using their legacy shape.
     // Our own explicit record already protects upgrades before registration.
-    const hello = await client.request("hello", { ...args, peer: { ...args.peer, agentStartedAt,
+    const hello = await client.request(this.opts.frontend ? "helloT3" : "hello", { ...args, peer: { ...args.peer, agentStartedAt,
       storeCapabilities: brokerVersion === APP_VERSION ? args.peer.storeCapabilities : undefined } }).catch((err) => {
       client.close();
       throw err;
     });
+    if (this.opts.frontend && !sameFrontend(this.opts, hello)) {
+      client.close(); throw new BridgeError("protocol_mismatch", "Broker did not attest the exact T3 frontend binding; hosted registration refused.");
+    }
     this.afterHello(client, hello);
   }
 
@@ -531,6 +536,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
         pid: process.pid,
         agentPid: this.agentHostPid,
         sessionId: this.sessionId,
+        ...(this.opts.frontend ? { frontend: this.opts.frontend } : {}),
         startedAt: Date.now(),
         autoWake: this.autoWake,
         wakeOnDirect: this.wakeOnDirect,
