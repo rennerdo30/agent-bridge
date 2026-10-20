@@ -7,7 +7,7 @@ type FakeWorker = import("node:events").EventEmitter & {
   state: Int32Array; messages: Message[]; terminate: ReturnType<typeof vi.fn>; unref: ReturnType<typeof vi.fn>;
 };
 type FakeHost = import("node:events").EventEmitter & {
-  stdout: import("node:events").EventEmitter; kill: ReturnType<typeof vi.fn>;
+  stdout: import("node:events").EventEmitter; kill: ReturnType<typeof vi.fn<() => boolean>>;
 };
 const thread = vi.hoisted(() => ({
   main: true, workers: [] as FakeWorker[], ports: [] as Port[],
