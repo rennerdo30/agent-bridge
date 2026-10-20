@@ -88,6 +88,14 @@ describe("delegation approval routing", () => {
     expect(rc.jobs!.askParent).toHaveBeenCalledTimes(2);
   });
 
+  it("reports working-copy changes as unknown when no snapshot could be taken before an edit job (AB-422)", async () => {
+    // home is not a git repository, so git status cannot give a before snapshot.
+    vi.spyOn(DELEGATION_TARGETS.codex, "run").mockResolvedValue({ sessionId: "saved", text: "edited", isError: false, details: {} });
+    const result = await runDelegate(context(), "codex", { title: "edit", prompt: "task", access: "edit" }, new AbortController().signal, undefined, true);
+    expect(result.text).toContain("Files changed in your working copy: unknown");
+    expect(result.text).not.toContain("No files changed");
+  });
+
   it("forwards job cleanup to its supervisor with the full command", async () => {
     const rc = context();
     const j = job();
