@@ -17,9 +17,6 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import type { CallToolResult, ServerNotification } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { isRecord } from "../core/json-store.js";
-import { readJsonSnapshot } from "../core/file-cache.js";
-import { indexedJobProjectionCurrent, readIndexedJobs } from "../core/job-archive-index.js";
-import { readArchivedJobSnapshot } from "../core/job-archive.js";
 import { CLAUDE_PERMISSION_MODES, CODEX_APPROVALS_REVIEWERS, CODEX_SANDBOXES, defaultPeerName, loadConfig, parseAgentKind, saveConfigValue, watchConfig, type BridgeConfig, MODEL_NAME_PATTERN } from "../core/config.js";
 import { canonicalProjectRoot } from "../core/project-identity.js";
 import {
@@ -93,7 +90,7 @@ import type { ProjectJobSummary } from "../core/project-job-summary.js";
 import {
   changeProjectChecklist, checklistSummary, cleanChecklistInputs, CHECKLIST_LIMITS, formatChecklist, JOB_ITEM_STATUSES, peersChecklistText,
   projectChecklistKey, readChecklists, readJobChecklist, readProjectChecklist, seedJobChecklist, summaryText,
-  accessJobChecklist, changeJobChecklistAsJob, supervisorRevision, type ChecklistInput, type ChecklistItem, type JobItemStatus, type ProjectChecklistItem,
+  accessJobChecklist, changeJobChecklistAsJob, readChecklistAuthority, supervisorRevision, type ChecklistInput, type ChecklistItem, type JobItemStatus, type ProjectChecklistItem,
 } from "../core/checklists.js";
 
 export { DELEGATED_JOB_NOTE } from "./delegate-run.js";
@@ -2227,25 +2224,9 @@ ${res.text || t("delegate.empty")}`, res.isError);
         const path = join(home, JOBS_FILE), lineage = privateChecklistLineage;
         let durableJob: { name: string; status: string; agent: string } | undefined;
         const authorize = () => {
-          // Read current durable authority inside admission, never a cached JobManager/shared grant.
-          let rows: unknown[];
-          const selected = { ids: new Set([owned.id]), names: new Set([owned.name]) };
-          if (indexedJobProjectionCurrent(path)) {
-            const active = readIndexedJobs(path, { ...selected, active: true }).jobs;
-            rows = active.length ? active : readIndexedJobs(path, selected).jobs.filter(row => row.status !== "running");
-          } else {
-            const data = readJsonSnapshot(path).value;
-            const active = Array.isArray(data) ? data : isRecord(data) && Array.isArray(data.jobs) ? data.jobs : null;
-            if (!active) throw new BridgeError("unauthorized", "Private checklist authority store is unavailable.");
-            const matches = active.filter(row => isRecord(row) && (row.id === owned.id || row.name === owned.name));
-            rows = matches.length ? matches : readArchivedJobSnapshot(path, selected).jobs.filter(row => row.status !== "running");
-          }
-          const row = rows.findLast(value => isRecord(value) && (value.id === owned.id || value.name === owned.name));
-          if (!isRecord(row) || row.remote || row.id !== owned.id || row.name !== a.job || row.agent !== owned.agent ||
-              !Number.isSafeInteger(row.startedAt) || Number(row.startedAt) <= 0 || row.startedAt !== owned.startedAt ||
-              !["running", "done", "failed", "cancelled", "interrupted", "paused"].includes(String(row.status)) ||
-              !Number.isSafeInteger(row.metadataVersion) || Number(row.metadataVersion) <= 0 || row.metadataVersion !== owned.metadataVersion ||
-              row.owner !== lineage.parentJob || row.parentJob !== lineage.parentJob || row.rootSession !== lineage.rootSession ||
+          // Same strict proof as the broker: no index shortcut, ambiguous winner, coercion or nonfinished archive.
+          const row = readChecklistAuthority(path, owned as unknown as Record<string, unknown>);
+          if (!row || row.name !== a.job || row.owner !== lineage.parentJob || row.parentJob !== lineage.parentJob || row.rootSession !== lineage.rootSession ||
               row.supervisor !== lineage.rootSession || row.rootName !== lineage.rootName)
             throw new BridgeError("unauthorized", "Current durable authority does not name this coordinator's exact direct child.");
           durableJob = { name: owned.name, status: String(row.status), agent: owned.agent };

@@ -74,7 +74,7 @@ import { readNetworkConfig, writeNetworkConfig, type NetworkConfig } from "../ne
 import { z } from "zod";
 import { basename, dirname, join } from "node:path";
 import { ProjectGroups } from "./project-groups.js";
-import { accessJobChecklist, jobChecklistRequestSchema } from "./checklists.js";
+import { accessJobChecklist, jobChecklistRequestSchema, readChecklistAuthority } from "./checklists.js";
 import { recoverJobRecordAsync, type RecoveryRefusal } from "./job-recovery.js";
 import { findHistoryJob, selectHistoryJobs } from "./run-history.js";
 import { pageProjectJobSummaries, PROJECT_JOB_SUMMARY_PAGE_MAX } from "./project-job-summary.js";
@@ -1690,48 +1690,7 @@ export class Broker {
    * helper's recovered/label-only fallback. Called again inside the checklist
    * transaction; no await or retained authority fills a missing durable field. */
   private currentChecklistAuthority(witness: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
-    if (!this.jobsPath || !witness || typeof witness.id !== "string" || typeof witness.name !== "string") return undefined;
-    try {
-      // Even an archive lookup requires an available, valid current registry:
-      // an absent/unreadable file cannot prove that no active override exists.
-      const snapshot = readJsonSnapshot(this.jobsPath), data = snapshot.value;
-      const rows = Array.isArray(data) ? data : isRecord(data) && Array.isArray(data.jobs) ? data.jobs : undefined;
-      if (!rows || rows.some(row => !isRecord(row))) return undefined;
-      const matches = (row: Record<string, unknown>) => row.id === witness.id || row.name === witness.name;
-      let selected = rows.filter(isRecord).filter(matches);
-      const active = selected.length > 0;
-      if (!active) selected = readArchivedJobSnapshot(this.jobsPath, {
-        ids: new Set([witness.id]), names: new Set([witness.name]),
-      }).jobs.filter(matches);
-      if (selected.length !== 1 || readJsonSnapshot(this.jobsPath).signature !== snapshot.signature) return undefined;
-      const current = selected[0]!;
-      const text = (value: unknown): value is string => typeof value === "string" && value.trim().length > 0;
-      if (!["id", "name", "owner", "supervisor", "rootName", "rootSession"].every(key => text(current[key])) ||
-          !AGENT_KINDS.includes(current.agent as AgentKind) ||
-          typeof current.startedAt !== "number" || !Number.isFinite(current.startedAt) || current.startedAt <= 0 ||
-          typeof current.metadataVersion !== "number" || !Number.isSafeInteger(current.metadataVersion) || current.metadataVersion <= 0 ||
-          !(current.sessionId === null || text(current.sessionId)) ||
-          current.threadId !== undefined && current.threadId !== null && !text(current.threadId) ||
-          current.parentJob !== undefined && !text(current.parentJob) ||
-          current.remote !== undefined && current.remote !== null && current.remote !== false ||
-          typeof current.status !== "string" || !["running", "paused", "done", "failed", "cancelled", "interrupted"].includes(current.status) ||
-          !active && ["running", "paused"].includes(String(current.status))) return undefined;
-      if (current.masters !== undefined && (!Array.isArray(current.masters) || !current.masters.every(text))) return undefined;
-      if (current.ownershipHistory !== undefined && (!Array.isArray(current.ownershipHistory) ||
-          !current.ownershipHistory.every(entry => isRecord(entry) && text(entry.from) && text(entry.to) &&
-            text(entry.rootSession) && ["fromRoot", "fromRootName", "rootName"].every(key => entry[key] === undefined || text(entry[key]))))) return undefined;
-      // Turn identity and direct-parent scope must be exact. Ownership handoffs
-      // may change roots/owners; only the complete current row supplies masters.
-      for (const key of ["id", "name", "agent", "startedAt", "sessionId", "parentJob"]) {
-        if (current[key] !== witness[key]) return undefined;
-      }
-      if (current.threadId !== witness.threadId || witness.metadataVersion !== undefined && current.metadataVersion !== witness.metadataVersion) return undefined;
-      return current;
-    } catch {
-      // Storage errors can contain SQL, paths or payloads. Unknown proof is a
-      // refusal, never permission from recoveredJobs/storedJob/history recovery.
-      return undefined;
-    }
+    return this.jobsPath ? readChecklistAuthority(this.jobsPath, witness) : undefined;
   }
 
   /** Synchronous authorization fence after the handler's final await. Never use

@@ -1,9 +1,12 @@
 import { DatabaseSync } from "node:sqlite";
 import { statSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { existingMetadataDb, metadataDb, physicalMetadataPath } from "./metadata-db.js";
 import { canonicalProjectRoot, physicalPath, projectKey } from "./project-identity.js";
-import { BridgeError } from "./protocol.js";
+import { AGENT_KINDS, BridgeError } from "./protocol.js";
+import { readJsonSnapshot } from "./file-cache.js";
+import { readArchivedJobSnapshot } from "./job-archive.js";
+import { assertWritableStore, isRecord } from "./json-store.js";
 import { storageLease } from "./storage-lock.js";
 import { z } from "zod";
 
@@ -64,6 +67,74 @@ export const jobChecklistRequestSchema = z.strictObject({
 export type JobChecklistRequest = z.infer<typeof jobChecklistRequestSchema>;
 export interface JobChecklistResult { job: { name: string; status: string; agent: string }; items: ChecklistItem[] }
 export const changesJobChecklist = (change: SupervisorChange): boolean => Boolean(change.add || change.edit || change.require || change.unrequire || change.close || change.approve || change.reject);
+
+const authorityText = z.string().min(1).refine(value => value === value.trim() && !/[\p{Cc}\p{Cf}]/u.test(value));
+const authorityPath = authorityText.refine(isAbsolute);
+const positiveInteger = z.number().int().positive().safe();
+const authorityIdentity = z.object({ id: authorityText, name: authorityText }).passthrough();
+const authorityWorktree = z.object({ repoRoot: authorityPath, path: authorityPath.optional(), cwd: authorityPath.optional() }).passthrough();
+/** Only fields used as authority/context are typed here; unrelated persisted job data is retained, never interpreted as a grant. */
+const checklistAuthoritySchema = authorityIdentity.extend({
+  agent: z.enum(AGENT_KINDS), startedAt: positiveInteger, metadataVersion: positiveInteger,
+  sessionId: authorityText.nullable(), threadId: authorityText.nullable().optional(),
+  owner: authorityText, supervisor: authorityText, rootName: authorityText, rootSession: authorityText, parentJob: authorityText.optional(),
+  status: z.enum(["running", "paused", "done", "failed", "cancelled", "interrupted"]),
+  // Only explicit local absence markers are allowed. Falsy strings/numbers are unknown, not local.
+  remote: z.union([z.null(), z.literal(false)]).optional(), executionOwner: authorityText.optional(),
+  masters: z.array(authorityText).optional(),
+  ownershipHistory: z.array(z.object({
+    id: authorityText, at: positiveInteger, from: authorityText, to: authorityText,
+    rootSession: authorityText, rootName: authorityText, fromRoot: authorityText.optional(), fromRootName: authorityText.optional(),
+  }).passthrough()).optional(),
+  projectRoot: authorityPath.optional(), workdir: authorityPath.nullable().optional(), worktree: authorityWorktree.nullable().optional(),
+  args: z.object({ cwd: authorityText.optional(), _worktree: authorityWorktree.optional(), host: z.never().optional() }).passthrough().optional(),
+  host: z.object({ pid: positiveInteger.nullable(), peer: authorityText, startedAt: positiveInteger }).passthrough().nullable().optional(),
+});
+
+/** Shared checklist-only durable proof; never use global control/recovery compatibility here.
+ * Invariants, applied after discovery AND synchronously inside checklist transaction admission:
+ * - A readable legacy array or supported-version document.jobs must identify EVERY row with usable, unique id AND name.
+ *   Malformed/duplicate identity anywhere means UNKNOWN, even when neither key matches the requested job.
+ * - Exactly one current row matching either key wins over archives. Invalid/conflicting current rows never fall back.
+ * - Only proven registry absence permits an indexed durable archive lookup: exactly one complete FINISHED row,
+ *   never running/paused, history/recovered memory, merged fields, or a last-row winner. Recheck registry identity.
+ * - Selected authority/context fields obey the noncoercing schema above. Identity/turn/version/direct-parent equal
+ *   the discovery witness; owners/roots/grants come wholly from current durable data (handoffs may change them).
+ * Caller-specific checks remain mandatory: broker live registration/current groups; private exact parent/root lineage.
+ * No await, write, bootstrap or migration occurs here. Store errors are unknown proof, never permission. */
+export function readChecklistAuthority(path: string, witness: Record<string, unknown> | undefined): z.infer<typeof checklistAuthoritySchema> | undefined {
+  const identity = authorityIdentity.safeParse(witness);
+  if (!witness || !identity.success) return undefined;
+  const { id, name } = identity.data;
+  try {
+    const snapshot = readJsonSnapshot(path), data = snapshot.value;
+    assertWritableStore(data); // Pure version validation only; never migrates or writes the input.
+    if (isRecord(data) && data.handoffs !== undefined && !Array.isArray(data.handoffs)) return undefined;
+    const rows = Array.isArray(data) ? data : isRecord(data) && Array.isArray(data.jobs) ? data.jobs : undefined;
+    if (!rows) return undefined;
+    const ids = new Set<string>(), names = new Set<string>();
+    const identified: z.infer<typeof authorityIdentity>[] = [];
+    for (const row of rows) {
+      const parsed = authorityIdentity.safeParse(row);
+      if (!parsed.success || ids.has(parsed.data.id) || names.has(parsed.data.name)) return undefined;
+      ids.add(parsed.data.id); names.add(parsed.data.name); identified.push(parsed.data);
+    }
+    let selected: unknown[] = identified.filter(row => row.id === id || row.name === name);
+    const active = selected.length > 0;
+    if (!active) selected = readArchivedJobSnapshot(path, {
+      ids: new Set([id]), names: new Set([name]),
+    }).jobs;
+    if (selected.length !== 1 || readJsonSnapshot(path).signature !== snapshot.signature) return undefined;
+    const parsed = checklistAuthoritySchema.safeParse(selected[0]);
+    if (!parsed.success) return undefined;
+    const current = parsed.data;
+    if (!active && (current.status === "running" || current.status === "paused")) return undefined;
+    for (const key of ["id", "name", "agent", "startedAt", "sessionId", "threadId", "metadataVersion", "parentJob"] as const) {
+      if (current[key] !== witness[key]) return undefined;
+    }
+    return current;
+  } catch { return undefined; }
+}
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS job_checklist (

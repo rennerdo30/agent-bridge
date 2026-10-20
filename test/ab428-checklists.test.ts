@@ -22,7 +22,7 @@ import { ParentLink, parentFromEnv, type ParentClient } from "../src/core/parent
 import { CODING_AGENTS } from "../src/core/protocol.js";
 import {
   changeProjectChecklist, checklistReport, CHECKLIST_LIMITS, projectChecklistKey, readJobChecklist, readProjectChecklist,
-  sanitizeChecklistText, seedJobChecklist, superviseJobChecklist,
+  sanitizeChecklistText, seedJobChecklist, superviseJobChecklist, changeJobChecklistAsJob,
   readChecklists,
 } from "../src/core/checklists.js";
 import { listRuns } from "../src/core/dashboard-read.js";
@@ -226,6 +226,115 @@ describe("AB-428 job checklists", () => {
     { get: true }, { add: [{ text: "Unauthorized" }] }, { edit: [{ id: "c1", text: "Unauthorized" }] },
     { require: ["c1"] }, { unrequire: ["c1"] }, { close: ["c1"] }, { approve: ["c2"] }, { reject: ["c2"] },
   ];
+  const strictProofCases = [
+    "both-missing", "both-invalid", "both-blank", "foreign-first", "foreign-last", "duplicate", "split-id", "split-name",
+    "status-running-array", "status-done-array", "remote-empty", "remote-zero", "archive-paused", "archive-running",
+    "missing-store", "malformed-store", "missing-row", "owner", "parentJob", "rootName", "rootSession", "supervisor", "generation",
+    "masters", "history", "executionOwner", "projectRoot", "workdir", "worktree", "args", "args-host", "threadId",
+  ];
+  it.each(["broker", "private"].flatMap(path => ["post-await", "admission"].flatMap(phase => strictProofCases.map(mode => ({ path, phase, mode })))))(
+    "requires unambiguous complete $path proof: $mode at $phase for all operations", async ({ path: route, phase, mode }) => {
+      const path = join(home, "jobs.json"), privateFixture = route === "private" ? nestedFixture() : undefined;
+      const brokerFixture = route === "broker" ? authorityFixture() : undefined;
+      const jobs = (privateFixture ?? brokerFixture)!.jobs;
+      const saved: Record<string, unknown> = privateFixture
+        ? JSON.parse(readFileSync(path, "utf8")).jobs.find((row: any) => row.id === privateFixture.job.id) : { ...brokerFixture!.saved };
+      const name = String(saved.name);
+      if (brokerFixture) {
+        brokerFixture.conn.peer.name = "owner";
+        writeFileSync(join(home, "config.json"), JSON.stringify({ projectGroups: false }));
+        seedJobChecklist(home, name, [{ text: "Keep required" }], null, "owner");
+      }
+      changeJobChecklistAsJob(home, name, { propose: [{ text: "Pending" }] });
+      const save = (rows: unknown[]) => writeFileSync(path, JSON.stringify({ version: 4, jobs: rows }));
+      // An older exact finished authority is present throughout. Unknown active identity must NEVER mean absence.
+      const archived = { ...saved, status: "done" };
+      archiveJobs(path, [archived]);
+      const db = metadataDb(home), exec = db.exec.bind(db);
+      const rows = () => db.prepare("SELECT * FROM job_checklist WHERE job=? ORDER BY seq").all(name);
+      const before = rows(), outcomes = [];
+      let armed = false, missingNumber = 0;
+      const corrupt = () => {
+        if (!armed) return;
+        armed = false;
+        const row = { ...saved }, foreign = { ...saved, owner: "foreign", parentJob: "other-parent", rootSession: "other-root" };
+        let current: unknown[] = [row];
+        if (mode === "both-missing") { delete row.id; delete row.name; }
+        else if (mode === "both-invalid") { row.id = 17; row.name = [name]; }
+        else if (mode === "both-blank") { row.id = ""; row.name = " "; }
+        else if (mode === "foreign-first") current = [foreign, row];
+        else if (mode === "foreign-last") current = [row, foreign];
+        else if (mode === "duplicate") current = [row, { ...row }];
+        else if (mode === "split-id") current = [row, { ...row, name: "codex-job-other-id" }];
+        else if (mode === "split-name") current = [row, { ...row, id: "other-id" }];
+        else if (mode === "status-running-array") row.status = ["running"];
+        else if (mode === "status-done-array") row.status = ["done"];
+        else if (mode === "remote-empty") row.remote = "";
+        else if (mode === "remote-zero") row.remote = 0;
+        else if (mode.startsWith("archive-")) { archiveJobs(path, [{ ...archived, status: mode.slice(8) }]); current = []; }
+        else if (mode === "missing-store") { renameSync(path, join(home, `unavailable-${missingNumber++}.json`)); return; }
+        else if (mode === "malformed-store") { writeFileSync(path, "{bad"); return; }
+        else if (mode === "missing-row") { current = []; archiveJobs(path, [{ ...archived, startedAt: Number(saved.startedAt) + 1 }]); }
+        else if (["owner", "parentJob", "rootName", "rootSession", "supervisor"].includes(mode))
+          row[mode] = route === "broker" && ["rootName", "rootSession", "supervisor"].includes(mode) ? [] : "foreign";
+        else if (mode === "generation") row.startedAt = Number(saved.startedAt) + 1;
+        else if (mode === "masters") row.masters = [saved.owner, 0];
+        else if (mode === "history") row.ownershipHistory = [{ id: "handoff", at: 1, from: saved.owner, to: saved.owner, rootSession: saved.rootSession, rootName: [] }];
+        else if (mode === "executionOwner") row.executionOwner = [];
+        else if (mode === "projectRoot") row.projectRoot = 0;
+        else if (mode === "workdir") row.workdir = false;
+        else if (mode === "worktree") row.worktree = { repoRoot: false };
+        else if (mode === "args") row.args = [];
+        else if (mode === "args-host") row.args = { ...saved.args as object, host: "" };
+        else if (mode === "threadId") row.threadId = [];
+        save(current);
+      };
+      const find = jobs.find.bind(jobs);
+      if (privateFixture) vi.spyOn(jobs, "find").mockImplementation((ref, recover) => {
+        const actual = find(ref, recover); // Real lookup/ownership; replacement happens only AFTER its final synchronous result.
+        if (recover === false && phase === "post-await") corrupt();
+        return actual;
+      });
+      if (brokerFixture) vi.spyOn(brokerFixture.broker, "jobForControl").mockImplementation(async () => {
+        await Promise.resolve();
+        if (phase === "post-await") corrupt();
+        return { ...saved };
+      });
+      vi.spyOn(db, "exec").mockImplementation(sql => { if (phase === "admission" && sql === "BEGIN IMMEDIATE") corrupt(); return exec(sql); });
+      const call = async (operation: Record<string, unknown>) => brokerFixture
+        ? brokerFixture.broker.handlers.jobChecklist(brokerFixture.conn, { job: name, ...operation }).then(() => "allowed", () => "denied")
+        : privateFixture!.call("job_checklist", { job: name, ...operation }).then(result => result.isError ? "denied" : "allowed");
+      for (const operation of checklistOperations) {
+        armed = false; save([saved]); archiveJobs(path, [archived]);
+        if (brokerFixture) brokerFixture.broker.recoveredJobs.set(saved.id, { ...saved });
+        expect(await call({ get: true })).toBe("allowed");
+        const bytes = readFileSync(join(home, "bridge.db"));
+        armed = true;
+        const result = await call(operation);
+        outcomes.push({ operation: Object.keys(operation)[0], result, checkedFence: !armed, rowsUnchanged: JSON.stringify(rows()) === JSON.stringify(before), bytesUnchanged: readFileSync(join(home, "bridge.db")).equals(bytes) });
+        // Restore only this isolated temporary fixture after an old-source unauthorized commit, so all eight are exercised.
+        if (JSON.stringify(rows()) !== JSON.stringify(before)) {
+          db.prepare("DELETE FROM job_checklist WHERE job=?").run(name);
+          for (const row of before) {
+            const keys = Object.keys(row);
+            db.prepare(`INSERT INTO job_checklist (${keys.join(",")}) VALUES (${keys.map(() => "?").join(",")})`).run(...keys.map(key => row[key]!));
+          }
+        }
+      }
+      jobs.setDormant(true);
+      expect(outcomes).toEqual(checklistOperations.map(operation => ({ operation: Object.keys(operation)[0], result: "denied", checkedFence: true, rowsUnchanged: true, bytesUnchanged: true })));
+    });
+
+  it.each(["done", "failed", "cancelled", "interrupted"])("retains exact private finished archive %s without a current override", async status => {
+    const f = nestedFixture(), path = join(home, "jobs.json");
+    const saved = JSON.parse(readFileSync(path, "utf8")).jobs.find((row: any) => row.id === f.job.id);
+    archiveJobs(path, [{ ...saved, status }]);
+    writeFileSync(path, JSON.stringify({ version: 4, jobs: [] }));
+    expect((await f.call("job_checklist", { job: f.job.name, get: true })).isError).not.toBe(true);
+    expect((await f.call("job_checklist", { job: f.job.name, unrequire: ["c1"] })).isError).not.toBe(true);
+    expect(readJobChecklist(home, f.job.name)[0]!.required).toBe(false);
+    f.jobs.setDormant(true);
+  });
   const brokenAuthority = ["missing", "ENOENT", "malformed", "container", "id", "name", "agent", "startedAt", "sessionId", "owner", "supervisor", "rootName", "rootSession", "metadataVersion", "status", "malformed-status", "malformed-remote", "reparented", "conflict"];
   it.each(brokenAuthority.flatMap(mode => ["post-await", "transaction"].map(phase => ({ mode, phase }))))(
     "refuses every operation from cached recovered authority with $mode durable proof at $phase", async ({ mode, phase }) => {
