@@ -1,12 +1,12 @@
 import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { delimiter, join } from "node:path";
+import { delimiter, join, relative } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { nullLogger } from "../src/core/logger.js";
 import { closeMetadataDb } from "../src/core/metadata-db.js";
 import { changedFilesNote, codexHookObservation, createWorktree, git as bridgeGit, finishWorktree, gitChangeSnapshot, gitStatusSnapshot, snapshotChanges } from "../src/core/worktree.js";
-import { NO_LAZY_FETCH_ARGS, repositoryGuards, resetGitFeatureCache } from "../src/core/git-safety.js";
+import { GitSafetyRefusal, NO_LAZY_FETCH_ARGS, repositoryGuards, repositoryGuardsSync, resetGitFeatureCache } from "../src/core/git-safety.js";
 import { cleanupWorktrees } from "../src/core/worktree-cleanup.js";
 
 /**
@@ -361,8 +361,16 @@ describe("bridge git calls: nested repositories, target worktrees and Git LFS (A
 
 describe("AB-422 guard decisions", () => {
   /** A runner that answers `git config --list` with the given entries (scope, key, value) and lists no gitlinks. */
-  const configured = (entries: [string, string, string][]) => async (args: string[]) =>
-    args[0] === "--version" ? "git version 2.55.0\n" : args[0] === "config" ? entries.map(([scope, key, value]) => `${scope}\0file:x\0${key}\n${value}\0`).join("") : "";
+  const configured = (entries: [string, string, string][]) => async (args: string[]) => {
+    if (args[0] === "config" && args.includes("--type=bool")) return git(repo, ...args);
+    // The existing remove-x decisions now model an actually registered target, not an unprovable path.
+    if (args[0] === "worktree" && args[1] === "list") {
+      const target = join(root, "x");
+      if (!existsSync(target)) git(repo, "worktree", "add", "-qb", "configured-target", target);
+      return git(repo, ...args);
+    }
+    return args[0] === "--version" ? "git version 2.55.0\n" : args[0] === "config" ? entries.map(([scope, key, value]) => `${scope}\0file:x\0${key}\n${value}\0`).join("") : "";
+  };
 
   it("keeps the canonical local filter.lfs driver and neutralises any other value of it", async () => {
     const canonical: [string, string, string][] = [["local", "filter.lfs.clean", "git-lfs clean -- %f"], ["local", "filter.lfs.smudge", "git-lfs smudge -- %f"],
@@ -581,6 +589,110 @@ describe("AB-422 round 4: enforcement floors and every reached repository", () =
       expect(versions).toHaveLength(1);
       expect(guards.env.GIT_NO_LAZY_FETCH).toBe("1");
     } finally { resetGitFeatureCache(); }
+  });
+});
+
+describe("AB-422 round 5: registered target selection and public error redaction", () => {
+  function target(path: string, branch: string): void {
+    mkdirSync(join(path, ".."), { recursive: true });
+    git(repo, "worktree", "add", "-qb", branch, path);
+    git(repo, "config", "extensions.worktreeConfig", "true");
+  }
+  const reads = (version = "2.55.0") => async (args: string[], dir: string | null) =>
+    args[0] === "--version" ? `git version ${version}` : git(dir ?? repo, ...args);
+
+  it.each([["remove", "filter"], ["move", "filter"], ["remove", "promisor"], ["move", "promisor"]] as const)(
+    "%s inspects the registered suffix before a same-name local directory (%s)", async (command, setting) => {
+      const actual = join(root, "external", "topic");
+      target(actual, "actual-target");
+      mkdirSync(join(repo, "topic"));
+      // Safe selection control: lock uses the same find_worktree lookup, without removal, movement or status.
+      git(repo, "worktree", "lock", "topic");
+      expect(git(repo, "worktree", "list", "--porcelain", "-z").split("\0\0")
+        .find((entry) => entry.includes(`worktree ${slash(actual)}\0`))).toContain("locked");
+      git(repo, "worktree", "unlock", "topic");
+      resetGitFeatureCache();
+      try {
+        if (setting === "filter") {
+          git(actual, "config", "--worktree", "filter.TargetOnly.clean", planted("target-only-filter"));
+          const guarded = await repositoryGuards(["worktree", command, "topic", join(root, "moved")], repo, reads());
+          expect(guarded.args).toContain("filter.TargetOnly.clean=");
+        } else {
+          git(actual, "config", "--worktree", "remote.fixture.promisor", "true");
+          await expect(repositoryGuards(["worktree", command, "topic", join(root, "moved")], repo, reads("2.45.0")))
+            .rejects.toThrow(/lazy/);
+        }
+        // No remove/move dispatch: only guards and metadata reads run, even on the broken baseline.
+        expect(readFileSync(join(actual, "a.txt"), "utf8")).toBe("original\n");
+        expect(existsSync(join(repo, "topic"))).toBe(true);
+        expect(markerText()).toBe("");
+      } finally { resetGitFeatureCache(); }
+    });
+
+  it.each(["remove", "move"])("%s refuses ambiguous registered suffixes despite a local directory", async (command) => {
+    const first = join(root, "one", "topic"), second = join(root, "two", "topic");
+    target(first, "first-target"); target(second, "second-target");
+    mkdirSync(join(repo, "topic"));
+    expect(() => git(repo, "worktree", "lock", "topic")).toThrow();
+    await expect(repositoryGuards(["worktree", command, "topic", join(root, "moved")], repo, reads()))
+      .rejects.toThrow(/target.*(ambiguous|registered)|ambiguous.*target/);
+    for (const path of [first, second]) expect(readFileSync(join(path, "a.txt"), "utf8")).toBe("original\n");
+  });
+
+  it("falls back to a registered canonical path after suffix ambiguity and supports absolute paths", async () => {
+    const actual = join(repo, "topic"), other = join(root, "elsewhere", "topic");
+    target(actual, "local-target"); target(other, "other-target");
+    git(actual, "config", "--worktree", "filter.LocalTarget.clean", planted("local-target"));
+    git(other, "config", "--worktree", "filter.OtherTarget.clean", planted("other-target"));
+    const cwd = join(repo, "inside"); mkdirSync(cwd);
+    for (const argument of ["topic", actual, `${slash(actual)}/../topic/.`, `${slash(relative(cwd, actual))}/.`]) {
+      const from = argument === "topic" ? repo : cwd;
+      for (const command of ["remove", "move"]) {
+        const guarded = await repositoryGuards(["worktree", command, argument, join(root, "moved")], from,
+          async (args, dir) => args[0] === "--version" ? "git version 2.55.0" : git(dir ?? from, ...args));
+        expect(guarded.args, `${command} ${argument}`).toContain("filter.LocalTarget.clean=");
+        expect(guarded.args, `${command} ${argument}`).not.toContain("filter.OtherTarget.clean=");
+      }
+    }
+    expect(markerText()).toBe("");
+  });
+
+  it("refuses unregistered or missing target paths before any worktree action", async () => {
+    mkdirSync(join(repo, "unregistered"));
+    for (const command of ["remove", "move"]) for (const argument of ["unregistered", join(root, "missing")]) {
+      await expect(repositoryGuards(["worktree", command, argument, join(root, "moved")], repo, reads()))
+        .rejects.toThrow(/target.*registered|cannot resolve.*target/);
+    }
+    expect(existsSync(join(repo, "unregistered"))).toBe(true);
+  });
+
+  it("public Git refusal redacts invalid config values after successful config listing", async () => {
+    const sentinel = "fixture-private-invalid-boolean-AB422";
+    git(repo, "config", "core.filemode", sentinel);
+    expect(git(repo, "config", "--list")).toContain(sentinel);
+    const failure = await bridgeGit(["status", "--porcelain"], repo, nullLogger).catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(GitSafetyRefusal);
+    expect(String(failure)).not.toContain(sentinel);
+    expect(JSON.stringify(failure, Object.getOwnPropertyNames(failure))).not.toContain(sentinel);
+    expect((failure as Error).message).toMatch(/git ls-files.*exit(?: status)? 128/);
+    expect(failure).not.toHaveProperty("cause");
+    expect(await gitChangeSnapshot(repo, nullLogger)).toBeNull();
+  });
+
+  it.each(["async", "sync"])("%s guard read errors retain operation/status without raw error fields", async (mode) => {
+    const sentinel = "fixture-private-discovery-diagnostic-AB422";
+    const run = (args: string[]) => {
+      if (args[0] === "--version") return "git version 2.55.0";
+      if (args[0] === "ls-files") throw Object.assign(new Error(sentinel), { code: 128, stdout: sentinel, stderr: sentinel, cause: new Error(sentinel) });
+      return "";
+    };
+    let failure: unknown;
+    if (mode === "async") failure = await repositoryGuards(["status"], repo, async (args) => run(args)).catch((error: unknown) => error);
+    else try { repositoryGuardsSync(["status"], repo, run); } catch (error) { failure = error; }
+    expect(failure).toBeInstanceOf(GitSafetyRefusal);
+    expect(JSON.stringify(failure, Object.getOwnPropertyNames(failure))).not.toContain(sentinel);
+    expect((failure as Error).message).toMatch(/git ls-files.*exit(?: status)? 128/);
+    expect(failure).not.toHaveProperty("cause");
   });
 });
 

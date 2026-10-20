@@ -1,5 +1,5 @@
 import { lstatSync, mkdirSync, readdirSync, realpathSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { DEFAULT_HOME, ENV } from "./constants.js";
 
 /**
@@ -196,14 +196,30 @@ export type GuardRunner<T> = (args: string[], dir: string | null) => T;
 interface ScannedRepository { label: string; entries: RepositoryConfigEntry[]; local: RepositoryConfigEntry[] }
 type Plan<T> = Generator<GuardRead, T, string>;
 
-const message = (err: unknown) => (err instanceof Error ? err.message : String(err)).split("\n")[0];
+/** Safe diagnostics for every guard read, shared by synchronous and asynchronous callers. No raw cause or IO. */
+class GuardReadFailure extends GitSafetyRefusal {
+  constructor(readonly operation: string, readonly kind: string, readonly code: string | number | undefined) {
+    super(`git ${operation} guard read failed (${kind}${code === undefined ? "" : ` ${code}`})`);
+  }
+}
+
+export function gitGuardReadFailure(args: readonly string[], error: unknown): GitSafetyRefusal {
+  if (error instanceof GuardReadFailure) return error;
+  const info = error !== null && typeof error === "object" ? error as { code?: unknown; killed?: unknown } : {};
+  const operation = ["--version", "config", "ls-files", "rev-parse", "worktree"].includes(args[0] ?? "") ? args[0]! : "metadata";
+  if (info.killed === true || info.code === "ETIMEDOUT") return new GuardReadFailure(operation, "timeout", undefined);
+  if (info.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") return new GuardReadFailure(operation, "output limit", undefined);
+  if (typeof info.code === "number" && Number.isSafeInteger(info.code)) return new GuardReadFailure(operation, "exit status", info.code);
+  const system = ["ENOENT", "EACCES", "EPERM", "EIO", "ENOTDIR", "ENAMETOOLONG", "EMFILE", "ENFILE"];
+  return new GuardReadFailure(operation, "system error", typeof info.code === "string" && system.includes(info.code) ? info.code : undefined);
+}
 
 function* readRepository(dir: string | null, label: string, check: (repo: ScannedRepository) => void): Plan<ScannedRepository> {
   let raw: string;
   // Reading configuration executes nothing (no hooks, filters or fsmonitor); includes are expanded and shown.
   try { raw = yield { args: ["config", "-z", "--list", "--includes", "--show-origin", "--show-scope"], dir }; }
   // Git's diagnostics for invalid configuration can contain its values. Keep those out of refusal reports.
-  catch { throw new GitSafetyRefusal(`refused: cannot read the git config of ${label} (AB-422)`); }
+  catch (err) { throw new GitSafetyRefusal(`refused: cannot read the git config of ${label}: ${gitGuardReadFailure(["config"], err).message} (AB-422)`); }
   const entries = parseConfigList(raw);
   const repo = { label, entries, local: entries.filter((e) => REPOSITORY_SCOPES.has(e.scope)) };
   check(repo); // Must precede even the discovery reads inside this repository.
@@ -225,13 +241,14 @@ function* nestedRepositories(dir: string | null, label: string, found: ScannedRe
     let inside = "";
     try { inside = (yield { args: ["rev-parse", "--is-inside-work-tree"], dir }).trim(); } catch { /* refused below */ }
     if (inside === "false") return;
-    throw new GitSafetyRefusal(`refused: cannot list the gitlinks of ${label}: ${message(err)} (AB-422)`);
+    throw new GitSafetyRefusal(`refused: cannot list the gitlinks of ${label}: ${gitGuardReadFailure(["ls-files"], err).message} (AB-422)`);
   }
   // "<mode> <object> <stage>\t<path>"
   const gitlinks = raw.split("\0").filter((record) => record.startsWith("160000 ") && record.includes("\t"));
   if (!gitlinks.length) return;
   let top = "";
-  try { top = (yield { args: ["rev-parse", "--show-toplevel"], dir }).trim(); } catch { /* refused below */ }
+  try { top = (yield { args: ["rev-parse", "--show-toplevel"], dir }).trim(); }
+  catch (err) { throw new GitSafetyRefusal(`refused: cannot find the work tree of ${label}: ${gitGuardReadFailure(["rev-parse"], err).message} (AB-422)`); }
   if (!top) throw new GitSafetyRefusal(`refused: cannot find the work tree of ${label} to check its gitlinks (AB-422)`);
   for (const record of gitlinks) {
     const path = resolve(top, record.slice(record.indexOf("\t") + 1));
@@ -245,6 +262,40 @@ function* nestedRepositories(dir: string | null, label: string, found: ScannedRe
     found.push(yield* readRepository(path, `the nested repository ${path}`, check));
     yield* nestedRepositories(path, `the nested repository ${path}`, found, seen, depth + 1, check);
   }
+}
+
+/** Git find_worktree(): a unique directory-boundary suffix wins, then a canonical registered path.
+ * https://github.com/git/git/blob/v2.45.1/worktree.c#L173-L228
+ * fspathcmp uses core.ignoreCase, not the host platform. Do not normalise the argument before suffix lookup.
+ */
+function* targetWorktree(cwd: string, target: string): Plan<string> {
+  const raw = yield { args: ["worktree", "list", "--porcelain", "-z"], dir: null };
+  const paths = raw.split("\0").filter((field) => field.startsWith("worktree ")).map((field) => field.slice(9));
+  if (!paths.length || paths.some((path) => !isAbsolute(path))) throw new GitSafetyRefusal("refused: cannot resolve a registered target worktree (AB-422)");
+  const ignoreCase = (yield { args: ["config", "--type=bool", "--default=false", "--get", "core.ignoreCase"], dir: null }).trim();
+  if (ignoreCase !== "true" && ignoreCase !== "false") throw new GitSafetyRefusal("refused: cannot prove target worktree path comparison settings (AB-422)");
+  const fold = (path: string) => ignoreCase === "true" ? path.replace(/[A-Z]/g, (c) => c.toLowerCase()) : path;
+  const suffixes = target ? paths.filter((path) => {
+    const start = path.length - target.length;
+    return (start === 0 || (start > 0 && (path[start - 1] === "/" || (process.platform === "win32" && path[start - 1] === "\\")))) &&
+      fold(path.slice(start)) === fold(target);
+  }) : [];
+  let selected = suffixes.length === 1 ? suffixes[0] : undefined;
+  if (!selected) {
+    // Preserve literal symlink/.. traversal until realpath, as Git does. resolve()/join() would collapse it early.
+    let canonical: string;
+    try { canonical = realpathSync.native(isAbsolute(target) ? target : `${cwd}/${target}`); }
+    catch { throw new GitSafetyRefusal("refused: target worktree is ambiguous or not registered (AB-422)"); }
+    const matches = paths.filter((path) => {
+      try { return fold(realpathSync.native(path)) === fold(canonical); } catch { return false; }
+    });
+    if (matches.length !== 1) throw new GitSafetyRefusal("refused: target worktree is ambiguous or not registered (AB-422)");
+    selected = matches[0]!;
+  }
+  // A stale registry entry must not make git -C walk up into a different repository's configuration.
+  try { lstatSync(join(selected, ".git")); }
+  catch { throw new GitSafetyRefusal("refused: cannot read the registered target worktree (AB-422)"); }
+  return selected;
 }
 
 /** Whether git would start a `filter.lfs` program here: its last clean, smudge or process value is not empty. */
@@ -300,30 +351,10 @@ function* guardPlan(rest: readonly string[], cwd: string): Plan<GitGuards> {
     if (sub === "worktree" && (rest[1] === "remove" || rest[1] === "move")) {
       // Git runs a status inside the target worktree, with that worktree's own config.worktree and gitlinks.
       const target = rest.slice(2).find((a) => !a.startsWith("-"));
-      if (target) {
-        let path = resolve(cwd, target);
-        let exists = true;
-        try { lstatSync(path); } catch { exists = false; }
-        if (!exists) {
-          // Git also accepts an unambiguous trailing directory name (e.g. `worktree remove topic`). Resolve
-          // that name through Git's registry so the checked config belongs to the target Git will enter.
-          let registered: string;
-          try { registered = yield { args: ["worktree", "list", "--porcelain", "-z"], dir: null }; }
-          catch { throw new GitSafetyRefusal("refused: cannot resolve the target worktree config (AB-422)"); }
-          const suffix = target.replace(/\\/g, "/").replace(/\/$/, "");
-          const candidates = registered.split("\0").filter((field) => field.startsWith("worktree "))
-            .map((field) => field.slice(9)).filter((dir) => {
-              const normal = dir.replace(/\\/g, "/");
-              return process.platform === "win32" ? normal.toLowerCase().endsWith(`/${suffix.toLowerCase()}`) : normal.endsWith(`/${suffix}`);
-            });
-          if (candidates.length > 1) throw new GitSafetyRefusal("refused: ambiguous target worktree config (AB-422)");
-          if (candidates.length === 1) { path = candidates[0]!; exists = true; }
-        }
-        if (exists) {
-          repos.push(yield* readRepository(path, `the worktree ${path}`, check));
-          yield* nestedRepositories(path, `the worktree ${path}`, repos, seen, 0, check);
-        }
-      }
+      if (!target) throw new GitSafetyRefusal("refused: cannot resolve a registered target worktree (AB-422)");
+      const path = yield* targetWorktree(cwd, target);
+      repos.push(yield* readRepository(path, `the worktree ${path}`, check));
+      yield* nestedRepositories(path, `the worktree ${path}`, repos, seen, 0, check);
     }
   }
   let lfs = false;
@@ -374,7 +405,7 @@ export async function repositoryGuards(rest: readonly string[], cwd: string, run
   while (!step.done) {
     let output: string;
     try { output = await run(step.value.args, step.value.dir); }
-    catch (err) { step = plan.throw(err); continue; }
+    catch (err) { step = plan.throw(gitGuardReadFailure(step.value.args, err)); continue; }
     step = plan.next(output);
   }
   return step.value;
@@ -387,7 +418,7 @@ export function repositoryGuardsSync(rest: readonly string[], cwd: string, run: 
   while (!step.done) {
     let output: string;
     try { output = run(step.value.args, step.value.dir); }
-    catch (err) { step = plan.throw(err); continue; }
+    catch (err) { step = plan.throw(gitGuardReadFailure(step.value.args, err)); continue; }
     step = plan.next(output);
   }
   return step.value;
