@@ -268,7 +268,8 @@ export class RemoteJobs {
         this.log.info("remote job control", { job: record.job.name, control: request.control.type, host: pair.name });
       } else if (request.op === "approval") {
         if (!listPendingApprovals(this.home).some((a) => a.id === request.id && a.job === record!.job.name && a.owner === record!.owner)) throw new Error("Remote approval expired or belongs to another job.");
-        const outcome = await answerPendingApproval(this.home, request.id, { decision: request.decision, reason: request.reason });
+        // The real decider: a supervisor on the paired PC, not this PC's dashboard (AB-402: never a reusable grant here).
+        const outcome = await answerPendingApproval(this.home, request.id, { decision: request.decision, reason: request.reason, source: "remote supervisor" });
         if (outcome !== "answered") throw new Error(`Remote approval ${outcome}.`);
       }
     }

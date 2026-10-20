@@ -7,7 +7,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { isDeepStrictEqual } from "node:util";
 import { closeSync, constants as fsConstants, copyFileSync, existsSync, fsyncSync, openSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { DEFAULT_MAX_JOBS, DELEGATION_METADATA_VERSION } from "../core/constants.js";
+import { DEFAULT_MAX_JOBS, DELEGATION_METADATA_VERSION, JOBS_FILE } from "../core/constants.js";
 import { DelegateError, failureCause, pidAlive, type DelegateResult } from "../core/delegate.js";
 import { displayPathText } from "../core/display-paths.js";
 import { capReport, quarantineMessage } from "../core/oversize.js";
@@ -24,6 +24,7 @@ import { indexedJobProjectionCurrent, readIndexedJobs } from "../core/job-archiv
 import { cloneJson, readJsonSnapshot } from "../core/file-cache.js";
 import { ARCHIVE_AGE_ENV, DEFAULT_ARCHIVE_AGE_MS } from "../core/run-archive.js";
 import { newApprovalId, publishApproval, type PermissionDecision, type PermissionRequest } from "../core/relay.js";
+import type { ApprovalGrants } from "./approval-reuse.js";
 import { notifyJobEvent } from "../core/notifications.js";
 import { RootConcurrency } from "../core/root-concurrency.js";
 import { completionMessageId } from "../core/completion.js";
@@ -147,6 +148,8 @@ export interface Job {
   awaitingAnswer?: boolean;
   /** MCP servers the parent allowed for this job (kept across its follow-ups). */
   allowedServers?: Set<string>;
+  /** Explicit "allow" answers this job may reuse for identical requests (AB-402); memory only, bounded. */
+  approvalGrants?: ApprovalGrants;
   /** An approval question the subagent is waiting on; only an explicit decision answers it. */
   pendingApproval?: ((answer: string, by?: string) => boolean | void) | null;
   /** While it runs: delivers a message into the running subagent (see parent-link.ts). */
@@ -266,9 +269,39 @@ const approvalAnswers = new WeakMap<Job, Set<(answer: string, by?: string) => bo
 /** Ending a turn must never leave an approval waiting after the job is gone. */
 export function denyPendingApprovals(job: Job, reason = "job finished"): void {
   for (const answer of [...(approvalAnswers.get(job) ?? [])]) answer(reason, "job completion");
+  // Identical-approval grants end with the turn (AB-402).
+  job.approvalGrants = undefined;
 }
 
-export function waitForApproval(job: Job, question: string, timeoutMs: number, post: (body: string) => void, log: Logger, home?: string, request?: PermissionRequest, askUser?: () => Promise<PermissionDecision>, escalate?: (body: string) => Promise<void>, forceEscalate = false): Promise<{ allow: boolean; reason: string }> {
+/**
+ * Who supervises the job, read from the durable job store (a handoff_subagents from another process updates only the
+ * store), or from memory when there is no store (AB-402). Any handoff changes it. Null when the store exists but cannot
+ * be read or does not have the job: then no grant is reused or kept, since a handoff may be what is missing.
+ */
+export function jobSupervision(home: string | undefined, job: Job, log?: Logger): string | null {
+  let durable: StoredJob | undefined;
+  if (home && existsSync(join(home, JOBS_FILE))) {
+    try { durable = findStoredJob(join(home, JOBS_FILE), job.id, job.name); }
+    catch (err) { log?.warn("could not read the job store; approvals are not reused", { job: job.name, err: String(err) }); return null; }
+    if (!durable) return null;
+  }
+  const source: Pick<Job, "supervisor" | "owner" | "rootName" | "rootSession" | "ownershipHistory"> = durable ?? job;
+  const history = Array.isArray(source.ownershipHistory) ? source.ownershipHistory : [];
+  const last = history.at(-1) as { id?: unknown } | undefined;
+  return JSON.stringify([source.supervisor ?? null, source.owner ?? null, source.rootName ?? null, source.rootSession ?? null, history.length, typeof last?.id === "string" ? last.id : null]);
+}
+
+/** An approval answer. */
+export type ApprovalOutcome = { allow: boolean; reason: string };
+/** Which approval an answer settled and who decided it ("MCP decide", "dashboard", "user in session", "timeout", ...). */
+export type ApprovalOrigin = { approvalId: string; by: string };
+const approvalOrigins = new WeakMap<ApprovalOutcome, ApprovalOrigin>();
+/** The approval id and decider behind an answer of this process's waitForApproval; none for any other answer. */
+export function approvalOrigin(answer: ApprovalOutcome): ApprovalOrigin | undefined { return approvalOrigins.get(answer); }
+/** Tag an answer with its origin (waitForApproval does this; tests may tag stand-in answers). */
+export function tagApprovalOrigin<T extends ApprovalOutcome>(answer: T, origin: ApprovalOrigin): T { approvalOrigins.set(answer, origin); return answer; }
+
+export function waitForApproval(job: Job, question: string, timeoutMs: number, post: (body: string) => void, log: Logger, home?: string, request?: PermissionRequest, askUser?: () => Promise<PermissionDecision>, escalate?: (body: string) => Promise<void>, forceEscalate = false): Promise<ApprovalOutcome> {
   return new Promise((resolve) => {
     let settled = false;
     let cleanup: (() => void) | undefined;
@@ -305,7 +338,7 @@ export function waitForApproval(job: Job, question: string, timeoutMs: number, p
           ? `Approval for ${job.name} was withdrawn because the job was paused; permission remains ungranted. It asks again after resume_subagent if it still needs it.`
           : `Approval for ${job.name} ${allow ? "allowed" : "denied"} by ${by}.`); }
       catch { log.warn("could not report approval answer", { job: job.name }); }
-      resolve({ allow, reason: answer.trim() });
+      resolve(tagApprovalOrigin({ allow, reason: answer.trim() }, { approvalId, by }));
       return true;
     };
     const timer = setTimeout(() => settle("no answer in time", "timeout"), timeoutMs);
@@ -2636,7 +2669,7 @@ export class JobManager {
    * example). The question arrives as a message from the job; the agent answers with message_subagent.
    * No answer within the time limit counts as "deny".
    */
-  askParent(job: Job, question: string, timeoutMs: number, request?: PermissionRequest): Promise<{ allow: boolean; reason: string }> {
+  askParent(job: Job, question: string, timeoutMs: number, request?: PermissionRequest): Promise<ApprovalOutcome> {
     return waitForApproval(job, question, timeoutMs, (body) => this.post(job, body), this.log, this.storePath ? dirname(this.storePath) : undefined, request, undefined, this.lineage?.escalate, Boolean(job.foreground && this.lineage));
   }
 
@@ -2897,19 +2930,24 @@ function readStoredJob(path: string, id: string, name: string, log?: Logger): St
 /** Private immutable selection for authority checks. Detach any fields exposed to
  * runtime/public jobs; never mutate these stat-validated cache records. */
 function readStoredJobSnapshot(path: string, id: string, name: string, log?: Logger): StoredJob | undefined {
-  try {
-    if (indexedJobProjectionCurrent(path)) {
-      const selection = { ids: new Set([id]), names: new Set([name]) };
-      const active = readIndexedJobs(path, { ...selection, active: true }).jobs.find(isStoredJob);
-      if (active) return active;
-      return readIndexedJobs(path, selection).jobs.find(record => isStoredJob(record) && record.status !== "running") as StoredJob | undefined;
-    }
-    const current = activeJobSnapshot(path);
-    for (const record of current.values()) if (record.id === id || record.name === name) return record;
-    for (const record of readArchivedJobSnapshot(path, { ids: new Set([id]), names: new Set([name]) }).jobs) {
-      if (isStoredJob(record) && record.status !== "running" && !current.has(record.id) && (record.id === id || record.name === name)) return record;
-    }
-  } catch (err) { log?.warn("could not look up stored job", { path, err: String(err) }); }
+  try { return findStoredJob(path, id, name); }
+  catch (err) { log?.warn("could not look up stored job", { path, err: String(err) }); }
+  return undefined;
+}
+
+/** readStoredJobSnapshot that throws when the store cannot be read, so a caller can tell that from a missing job. */
+function findStoredJob(path: string, id: string, name: string): StoredJob | undefined {
+  if (indexedJobProjectionCurrent(path)) {
+    const selection = { ids: new Set([id]), names: new Set([name]) };
+    const active = readIndexedJobs(path, { ...selection, active: true }).jobs.find(isStoredJob);
+    if (active) return active;
+    return readIndexedJobs(path, selection).jobs.find(record => isStoredJob(record) && record.status !== "running") as StoredJob | undefined;
+  }
+  const current = activeJobSnapshot(path);
+  for (const record of current.values()) if (record.id === id || record.name === name) return record;
+  for (const record of readArchivedJobSnapshot(path, { ids: new Set([id]), names: new Set([name]) }).jobs) {
+    if (isStoredJob(record) && record.status !== "running" && !current.has(record.id) && (record.id === id || record.name === name)) return record;
+  }
   return undefined;
 }
 

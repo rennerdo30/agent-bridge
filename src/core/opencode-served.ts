@@ -6,7 +6,7 @@ import { markerSafe, opencodePermissionText } from "./approval-display.js";
 import { checkDepthPublic, childEnvPublic, DelegateError, killTree, trackChild, resolveBinary, unwrapNpmShim, opencodeVersion, OPENCODE_READ_ONLY_TOOLS, type DelegateRequest, type DelegateResult } from "./delegate.js";
 import { createOpencodeNativeToolPlugin, OPENCODE_NATIVE_ACTION_PREFIX, OPENCODE_NATIVE_GATE_ID, opencodeNativeGateReportError, parseOpencodeVersion, unknownOpencodeVersionMessage, type OpencodeNativeAccess } from "./opencode-native-tools.js";
 import { progressEventHandler } from "./progress.js";
-import { boundedDetail, type PermissionDecision, type PermissionRequest } from "./relay.js";
+import { boundedDetail, requestIdentity, type PermissionDecision, type PermissionRequest } from "./relay.js";
 
 /**
  * opencode with permission forwarding. `opencode run` answers every permission request itself (rejects
@@ -130,10 +130,25 @@ function mcpToolPrefix(server: string): string {
 export function opencodePermissionRequest(p: Json, mcpServers: string[], cwd: string): PermissionRequest {
   const permission = String(p.permission ?? "unknown");
   const detail = permissionDetail(p);
-  if (permission.startsWith(OPENCODE_NATIVE_ACTION_PREFIX)) return { agent: "opencode", tool: permission, ...boundedDetail(markerSafe(detail)), cwd };
+  const exact = permissionExactness(p, permission);
+  if (permission.startsWith(OPENCODE_NATIVE_ACTION_PREFIX)) return { agent: "opencode", tool: permission, ...boundedDetail(markerSafe(detail)), cwd, ...exact };
   const server = [...mcpServers].sort((a, b) => b.length - a.length).find((s) => permission.startsWith(mcpToolPrefix(s)));
-  if (server) return { agent: "opencode", tool: `mcp:${server}`, ...boundedDetail(markerSafe(`${permission}: ${detail}`)), cwd };
-  return { agent: "opencode", tool: permission, ...boundedDetail(permissionText(p)), cwd };
+  if (server) return { agent: "opencode", tool: `mcp:${server}`, ...boundedDetail(markerSafe(`${permission}: ${detail}`)), cwd, ...exact };
+  return { agent: "opencode", tool: permission, ...boundedDetail(permissionText(p)), cwd, ...exact };
+}
+
+/** opencode permissions that change files: always asked, never reused (AB-402). */
+const OPENCODE_FILE_CHANGES: ReadonlySet<string> = new Set(["edit", "write", "patch", "multiedit", "apply_patch"]);
+/** Per-request bookkeeping in a `permission.asked` event; everything else is part of what is approved. */
+const OPENCODE_VOLATILE = new Set(["id", "sessionID", "messageID", "callID", "time"]);
+
+/** The exact identity of a permission request: the whole event except its bookkeeping (AB-402). */
+function permissionExactness(p: Json, permission: string): Pick<PermissionRequest, "identity" | "inexact"> {
+  if (OPENCODE_FILE_CHANGES.has(permission)) return { inexact: true };
+  const fields = Object.fromEntries(Object.entries(p as Record<string, unknown>).filter(([key, value]) => !OPENCODE_VOLATILE.has(key)
+    // The calling tool reference ({ messageID, callID }) names the call, not the request.
+    && !(key === "tool" && value && typeof value === "object" && Object.keys(value).every((k) => k === "messageID" || k === "callID"))));
+  return { identity: requestIdentity({ source: "opencode", ...fields, permission }) };
 }
 
 function permissionDetail(p: Json): string {
