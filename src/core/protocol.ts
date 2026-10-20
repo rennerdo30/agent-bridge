@@ -295,6 +295,8 @@ export interface RequestMap {
   projectMain: [{ to: string }, PeerInfo];
   handoffSubagents: [import("./job-handoff.js").HandoffArgs, import("./job-handoff.js").HandoffReceipt];
   jobAuthority: [{ job: string }, import("../mcp/jobs.js").Job | null];
+  /** Local authenticated operation; never relayed to a paired PC and never automatically replayed. */
+  jobChecklist: [import("./checklists.js").JobChecklistRequest, import("./checklists.js").JobChecklistResult];
   jobRecipient: [{ job: string }, string];
   inlineJobControl: [{ job: string; control: import("../mcp/jobs.js").RunnerControl }, { sent: boolean }];
   inlineJobReport: [BridgeMessage, { saved: boolean }];

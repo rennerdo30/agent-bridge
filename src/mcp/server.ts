@@ -17,6 +17,9 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import type { CallToolResult, ServerNotification } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { isRecord } from "../core/json-store.js";
+import { readJsonSnapshot } from "../core/file-cache.js";
+import { indexedJobProjectionCurrent, readIndexedJobs } from "../core/job-archive-index.js";
+import { readArchivedJobSnapshot } from "../core/job-archive.js";
 import { CLAUDE_PERMISSION_MODES, CODEX_APPROVALS_REVIEWERS, CODEX_SANDBOXES, defaultPeerName, loadConfig, parseAgentKind, saveConfigValue, watchConfig, type BridgeConfig, MODEL_NAME_PATTERN } from "../core/config.js";
 import { canonicalProjectRoot } from "../core/project-identity.js";
 import {
@@ -89,8 +92,8 @@ import { boundMcpTexts, fitsMcpResult, longestFittingPrefix, messageBodyPage, pa
 import type { ProjectJobSummary } from "../core/project-job-summary.js";
 import {
   changeProjectChecklist, checklistSummary, cleanChecklistInputs, CHECKLIST_LIMITS, formatChecklist, JOB_ITEM_STATUSES, peersChecklistText,
-  projectChecklistKey, proposeJobChecklist, readChecklists, readJobChecklist, readProjectChecklist, seedJobChecklist, summaryText,
-  superviseJobChecklist, supervisorRevision, updateJobChecklistAsJob, type ChecklistInput, type ChecklistItem, type JobItemStatus, type ProjectChecklistItem,
+  projectChecklistKey, readChecklists, readJobChecklist, readProjectChecklist, seedJobChecklist, summaryText,
+  accessJobChecklist, changeJobChecklistAsJob, supervisorRevision, type ChecklistInput, type ChecklistItem, type JobItemStatus, type ProjectChecklistItem,
 } from "../core/checklists.js";
 
 export { DELEGATED_JOB_NOTE } from "./delegate-run.js";
@@ -749,6 +752,10 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
     return jobs.find(ref, false);
   };
   const { node, log, cfg, home } = ctx;
+  // The only broker-free exception is this process's established private delegated coordinator.
+  const privateChecklistLineage = !node && ctx.parent && ctx.jobs instanceof JobManager && ctx.childInbox instanceof LocalCoordinator &&
+    ctx.childInbox.name === process.env[PARENT_JOB_ENV] && ctx.childInbox.currentSessionId === process.env[ROOT_SESSION_ENV]
+    ? { parentJob: ctx.childInbox.name, rootSession: ctx.childInbox.currentSessionId, rootName: process.env[ROOT_NAME_ENV] || ctx.parent.name } : undefined;
   const mailScopes = ctx.agent === "claude" && node ? ctx.claudeMailScopes ??= new ClaudeMailScopes() : undefined;
   const mailScopeSchema: Record<string, z.ZodOptional<z.ZodString>> = mailScopes ? { _bridge_scope: z.string().optional().describe("Internal host-mod capability; never supply manually") } : {};
   const waits = new MessageWaitStore(ctx.home);
@@ -2207,12 +2214,46 @@ ${res.text || t("delegate.empty")}`, res.isError);
     },
     guarded("job_checklist", async (a: { job: string; get?: boolean; add?: ChecklistInput[]; edit?: { id: string; text?: string; required?: boolean }[];
       require?: string[]; unrequire?: string[]; close?: string[]; approve?: string[]; reject?: string[]; note?: string }) => {
-      const job = await findJob(a.job);
-      if (!job || job.name !== a.job) throw new BridgeError("bad_request", "No job with that name is owned by this session.");
-      if (job.remote) throw new BridgeError("bad_request", CHECKLIST_REMOTE);
       const changing = Boolean(a.add || a.edit || a.require || a.unrequire || a.close || a.approve || a.reject);
       if (a.note !== undefined && !(a.close || a.approve || a.reject)) throw new BridgeError("bad_request", "A note goes with close, approve or reject.");
-      const items = changing ? superviseJobChecklist(ctx.home, job.name, a, rc.me()) : readJobChecklist(ctx.home, job.name);
+      let job: { name: string; status: string; agent: string }, items: ChecklistItem[];
+      if (node) {
+        // The broker owns the final authorization and transaction. Unavailable/old brokers fail closed, with no local fallback.
+        ({ job, items } = await node.jobChecklist(a));
+      } else {
+        if (!privateChecklistLineage) throw new BridgeError("unauthorized", "Checklist access requires an authenticated broker or this job's private delegated coordinator.");
+        const owned = await findJob(a.job);
+        if (!owned || owned.name !== a.job) throw new BridgeError("unauthorized", "No direct child with that exact identity is owned by this coordinator.");
+        const path = join(home, JOBS_FILE), lineage = privateChecklistLineage;
+        let durableJob: { name: string; status: string; agent: string } | undefined;
+        const authorize = () => {
+          // Read current durable authority inside admission, never a cached JobManager/shared grant.
+          let rows: unknown[];
+          const selected = { ids: new Set([owned.id]), names: new Set([owned.name]) };
+          if (indexedJobProjectionCurrent(path)) {
+            const active = readIndexedJobs(path, { ...selected, active: true }).jobs;
+            rows = active.length ? active : readIndexedJobs(path, selected).jobs.filter(row => row.status !== "running");
+          } else {
+            const data = readJsonSnapshot(path).value;
+            const active = Array.isArray(data) ? data : isRecord(data) && Array.isArray(data.jobs) ? data.jobs : null;
+            if (!active) throw new BridgeError("unauthorized", "Private checklist authority store is unavailable.");
+            const matches = active.filter(row => isRecord(row) && (row.id === owned.id || row.name === owned.name));
+            rows = matches.length ? matches : readArchivedJobSnapshot(path, selected).jobs.filter(row => row.status !== "running");
+          }
+          const row = rows.findLast(value => isRecord(value) && (value.id === owned.id || value.name === owned.name));
+          if (!isRecord(row) || row.remote || row.id !== owned.id || row.name !== a.job || row.agent !== owned.agent ||
+              !Number.isSafeInteger(row.startedAt) || Number(row.startedAt) <= 0 || row.startedAt !== owned.startedAt ||
+              !["running", "done", "failed", "cancelled", "interrupted", "paused"].includes(String(row.status)) ||
+              !Number.isSafeInteger(row.metadataVersion) || Number(row.metadataVersion) <= 0 || row.metadataVersion !== owned.metadataVersion ||
+              row.owner !== lineage.parentJob || row.parentJob !== lineage.parentJob || row.rootSession !== lineage.rootSession ||
+              row.supervisor !== lineage.rootSession || row.rootName !== lineage.rootName)
+            throw new BridgeError("unauthorized", "Current durable authority does not name this coordinator's exact direct child.");
+          durableJob = { name: owned.name, status: String(row.status), agent: owned.agent };
+        };
+        items = accessJobChecklist(home, owned.name, a, lineage.parentJob, authorize);
+        if (!durableJob) throw new BridgeError("unauthorized", "Private checklist authority is unavailable.");
+        job = durableJob;
+      }
       if (!items.length) return text(`${job.name} has no checklist. Add items with job_checklist(job="${job.name}", add=[{ text: "..." }]).`);
       const summary = checklistSummary(items);
       return text([`${changing ? "Checklist updated" : "Checklist"} of ${job.name}: ${summaryText(summary)}${summary.requiredOpen ? `; ${summary.requiredOpen} required open` : ""}.`,
@@ -2295,9 +2336,7 @@ ${res.text || t("delegate.empty")}`, res.isError);
       },
       guarded("checklist", async (a: { update?: { id: string; status: JobItemStatus; note?: string }[]; propose?: { text: string; why?: string }[] }) => {
         if (!jobName) throw new BridgeError("bad_request", "This session is not a bridge job; it has no checklist.");
-        const blocked = a.update?.length ? updateJobChecklistAsJob(ctx.home, jobName, a.update).blocked : [];
-        const proposed = a.propose?.length ? proposeJobChecklist(ctx.home, jobName, a.propose).proposed : [];
-        const items = readJobChecklist(ctx.home, jobName);
+        const { blocked, proposed, items } = changeJobChecklistAsJob(ctx.home, jobName, a);
         if (!items.length) return text("You have no checklist for this task.");
         const changed = Boolean(a.update?.length || a.propose?.length);
         const lines = [`${changed ? "Checklist updated" : "Nothing changed"}. Progress: ${summaryText(checklistSummary(items))}.`, formatChecklist(items),

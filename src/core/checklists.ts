@@ -5,6 +5,7 @@ import { existingMetadataDb, metadataDb, physicalMetadataPath } from "./metadata
 import { canonicalProjectRoot, physicalPath, projectKey } from "./project-identity.js";
 import { BridgeError } from "./protocol.js";
 import { storageLease } from "./storage-lock.js";
+import { z } from "zod";
 
 /**
  * AB-428: job checklists owned by the bridge. bridge.db is the single source of truth; only agent-bridge's MCP tools
@@ -49,6 +50,20 @@ export interface SupervisorChange {
   reject?: string[];
   note?: string;
 }
+
+const itemSchema = z.strictObject({ text: z.string().min(1).max(CHECKLIST_LIMITS.text), required: z.boolean().optional() });
+const idsSchema = z.array(z.string().regex(/^c\d{1,4}$/)).min(1).max(CHECKLIST_LIMITS.batch);
+/** The local broker boundary independently validates every argument, including nested unknown keys. */
+export const jobChecklistRequestSchema = z.strictObject({
+  job: z.string().min(1).max(80), get: z.boolean().optional(),
+  add: z.array(itemSchema).min(1).max(CHECKLIST_LIMITS.items).optional(),
+  edit: z.array(z.strictObject({ id: z.string().regex(/^c\d{1,4}$/), text: z.string().min(1).max(CHECKLIST_LIMITS.text).optional(), required: z.boolean().optional() })).min(1).max(CHECKLIST_LIMITS.batch).optional(),
+  require: idsSchema.optional(), unrequire: idsSchema.optional(), close: idsSchema.optional(), approve: idsSchema.optional(), reject: idsSchema.optional(),
+  note: z.string().max(CHECKLIST_LIMITS.note).optional(),
+});
+export type JobChecklistRequest = z.infer<typeof jobChecklistRequestSchema>;
+export interface JobChecklistResult { job: { name: string; status: string; agent: string }; items: ChecklistItem[] }
+export const changesJobChecklist = (change: SupervisorChange): boolean => Boolean(change.add || change.edit || change.require || change.unrequire || change.close || change.approve || change.reject);
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS job_checklist (
@@ -188,7 +203,17 @@ function requireIds(items: ChecklistItem[], ids: readonly string[], allowed: (it
 
 /** The job's own ticks. A job never adds, deletes or un-requires items; a required item is skipped only with a note. */
 export function updateJobChecklistAsJob(home: string, job: string, updates: readonly { id: string; status: JobItemStatus; note?: string }[]): { items: ChecklistItem[]; blocked: ChecklistItem[] } {
-  if (!updates.length) return { items: readJobChecklist(home, job), blocked: [] };
+  return changeJobChecklistAsJob(home, job, { update: updates });
+}
+
+/** Ticks and proposals are one atomic batch: an invalid proposal cannot consume a blocked transition's question. */
+export function changeJobChecklistAsJob(home: string, job: string, change: {
+  update?: readonly { id: string; status: JobItemStatus; note?: string }[];
+  propose?: readonly { text: string; why?: string }[];
+}): { items: ChecklistItem[]; blocked: ChecklistItem[]; proposed: ChecklistItem[] } {
+  const updates = change.update ?? [], proposals = change.propose ?? [];
+  if (!updates.length && !proposals.length) return { items: readJobChecklist(home, job), blocked: [], proposed: [] };
+  const clean = proposals.map(p => ({ text: cleanText(p.text, "A proposed item", CHECKLIST_LIMITS.text), why: p.why === undefined ? "" : cleanText(p.why, "A reason", CHECKLIST_LIMITS.note, true) }));
   const db = writable(home);
   return transaction(home, db, () => {
     const items = jobRows(db, job);
@@ -203,27 +228,33 @@ export function updateJobChecklistAsJob(home: string, job: string, updates: read
       if (u.status === "blocked" && item.status !== "blocked") blocked.push({ ...item, status: "blocked", note });
       update.run(u.status, note, now, job, job, item.id);
     });
-    return { items: jobRows(db, job), blocked };
+    const pending = items.filter(i => i.status === "proposed").length;
+    if (pending + clean.length > CHECKLIST_LIMITS.proposals) bad(`At most ${CHECKLIST_LIMITS.proposals} proposals can wait for the supervisor at once.`);
+    const proposed = clean.length ? insertItems(db, job, clean.map(p => ({ ...p, required: false, source: "job" as const, status: "proposed" as const })), job, now, 0) : [];
+    return { items: jobRows(db, job), blocked, proposed };
   });
 }
 
 /** A job's proposals: stored as "proposed" until the supervisor approves or rejects them. */
 export function proposeJobChecklist(home: string, job: string, proposals: readonly { text: string; why?: string }[]): { items: ChecklistItem[]; proposed: ChecklistItem[] } {
-  if (!proposals.length) return { items: readJobChecklist(home, job), proposed: [] };
-  const clean = proposals.map(p => ({ text: cleanText(p.text, "A proposed item", CHECKLIST_LIMITS.text), why: p.why === undefined ? "" : cleanText(p.why, "A reason", CHECKLIST_LIMITS.note, true) }));
-  const db = writable(home);
-  return transaction(home, db, () => {
-    const pending = jobRows(db, job).filter(i => i.status === "proposed").length;
-    if (pending + clean.length > CHECKLIST_LIMITS.proposals) bad(`At most ${CHECKLIST_LIMITS.proposals} proposals can wait for the supervisor at once.`);
-    const proposed = insertItems(db, job, clean.map(p => ({ ...p, required: false, source: "job" as const, status: "proposed" as const })), job, Date.now(), 0);
-    return { items: jobRows(db, job), proposed };
-  });
+  return changeJobChecklistAsJob(home, job, { propose: proposals });
+}
+
+/** Authorization is synchronous and repeated after the storage lease/transaction is admitted. No IO await may intervene. */
+export function accessJobChecklist(home: string, job: string, change: SupervisorChange, by: string, authorize: () => void): ChecklistItem[] {
+  if (changesJobChecklist(change)) return superviseJobChecklist(home, job, change, by, authorize);
+  authorize();
+  const db = readable(home);
+  if (!db) return [];
+  return transaction(home, db, () => { authorize(); return jobRows(db, job); });
 }
 
 /** The supervisor's changes, applied together or not at all. */
-export function superviseJobChecklist(home: string, job: string, change: SupervisorChange, by: string): ChecklistItem[] {
+export function superviseJobChecklist(home: string, job: string, change: SupervisorChange, by: string, authorize?: () => void): ChecklistItem[] {
+  authorize?.();
   const db = writable(home);
   return transaction(home, db, () => {
+    authorize?.();
     const now = Date.now(), note = change.note === undefined ? undefined : cleanText(change.note, "A note", CHECKLIST_LIMITS.note, true);
     const set = (id: string, fields: Record<string, string | number>) => {
       const keys = Object.keys(fields);

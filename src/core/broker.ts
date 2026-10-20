@@ -74,6 +74,7 @@ import { readNetworkConfig, writeNetworkConfig, type NetworkConfig } from "../ne
 import { z } from "zod";
 import { basename, dirname, join } from "node:path";
 import { ProjectGroups } from "./project-groups.js";
+import { accessJobChecklist, jobChecklistRequestSchema } from "./checklists.js";
 import { recoverJobRecordAsync, type RecoveryRefusal } from "./job-recovery.js";
 import { findHistoryJob, selectHistoryJobs } from "./run-history.js";
 import { pageProjectJobSummaries, PROJECT_JOB_SUMMARY_PAGE_MAX } from "./project-job-summary.js";
@@ -549,6 +550,31 @@ export class Broker {
         const peer = this.requirePeer(c), job = this.currentJobAuthority(await this.jobForControl(peer, a.job));
         if (!job || !this.groups.canControl(peer, job, this.localPeers())) return null;
         return job as unknown as import("../mcp/jobs.js").Job;
+      },
+      jobChecklist: async (c, a) => {
+        const parsed = jobChecklistRequestSchema.safeParse(a);
+        if (!parsed.success || parsed.data.note !== undefined && !(parsed.data.close || parsed.data.approve || parsed.data.reject))
+          throw new BridgeError("bad_request", "Invalid checklist request. No checklist operation applied.");
+        const caller = () => {
+          if (!c.authed || !c.registered || !this.conns.has(c) || c.retired || c.socket.destroyed || c.peer?.host)
+            throw new BridgeError("unauthorized", "Checklist access requires a current authenticated local registration.");
+          return this.requirePeer(c);
+        };
+        const { job: name, ...change } = parsed.data;
+        const recovered = await this.jobForControl(caller(), name);
+        // Re-read registration and durable job authority after the final await, and again in transaction admission.
+        // A fresh group reader also observes settings/path changes during admission, rather than a cached dispatch grant.
+        let current: Record<string, unknown> | undefined;
+        const authorize = () => {
+          const peer = caller();
+          current = this.currentJobAuthority(recovered);
+          if (!current || current.name !== name || current.remote || !this.jobsPath ||
+              !new ProjectGroups(dirname(this.jobsPath)).canControl(peer, current, this.localPeers()))
+            throw new BridgeError("unauthorized", "Current authority does not allow this checklist operation.");
+        };
+        authorize();
+        const items = accessJobChecklist(dirname(this.jobsPath!), name, change, caller().name, authorize);
+        return { job: { name, status: String(current!.status), agent: String(current!.agent) }, items };
       },
       jobRecipient: async (c, a) => {
         const peer = this.requirePeer(c), job = this.currentJobAuthority(await this.jobForControl(peer, a.job));

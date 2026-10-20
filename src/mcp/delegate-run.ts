@@ -144,6 +144,23 @@ export async function runDelegate(
   rc: RunContext, target: CodingAgent, a: DelegateArgs, signal: AbortSignal,
   onProgress: ((message: string) => void) | undefined, background: boolean, job?: Job,
 ): Promise<RunResult> {
+  try { return await runDelegateTurn(rc, target, a, signal, onProgress, background, job); }
+  catch (error) {
+    // Cover setup, root admission, continuation preparation and provider failures at one boundary.
+    // Keep the original error object/code and cancellation state; required items are reported, never a new failure.
+    if (error instanceof Error) {
+      const checklist = checklistReport(jobChecklist(rc, a._job ?? job?.name));
+      if (checklist) error.message += `\n\n${checklist}`;
+      error.message = displayPathText(error.message);
+    }
+    throw error;
+  }
+}
+
+async function runDelegateTurn(
+  rc: RunContext, target: CodingAgent, a: DelegateArgs, signal: AbortSignal,
+  onProgress: ((message: string) => void) | undefined, background: boolean, job?: Job,
+): Promise<RunResult> {
   checkDepth(rc.cfg.maxDelegateDepth);
   if (!job?.rootSession) return runWithWorktreeLease(rc, target, a, signal, onProgress, background, job);
   const budget = new RootConcurrency(rc.home, job.rootSession);
@@ -652,8 +669,6 @@ async function runDelegateInner(
       try { const warning = worktreeLinkWarning(scanWorktreeLinks(linkRoot)); if (warning) err.message += `\n\n${warning}`; }
       catch (scanError) { err.message += `\nWARNING: worktree link inspection failed: ${(scanError as Error).message}`; }
     }
-    const checklist = checklistReport(jobChecklist(rc, a._job));
-    if (checklist && err instanceof Error) err.message += `\n\n${checklist}`;
     if (err instanceof Error) err.message = displayPathText(err.message);
     throw err;
   }
