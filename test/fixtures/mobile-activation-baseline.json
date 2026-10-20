@@ -1,7 +1,7 @@
 {
   "base": "0fed680017e823197b1fb3344598632f5cd219ed",
   "uiSha256": "876fbc073c419e55a05c806b75c4993d254510c444cbd81d70098efbd22fb98c",
-  "pageSha256": "668c9fd947ec754dcd8887e18d235f361239073558920e49f6e8a89afbf3514b",
+  "pageSha256": "6542064f73430711bd862367a546a07ea7b7c14343a5255d0907d926525fa213",
   "updates": {
     "PR-20": {
       "base": "0761d56fe4c36e505550f9b889841fdf8e82c80a",
@@ -38,8 +38,8 @@
       "commit": "cdd6e5a9"
     },
     "AB-428": {
-      "base": "26eec067",
-      "reason": "AB-428: the desktop dashboard script shows a job checklist: buildModel sets g.checklist from the newest run (dashboard-read attaches the bridge checklist to it), runChips adds an escaped \"checklist N/M\" chip with the summary as title, and renderConversation fills a new hidden-by-default #cList element (escaped id, status, text and note per item; cleared in the other views). Five CSS rules (.clist) use existing tokens. Page re-pinned from 3f257b19 to 0eb9a5b7. ui.ts (uiSha256), the mobileDashboardPage addition, the optional mobile page and default mobile activation behavior are unchanged."
+      "base": "42ac9a2b8018fe9abe5adac196b4a770e54290a0",
+      "reason": "PR #106 sequential rebase: verified the ui-page added/removed source lines exactly match original AB-428 14791122..873dd900. Existing finished dashboard row chip and conversation checklist only; escaped values, five existing-token CSS rules, no controls. Main AB-417 approvalFlags and guard changes remain. Recomputed page hash using the unchanged mobile-owner-startup normalizer: 668c9fd947ec754dcd8887e18d235f361239073558920e49f6e8a89afbf3514b -> 6542064f73430711bd862367a546a07ea7b7c14343a5255d0907d926525fa213. ui.ts, mobileDashboardPage, all other pins, normalizers/assertions, mobile activation and UI readiness behavior are unchanged. Parent must review this attributable pin delta before merge."
     }
   }
 }

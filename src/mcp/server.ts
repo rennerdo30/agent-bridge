@@ -1694,15 +1694,21 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
   };
   const keep = (a: DelegateArgs): Record<string, unknown> => Object.fromEntries(KEPT_ARGS.filter((k) => a[k] !== undefined).map((k) => [k, a[k]]));
   /** AB-428: refuse a bad checklist before anything starts; remote jobs have none. */
-  const checkChecklist = (checklist: ChecklistArg | undefined, host: string | undefined) => {
+  const checkChecklist = (checklist: ChecklistArg | undefined, a: Pick<DelegateArgs, "host" | "cwd">) => {
+    const { host } = a;
     if (host && Array.isArray(checklist) && checklist.length) throw new BridgeError("bad_request", CHECKLIST_REMOTE);
-    if (Array.isArray(checklist)) cleanChecklistInputs(checklist);
+    const parentItems = Array.isArray(checklist) ? cleanChecklistInputs(checklist) : [];
+    const key = host || checklist === "none" ? null : projectChecklistKey(a.cwd || ctx.cwd());
+    const projectItems = key ? readProjectChecklist(ctx.home, key) : [];
+    if (parentItems.length + projectItems.length > CHECKLIST_LIMITS.items)
+      throw new BridgeError("bad_request", `A job's checklist has at most ${CHECKLIST_LIMITS.items} items, including the project checklist.`);
+    return { key, projectItems };
   };
   /** Store the job's checklist (with the project checklist of its folder); returns a line for the caller. */
-  const seedChecklist = (jobName: string, checklist: ChecklistArg | undefined, a: DelegateArgs): string => {
+  const seedChecklist = (jobName: string, checklist: ChecklistArg | undefined, a: DelegateArgs, prepared: ReturnType<typeof checkChecklist>): string => {
     if (a.host) return "";
     try {
-      const items = seedJobChecklist(ctx.home, jobName, checklist, checklist === "none" ? null : projectChecklistKey(a.cwd || ctx.cwd()), rc.me());
+      const items = seedJobChecklist(ctx.home, jobName, checklist, prepared.key, rc.me(), prepared.projectItems);
       if (!items.length) return "";
       const fromProject = items.filter((i) => i.source === "project").length;
       return `\nChecklist: ${items.length} item(s)${fromProject ? `, ${fromProject} from the project checklist` : ""}; peers shows its progress, job_checklist changes it.`;
@@ -1826,7 +1832,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
       },
       guarded(askName, async ({ checklist, ...input }: DelegateArgs & { checklist?: ChecklistArg }, extra) => {
         let a: DelegateArgs = input;
-        checkChecklist(checklist, a.host);
+        const preparedChecklist = checkChecklist(checklist, a);
         if (target === "codex" && !a.host) a = { ...a, native_subagents: a.native_subagents ?? cfg.codexSubagents };
         if (a.host && (!a.cwd || a.send_to?.length)) throw new BridgeError("bad_request", "Remote jobs require an absolute remote cwd; send_to is local-only.");
         if (a.host) {
@@ -1840,7 +1846,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
         // Visible in peers while it runs (the caller is blocked, but its coordinator may ask).
         const tracked = ctx.jobs?.track(target, a.model ?? defaultModel, a.prompt, resumeFor(a), keep(a));
         if (tracked) { seedUsage(tracked.job, usage); ctx.jobs?.persist(); }
-        const checklistLine = tracked ? seedChecklist(tracked.job.name, checklist, a) : "";
+        const checklistLine = tracked ? seedChecklist(tracked.job.name, checklist, a, preparedChecklist) : "";
         if (a.host && tracked) {
           tracked.job.remote = { host: a.host, name: `${target}-job-${tracked.job.id}` };
           ctx.jobs!.persist();
@@ -1903,7 +1909,7 @@ ${res.text || t("delegate.empty")}`, res.isError);
         inputSchema: { ...schema, title: schema.title.optional().describe("A short title, 3-7 words. Optional: if omitted, derived from the prompt's first nonempty line and noted in the result.") },
       },
       guarded(spawnName, async ({ checklist, ...input }: Omit<DelegateArgs, "title"> & { title?: string; checklist?: ChecklistArg }) => {
-        checkChecklist(checklist, input.host);
+        const preparedChecklist = checkChecklist(checklist, input);
         const derivedTitle = input.title === undefined;
         let a: DelegateArgs = { ...input, title: input.title ?? deriveJobTitle(input.prompt, MAX_TITLE_CHARS) };
         if (target === "codex" && !a.host) a = { ...a, native_subagents: a.native_subagents ?? cfg.codexSubagents };
@@ -1917,7 +1923,7 @@ ${res.text || t("delegate.empty")}`, res.isError);
         const job = jobs.start(target, a.model ?? defaultModel, a.prompt, background((job) => { seedUsage(job, usage); return { ...a, _job: job.name }; }, a), resumeFor(a), keep(a));
         seedUsage(job, usage);
         jobs.persist();
-        const checklistLine = seedChecklist(job.name, checklist, a);
+        const checklistLine = seedChecklist(job.name, checklist, a, preparedChecklist);
         const cwd = a.cwd || ctx.cwd();
         const access = a.access ?? (a.worktree || isBridgeWorktree(cwd, ctx.home) ? "edit" : null);
         // Exact target options (sandbox, permission_mode, auto_approve, bypass_permissions) say it themselves.

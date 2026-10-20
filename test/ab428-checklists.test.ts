@@ -1,4 +1,5 @@
-import { mkdirSync, readdirSync, readFileSync, symlinkSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import * as sqlite from "node:sqlite";
 import { DatabaseSync } from "node:sqlite";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -13,12 +14,53 @@ import { CODING_AGENTS } from "../src/core/protocol.js";
 import {
   changeProjectChecklist, checklistReport, CHECKLIST_LIMITS, projectChecklistKey, readJobChecklist, readProjectChecklist,
   sanitizeChecklistText, seedJobChecklist, superviseJobChecklist,
+  readChecklists,
 } from "../src/core/checklists.js";
+import { listRuns } from "../src/core/dashboard-read.js";
 import { runDelegate, type DelegateArgs, type RunContext } from "../src/mcp/delegate-run.js";
 import type { Job } from "../src/mcp/jobs.js";
 import { instructionsFor, registerTools, type ServerContext } from "../src/mcp/server.js";
 import { DELEGATION_TARGETS } from "../src/mcp/targets.js";
 import { makeEnv, type TestEnv } from "./helpers.js";
+
+vi.mock("node:sqlite", async original => {
+  const actual = await original<typeof import("node:sqlite")>();
+  return { ...actual, DatabaseSync: vi.fn(function (...args: unknown[]) { return Reflect.construct(actual.DatabaseSync, args); }) };
+});
+// These fixtures exercise checklist behavior, not host process discovery or HTTP transport.
+vi.mock("../src/core/process-identity.js", async original => ({
+  ...await original<typeof import("../src/core/process-identity.js")>(),
+  ownProcessIdentity: async () => "fixture-own", parentProcessIdentity: async () => "fixture-parent",
+  processIdentity: () => "fixture-own", readProcessIdentity: async () => "fixture-own",
+  readProcessIdentities: async (pids: number[]) => new Map(pids.map(pid => [pid, "fixture-own"])),
+  readProcessIdentitiesSync: (pids: number[]) => new Map(pids.map(pid => [pid, "fixture-own"])),
+  readProcessNamesSync: () => new Map(), isProcessIdentityAlive: () => true,
+  processStartMs: () => Date.now() - 1000, recordedOwnerAlive: () => true, recordedOwnerLiveness: () => true,
+}));
+vi.mock("../src/core/job-run-index.js", async original => ({
+  ...await original<typeof import("../src/core/job-run-index.js")>(),
+  startBrokerJobRunIndex: async () => {}, stopJobRunBackfill: async () => {},
+}));
+vi.mock("../src/core/job-archive-background.js", () => ({
+  JobArchiveBackground: class { async close() {} repack() {} },
+}));
+vi.mock("../src/core/parent-link.js", async original => {
+  const actual = await original<typeof import("../src/core/parent-link.js")>();
+  const clients = new Map<string, ParentClient>();
+  let next = 0;
+  class FixtureLink extends actual.ParentLink {
+    private readonly key = String(++next);
+    constructor(name: string, onMessage: (body: string, replyTo: string | null, kind?: "note" | "question") => any, ...rest: any[]) {
+      super(name, onMessage, ...rest as [typeof nullLogger]);
+      clients.set(this.key, { name, inbox: async () => [], progress: async () => {},
+        send: async (body, replyTo, kind) => onMessage(body, replyTo ?? null, kind),
+        siblings: { peers: async () => [], send: async () => { throw new Error("unused"); } } });
+    }
+    override async start() {}
+    override childEnv() { return { [actual.PARENT_URL_ENV]: this.key }; }
+  }
+  return { ...actual, ParentLink: FixtureLink, parentFromEnv: (env = process.env) => clients.get(env[actual.PARENT_URL_ENV] ?? "") ?? null };
+});
 
 /** AB-428: bridge-owned job checklists, master approval of new items and the project definition of done. */
 const JOB = "codex-job-0a1b2c3d";
@@ -38,6 +80,8 @@ const job = (name = JOB): Job => ({ id: name.slice(-8), name, agent: "codex", mo
 let env: TestEnv, home: string, project: string, nodes: BridgeNode[];
 beforeEach(() => {
   env = makeEnv(); home = env.home; nodes = [];
+  vi.stubEnv("AGENT_BRIDGE_HISTORY_INGEST", "0");
+  vi.stubEnv("AGENT_BRIDGE_AUTO_BACKUP", "0");
   project = join(home, "repo"); mkdirSync(project, { recursive: true });
 });
 afterEach(async () => { vi.unstubAllEnvs(); vi.restoreAllMocks(); await Promise.all(nodes.map(n => n.stop().catch(() => {}))); closeMetadataDb(home); await env.cleanup(); });
@@ -88,6 +132,52 @@ async function delegatedTurn(owned: Job, during?: (req: { prompt: string; extraE
 }
 
 describe("AB-428 job checklists", () => {
+  it("projects retained checklists read-only and reuses an unchanged dashboard snapshot", () => {
+    seedJobChecklist(home, JOB, [{ text: "Retained step" }], null, "claude-parent");
+    closeMetadataDb(home);
+    const runs = join(home, "runs"); mkdirSync(runs);
+    writeFileSync(join(runs, "fixture.log"), "00:00:00 codex\n00:00:01 finished after 1s · done\n");
+    writeFileSync(join(runs, "fixture.json"), JSON.stringify({ job: JOB, jobStartedAt: 1, by: "claude-parent" }));
+    const opens = vi.mocked(sqlite.DatabaseSync); opens.mockClear();
+    expect(listRuns(home)[0]!.checklist).toMatchObject({ summary: { total: 1, requiredOpen: 1 }, items: [{ text: "Retained step" }] });
+    expect(opens.mock.calls.length).toBeGreaterThan(0);
+    for (const args of opens.mock.calls) expect(args).toEqual([join(home, "bridge.db"), { readOnly: true, timeout: 1000 }]);
+    opens.mockClear();
+    expect(listRuns(home)[0]!.checklist?.summary.requiredOpen).toBe(1);
+    expect(opens).not.toHaveBeenCalled();
+    superviseJobChecklist(home, JOB, { close: ["c1"] }, "claude-parent"); closeMetadataDb(home);
+    expect(listRuns(home)[0]!.checklist).toBeUndefined();
+    expect(readJobChecklist(home, JOB)[0]!.status).toBe("closed");
+  });
+
+  it("does not bootstrap a missing checklist component during projection", () => {
+    const missing = join(home, "missing-store"); mkdirSync(missing);
+    expect(readChecklists(missing, [JOB]).size).toBe(0);
+    expect(existsSync(join(missing, "bridge.db"))).toBe(false);
+    const legacy = new DatabaseSync(join(home, "bridge.db"));
+    legacy.exec("CREATE TABLE retained(value TEXT); INSERT INTO retained VALUES ('keep');"); legacy.close();
+    const before = readFileSync(join(home, "bridge.db"));
+    const opens = vi.mocked(sqlite.DatabaseSync); opens.mockClear();
+    expect(readChecklists(home, [JOB]).size).toBe(0);
+    expect(opens.mock.calls).toEqual([[join(home, "bridge.db"), { readOnly: true, timeout: 1000 }]]);
+    expect(readFileSync(join(home, "bridge.db"))).toEqual(before);
+    opens.mockClear();
+    expect(readChecklists(home, [JOB]).size).toBe(0);
+    expect(opens).not.toHaveBeenCalled();
+    expect(readdirSync(home)).not.toContain(".migration-snapshots");
+  });
+
+  it("rejects a combined project and parent checklist overflow before a job or rows exist", async () => {
+    changeProjectChecklist(home, projectChecklistKey(project)!, { set: Array.from({ length: 30 }, (_, i) => ({ text: `Project ${i}` })) }, "claude-parent");
+    const s = await supervisor();
+    const result = await s.call("spawn_codex", { prompt: "Task", worktree: true,
+      checklist: Array.from({ length: 21 }, (_, i) => ({ text: `Parent ${i}` })) });
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toMatch(/at most 50/);
+    expect(s.start).not.toHaveBeenCalled();
+    expect(readJobChecklist(home, JOB)).toEqual([]);
+  });
+
   it("a spawn with a checklist plus the project checklist puts both in the job's brief and state", async () => {
     changeProjectChecklist(home, projectChecklistKey(project)!, { set: [{ text: "Run npx tsc --noEmit", required: true }] }, "claude-parent");
     const s = await supervisor();

@@ -1,7 +1,7 @@
-import type { DatabaseSync } from "node:sqlite";
-import { existsSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
+import { statSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { existingMetadataDb, metadataDb } from "./metadata-db.js";
+import { existingMetadataDb, metadataDb, physicalMetadataPath } from "./metadata-db.js";
 import { canonicalProjectRoot, physicalPath, projectKey } from "./project-identity.js";
 import { BridgeError } from "./protocol.js";
 import { storageLease } from "./storage-lock.js";
@@ -159,10 +159,11 @@ export function cleanChecklistInputs(items: readonly ChecklistInput[], defaultRe
  * The checklist a new job starts with: the project checklist (unless "none"), then the supervisor's items (required
  * unless required=false). A job that already has a checklist keeps it (a continuation never resets its state).
  */
-export function seedJobChecklist(home: string, job: string, input: readonly ChecklistInput[] | "none" | undefined, project: string | null, by: string): ChecklistItem[] {
+export function seedJobChecklist(home: string, job: string, input: readonly ChecklistInput[] | "none" | undefined, project: string | null, by: string,
+  projectSnapshot?: readonly ProjectChecklistItem[]): ChecklistItem[] {
   const parent = input === "none" ? [] : cleanChecklistInputs(input ?? [], true);
   if (input !== "none" && !parent.length && !project) return readJobChecklist(home, job);
-  const projectItems = input === "none" || !project ? [] : readProjectChecklist(home, project);
+  const projectItems = input === "none" || !project ? [] : projectSnapshot ?? readProjectChecklist(home, project);
   if (!parent.length && !projectItems.length) return readJobChecklist(home, job);
   const db = writable(home);
   return transaction(home, db, () => {
@@ -335,23 +336,50 @@ export function checklistReport(items: readonly ChecklistItem[]): string | null 
     formatChecklist(items)].filter(Boolean).join("\n");
 }
 
-/** Summaries and items of the named jobs that have a checklist (peers and the dashboard). Read-only, never creates the store. */
+type ChecklistProjection = Map<string, { summary: ChecklistSummary; items: ChecklistItem[] }>;
+const projections = new Map<string, { signature: string; names: string; value: ChecklistProjection }>();
+function projectionSignature(file: string): string {
+  return [file, `${file}-wal`].map(path => {
+    try { const s = statSync(path, { bigint: true }); return `${s.dev}:${s.ino}:${s.size}:${s.mtimeNs}:${s.ctimeNs}`; }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return "-"; throw error; }
+  }).join("/");
+}
+
+/** Display projection: short-lived read-only snapshots, with no metadata admission, bootstrap or migrations.
+ * Unchanged polls only stat the database/WAL; copies prevent a view from changing the cached rows. */
 export function readChecklists(home: string, jobs: Iterable<string>): Map<string, { summary: ChecklistSummary; items: ChecklistItem[] }> {
-  const names = [...new Set(jobs)].filter(Boolean);
-  const out = new Map<string, { summary: ChecklistSummary; items: ChecklistItem[] }>();
-  if (!names.length || !existsSync(join(resolve(home), "bridge.db"))) return out;
+  const names = [...new Set(jobs)].filter(Boolean).sort();
+  const out: ChecklistProjection = new Map();
+  if (!names.length) return out;
+  const file = join(resolve(home), "bridge.db"), requested = JSON.stringify(names);
+  let db: DatabaseSync | undefined;
   try {
-    const db = readable(home);
-    if (!db) return out;
-    for (let at = 0; at < names.length; at += 400) {
-      const chunk = names.slice(at, at + 400);
-      const grouped = new Map<string, ChecklistItem[]>();
-      for (const row of db.prepare(`SELECT * FROM job_checklist WHERE job IN (${chunk.map(() => "?").join(",")}) ORDER BY job, seq`).all(...chunk)) {
-        const job = String(row.job), list = grouped.get(job) ?? [];
-        list.push(toItem(row)); grouped.set(job, list);
+    const signature = projectionSignature(file), saved = projections.get(file);
+    if (saved?.signature === signature && saved.names === requested) return structuredClone(saved.value);
+    physicalMetadataPath(file);
+    // Opening a missing store must never create persistent data, even when an outcome worker has not initialized it yet.
+    if (!signature.startsWith("-/")) {
+      db = new DatabaseSync(file, { readOnly: true, timeout: 1000 });
+      db.exec("BEGIN");
+      const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('bridge_components','job_checklist','project_checklist')").all();
+      const admitted = tables.length === 3 && Number(db.prepare("SELECT version FROM bridge_components WHERE name='checklists'").get()?.version) === 1;
+      for (let at = 0; admitted && at < names.length; at += 400) {
+        const chunk = names.slice(at, at + 400);
+        const grouped = new Map<string, ChecklistItem[]>();
+        for (const row of db.prepare(`SELECT * FROM job_checklist WHERE job IN (${chunk.map(() => "?").join(",")}) ORDER BY job, seq`).all(...chunk)) {
+          const job = String(row.job), list = grouped.get(job) ?? [];
+          list.push(toItem(row)); grouped.set(job, list);
+        }
+        for (const [name, items] of grouped) if (items.some(i => ACTIVE.has(i.status) || i.status === "proposed")) out.set(name, { summary: checklistSummary(items), items });
       }
-      for (const [name, items] of grouped) if (items.some(i => ACTIVE.has(i.status) || i.status === "proposed")) out.set(name, { summary: checklistSummary(items), items });
+      db.exec("COMMIT");
+    }
+    // A concurrent writer invalidates the snapshot; the next poll must retry instead of retaining a stale result.
+    if (projectionSignature(file) === signature) {
+      projections.delete(file); projections.set(file, { signature, names: requested, value: structuredClone(out) });
+      if (projections.size > 8) projections.delete(projections.keys().next().value!);
     }
   } catch { /* Display only: a busy or older store shows no checklist rather than failing the listing. */ }
+  finally { db?.close(); }
   return out;
 }
