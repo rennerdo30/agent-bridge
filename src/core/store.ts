@@ -21,6 +21,7 @@ import { configureSqlite, isSqliteBusy, retrySqlite, SQLITE_BUSY_TIMEOUT_MS, SQL
 import { attachStoreCompatibility } from "./store-compatibility-overlay.js";
 import { NativeLifecycleReader, type NativeRouteSnapshot } from "./native-lifecycle-reader.js";
 import { physicalPath } from "./project-identity.js";
+import { t3BindingSchema } from "./t3-identity.js";
 
 import { SQLITE_STORE_VERSION } from "./store-version.js";
 export { SQLITE_STORE_VERSION } from "./store-version.js";
@@ -116,6 +117,10 @@ export function migrateMessageSchema(db: DatabaseSync, file: string, existed: bo
 }
 
 export function registrationIdentity(peer: PeerInfo): string | null {
+  if (peer.frontend) {
+    const bound = t3BindingSchema.parse(peer.frontend);
+    return JSON.stringify([peer.agent, "t3", bound.scope, bound.threadId, peer.name.replace(/-\d+$/, ""), bound.providerInstanceId]);
+  }
   if (peer.jobAgent || !Number.isSafeInteger(peer.agentPid) || !peer.agentPid || peer.agentPid <= 0 || !peer.agentStartedAt) return null;
   let cwd = resolve(peer.cwd);
   try { cwd = physicalPath(cwd); } catch { /* A removed working folder still has a stable absolute spelling. */ }
@@ -490,8 +495,8 @@ export class MessageStore {
     const identity = registrationIdentity(peer);
     if (peer.jobAgent || (!identity && !peer.sessionId)) return [];
     return this.statement(this.db, `SELECT name FROM peer_names JOIN peer_name_owners USING(name,identity)
-      WHERE identity=? OR (session_id=? AND agent=?) GROUP BY name ORDER BY MIN(learned_at) ASC, MIN(peer_names.rowid) ASC`)
-      .all(identity, peer.sessionId, peer.agent).map((r) => String(r.name));
+      WHERE identity=? OR (session_id=? AND agent=? AND (CASE WHEN json_valid(identity) THEN json_extract(identity,'$[1]') END) IS NOT 't3') GROUP BY name ORDER BY MIN(learned_at) ASC, MIN(peer_names.rowid) ASC`)
+      .all(identity, peer.frontend ? null : peer.sessionId, peer.agent).map((r) => String(r.name));
     });
   }
 

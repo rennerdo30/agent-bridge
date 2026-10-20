@@ -2,6 +2,7 @@ import { bundleDirectory } from "./bundle-directory.js";
 import { codexSubagentConfig } from "./codex-subagents.js";
 import { codexExecutionPrompt } from "./codex-env.js";
 import { jobEnvironment } from "./job-environment.js";
+import { withoutT3Context } from "./t3-identity.js";
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { delimiter, dirname, extname, isAbsolute, join, win32 } from "node:path";
@@ -463,7 +464,7 @@ export function childEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv 
     AGENT_BRIDGE_LAUNCH_PLUGIN_ROOT: _parentPlugin, AGENT_BRIDGE_RELAY_URL: _parentRelayUrl,
     AGENT_BRIDGE_RELAY_TOKEN: _parentRelayToken, AGENT_BRIDGE_ANTIGRAVITY_ACCESS: _parentAntigravityAccess,
     AGENT_BRIDGE_ANTIGRAVITY_EDIT_RELAY: _parentAntigravityEditRelay, ...env } = process.env;
-  return jobEnvironment({ ...env, ...extra, [ENV.internal]: "1", [DELEGATE_DEPTH_ENV]: String(currentDelegateDepth() + 1) });
+  return jobEnvironment(withoutT3Context({ ...env, ...extra, [ENV.internal]: "1", [DELEGATE_DEPTH_ENV]: String(currentDelegateDepth() + 1) }));
 }
 
 export function checkDepth(max = Number(process.env[ENV.maxDelegateDepth] ?? DEFAULT_MAX_DELEGATE_DEPTH), env: NodeJS.ProcessEnv = process.env): void {

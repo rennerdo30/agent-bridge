@@ -1,7 +1,7 @@
 {
   "base": "8deb0286773a6b61243caaae237e16227dc2f591",
   "methods": {
-    "src/core/broker.ts:constructor": "d10591980e1ed6b0cac2a60dba2b5e2288362fc79f0a795c9457587349fd3094",
+    "src/core/broker.ts:constructor": "adad444e14f7c40bf1c5ffadc7bb648e9a4ae8f3f02f92bc8514583e81bdad5e",
     "src/core/broker.ts:listen": "bd39e0afecb5a74d76161f26d5923f2c1e41da8cc490ed1448a9260b850ce4b0",
     "src/core/broker.ts:startServices": "07bc9bdb56bea9ae2c5c3f0c89639469f7fa5ccfb0d8e5bc97fc1efbfd93fe2f",
     "src/core/broker.ts:abortStartup": "6132967fa78fd39cff064a581f4f49bb9c1c75b644fba78b291708c58733118c",
@@ -17,6 +17,19 @@
   },
   "uiSha256": "ebdf54b1b23e68246479ded1231d0b2e014a5658cc69f4b8c0281a350dec6b18",
   "updates": {
+    "AB-446": {
+      "base": "4277dc248013b8bc158ac3166974a6c0b07b464f",
+      "initialSourceCommit": "ee1b6144a652ec437140b34d623324c69c97cd08",
+      "changes": [
+        {
+          "method": "src/core/broker.ts:constructor",
+          "previous": "d10591980e1ed6b0cac2a60dba2b5e2288362fc79f0a795c9457587349fd3094",
+          "current": "adad444e14f7c40bf1c5ffadc7bb648e9a4ae8f3f02f92bc8514583e81bdad5e",
+          "normalizedSourceFileSha256": "3f250778881aefbf0e3f1010e08fe10a342d414d38ab3dd195a36182de66c696"
+        }
+      ],
+      "reason": "Owner-authorized AB-446 constructor-only refresh after independent review comment38923 and final source comparison. Only helloT3 registration is added to the constructor; existing hello/auth/mobile handlers, the other 12 method pins, complete startUi source, normalizer and assertions are unchanged. Corrective daemon environment isolation is outside these pinned methods. Failed run39448924739 is retained; hosted CI must recheck acceptance."
+    },
     "AB-280": {
       "base": "00cbe6efced0293804ae0ea50bc4a9caef1d5a7b",
       "methods": [

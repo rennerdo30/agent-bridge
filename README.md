@@ -8,6 +8,8 @@ agent-bridge connects the coding agents on your machine, and on PCs you pair, in
 
 **[Documentation](https://rennerdo30.github.io/agent-bridge/)** · [Install](#install) · [Update](#update) · [Changelog](CHANGELOG.md)
 
+Experimental opt-in host integration: [T3 Code session messaging and T3-owned tasks](docs/t3-code.md) (requires explicitly injected scoped ACP transport).
+
 ![The agent-bridge dashboard: sessions grouped by project, a subagent tree and a live conversation](docs/images/dashboard-session-dark.png)
 
 ## What it does

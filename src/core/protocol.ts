@@ -17,6 +17,7 @@ import type { ConversationRequest, ConversationPage } from "./conversations.js";
 import type { HistorySearch, HistoryResult } from "./history.js";
 import type { TransferProgress, TransferStarted } from "../network/transfers.js";
 import type { DecideArgs, DecisionsArgs, OwnerDecision } from "./decisions.js";
+import type { T3Binding } from "./t3-identity.js";
 
 export type AgentKind = "claude" | "codex" | "opencode" | "antigravity" | "muse" | "other";
 export const AGENT_KINDS: readonly AgentKind[] = ["claude", "codex", "opencode", "antigravity", "muse", "other"];
@@ -82,6 +83,8 @@ export interface PeerInfo {
   agentStartedAt?: string | null;
   /** Agent session / thread id, when known (learned from hooks). */
   sessionId: string | null;
+  /** Explicitly attested frontend thread, separate from the provider-native session ID. */
+  frontend?: T3Binding;
   startedAt: number;
   autoWake: boolean;
   wakeOnDirect?: boolean;
@@ -147,6 +150,7 @@ export interface HelloArgs {
   canHost?: boolean;
 }
 export interface HelloResult {
+  frontend?: T3Binding;
   brokerPid: number;
   brokerVersion?: string;
   /** Final name; may carry a suffix if the requested name was taken. */
@@ -296,6 +300,8 @@ export interface RequestMap {
   inlineJobReport: [BridgeMessage, { saved: boolean }];
   auth: [AuthArgs, { brokerPid: number }];
   hello: [HelloArgs, HelloResult];
+  /** Opt-in host identity requires a broker that understands the binding; never fall back to hello. */
+  helloT3: [HelloArgs, HelloResult];
   send: [SendArgs, SendResult];
   decide: [DecideArgs, { decision: OwnerDecision; deliveredTo: string[] }];
   decisions: [DecisionsArgs, OwnerDecision[]];
