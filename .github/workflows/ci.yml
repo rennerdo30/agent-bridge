@@ -172,14 +172,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: ${{ matrix.node }}
-          cache: npm
-      - run: npm ci
-      - run: npm run typecheck
-      - run: npm run build
-      # "Re-run failed jobs" keeps a successful collect job, so take the newest attempt's inventory.
+      # Use bootstrap Node to select the newest nonfuture inventory before setup or dependencies.
+      # "Re-run failed jobs" keeps a successful collect job and its exact Node patch.
       - name: Download shard inventory
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
@@ -188,11 +182,19 @@ jobs:
       - name: Select shard inventory
         id: collect
         run: node scripts/select-shard-inventory.mjs .agent-bridge-test/inventory ${{ matrix.node }} .agent-bridge-test/ci/shards.json
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ steps.collect.outputs.node-version }}
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+        id: build
       # The released runner retains lane filters, deadlines and worker limits.
       - name: Fast tests
         run: npm test -- --shard=${{ matrix.shard }}/6 --reporter=default --reporter=json --reporter=./scripts/ci-reporter.mjs --outputFile.json=.agent-bridge-test/ci/fast-results.json
       - name: Integration tests
-        if: ${{ !cancelled() && steps.collect.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: npm run test:integration -- --shard=${{ matrix.shard }}/6 --reporter=default --reporter=json --reporter=./scripts/ci-reporter.mjs --outputFile.json=.agent-bridge-test/ci/integration-results.json
       # Known-flaky list: "skipped by known-flaky: N" per lane in the job summary; N must equal the
       # listed tests collected in this job, and every listed test must be reported skipped.
