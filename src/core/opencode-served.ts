@@ -23,6 +23,10 @@ const PASSWORD_BYTES = 24;
 export const OPENCODE_ASK_PERMISSIONS = { edit: "ask", bash: "ask" } as const;
 /** If the session shows no sign of life this long after the prompt, something is wrong (bad model, auth). */
 const START_WATCHDOG_MS = 60_000;
+// A malformed/cyclic ancestry or a stream of unknown sessions cannot cause unbounded discovery.
+const MAX_SESSION_ANCESTRY = 64;
+const MAX_SESSION_LOOKUPS = 256;
+const QUESTION_CANCELLED_FEEDBACK = "This delegated run cannot ask questions. Continue without an answer and state any assumptions.";
 /** Server output kept for error reports; the listen line and a failure's last words fit easily. */
 const SERVE_OUTPUT_TAIL_CHARS = 4_000;
 
@@ -226,6 +230,32 @@ export async function delegateToOpencodeServed(
       const sessionId: string = req.sessionId ?? (await api("POST", "/session", { location: { directory: req.cwd }, ...(model ? { model } : {}) })).id;
       knownSession = sessionId;
       req.onSession?.(sessionId);
+      // V2 noninteractive.ts:141-233 owns root + verified descendants for control requests,
+      // but only the root's text/execution events may settle the delegated answer.
+      const ownership = new Map<string, boolean>([[sessionId, true]]);
+      let lookupsLeft = MAX_SESSION_LOOKUPS;
+      const ownsSession = async (candidate: unknown): Promise<boolean> => {
+        if (typeof candidate !== "string" || !candidate.trim() || candidate === "global") return false;
+        let current = candidate;
+        const visited = new Set<string>();
+        let owned = false;
+        while (visited.size < MAX_SESSION_ANCESTRY) {
+          const cached = ownership.get(current);
+          if (cached !== undefined) { owned = cached; break; }
+          if (visited.has(current) || current === "global" || lookupsLeft <= 0) break;
+          visited.add(current);
+          lookupsLeft--;
+          const info = await api("GET", `/session/${encodeURIComponent(current)}`).catch(() => null);
+          // Bind the response to the queried session; an event's claimed parent is never proof.
+          if (info?.id !== current || typeof info.parentID !== "string" || !info.parentID.trim()) break;
+          current = info.parentID;
+          if (current === sessionId) { owned = true; break; }
+        }
+        if (owned) for (const id of visited) ownership.set(id, true);
+        // A depth-limited/unknown path does not disprove its ancestors' ownership.
+        else if (visited.has(candidate)) ownership.set(candidate, false);
+        return owned;
+      };
       if (req.sessionId && model) await api("POST", `/session/${sessionId}/model`, { model });
       const servers = await api("GET", `/mcp?${new URLSearchParams({ "location[directory]": req.cwd })}`).catch(() => []);
       const mcpServers = Array.isArray(servers) ? servers.map((s: Json) => s.name ?? s.id).filter((name): name is string => typeof name === "string") : [];
@@ -239,17 +269,41 @@ export async function delegateToOpencodeServed(
       let costUsd: unknown = null;
       let succeeded = false;
       let textEvents = 0;
-      let rejectedAtText = -1;
+      let unansweredAtText = -1;
+      let unansweredReason = "";
       let finish: unknown;
       const onEvent = progressEventHandler("opencode", req.onProgress);
       for await (const ev of sse(events.body)) {
         const p = ev.data ?? {};
-        if (p.sessionID !== sessionId) continue;
         if (ev.type === "permission.asked") {
+          if (typeof p.id !== "string" || !p.id || !await ownsSession(p.sessionID)) continue;
           const decision = await req.onPermission(opencodePermissionRequest({ ...p, permission: p.action, patterns: p.resources }, mcpServers, req.cwd));
-          await api("POST", `/session/${sessionId}/permission/${p.id}/reply`, { decision: decision.allow ? "once" : "reject", ...(!decision.allow ? { message: decision.message } : {}) });
-          if (!decision.allow) rejectedAtText = textEvents;
-        } else if (ev.type === "session.text.ended") {
+          await api("POST", `/session/${encodeURIComponent(p.sessionID)}/permission/${encodeURIComponent(p.id)}/reply`, { decision: decision.allow ? "once" : "reject", ...(!decision.allow ? { message: decision.message } : {}) });
+          if (!decision.allow) { unansweredAtText = textEvents; unansweredReason = "permission rejected"; }
+          continue;
+        }
+        if (ev.type === "form.created") {
+          const form = p.form;
+          if (typeof form?.id !== "string" || !form.id || !await ownsSession(form.sessionID)) continue;
+          const continuing = form.metadata?.kind === "question";
+          // protocol/groups/session.ts:856: cancellation is DELETE; feedback is a query field.
+          const query = continuing ? `?${new URLSearchParams({ message: QUESTION_CANCELLED_FEEDBACK })}` : "";
+          try {
+            await api("DELETE", `/session/${encodeURIComponent(form.sessionID)}/form/${encodeURIComponent(form.id)}${query}`);
+          } catch (error) {
+            // Like the CLI, tolerate a form answered/cancelled while its event was in flight.
+            let settled = false;
+            if (error instanceof DelegateError && error.message.endsWith("HTTP 409")) {
+              try { settled = JSON.parse(error.stderrTail)._tag === "FormAlreadySettledError"; } catch { /* not the typed race */ }
+            }
+            if (!settled) throw error;
+          }
+          if (continuing) { unansweredAtText = textEvents; unansweredReason = "question cancelled"; }
+          else failure ??= "opencode form cancelled without an answer";
+          continue;
+        }
+        if (p.sessionID !== sessionId) continue;
+        if (ev.type === "session.text.ended") {
           textEvents++;
           if (lastMessage !== p.assistantMessageID) finish = undefined;
           lastMessage = p.assistantMessageID;
@@ -274,7 +328,7 @@ export async function delegateToOpencodeServed(
       }
       const text = [...(textByMessage.get(lastMessage) ?? [])].sort(([a], [b]) => a - b).map(([, value]) => value).join("");
       failure ??= !succeeded ? "opencode event stream ended before completion"
-        : rejectedAtText >= 0 && textEvents <= rejectedAtText ? "opencode permission rejected without a final response"
+        : unansweredAtText >= 0 && textEvents <= unansweredAtText ? `opencode ${unansweredReason} without a final response`
         : opencodeCompletionError(text, finish ?? "stop");
       if (failure && !text) throw new DelegateError(failure, "failed", "", "", sessionId);
       if (!text && !failure) throw new DelegateError("opencode event stream ended without a response", "failed", "", "", sessionId);

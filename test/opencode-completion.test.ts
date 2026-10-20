@@ -95,6 +95,119 @@ if(process.argv[2]==='run'){
   return { bin, cwd, prompt: "task", timeoutSec: 5, log: nullLogger };
 }
 
+// V2 protocol replay: noninteractive.ts:141-233 handles descendant asks and nested forms
+// before filtering root output. Cancellation is DELETE with query.message, not a JSON body:
+// https://github.com/anomalyco/opencode/blob/v2.0.26/packages/protocol/src/groups/session.ts#L856
+function controlFixture(kind: "form" | "permission", owner: string, outcome = "answer") {
+  const req = fixture(2, "controls");
+  writeFileSync(join(req.cwd, "calls.jsonl"), "");
+  writeFileSync(join(req.cwd, "fake.mjs"), `#!/usr/bin/env node
+import {appendFileSync} from 'node:fs';import {createServer} from 'node:http';
+appendFileSync(new URL('pids',import.meta.url),process.pid+'\\n');
+if(process.argv[2]==='--version'){console.log('opencode v2.0.26');process.exit(0)}
+const kind=${JSON.stringify(kind)},owner=${JSON.stringify(owner)},outcome=${JSON.stringify(outcome)};
+let stream,watchdog;
+const record=value=>appendFileSync(new URL('calls.jsonl',import.meta.url),JSON.stringify(value)+'\\n');
+const emit=(type,data)=>stream.write('data: '+JSON.stringify({type,data})+'\\n\\n');
+const finish=()=>{
+ clearTimeout(watchdog);
+ // Child terminal/text events never settle or contaminate the root result.
+ emit('session.text.ended',{sessionID:'grandchild',assistantMessageID:'child-answer',ordinal:0,text:'WRONG CHILD ANSWER'});
+ emit('session.execution.succeeded',{sessionID:'grandchild'});
+ if(outcome!=='no-final')emit('session.text.ended',{sessionID:'session',assistantMessageID:'final',ordinal:0,text:'Root fallback answer'});
+ emit('session.execution.succeeded',{sessionID:'session'});
+};
+const ask=(type,sessionID,id)=>emit(type==='form'?'form.created':'permission.asked',type==='form'
+ ?{form:{id,sessionID,title:'Question',fields:[],metadata:{kind:outcome==='non-question'?'elicitation':'question'}}}
+ :{id,sessionID,action:'bash',resources:['echo child']});
+const server=createServer(async(request,response)=>{
+ const url=new URL(request.url,'http://fixture'),path=url.pathname;
+ let text='';for await(const chunk of request)text+=chunk;
+ record({method:request.method,path,query:Object.fromEntries(url.searchParams),body:text?JSON.parse(text):null});
+ if(path==='/api/event'){stream=response;response.writeHead(200,{'content-type':'text/event-stream'});response.write(': connected\\n\\n');return}
+ let result={};
+ if(path==='/api/session')result={id:'session'};
+ if(request.method==='GET'&&/^\\/api\\/session\\/[^/]+$/.test(path)){
+  const id=decodeURIComponent(path.split('/').pop());
+  if(id==='unknown'){response.writeHead(404);response.end('{}');return}
+  const parentID=id==='child'?'session':id==='grandchild'?'child':id==='unrelated'?'elsewhere':id==='cycle-a'?'cycle-b':id==='cycle-b'?'cycle-a':id.startsWith('deep')?(Number(id.slice(4))>=80?'session':'deep'+(Number(id.slice(4))+1)):undefined;
+  result={id:id==='mismatch'?'child':id,...(parentID?{parentID}:{})};
+ }
+ if(path.endsWith('/prompt'))setTimeout(()=>{
+  emit('session.text.ended',{sessionID:'session',assistantMessageID:'progress',ordinal:0,text:'Working on it'});
+  for(const foreign of ['unrelated','unknown','mismatch','cycle-a','deep0','global']){
+   ask('form',foreign,'foreign-form');ask('permission',foreign,'foreign-permission');
+  }
+  ask(kind,owner,'owned');
+  watchdog=setTimeout(()=>emit('session.execution.failed',{sessionID:'session',error:{message:'fixture control request was not settled'}}),1500);
+ },5);
+ if(request.method==='DELETE'||path.endsWith('/reply')){
+  const expected='/api/session/'+owner+(kind==='form'?'/form/owned':'/permission/owned/reply');
+  if(path!==expected){response.writeHead(400);response.end('{}');return}
+  if(kind==='form'&&outcome==='cancel-error'){response.writeHead(500);response.end('{}');return}
+  if(kind==='form'&&outcome==='settled'){
+   response.writeHead(409);response.end(JSON.stringify({_tag:'FormAlreadySettledError',id:'owned',message:'already answered'}));
+  }else{response.writeHead(204);response.end()}
+  setTimeout(finish,5);return;
+ }
+ response.end(JSON.stringify({data:result}));
+});
+server.listen(0,'127.0.0.1',()=>console.log('listening on http://127.0.0.1:'+server.address().port));
+setTimeout(()=>process.exit(2),8000);
+`);
+  return { ...req, calls: () => readFileSync(join(req.cwd, "calls.jsonl"), "utf8").trim().split("\n").map(line => JSON.parse(line)) };
+}
+
+for (const sessionId of [undefined, "session"]) {
+  for (const owner of ["session", "grandchild"]) {
+    it(`cancels owned ${owner} question forms with feedback (${sessionId ? "resumed" : "initial"})`, async () => {
+      const req = controlFixture("form", owner);
+      expect(await delegateToOpencode({ ...req, autoApprove: true, sessionId })).toMatchObject({ text: "Root fallback answer", isError: false });
+      const controls = req.calls().filter(c => c.method === "DELETE" || c.path.endsWith("/reply"));
+      expect(controls).toEqual([{ method: "DELETE", path: `/api/session/${owner}/form/owned`,
+        query: { message: expect.stringMatching(/cannot.*question/i) }, body: null }]);
+      const lookups = req.calls().filter(c => c.method === "GET" && c.path.startsWith("/api/session/"));
+      expect(lookups.filter(c => /\/deep\d+$/.test(c.path)).length).toBeLessThan(80);
+      expect(lookups.filter(c => c.path.endsWith("/cycle-a"))).toHaveLength(1);
+    });
+  }
+  for (const autoApprove of [true, false]) {
+    it(`binds native child permission ${autoApprove ? "allow" : "deny"} to its owner (${sessionId ? "resumed" : "initial"})`, async () => {
+      const req = controlFixture("permission", "grandchild");
+      expect(await delegateToOpencode({ ...req, autoApprove, sessionId })).toMatchObject({ text: "Root fallback answer", isError: false });
+      expect(req.calls().filter(c => c.method === "DELETE" || c.path.endsWith("/reply"))).toEqual([
+        { method: "POST", path: "/api/session/grandchild/permission/owned/reply", query: {},
+          body: autoApprove ? { decision: "once" } : { decision: "reject", message: "This delegated run cannot request approval." } },
+      ]);
+    });
+  }
+}
+
+it("relays owned child permissions through the existing approval callback only", async () => {
+  const req = controlFixture("permission", "child");
+  const questions: string[] = [];
+  expect(await delegateToOpencodeServed({ ...req, onPermission: async r => {
+    questions.push(r.tool);return { allow: false, message: "Supervisor declined child shell" };
+  } })).toMatchObject({ text: "Root fallback answer", isError: false });
+  expect(questions).toEqual(["bash"]);
+  expect(req.calls().find(c => c.path.endsWith("/reply"))).toMatchObject({
+    path: "/api/session/child/permission/owned/reply", body: { decision: "reject", message: "Supervisor declined child shell" },
+  });
+});
+
+for (const outcome of ["settled", "non-question", "no-final", "cancel-error"]) {
+  it(`settles owned form ${outcome} honestly`, async () => {
+    const req = controlFixture("form", "child", outcome);
+    const result = await delegateToOpencode({ ...req, autoApprove: true }).catch(error => error);
+    if (outcome === "settled") expect(result).toMatchObject({ text: "Root fallback answer", isError: false });
+    else expect(result.name === "DelegateError" ? result.kind === "failed" : result.isError).toBe(true);
+    const controls = req.calls().filter(c => c.method === "DELETE" || c.path.endsWith("/reply"));
+    expect(controls).toHaveLength(1);
+    expect(controls[0].path).toBe("/api/session/child/form/owned");
+    expect(controls[0].query).toEqual(outcome === "non-question" ? {} : { message: expect.any(String) });
+  });
+}
+
 it("does not reuse progress text when a later tool-only message is rejected", () => {
   const out = [
     { type: "text", sessionID: "session", part: { messageID: "progress", text: "Working" } },
