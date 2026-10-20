@@ -38,7 +38,10 @@ export async function signalFixtureProcess(
     signal: (pid, signal) => { process.kill(pid, signal); },
   },
 ): Promise<void> {
-  if (await fixtureProcessGeneration(pid, expected, refusal, probes)) probes.signal(pid, signal);
+  if (await fixtureProcessGeneration(pid, expected, refusal, probes)) {
+    try { probes.signal(pid, signal); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error; }
+  }
 }
 
 interface FixtureChild {
@@ -56,10 +59,45 @@ interface FixtureChildProbes {
 
 /** Only for the ChildProcess created and recorded by the calling fixture. */
 export async function stopFixtureChild(
-  child: FixtureChild, expected: string | null, _refusal: string,
+  child: FixtureChild, expected: string | null, refusal: string,
   probes: FixtureChildProbes = {
     identity: readProcessIdentity, signal: (pid, signal) => { process.kill(pid, signal); },
   },
 ): Promise<void> {
-  if (expected && await probes.identity(child.pid!) === expected) probes.signal(child.pid!, "SIGKILL");
+  const pid = child.pid;
+  if (typeof pid !== "number" || !Number.isSafeInteger(pid) || pid <= 0) throw new Error(refusal);
+  const knownExit = () => child.exitCode !== null || child.signalCode !== null;
+  await new Promise<void>((resolve, reject) => {
+    const deadline = performance.now() + 3_000;
+    const timeout = () => new Error(`${refusal}: exact child exit not observed within 3000 ms; fixture retained`);
+    let settled = false, exited = false, inspected = false;
+    let timer: NodeJS.Timeout | undefined;
+    const finish = (ok: boolean, error?: unknown) => {
+      if (settled) return;
+      settled = true; clearTimeout(timer); child.removeListener("exit", onExit);
+      if (ok) resolve(); else reject(error);
+    };
+    const complete = () => {
+      if (performance.now() >= deadline) { finish(false, timeout()); return; }
+      if (inspected && (exited || knownExit())) finish(true);
+    };
+    const onExit = () => { exited = true; complete(); };
+    // Observe this saved object before inspecting or signalling: PID absence, stdio closure and killed
+    // are not its exit event. Unknown/reused identity only permits passive waiting on this owned child.
+    child.once("exit", onExit);
+    timer = setTimeout(() => finish(false, timeout()), 3_000);
+    if (knownExit()) { inspected = true; complete(); return; }
+    void (async () => {
+      if (expected && !exited) {
+        const matches = await probes.identity(pid) === expected;
+        if (settled) return;
+        if (performance.now() >= deadline) { finish(false, timeout()); return; }
+        if (matches && !exited && !knownExit()) {
+          try { probes.signal(pid, "SIGKILL"); }
+          catch (error) { if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error; }
+        }
+      }
+      inspected = true; complete();
+    })().catch(error => finish(false, error));
+  });
 }

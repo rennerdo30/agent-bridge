@@ -269,7 +269,13 @@ describe("granted plugin MCP exposure in headless Claude jobs", () => {
       expect(child.signalCode).toBeNull();
     } finally {
       // Fixture cleanup only for this test-created root with its recorded identity.
-      await stopFixtureChild(child, identity, "Cannot prove plugin MCP fixture root exit");
+      try { await stopFixtureChild(child, identity, "Cannot prove plugin MCP fixture root exit"); }
+      catch (error) {
+        // afterEach must retain this fixture when the exact owned root's exit was not proved.
+        const retained = dirs.indexOf(f.root);
+        if (retained >= 0) dirs.splice(retained, 1);
+        throw new Error(`Plugin MCP fixture retained at ${f.root}`, { cause: error });
+      }
     }
   });
 
