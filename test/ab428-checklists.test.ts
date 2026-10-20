@@ -38,7 +38,14 @@ import { DELEGATION_TARGETS } from "../src/mcp/targets.js";
 import { makeEnv, type TestEnv } from "./helpers.js";
 
 const forbiddenLaunches = vi.hoisted(() => [] as string[]);
-const fixtureHost = vi.hoisted(() => ({ platform: undefined as NodeJS.Platform | undefined }));
+const fixtureHost = vi.hoisted(() => ({
+  platform: undefined as NodeJS.Platform | undefined,
+  grammar: undefined as typeof import("node:path").isAbsolute | undefined,
+  pathBoundary(actual: typeof import("node:path")): typeof import("node:path") {
+    // Zod retains this function at module load; live imports must observe the same current grammar.
+    return { ...actual, isAbsolute: (value: string) => (fixtureHost.grammar ?? actual.isAbsolute)(value) };
+  },
+}));
 vi.mock("node:process", async original => {
   const actual = await original<typeof import("node:process")>();
   return { ...actual, get platform() { return fixtureHost.platform ?? actual.platform; } };
@@ -46,7 +53,7 @@ vi.mock("node:process", async original => {
 const fixtureFs = vi.hoisted(() => ({ statSync: null as typeof import("node:fs").statSync | null }));
 vi.mock("node:path", async original => {
   const actual = await original<typeof import("node:path")>();
-  return { ...actual, isAbsolute: actual.isAbsolute };
+  return fixtureHost.pathBoundary(actual);
 });
 vi.mock("node:fs", async original => {
   const actual = await original<typeof import("node:fs")>();
@@ -413,8 +420,8 @@ describe("AB-428 job checklists", () => {
   // Model the host's filesystem path semantics, never an authority answer. All file IO remains isolated/native.
   function windowsDiscoveryHost() {
     fixtureHost.platform = "win32";
-    const pathGrammar = vi.spyOn(hostPath, "isAbsolute").mockImplementation(hostPath.win32.isAbsolute);
-    return () => { fixtureHost.platform = undefined; pathGrammar.mockRestore(); };
+    fixtureHost.grammar = hostPath.win32.isAbsolute;
+    return () => { fixtureHost.platform = undefined; fixtureHost.grammar = undefined; };
   }
   const discoverySources = ["projectRoot", "worktree", "workdir", "runner", "spec", "owner-peer", "caller-peer", "args"];
   it.each(discoverySources)("qualifies Windows %s provenance at both broker fences for every operation", async source => {
@@ -466,6 +473,28 @@ describe("AB-428 job checklists", () => {
     } finally { restoreHost(); f.jobs.setDormant(true); }
     expect(outcomes).toEqual([]);
   });
+  it("keeps a cold POSIX schema and live Windows discovery on the same modeled path boundary", async () => {
+    const f = authorityFixture(), path = join(home, "jobs.json");
+    const record = { ...f.saved, projectRoot: "E:\\qualified", worktree: { repoRoot: "\\\\server\\share\\repo" } };
+    f.save([record]);
+    const opens = vi.mocked(DatabaseSync).mock.calls.length;
+    // Load the actual durable-authority schema with the original POSIX predicate, even on a Windows test host.
+    fixtureHost.grammar = hostPath.posix.isAbsolute;
+    const coldModule = "../src/core/checklists.ts?checklist-fixture-cold-posix";
+    try {
+      const proof: typeof import("../src/core/checklists.js") = await import(/* @vite-ignore */ coldModule);
+      expect(proof.readChecklistAuthority(path, f.saved), "cold POSIX authority rejects Windows canonical roots").toBeUndefined();
+      fixtureHost.grammar = hostPath.win32.isAbsolute;
+      // The old adapter exposes Windows to live imports while the cold schema retains the native POSIX function.
+      expect(hostPath.isAbsolute(record.projectRoot), "live discovery now uses Windows syntax").toBe(true);
+      expect(proof.readChecklistAuthority(path, f.saved), "captured schema must use that SAME Windows model").toMatchObject({
+        id: f.saved.id, name: JOB, owner: "owner", projectRoot: record.projectRoot, worktree: record.worktree,
+      });
+      expect(vi.mocked(DatabaseSync).mock.calls.length, "current proof does not initialize/open metadata").toBe(opens);
+    } finally {
+      fixtureHost.grammar = undefined; f.jobs.setDormant(true);
+    }
+  });
   it("preserves qualified Windows group discovery across every root input and both fences", async () => {
     const f = authorityFixture(), qualified = "E:\\qualified";
     seedJobChecklist(home, JOB, [{ text: "Required" }], null, "owner");
@@ -497,7 +526,9 @@ describe("AB-428 job checklists", () => {
     try {
       for (source of discoverySources.filter(s => s !== "args")) for (context of (source === "workdir" ? qualifiedWindowsContext : qualifiedWindowsContext.slice(0, 1))) for (phase of ["post-await", "admission"]) for (const operation of (source === "workdir" && context === qualifiedWindowsContext[0] ? checklistOperations : checklistOperations.slice(0, 1))) {
         armed = false; publish(qualified);
-        expect((await f.broker.handlers.jobChecklist(f.conn, { job: JOB, get: true })).items).toHaveLength(2);
+        const label = JSON.stringify({ source, context, phase, operation: Object.keys(operation)[0], stage: "complete-authority precondition" });
+        const precondition = await f.broker.handlers.jobChecklist(f.conn, { job: JOB, get: true }).catch((cause: unknown) => { throw new Error(label, { cause }); });
+        expect(precondition.items, label).toHaveLength(2);
         discovery.mockClear(); armed = true;
         const result = await f.broker.handlers.jobChecklist(f.conn, { job: JOB, ...operation }).then(() => "allowed", () => "denied");
         if (result !== "allowed" || armed || !discovery.mock.calls.some(([value]) => value === context)) failures.push({ source, context, phase, operation, result, checkedFence: !armed, probes: discovery.mock.calls });
@@ -552,7 +583,7 @@ describe("AB-428 job checklists", () => {
     vi.spyOn(f.broker, "jobForControl").mockImplementation(async () => { await Promise.resolve(); if (phase === "post-await") inject(); return { ...f.saved }; });
     vi.spyOn(db, "exec").mockImplementation(sql => { if (phase === "admission" && sql === "BEGIN IMMEDIATE") inject(); return exec(sql); });
     vi.spyOn(projectIdentity, "canonicalProjectRoot").mockReturnValue(project);
-    const pathGrammar = vi.spyOn(hostPath, "isAbsolute").mockImplementation(hostPath.posix.isAbsolute);
+    fixtureHost.grammar = hostPath.posix.isAbsolute;
     fixtureHost.platform = "linux";
     const outcomes = [];
     try {
@@ -564,7 +595,7 @@ describe("AB-428 job checklists", () => {
         outcomes.push({ result, checkedFence: !armed });
         restoreWindowsFixtureRows(db, JOB, before);
       }
-    } finally { fixtureHost.platform = undefined; pathGrammar.mockRestore(); f.jobs.setDormant(true); }
+    } finally { fixtureHost.platform = undefined; fixtureHost.grammar = undefined; f.jobs.setDormant(true); }
     expect(outcomes).toEqual(Array.from({ length: 16 }, () => ({ result: "allowed", checkedFence: true })));
   });
   const strictProofCases = [
