@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { nullLogger } from "../src/core/logger.js";
 import { closeMetadataDb } from "../src/core/metadata-db.js";
 import { changedFilesNote, codexHookObservation, createWorktree, git as bridgeGit, finishWorktree, gitChangeSnapshot, gitStatusSnapshot, snapshotChanges } from "../src/core/worktree.js";
-import { GitSafetyRefusal, NO_LAZY_FETCH_ARGS, repositoryGuards, repositoryGuardsSync, resetGitFeatureCache } from "../src/core/git-safety.js";
+import { GitSafetyRefusal, gitGuardReadFailure, NO_LAZY_FETCH_ARGS, repositoryGuards, repositoryGuardsSync, resetGitFeatureCache } from "../src/core/git-safety.js";
 import { cleanupWorktrees } from "../src/core/worktree-cleanup.js";
 
 /**
@@ -679,11 +679,24 @@ describe("AB-422 round 5: registered target selection and public error redaction
     expect(await gitChangeSnapshot(repo, nullLogger)).toBeNull();
   });
 
+  it("keeps invalid sync statuses private and preserves known spawn error codes", () => {
+    const sentinel = "fixture-private-invalid-status-AB422";
+    for (const status of [sentinel, 128.5, Number.MAX_SAFE_INTEGER + 1]) {
+      const failure = gitGuardReadFailure(["config"], Object.assign(new Error(sentinel), { status, stdout: sentinel, stderr: sentinel, cause: new Error(sentinel) }));
+      expect(failure.message).toBe("git config guard read failed (system error)");
+      expect(JSON.stringify(failure, Object.getOwnPropertyNames(failure))).not.toContain(sentinel);
+    }
+    const spawn = gitGuardReadFailure(["config"], { code: "ENOENT", status: null, message: sentinel, stderr: sentinel });
+    expect(spawn.message).toBe("git config guard read failed (system error ENOENT)");
+  });
+
   it.each(["async", "sync"])("%s guard read errors retain operation/status without raw error fields", async (mode) => {
     const sentinel = "fixture-private-discovery-diagnostic-AB422";
     const run = (args: string[]) => {
       if (args[0] === "--version") return "git version 2.55.0";
-      if (args[0] === "ls-files") throw Object.assign(new Error(sentinel), { code: 128, stdout: sentinel, stderr: sentinel, cause: new Error(sentinel) });
+      if (args[0] === "ls-files") throw Object.assign(new Error(sentinel), mode === "sync" ?
+        { status: 128, signal: null, output: [null, sentinel, sentinel], stdout: sentinel, stderr: sentinel, cause: new Error(sentinel) } :
+        { code: 128, stdout: sentinel, stderr: sentinel, cause: new Error(sentinel) });
       return "";
     };
     let failure: unknown;

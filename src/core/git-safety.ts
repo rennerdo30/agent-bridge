@@ -205,11 +205,13 @@ class GuardReadFailure extends GitSafetyRefusal {
 
 export function gitGuardReadFailure(args: readonly string[], error: unknown): GitSafetyRefusal {
   if (error instanceof GuardReadFailure) return error;
-  const info = error !== null && typeof error === "object" ? error as { code?: unknown; killed?: unknown } : {};
+  const info = error !== null && typeof error === "object" ? error as { code?: unknown; status?: unknown; killed?: unknown } : {};
   const operation = ["--version", "config", "ls-files", "rev-parse", "worktree"].includes(args[0] ?? "") ? args[0]! : "metadata";
   if (info.killed === true || info.code === "ETIMEDOUT") return new GuardReadFailure(operation, "timeout", undefined);
   if (info.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") return new GuardReadFailure(operation, "output limit", undefined);
   if (typeof info.code === "number" && Number.isSafeInteger(info.code)) return new GuardReadFailure(operation, "exit status", info.code);
+  // Node execFileSync/checkExecSyncError carries a nonzero exit in status; async execFile uses code.
+  if (typeof info.status === "number" && Number.isSafeInteger(info.status)) return new GuardReadFailure(operation, "exit status", info.status);
   const system = ["ENOENT", "EACCES", "EPERM", "EIO", "ENOTDIR", "ENAMETOOLONG", "EMFILE", "ENFILE"];
   return new GuardReadFailure(operation, "system error", typeof info.code === "string" && system.includes(info.code) ? info.code : undefined);
 }
