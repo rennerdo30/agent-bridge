@@ -73,6 +73,7 @@ import { NetworkService, type NetworkStatus } from "../network/link.js";
 import { readNetworkConfig, writeNetworkConfig, type NetworkConfig } from "../network/config.js";
 import { z } from "zod";
 import { basename, dirname, isAbsolute, join } from "node:path";
+import { platform as hostPlatform } from "node:process";
 import { ProjectGroups } from "./project-groups.js";
 import { accessJobChecklist, jobChecklistRequestSchema, readChecklistAuthority } from "./checklists.js";
 import { recoverJobRecordAsync, type RecoveryRefusal } from "./job-recovery.js";
@@ -223,11 +224,30 @@ type Handler<O extends Op> = (conn: Conn, args: RequestMap[O][0]) => RequestMap[
 /** A handoff commit retries a briefly held registry lease asynchronously, as long as a blocking writer would wait. */
 const HANDOFF_LOCK_WAIT_MS = 2_000;
 const HANDOFF_LOCK_RETRY_MS = 25;
+/** Qualification only: no resolution/probe, normalization or new grant. Stored context remains unchanged. */
+function checklistDiscoveryPath(cwd: string): boolean {
+  if (hostPlatform !== "win32") return isAbsolute(cwd);
+  if (cwd.includes("\0")) return false;
+  const uncShare = (value: string) => {
+    const match = /^([^\\/]+)[\\/]([^\\/]+)(?:[\\/]|$)/.exec(value);
+    return Boolean(match && match.slice(1).every(part => !/^[. ]+$/.test(part) && !/[<>:"|?*\u0000-\u001f]/.test(part)));
+  };
+  // Extended filesystem paths have literal backslashes; other device/NT namespaces are not project roots.
+  if (cwd.startsWith("\\\\?\\")) {
+    const path = cwd.slice(4);
+    if (path.includes("/")) return false;
+    if (/^[a-z]:\\/i.test(path) || /^Volume\{[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\}\\/i.test(path)) return true;
+    return /^UNC\\/i.test(path) && uncShare(path.slice(4));
+  }
+  // A rooted slash alone still depends on the current drive. UNC needs BOTH server and share.
+  return /^[a-z]:[\\/]/i.test(cwd) || /^[\\/]{2}/.test(cwd) && uncShare(cwd.slice(2));
+}
+
 /** Retained relative context has no original cwd witness here. Preserve current project roles,
  * but never rediscover these paths against the broker's unrelated current directory. */
 class ChecklistProjectGroups extends ProjectGroups {
   override root(cwd: string): string | null {
-    return isAbsolute(cwd) ? super.root(cwd) : null;
+    return checklistDiscoveryPath(cwd) ? super.root(cwd) : null;
   }
 }
 

@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
 import * as fs from "node:fs";
+import * as hostPath from "node:path";
 import { EventEmitter } from "node:events";
 import * as sqlite from "node:sqlite";
 import * as childProcess from "node:child_process";
@@ -37,7 +38,16 @@ import { DELEGATION_TARGETS } from "../src/mcp/targets.js";
 import { makeEnv, type TestEnv } from "./helpers.js";
 
 const forbiddenLaunches = vi.hoisted(() => [] as string[]);
+const fixtureHost = vi.hoisted(() => ({ platform: undefined as NodeJS.Platform | undefined }));
+vi.mock("node:process", async original => {
+  const actual = await original<typeof import("node:process")>();
+  return { ...actual, get platform() { return fixtureHost.platform ?? actual.platform; } };
+});
 const fixtureFs = vi.hoisted(() => ({ statSync: null as typeof import("node:fs").statSync | null }));
+vi.mock("node:path", async original => {
+  const actual = await original<typeof import("node:path")>();
+  return { ...actual, isAbsolute: actual.isAbsolute };
+});
 vi.mock("node:fs", async original => {
   const actual = await original<typeof import("node:fs")>();
   fixtureFs.statSync = actual.statSync;
@@ -379,6 +389,183 @@ describe("AB-428 job checklists", () => {
     f.jobs.setDormant(true);
     expect(outcomes).toEqual(Array.from({ length: 16 }, () => ({ result: "denied", checkedFence: true, bytesUnchanged: true })));
     expect(discovery.mock.calls.every(([value]) => isAbsolute(value))).toBe(true);
+  });
+  const ambiguousWindowsContext = [
+    "\\repo", "/repo", "E:repo", "E:", "\\\\server", "\\\\server\\", "\\\\server\\\\share",
+    "\\\\.\\E:\\repo", "\\\\?\\E:repo", "\\\\?\\UNC\\server", "\\\\?\\UNC\\\\share",
+    "\\\\?\\GLOBALROOT\\Device\\HarddiskVolume1\\repo", "\\\\?\\Volume{bad}\\repo", "//?/E:/repo",
+    "\\\\?\\E:/repo", "\\\\..\\share\\repo", "\\\\server\\..\\repo",
+  ];
+  const qualifiedWindowsContext = [
+    "E:\\repo", "E:/repo", "e:\\mixed/path", "\\\\server\\share\\repo", "//server/share/repo",
+    "\\\\?\\E:\\repo", "\\\\?\\UNC\\server\\share\\repo", "\\\\?\\Volume{12345678-1234-1234-1234-123456789abc}\\repo",
+  ];
+  function restoreWindowsFixtureRows(db: DatabaseSync, name: string, before: Record<string, any>[]) {
+    if (JSON.stringify(db.prepare("SELECT * FROM job_checklist WHERE job=? ORDER BY seq").all(name)) === JSON.stringify(before)) return;
+    // Fixture cleanup only: publish its reset together rather than fsync each row separately.
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      db.prepare("DELETE FROM job_checklist WHERE job=?").run(name);
+      for (const row of before) { const keys = Object.keys(row); db.prepare(`INSERT INTO job_checklist (${keys.join(",")}) VALUES (${keys.map(() => "?").join(",")})`).run(...keys.map(key => row[key]!)); }
+      db.exec("COMMIT");
+    } catch (error) { if (db.isTransaction) db.exec("ROLLBACK"); throw error; }
+  }
+  // Model the host's filesystem path semantics, never an authority answer. All file IO remains isolated/native.
+  function windowsDiscoveryHost() {
+    fixtureHost.platform = "win32";
+    const pathGrammar = vi.spyOn(hostPath, "isAbsolute").mockImplementation(hostPath.win32.isAbsolute);
+    return () => { fixtureHost.platform = undefined; pathGrammar.mockRestore(); };
+  }
+  const discoverySources = ["projectRoot", "worktree", "workdir", "runner", "spec", "owner-peer", "caller-peer", "args"];
+  it.each(discoverySources)("qualifies Windows %s provenance at both broker fences for every operation", async source => {
+    const f = authorityFixture(), path = join(home, "jobs.json"), qualified = "E:\\qualified";
+    seedJobChecklist(home, JOB, [{ text: "Required" }], null, "owner");
+    changeJobChecklistAsJob(home, JOB, { propose: [{ text: "Pending" }] });
+    const db = metadataDb(home), exec = db.exec.bind(db);
+    const rows = () => db.prepare("SELECT * FROM job_checklist WHERE job=? ORDER BY seq").all(JOB);
+    const before = rows(), outcomes: unknown[] = [];
+    const reset = () => restoreWindowsFixtureRows(db, JOB, before);
+    const runner = { ...f.conn, peer: { ...f.conn.peer, id: `job:${f.saved.id}`, name: JOB, jobAgent: "codex", cwd: qualified } };
+    const originalOwner = { ...f.conn, peer: { ...f.conn.peer, id: "original-owner", name: "owner", cwd: qualified } };
+    if (source === "runner") f.broker.conns.add(runner);
+    if (source === "owner-peer") f.broker.conns.add(originalOwner);
+    const spec = join(home, "jobs", `${f.saved.id}.spec.json`);
+    if (source === "spec") mkdirSync(join(home, "jobs"), { recursive: true });
+    let phase = "", armed = false, context = "";
+    const publish = (value: string, safe: boolean) => {
+      const record: Record<string, unknown> = { ...f.saved, projectRoot: undefined, worktree: null, workdir: safe ? qualified : null, args: {} };
+      f.conn.peer.cwd = source === "caller-peer" ? value : qualified;
+      runner.peer.cwd = value; originalOwner.peer.cwd = value;
+      if (!safe) {
+        if (source === "projectRoot") record.projectRoot = value;
+        else if (source === "worktree") record.worktree = { repoRoot: value };
+        else if (source === "workdir" || source === "caller-peer") record.workdir = source === "caller-peer" ? qualified : value;
+        else if (source === "args") record.args = { cwd: value };
+      }
+      if (source === "spec") writeAuthorityFixture(spec, { cwd: value }); // Actual legacy spec reader, no transport/authority stub.
+      f.save([record as typeof f.saved]);
+    };
+    const inject = () => { if (armed) { armed = false; publish(context, false); } };
+    vi.spyOn(f.broker, "jobForControl").mockImplementation(async () => { await Promise.resolve(); if (phase === "post-await") inject(); return { ...f.saved }; });
+    vi.spyOn(db, "exec").mockImplementation(sql => { if (phase === "admission" && sql === "BEGIN IMMEDIATE") inject(); return exec(sql); });
+    const discovery = vi.spyOn(projectIdentity, "canonicalProjectRoot").mockReturnValue(project);
+    const restoreHost = windowsDiscoveryHost();
+    try {
+      for (context of (source === "workdir" ? ambiguousWindowsContext : ambiguousWindowsContext.slice(0, 2))) for (phase of ["post-await", "admission"]) for (const operation of (ambiguousWindowsContext.indexOf(context) < 2 ? checklistOperations : checklistOperations.slice(0, 1))) {
+        armed = false; publish(qualified, true);
+        expect((await f.broker.handlers.jobChecklist(f.conn, { job: JOB, get: true })).items).toHaveLength(2);
+        discovery.mockClear(); const bytes = readFileSync(join(home, "bridge.db"));
+        armed = true;
+        const result = await f.broker.handlers.jobChecklist(f.conn, { job: JOB, ...operation }).then(() => "allowed", () => "denied");
+        const outcome = { context, phase, operation: Object.keys(operation)[0], result, checkedFence: !armed,
+          rowsUnchanged: JSON.stringify(rows()) === JSON.stringify(before), bytesUnchanged: readFileSync(join(home, "bridge.db")).equals(bytes),
+          ambiguousProbe: discovery.mock.calls.some(([value]) => value === context) };
+        if (result !== "denied" || !outcome.checkedFence || !outcome.rowsUnchanged || !outcome.bytesUnchanged || outcome.ambiguousProbe) outcomes.push(outcome);
+        reset(); // Isolated old-source unauthorized commits must not conceal failures of subsequent operations.
+      }
+    } finally { restoreHost(); f.jobs.setDormant(true); }
+    expect(outcomes).toEqual([]);
+  });
+  it("preserves qualified Windows group discovery across every root input and both fences", async () => {
+    const f = authorityFixture(), qualified = "E:\\qualified";
+    seedJobChecklist(home, JOB, [{ text: "Required" }], null, "owner");
+    changeJobChecklistAsJob(home, JOB, { propose: [{ text: "Pending" }] });
+    const db = metadataDb(home), exec = db.exec.bind(db);
+    const rows = () => db.prepare("SELECT * FROM job_checklist WHERE job=? ORDER BY seq").all(JOB), before = rows();
+    const runner = { ...f.conn, peer: { ...f.conn.peer, id: `job:${f.saved.id}`, name: JOB, jobAgent: "codex", cwd: qualified } };
+    const owner = { ...f.conn, peer: { ...f.conn.peer, id: "original-owner", name: "owner", cwd: qualified } };
+    const spec = join(home, "jobs", `${f.saved.id}.spec.json`); mkdirSync(join(home, "jobs"), { recursive: true });
+    let source = "", context = "", phase = "", armed = false;
+    const publish = (value: string) => {
+      f.broker.conns.delete(runner); f.broker.conns.delete(owner);
+      f.conn.peer.cwd = source === "caller-peer" ? value : qualified;
+      const row: Record<string, unknown> = { ...f.saved, projectRoot: undefined, workdir: null, worktree: null };
+      writeAuthorityFixture(spec, {});
+      if (source === "projectRoot") row.projectRoot = value;
+      else if (source === "worktree") row.worktree = { repoRoot: value };
+      else if (source === "workdir" || source === "caller-peer") row.workdir = source === "caller-peer" ? qualified : value;
+      else if (source === "runner") { runner.peer.cwd = value; f.broker.conns.add(runner); }
+      else if (source === "owner-peer") { owner.peer.cwd = value; f.broker.conns.add(owner); }
+      else if (source === "spec") writeAuthorityFixture(spec, { cwd: value });
+      f.save([row as typeof f.saved]);
+    };
+    const inject = () => { if (armed) { armed = false; publish(context); } };
+    vi.spyOn(f.broker, "jobForControl").mockImplementation(async () => { await Promise.resolve(); if (phase === "post-await") inject(); return { ...f.saved }; });
+    vi.spyOn(db, "exec").mockImplementation(sql => { if (phase === "admission" && sql === "BEGIN IMMEDIATE") inject(); return exec(sql); });
+    const discovery = vi.spyOn(projectIdentity, "canonicalProjectRoot").mockReturnValue(project);
+    const restoreHost = windowsDiscoveryHost(), failures: unknown[] = [];
+    try {
+      for (source of discoverySources.filter(s => s !== "args")) for (context of (source === "workdir" ? qualifiedWindowsContext : qualifiedWindowsContext.slice(0, 1))) for (phase of ["post-await", "admission"]) for (const operation of (source === "workdir" && context === qualifiedWindowsContext[0] ? checklistOperations : checklistOperations.slice(0, 1))) {
+        armed = false; publish(qualified);
+        expect((await f.broker.handlers.jobChecklist(f.conn, { job: JOB, get: true })).items).toHaveLength(2);
+        discovery.mockClear(); armed = true;
+        const result = await f.broker.handlers.jobChecklist(f.conn, { job: JOB, ...operation }).then(() => "allowed", () => "denied");
+        if (result !== "allowed" || armed || !discovery.mock.calls.some(([value]) => value === context)) failures.push({ source, context, phase, operation, result, checkedFence: !armed, probes: discovery.mock.calls });
+        restoreWindowsFixtureRows(db, JOB, before);
+      }
+    } finally { restoreHost(); f.jobs.setDormant(true); }
+    expect(failures).toEqual([]);
+  });
+  it.each(["owner", "master", "private"])("retains ambiguous Windows context for exact %s current/finished authority", async role => {
+    const nested = role === "private" ? nestedFixture() : undefined, f = role === "private" ? undefined : authorityFixture();
+    const jobs = (nested ?? f)!.jobs, path = join(home, "jobs.json"), name = nested?.job.name ?? JOB;
+    const saved = nested ? JSON.parse(readFileSync(path, "utf8")).jobs.find((row: any) => row.name === name) : f!.saved;
+    if (f) { f.conn.peer.name = role === "owner" ? "owner" : "explicit-master"; seedJobChecklist(home, name, [{ text: "Required" }], null, "owner"); }
+    changeJobChecklistAsJob(home, name, { propose: [{ text: "Pending" }] });
+    const db = metadataDb(home), exec = db.exec.bind(db), rows = () => db.prepare("SELECT * FROM job_checklist WHERE job=? ORDER BY seq").all(name), before = rows();
+    let phase = "", armed = false, replacement = () => {};
+    const inject = () => { if (armed) { armed = false; replacement(); } };
+    if (f) vi.spyOn(f.broker, "jobForControl").mockImplementation(async () => { await Promise.resolve(); if (phase === "post-await") inject(); return { ...saved }; });
+    else { const find = jobs.find.bind(jobs); vi.spyOn(jobs, "find").mockImplementation((ref, recover) => { const actual = find(ref, recover); if (phase === "post-await" && recover === false) inject(); return actual; }); }
+    vi.spyOn(db, "exec").mockImplementation(sql => { if (phase === "admission" && sql === "BEGIN IMMEDIATE") inject(); return exec(sql); });
+    const discovery = vi.spyOn(projectIdentity, "canonicalProjectRoot").mockReturnValue(project);
+    const restoreHost = windowsDiscoveryHost(), failures: unknown[] = [];
+    const call = async (operation: Record<string, unknown>) => f ? f.broker.handlers.jobChecklist(f.conn, { job: name, ...operation }).then(() => "allowed", () => "denied")
+      : nested!.call("job_checklist", { job: name, ...operation }).then(result => result.isError ? "denied" : "allowed");
+    try {
+      for (const context of [ambiguousWindowsContext[0]!, ambiguousWindowsContext[1]!, ambiguousWindowsContext[2]!, ambiguousWindowsContext[4]!, ambiguousWindowsContext[11]!]) for (const source of ["current", "archive"]) for (phase of ["post-await", "admission"]) for (const operation of (context === ambiguousWindowsContext[0] ? checklistOperations : checklistOperations.slice(0, 1))) {
+        const row = { ...saved, status: source === "archive" ? "done" : saved.status, projectRoot: undefined, worktree: null, workdir: context, args: { cwd: context },
+          ...(role === "master" ? { masters: ["explicit-master"] } : {}) };
+        const safe = { ...row, workdir: "E:\\qualified", args: { cwd: "E:\\qualified" } };
+        armed = false;
+        if (source === "archive") { writeAuthorityFixture(path, { version: 4, jobs: [] }); archiveJobs(path, [safe]); replacement = () => { archiveJobs(path, [row]); }; }
+        else { writeAuthorityFixture(path, { version: 4, jobs: [safe] }); replacement = () => { writeAuthorityFixture(path, { version: 4, jobs: [row] }); }; }
+        expect(await call({ get: true })).toBe("allowed");
+        discovery.mockClear(); armed = true;
+        const result = await call(operation);
+        if (result !== "allowed" || armed || discovery.mock.calls.length) failures.push({ context, source, phase, operation, result, checkedFence: !armed, probes: discovery.mock.calls });
+        restoreWindowsFixtureRows(db, name, before);
+      }
+    } finally { restoreHost(); jobs.setDormant(true); }
+    expect(failures).toEqual([]);
+  });
+
+  it("retains the host POSIX rooted-path grammar at both group authorization fences", async () => {
+    const f = authorityFixture(), db = metadataDb(home), exec = db.exec.bind(db);
+    seedJobChecklist(home, JOB, [{ text: "Required" }], null, "owner");
+    changeJobChecklistAsJob(home, JOB, { propose: [{ text: "Pending" }] });
+    const before = db.prepare("SELECT * FROM job_checklist WHERE job=? ORDER BY seq").all(JOB);
+    f.conn.peer.cwd = "/registered/member";
+    let phase = "", armed = false;
+    const save = () => f.save([{ ...f.saved, projectRoot: undefined, worktree: null, workdir: "/fixture/repo" } as typeof f.saved]);
+    const inject = () => { if (armed) { armed = false; save(); } };
+    vi.spyOn(f.broker, "jobForControl").mockImplementation(async () => { await Promise.resolve(); if (phase === "post-await") inject(); return { ...f.saved }; });
+    vi.spyOn(db, "exec").mockImplementation(sql => { if (phase === "admission" && sql === "BEGIN IMMEDIATE") inject(); return exec(sql); });
+    vi.spyOn(projectIdentity, "canonicalProjectRoot").mockReturnValue(project);
+    const pathGrammar = vi.spyOn(hostPath, "isAbsolute").mockImplementation(hostPath.posix.isAbsolute);
+    fixtureHost.platform = "linux";
+    const outcomes = [];
+    try {
+      for (phase of ["post-await", "admission"]) for (const operation of checklistOperations) {
+        armed = false; save();
+        expect((await f.broker.handlers.jobChecklist(f.conn, { job: JOB, get: true })).items).toHaveLength(2);
+        armed = true;
+        const result = await f.broker.handlers.jobChecklist(f.conn, { job: JOB, ...operation }).then(() => "allowed", () => "denied");
+        outcomes.push({ result, checkedFence: !armed });
+        restoreWindowsFixtureRows(db, JOB, before);
+      }
+    } finally { fixtureHost.platform = undefined; pathGrammar.mockRestore(); f.jobs.setDormant(true); }
+    expect(outcomes).toEqual(Array.from({ length: 16 }, () => ({ result: "allowed", checkedFence: true })));
   });
   const strictProofCases = [
     "both-missing", "both-invalid", "both-blank", "foreign-first", "foreign-last", "duplicate", "split-id", "split-name",
