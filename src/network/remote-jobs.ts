@@ -353,7 +353,10 @@ export class RemoteJobs {
     timer.unref();
     intent.task = startRunFeedReady(intent.options, controller.signal).then(feed => {
       if (this.closed || controller.signal.aborted || this.mirrorIntents.get(key) !== intent) {
-        feed.end("interrupted"); // Release only this newly created feed; retain all of its data.
+        // Dispose only this intent's feed using its own retained terminal facts.
+        const state = intent.snapshot.state;
+        if (state && state.status !== "running") this.updateMirrorFeed(feed, state);
+        else feed.end("interrupted");
         return;
       }
       this.feeds.set(key, feed);
@@ -370,9 +373,14 @@ export class RemoteJobs {
   private updateMirror(key: string, snapshot: RemoteJobSnapshot): void {
     const feed = this.feeds.get(key), state = snapshot.state;
     if (!feed || !state) return;
+    this.updateMirrorFeed(feed, state);
+    if (state.status !== "running") this.feeds.delete(key);
+  }
+
+  private updateMirrorFeed(feed: RunFeed, state: RunnerState): void {
     feed.meta({ session: state.sessionId, workdir: state.workdir ?? undefined, model: state.model, percent: state.percent, progressNote: state.progressNote, etaAt: state.etaAt, etaReportedAt: state.etaReportedAt });
     if (state.progress) feed.report(state.progress);
-    if (state.status !== "running") { feed.end(state.status, state.report); this.feeds.delete(key); }
+    if (state.status !== "running") feed.end(state.status, state.report);
   }
 
   close(): void {
