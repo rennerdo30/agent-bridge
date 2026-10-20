@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { EventEmitter } from "node:events";
+import { stripTypeScriptTypes } from "node:module";
+import { controlDashboardJob, JobControlError } from "../src/core/job-control.js";
 import { retainedUiSender } from "../src/cli/ui-sender.js";
 
 // Execute the actual UI factory and HTTP cancellation adapter with mock-only
@@ -211,5 +213,104 @@ it("refuses success after synchronous construction overruns the budget without c
   const request = f.request(); f.identity.resolve("known"); await request.done;
   expect(request.state.error).toBeInstanceOf(Error);
   expect(f.nodes[0]!.send).not.toHaveBeenCalled();
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+// These are the production functions/statements, with only types erased. No
+// replacement control callback or route implementation can hide a missed guard.
+const section = (start: string, end: string) => {
+  const from = ui.indexOf(start), to = ui.indexOf(end, from);
+  if (from < 0 || to <= from) throw new Error(`Missing production boundary: ${start}`);
+  return ui.slice(from, to);
+};
+const ownerSource = section("async function jobOwner(", "interface MessageRow");
+const transportSource = section("  const networkRequest =", "  const remoteRead =");
+const handoffSource = section('    if (req.method === "POST" && url.pathname === "/api/subagents/handoff")', "    const jobCommand =");
+const jobSource = section("    const jobCommand =", '    return send(res, 404, { error: "not found" });');
+const childSource = section("          const sender = await getSender();", "          return send(res, result.isError");
+
+async function controlFixture(route: "handoff" | "job" | "child", hold: "owner" | "control" | "connect" | "auth" | "submitted") {
+  const f = fixture(); f.identity.resolve("known");
+  const node = await f.sender.get(), events = new EventEmitter(), pending = deferred<void>();
+  Object.assign(node, { id: "fixture-sender", on: events.on.bind(events), off: events.off.bind(events) });
+  let lookups = 0;
+  const peers = vi.fn(async () => {
+    const ordinal = ++lookups;
+    if (hold === "owner" && ordinal === 1 || hold === "control" && ordinal === (route === "handoff" ? 1 : 2)) await pending.promise;
+    return [{ name: "owner" }];
+  });
+  Object.assign(node, { peers });
+  const commit = vi.fn(async (_op: string, args: { body: string }) => {
+    if (hold === "submitted") await pending.promise;
+    const { requestId } = JSON.parse(args.body);
+    events.emit("job_control", { from: { name: "owner" }, body: JSON.stringify({ type: "result", requestId, outcome: "queued", text: "confirmed", isError: false }) });
+    return { messages: [], deliveredTo: ["owner"], queuedFor: [] };
+  });
+  const client = {
+    close: vi.fn(),
+    request: vi.fn(async (op: string, args: { body: string }) => {
+      if (op === "auth") { if (hold === "auth") await pending.promise; return {}; }
+      return commit(op, args);
+    }),
+  };
+  const connect = vi.fn(async () => { if (hold === "connect") await pending.promise; return client; });
+  const response = vi.fn(), opts = { home: "fixture-home", pipe: "fixture-pipe", log: { warn: vi.fn() } };
+  const pathname = route === "handoff" ? "/api/subagents/handoff" : "/api/jobs/settings";
+  const source = `${ownerSource}\n${transportSource}\nreturn async (req, res, signal) => {
+    const getSender = () => sender.get(signal);
+    const url = { pathname: ${JSON.stringify(pathname)} };
+    const name = "fixture-job", run = { by: "owner" }, child = { id: "child", title: "child" };
+    const body = { body: "owner message" };
+    ${route === "handoff" ? handoffSource : route === "job" ? jobSource : `{ ${childSource} }`}
+  };`;
+  const dependencies = {
+    controlDashboardJob, JobControlError, BridgeClient: { connect }, opts, token: "fixture-token", PROTOCOL_VERSION: 1, DASHBOARD_TIMEOUT_MS: 10_000,
+    sender: f.sender, send: response, readJson: async () => ({ from: "owner", to: "new-owner", run: "fixture-run" }),
+    handoffSchema: { safeParse: () => ({ success: true, data: { to: "new-owner", jobs: "all" } }) },
+    JOB_COMMANDS: { [pathname]: () => ({ type: "settings", settings: { model: "fixture" } }) }, RUN_NAME: /^[\w.-]+\.log$/,
+    listRunsResponsive: async () => [{ name: "fixture-run", by: "owner", job: "fixture-job" }], recoverJobRecord: () => ({}),
+    chooseJobRecipient: () => "owner", ProjectGroups: class { members() { return []; } }, childNote: (_id: string, _title: string, body: string) => body,
+  };
+  const handle = new Function(...Object.keys(dependencies),
+    stripTypeScriptTypes(`function wireControl() { ${source} }`) + "\nreturn wireControl();")(...Object.values(dependencies));
+  const listener = new Function("createServer", "handle", "opts", "send", `${adapter}\nreturn server;`)(
+    (callback: unknown) => callback, handle, opts, response) as (req: EventEmitter, res: EventEmitter) => void;
+  const req = Object.assign(new EventEmitter(), { method: "POST", headers: { "x-agent-bridge": "1" } });
+  const res = Object.assign(new EventEmitter(), { headersSent: false, destroyed: false });
+  listener(req, res); await vi.advanceTimersByTimeAsync(0);
+  return { pending, peers, connect, client, commit, response, req, res, events };
+}
+
+it.each([
+  ["handoff", "control"], ["job", "owner"], ["job", "control"], ["child", "owner"], ["child", "control"],
+] as const)("cancels actual %s control after readiness while %s peer lookup is pending", async (route, hold) => {
+  const f = await controlFixture(route, hold);
+  expect(f.peers).toHaveBeenCalledTimes(hold === "control" && route !== "handoff" ? 2 : 1);
+  f.res.destroyed = true; f.res.emit("close"); f.pending.resolve();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(f.commit).not.toHaveBeenCalled();
+  expect(f.response).not.toHaveBeenCalled();
+  expect(f.events.listenerCount("job_control")).toBe(0);
+  expect(f.req.listenerCount("aborted")).toBe(0); expect(f.res.listenerCount("close")).toBe(0);
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it.each(["connect", "auth"] as const)("cancels actual control before submission when transport %s is pending", async hold => {
+  const f = await controlFixture("handoff", hold);
+  expect(f.connect).toHaveBeenCalledOnce();
+  f.res.destroyed = true; f.res.emit("close"); f.pending.resolve();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(f.commit).not.toHaveBeenCalled(); expect(f.client.close).toHaveBeenCalledOnce();
+  expect(f.response).not.toHaveBeenCalled(); expect(f.events.listenerCount("job_control")).toBe(0);
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it("does not retry or report success when a submitted control becomes uncertain after disconnect", async () => {
+  const f = await controlFixture("handoff", "submitted");
+  expect(f.commit).toHaveBeenCalledOnce();
+  f.res.destroyed = true; f.res.emit("close"); f.pending.reject(new Error("submission uncertain"));
+  await vi.advanceTimersByTimeAsync(0);
+  expect(f.commit).toHaveBeenCalledOnce(); expect(f.client.close).toHaveBeenCalledOnce();
+  expect(f.response).not.toHaveBeenCalled(); expect(f.events.listenerCount("job_control")).toBe(0);
   expect(vi.getTimerCount()).toBe(0);
 });
