@@ -15,8 +15,17 @@
     "src/cli/dashboard.ts:ensure": "d19ca8a9485ccc07d588997e3497bc11545e730a264e9a6f59bf1ceb0dfcda49",
     "src/cli/dashboard.ts:close": "534d315c24ff13f59aa4082abf2fb66906e6bee9b979a6348979cbaef89ec7b4"
   },
-  "uiSha256": "ebdf54b1b23e68246479ded1231d0b2e014a5658cc69f4b8c0281a350dec6b18",
+  "uiSha256": "f2a5b28254d4bb467f28bdee139e3b23bd9d4bd0c7c15fee116b4ed85a6ac385",
   "updates": {
+    "AB-456": {
+      "base": "cd62f067827d6c7313de78075d5df9e942d2a8f8",
+      "sourceCommits": ["44df891c0c742073d6167c1ba682d657acb6b8e7", "a07ffe2e13b9335e7e409a6b813fb3954dd80bf5"],
+      "integratedSourceCommits": ["35a191ba262f3d5eccd166ade15e9b2bc9a367ca", "1eca89e9383c6204b51dc471dbe47419542b87cb"],
+      "changes": [],
+      "previousUiSha256": "ebdf54b1b23e68246479ded1231d0b2e014a5658cc69f4b8c0281a350dec6b18",
+      "uiSha256": "f2a5b28254d4bb467f28bdee139e3b23bd9d4bd0c7c15fee116b4ed85a6ac385",
+      "reason": "Parent-authorized UI-only source pin refresh after independent AB-456 review39328 / GN-349 review39329. Integrated blobs exactly match reviewed a07ffe2e: shared asynchronous sender initialization, per-request 8000ms readiness and cancellation checks at actual control/send/chat/queue boundaries. Recomputed with the unchanged mobile-wiring normalizer before this amendment. All thirteen method pins, mobile activation/ownership/assertions, source guard and daemon-lifecycle fixture remain unchanged. Mock receipts are separate from hosted lifecycle acceptance; synchronous JavaScript/filesystem stalls cannot be timer-preempted."
+    },
     "AB-446": {
       "base": "4277dc248013b8bc158ac3166974a6c0b07b464f",
       "initialSourceCommit": "ee1b6144a652ec437140b34d623324c69c97cd08",
