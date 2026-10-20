@@ -772,6 +772,29 @@ describe("PR99 review round 2", () => {
     await runDelegate(rc, "claude", { title: "reuse", prompt: "task", access: "read" }, j.controller.signal, undefined, true, j);
   });
 
+  it("observes disabling while an inexact request waits and revokes retained MCP grants", async () => {
+    const rc = context([allowed(), denied(), allowed()]);
+    const answer = rc.jobs!.askParent;
+    rc.jobs!.askParent = vi.fn(async (...args: Parameters<typeof answer>) => {
+      if (vi.mocked(rc.jobs!.askParent).mock.calls.length === 2)
+        rc.cfg.jobs = { ...rc.cfg.jobs, reuseIdenticalApprovals: false };
+      return answer(...args);
+    });
+    const j = job();
+    vi.spyOn(DELEGATION_TARGETS.claude, "run").mockImplementation(async (_cfg, req) => {
+      const request = hook("claude", "mcp__other__lookup", { query: "x" });
+      expect((await req.approve!(request)).allow).toBe(true);
+      expect((await req.approve!(hook("claude", "Edit", { file_path: "check.sh" }))).allow).toBe(false);
+      expect(j.approvalGrants).toBeUndefined();
+      rc.cfg.jobs = { ...rc.cfg.jobs, reuseIdenticalApprovals: true };
+      j.allowedServers?.clear();
+      expect((await req.approve!(request)).allow).toBe(true);
+      expect(rc.jobs!.askParent).toHaveBeenCalledTimes(3);
+      return { sessionId: "saved", text: "done", isError: false, details: {} };
+    });
+    await runDelegate(rc, "claude", { title: "reuse", prompt: "task", access: "read" }, j.controller.signal, undefined, true, j);
+  });
+
   it("takes new launch authority for each retry without carrying the earlier launch's grants", async () => {
     const rc = context([allowed(), allowed(), allowed()]);
     rc.cfg.claudePermissionMode = "manual";

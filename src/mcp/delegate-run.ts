@@ -209,10 +209,12 @@ async function runDelegateInner(
   let relayCalls = 0;
   const codexHash = target === "codex" ? codexPermissionHookHash() : null;
   const journalPermission = async (request: PermissionRequest, decide: () => Promise<PermissionDecision>) => {
+    reuseEnabled(); // Observe policy at every request/outcome, including inexact and automatically decided requests.
     const id = randomUUID();
     const context = { kind: "approval" as const, agent: target, project: workdir, job: job?.name ?? a._job, session: job?.sessionId ?? undefined };
     await appendContextEvent(rc.home, { ...context, payload: { id, stage: "request", request } });
     const decision = await decide();
+    reuseEnabled();
     await appendContextEvent(rc.home, { ...context, payload: { id, stage: "decision", decision } });
     return decision;
   };
