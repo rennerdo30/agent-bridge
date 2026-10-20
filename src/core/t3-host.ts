@@ -136,10 +136,17 @@ function decode<S extends z.ZodType>(schema: S, result: unknown): z.output<S> {
 
 export class T3Host {
   private bindingValue?: T3Binding;
+  private readonly taskThreads = new Map<string, string>();
   private readonly active = new Set<AbortController>();
   private stopped = false;
   constructor(private readonly config: T3TransportConfig, private readonly connect: T3Connect = connectMcp) {}
   get binding(): T3Binding { if (!this.bindingValue) throw new T3HostError("unavailable", "binding"); return { ...this.bindingValue }; }
+
+  private rememberTask(task: z.output<typeof taskSchema>): void {
+    // Eviction loses only a local lookup. A later send refuses until explicit status returns the result.
+    if (this.taskThreads.size >= 2000 && !this.taskThreads.has(task.taskId)) this.taskThreads.delete(this.taskThreads.keys().next().value!);
+    this.taskThreads.set(task.taskId, task.childThreadId);
+  }
 
   private async session<T>(operation: string, fn: (call: <S extends z.ZodType>(name: T3Tool, args: Record<string, unknown>, schema: S, effect?: boolean) => Promise<z.output<S>>, caps: T3Capabilities, names: Set<string>) => Promise<T>, signal?: AbortSignal): Promise<T> {
     if (this.stopped || signal?.aborted) throw new T3HostError("unavailable", operation);
@@ -192,12 +199,17 @@ export class T3Host {
   }
   send(input: { message: string; clientRequestId: string; mode?: z.infer<typeof t3Mode>; taskId?: string }, signal?: AbortSignal) {
     const args = z.object({ message: z.string().min(1).max(64_000), clientRequestId: t3RequestId, mode: t3Mode.default("queue"), taskId: id.optional() }).strict().parse(input);
+    const childThreadId = args.taskId ? this.taskThreads.get(args.taskId) : undefined;
+    if (args.taskId && !childThreadId) {
+      const error = new T3HostError("refused", "send");
+      error.message += " Call explicit t3_task_status(taskId=...) to read the result and establish the owned child binding before t3_send.";
+      return Promise.reject(error);
+    }
     return this.session("send", async (call, caps) => {
       if (!caps.features.threadManagement) throw new Error("T3 messaging unavailable");
-      // A child target is resolved only from this caller's T3-owned task, never an arbitrary thread ID.
-      const task = args.taskId ? await call("task_status", { taskId: args.taskId }, taskSchema) : undefined;
-      if (task && task.taskId !== args.taskId) throw new Error("T3 wrong task");
-      const threadId = task?.childThreadId ?? this.binding.threadId;
+      // Only explicit delegate/status calls may learn this binding. Send must never acknowledge
+      // a terminal task result implicitly by calling task_status and discarding its summary.
+      const threadId = childThreadId ?? this.binding.threadId;
       const receipt = await call("t3_thread_send", { threadId, message: args.message, mode: args.mode, clientRequestId: args.clientRequestId }, sendSchema, true);
       if (receipt.threadId !== threadId) throw new Error("T3 wrong receipt");
       return { ownership: "t3" as const, clientRequestId: args.clientRequestId, receipt, consumption: "unconfirmed" as const };
@@ -218,6 +230,7 @@ export class T3Host {
       }
       const task = await call("delegate_task", { ...args, mode: "async" }, taskSchema, true);
       if (task.providerInstanceId !== selected || task.model !== model.id) throw new Error("T3 wrong delegated target");
+      this.rememberTask(task);
       return { ownership: "t3" as const, clientRequestId: args.clientRequestId, task };
     }, signal);
   }
@@ -226,6 +239,7 @@ export class T3Host {
     return this.session("status", async call => {
       const task = await call("task_status", { taskId }, taskSchema);
       if (task.taskId !== taskId) throw new Error("T3 wrong task");
+      this.rememberTask(task);
       return { ownership: "t3" as const, task };
     }, signal);
   }

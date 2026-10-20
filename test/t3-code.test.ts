@@ -1,5 +1,9 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
+import * as childProcess from "node:child_process";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -7,15 +11,23 @@ import { T3Host, T3HostError, T3_TOOL_NAMES, t3TransportFromEnv, type T3Connect,
 import { withoutT3Context } from "../src/core/t3-identity.js";
 import { childEnv } from "../src/core/delegate.js";
 import { jobEnvironment } from "../src/core/job-environment.js";
+import { daemonEnvironment, launchDaemon } from "../src/core/daemon-launcher.js";
 import { BridgeNode } from "../src/core/node.js";
 import { loadConfig } from "../src/core/config.js";
 import { nullLogger } from "../src/core/logger.js";
 import { channelPusher, registerTools, type ServerContext } from "../src/mcp/server.js";
 import { T3Waker } from "../src/mcp/t3-wake.js";
+import { T3WakeJournal, T3_WAKE_MESSAGE_LIMIT } from "../src/core/t3-wake-journal.js";
+import * as jsonStore from "../src/core/json-store.js";
 import { makeEnv } from "./helpers.js";
 import { registrationIdentity } from "../src/core/store.js";
 import type { PeerInfo } from "../src/core/protocol.js";
 import type { BridgeMessage } from "../src/core/protocol.js";
+
+vi.mock("node:child_process", async original => {
+  const actual = await original<typeof import("node:child_process")>();
+  return { ...actual, spawn: vi.fn(actual.spawn) };
+});
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); vi.useRealTimers(); });
 
@@ -131,6 +143,7 @@ it("rejects error/mismatched effect receipts and validates task ownership before
     await expect(r.host.send({ message: "hello", clientRequestId: "effect-id" })).rejects.toMatchObject({ stage: "unknown" });
   }
   const r = replay(name => name === "task_status" ? envelope({ ...task(), taskId: "foreign" }) : undefined);
+  await expect(r.host.status("task-1")).rejects.toMatchObject({ stage: "refused" });
   await expect(r.host.send({ taskId: "task-1", message: "hello", clientRequestId: "follow-up" })).rejects.toMatchObject({ stage: "refused" });
   expect(r.calls.some(c => c.name === "t3_thread_send")).toBe(false);
 });
@@ -227,12 +240,167 @@ function wakeFixture(messages: BridgeMessage[]) {
   return { node, cfg };
 }
 
+it.each(["accepted", "unknown"])("does not re-batch an %s wake across reload with partial reads and new mail", async outcome => {
+  const env = makeEnv(), messages = [mail("old-a"), mail("old-b")], { node, cfg } = wakeFixture(messages);
+  const r = replay(name => { if (name === "t3_thread_send" && outcome === "unknown") throw new Error("lost receipt"); });
+  await r.host.capabilities();
+  const create = () => new T3Waker(r.host, node, cfg, nullLogger, 10, env.home);
+  let waker = create();
+  try {
+    await waker.flush(); waker.stop();
+    const file = new T3WakeJournal(env.home, r.host.binding).file;
+    const original = JSON.parse(readFileSync(file, "utf8")).operations[0];
+    expect(original).toMatchObject({ state: outcome, messageIds: ["old-a", "old-b"] });
+    messages.shift(); messages.push(mail("new-c"));
+    waker = create(); await waker.flush();
+    const sends = r.calls.filter(c => c.name === "t3_thread_send");
+    expect(sends).toHaveLength(2);
+    expect(sends[1]?.args.message).toContain("new-c");
+    expect(sends[1]?.args.message).not.toContain("old-b");
+    expect(JSON.parse(readFileSync(file, "utf8")).operations[0]).toEqual(original);
+    expect(node.markRead).not.toHaveBeenCalled();
+  } finally { waker.stop(); await env.cleanup(); }
+});
+
+it("does not implicitly acknowledge child completion during send success or failure", async () => {
+  let failSend = false;
+  const r = replay(name => { if (name === "t3_thread_send" && failSend) throw new Error("lost receipt"); });
+  await r.host.capabilities();
+  await expect(r.host.send({ taskId: "task-1", message: "follow-up", clientRequestId: "unknown-child" })).rejects.toThrow(/explicit.*t3_task_status/i);
+  expect(r.calls.some(c => c.name === "task_status")).toBe(false);
+  expect((await r.host.status("task-1")).task.summary).toBe("Original published result");
+  await r.host.send({ taskId: "task-1", message: "follow-up", clientRequestId: "known-child" });
+  failSend = true;
+  await expect(r.host.send({ taskId: "task-1", message: "later follow-up", clientRequestId: "lost-child-send" })).rejects.toMatchObject({ stage: "unknown" });
+  expect(r.calls.filter(c => c.name === "task_status")).toHaveLength(1);
+});
+
+it("strips scoped T3 context from shared daemon environments without removing discovery settings", () => {
+  for (const [key, value] of Object.entries({ ...scopedEnv, t3_acp_mcp_entrypoint: "fixture-entry", T3_ACP_MCP_NODE: "fixture-node", CODEX_HOME: "fixture-discovery" })) vi.stubEnv(key, value);
+  const result = daemonEnvironment({ cli: "fixture", home: "fixture-home", pipe: "fixture-pipe", cwd: "fixture-cwd" });
+  expect(Object.keys(result).filter(key => key.toUpperCase() === "AGENT_BRIDGE_HOST" || key.toUpperCase().startsWith("T3_ACP_MCP_"))).toEqual([]);
+  expect(result.CODEX_HOME).toBe("fixture-discovery");
+  expect(result.AGENT_BRIDGE_HOME).toBe("fixture-home");
+  expect(result.AGENT_BRIDGE_PIPE).toBe("fixture-pipe");
+});
+
+it.each(["linux", "win32"] as const)("strips T3 grants at the actual mocked %s daemon launch boundary", async platform => {
+  const env = makeEnv();
+  try {
+    for (const [key, value] of Object.entries(scopedEnv)) vi.stubEnv(key, value);
+    if (platform === "win32") {
+      // Make helper discovery hermetic on Linux/macOS too; spawn below is always mocked.
+      vi.stubEnv("SystemRoot", env.home);
+      const helper = join(env.home, "System32", "WindowsPowerShell", "v1.0");
+      mkdirSync(helper, { recursive: true }); writeFileSync(join(helper, "powershell.exe"), "mock helper, never executed");
+    }
+    vi.spyOn(process, "platform", "get").mockReturnValue(platform);
+    const child = Object.assign(new EventEmitter(), { stdin: new PassThrough(), stdout: new PassThrough(), unref: vi.fn(), kill: vi.fn() });
+    let input = "";
+    child.stdin.setEncoding("utf8").on("data", chunk => { input += chunk; });
+    const spawned = vi.spyOn(childProcess, "spawn").mockImplementation(() => {
+      queueMicrotask(() => {
+        if (platform === "win32") { child.stdout.write('{"code":0,"pid":1234}'); child.emit("close", 0); }
+        else child.emit("spawn");
+      });
+      return child as unknown as childProcess.ChildProcess;
+    });
+    expect(await launchDaemon({ cli: process.execPath, home: env.home, pipe: env.pipe, cwd: env.home })).toEqual({ kind: "created" });
+    const launchEnv = spawned.mock.calls[0]?.[2]?.env;
+    expect(launchEnv).toBeDefined();
+    expect(Object.keys(launchEnv!).filter(key => key.toUpperCase() === "AGENT_BRIDGE_HOST" || key.toUpperCase().startsWith("T3_ACP_MCP_"))).toEqual([]);
+    if (platform === "win32") expect(JSON.parse(input).environment.some((entry: string) => /^(AGENT_BRIDGE_HOST|T3_ACP_MCP_)/i.test(entry))).toBe(false);
+  } finally { vi.restoreAllMocks(); await env.cleanup(); }
+});
+
+it("refuses dispatch if the immutable wake operation cannot be retained", async () => {
+  const env = makeEnv(), r = replay(), { node, cfg } = wakeFixture([mail("persist-first")]);
+  await r.host.capabilities();
+  const warn = vi.fn(), log = { ...nullLogger, warn };
+  const write = vi.spyOn(jsonStore, "writeJsonStore").mockImplementationOnce(() => { throw new Error("fixture-only write failure"); });
+  const waker = new T3Waker(r.host, node, cfg, log, 10, env.home);
+  try {
+    await waker.flush(); await waker.flush();
+    expect(write).toHaveBeenCalledOnce();
+    expect(r.calls.some(c => c.name === "t3_thread_send")).toBe(false);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("journal blocked"), { reason: "unavailable" });
+  } finally { waker.stop(); await env.cleanup(); }
+});
+
+it.each(["corrupt", "future-contract", "future-json", "wrong-binding"])("preserves an %s journal and refuses all dispatch", async kind => {
+  const env = makeEnv(), r = replay(), { node, cfg } = wakeFixture([mail("persisted-a"), mail("new-b")]);
+  await r.host.capabilities();
+  const journal = new T3WakeJournal(env.home, r.host.binding);
+  journal.admit(["persisted-a"]);
+  const previous = JSON.parse(readFileSync(journal.file, "utf8"));
+  if (kind === "future-contract") previous.contractVersion++;
+  if (kind === "future-json") previous.version++;
+  if (kind === "wrong-binding") previous.binding.threadId = "other-thread";
+  const raw = kind === "corrupt" ? '{"partial":' : JSON.stringify(previous);
+  writeFileSync(journal.file, raw);
+  const warn = vi.fn(), waker = new T3Waker(r.host, node, cfg, { ...nullLogger, warn }, 10, env.home);
+  try {
+    await waker.flush();
+    expect(r.calls.some(c => c.name === "t3_thread_send")).toBe(false);
+    expect(readFileSync(journal.file, "utf8")).toBe(raw);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("journal blocked"), { reason: "invalid" });
+  } finally { waker.stop(); await env.cleanup(); }
+});
+
+it("retains submitted uncertainty after outcome-persistence failure and never resends after restart", async () => {
+  const env = makeEnv(), r = replay(), { node, cfg } = wakeFixture([mail("accepted-a")]);
+  await r.host.capabilities();
+  const realWrite = jsonStore.writeJsonStore;
+  let writes = 0;
+  const write = vi.spyOn(jsonStore, "writeJsonStore").mockImplementation((...args) => { if (++writes === 2) throw new Error("lost outcome write"); return realWrite(...args); });
+  let waker = new T3Waker(r.host, node, cfg, nullLogger, 10, env.home);
+  try {
+    await waker.flush(); waker.stop(); write.mockRestore();
+    const journal = new T3WakeJournal(env.home, r.host.binding), raw = readFileSync(journal.file, "utf8");
+    expect(JSON.parse(raw).operations[0].state).toBe("submitted");
+    waker = new T3Waker(r.host, node, cfg, nullLogger, 10, env.home); await waker.flush();
+    expect(r.calls.filter(c => c.name === "t3_thread_send")).toHaveLength(1);
+    expect(readFileSync(journal.file, "utf8")).toBe(raw);
+  } finally { waker.stop(); await env.cleanup(); }
+});
+
+it("admits a wake once across overlapping wakers and keeps different frontend journals separate", async () => {
+  const env = makeEnv(), r = replay(), { node, cfg } = wakeFixture([mail("overlap-a")]);
+  await r.host.capabilities();
+  const one = new T3Waker(r.host, node, cfg, nullLogger, 10, env.home), two = new T3Waker(r.host, node, cfg, nullLogger, 10, env.home);
+  try {
+    await Promise.all([one.flush(), two.flush()]);
+    expect(r.calls.filter(c => c.name === "t3_thread_send")).toHaveLength(1);
+    const journal = new T3WakeJournal(env.home, r.host.binding), other = new T3WakeJournal(env.home, { ...r.host.binding, threadId: "other-thread" });
+    expect(other.file).not.toBe(journal.file);
+    expect(other.admit(["overlap-a"])).toBeDefined();
+    const raw = readFileSync(journal.file, "utf8");
+    expect(raw).not.toContain(scopedEnv.T3_ACP_MCP_AUTHORIZATION);
+    expect(raw).not.toContain(scopedEnv.T3_ACP_MCP_ENDPOINT);
+  } finally { one.stop(); two.stop(); await env.cleanup(); }
+});
+
+it("fails closed at journal capacity without deleting accepted or outstanding records", async () => {
+  const env = makeEnv(), r = replay(); await r.host.capabilities();
+  const journal = new T3WakeJournal(env.home, r.host.binding);
+  for (let start = 0; start < T3_WAKE_MESSAGE_LIMIT; start += 100) journal.admit(Array.from({ length: 100 }, (_, index) => `retained-${start + index}`));
+  const raw = readFileSync(journal.file, "utf8"), { node, cfg } = wakeFixture([mail("one-more")]);
+  const warn = vi.fn(), waker = new T3Waker(r.host, node, cfg, { ...nullLogger, warn }, 10, env.home);
+  try {
+    await waker.flush();
+    expect(r.calls.some(c => c.name === "t3_thread_send")).toBe(false);
+    expect(readFileSync(journal.file, "utf8")).toBe(raw);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("journal blocked"), { reason: "full" });
+  } finally { waker.stop(); await env.cleanup(); }
+});
+
 it("coalesces policy-eligible pointer wakes without consuming mail or retrying unknown sends", async () => {
   vi.useFakeTimers();
+  const env = makeEnv();
   const messages = [mail("one"), mail("two"), mail("quiet", { conversationId: "conversation:note" }), mail("hop", { hop: 5 }), mail("kind", { to: "codex", recipient: "receiver" })];
   const { node, cfg } = wakeFixture(messages), r = replay();
   await r.host.capabilities();
-  const waker = new T3Waker(r.host, node, cfg, nullLogger, 10);
+  const waker = new T3Waker(r.host, node, cfg, nullLogger, 10, env.home);
   node.emit("message", messages[0]!); node.emit("message", messages[1]!);
   await vi.advanceTimersByTimeAsync(10);
   const sends = r.calls.filter(c => c.name === "t3_thread_send");
@@ -247,11 +415,13 @@ it("coalesces policy-eligible pointer wakes without consuming mail or retrying u
 
   const failed = replay(name => { if (name === "t3_thread_send") throw new Error("lost receipt"); });
   await failed.host.capabilities();
-  const other = new T3Waker(failed.host, node, cfg, nullLogger, 10);
+  messages.push(mail("three"));
+  const other = new T3Waker(failed.host, node, cfg, nullLogger, 10, env.home);
   await other.flush(); await other.flush();
   expect(failed.calls.filter(c => c.name === "t3_thread_send")).toHaveLength(1);
   expect(node.markRead).not.toHaveBeenCalled();
   other.stop();
+  await env.cleanup();
 });
 
 it("disables Claude channel consumption in host mode and respects disconnected/retired peers", async () => {

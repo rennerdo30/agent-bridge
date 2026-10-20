@@ -421,7 +421,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
   let launchInspected: () => void = () => {};
   const launchKnown = new Promise<void>((r) => (launchInspected = r));
   const ctx: ServerContext = { agent, cfg, node, log, home, t3Host, cwd: () => node?.cwd ?? cwd, channelActive: () => channel, parent: delegated ? parentFromEnv() : null, launchKnown };
-  const t3Waker = t3Host && node ? new T3Waker(t3Host, node, cfg, log.child("t3-wake")) : undefined;
+  const t3Waker = t3Host && node ? new T3Waker(t3Host, node, cfg, log.child("t3-wake"), 1500, home) : undefined;
   if (t3Host && node) await node.setWakePolicy(cfg.wakeOnDirect, true, cfg.maxHops);
   if (!node && ctx.parent && process.env[PARENT_JOB_ENV] && process.env[ROOT_SESSION_ENV]) {
     const parentJob = process.env[PARENT_JOB_ENV]!;
@@ -964,7 +964,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
       inputSchema: { taskId: z.string().min(1).max(512), clientRequestId: t3RequestId, reason: z.string().max(1000).optional() },
     }, guarded("t3_task_cancel", async (args: { taskId: string; clientRequestId: string; reason?: string }, extra) => text(JSON.stringify(await host.cancel(args.taskId, args.clientRequestId, args.reason, extra.signal)))));
     register("t3_send", {
-      title: "Send into an existing T3 thread", description: "Send to this exact bound T3 thread, or an owned child's thread selected by taskId. queue is the default. Requires a stable clientRequestId; dispatch acceptance does not mean Bridge inbox consumption. No top-level thread launch or arbitrary thread target.",
+      title: "Send into an existing T3 thread", description: "Send to this exact bound T3 thread, or a locally known owned child's thread selected by taskId. Unknown child bindings require explicit t3_task_status, which returns the task result; send never reads or acknowledges task results implicitly. queue is the default. Requires a stable clientRequestId; dispatch acceptance does not mean Bridge inbox consumption. No top-level thread launch or arbitrary thread target.",
       inputSchema: { message: z.string().min(1).max(64_000), clientRequestId: t3RequestId, mode: t3Mode.optional(), taskId: z.string().min(1).max(512).optional() },
     }, guarded("t3_send", async (args: Parameters<T3Host["send"]>[0], extra) => text(JSON.stringify(await host.send(args, extra.signal)))));
   }

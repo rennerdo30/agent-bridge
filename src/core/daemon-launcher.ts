@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { ENV, LATE_RELAUNCH_BACKOFF_MAX_MS, LATE_RELAUNCH_BACKOFF_MIN_MS } from "./constants.js";
 import type { BridgeConfig } from "./config.js";
+import { withoutT3Context } from "./t3-identity.js";
 
 export type DaemonLaunch = { kind: "created" } | { kind: "unavailable"; reason: "windows_wmi_unavailable" | "windows_wmi_create_rejected" } | { kind: "unknown"; stage?: "read" | "startup" | "create"; errorCode?: number };
 export interface DaemonOptions { cli: string; home: string; pipe: string; cwd: string; dashboard?: boolean; config?: Pick<BridgeConfig, "network" | "mobile" | "dashboardPort"> }
@@ -49,7 +50,7 @@ try {
 
 /** Keep configuration/native transcript discovery, without inheriting session control credentials. */
 export function daemonEnvironment(options: DaemonOptions): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...process.env, [ENV.home]: options.home, [ENV.pipe]: options.pipe };
+  const env: NodeJS.ProcessEnv = { ...withoutT3Context(process.env), [ENV.home]: options.home, [ENV.pipe]: options.pipe };
   for (const key of Object.keys(env)) {
     if (/^AGENT_BRIDGE_(?:PARENT_|ROOT_|JOB_|DELEGATE_|INTERNAL$)/.test(key)) delete env[key];
   }
@@ -133,7 +134,7 @@ export async function launchDaemon(options: DaemonOptions, late?: LateDaemonLaun
   }
   const powershell = join(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
   if (!existsSync(powershell)) return { kind: "unavailable", reason: "windows_wmi_unavailable" };
-  const child = spawn(powershell, ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(WINDOWS_CREATE, "utf16le").toString("base64")], { windowsHide: true, stdio: ["pipe", "pipe", "ignore"] });
+  const child = spawn(powershell, ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(WINDOWS_CREATE, "utf16le").toString("base64")], { env, windowsHide: true, stdio: ["pipe", "pipe", "ignore"] });
   return superviseCreateHelper(child as unknown as CreateHelper, JSON.stringify({ command: [process.execPath, options.cli, "broker-daemon"].map(windowsArgument).join(" "), cwd: options.cwd,
     environment: Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined).map(([key, value]) => `${key}=${value}`) }), late);
 }
