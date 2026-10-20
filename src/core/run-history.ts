@@ -371,11 +371,12 @@ export function* historyJobsSteps(home: string, responsive = false, selection: A
   let canonicalHome: string;
   try { canonicalHome = realpathSync.native(home); } catch { return out; }
   const indexed = join(canonicalHome, JOBS_FILE);
-  for (const job of (yield* readIndexedJobSteps(indexed, responsive, { ...selection, history: true })).jobs) {
+  const snapshot = yield* readIndexedJobSteps(indexed, responsive, { ...selection, history: true });
+  for (const job of snapshot.jobs) {
     if (responsive) yield;
     if (typeof job.name === "string" && RUN_LOG_NAME.test(job.name + ".log")) out.set(job.name, job);
   }
-  if (indexedJobProjectionCurrent(indexed)) return out;
+  if (indexedJobProjectionCurrent(indexed, snapshot.signature)) return out;
   // Active compatibility data overrides the index. Validate containment on every
   // read, including a suspended read after an ancestor replacement.
   const active = safeFile(home, path, canonicalHome);
