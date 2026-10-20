@@ -26,6 +26,8 @@ import { ConnectionActivity } from "../core/connection-activity.js";
 import { DEFAULT_CODEX_SUBAGENTS, MAX_CODEX_SUBAGENTS, APP_VERSION, MAX_BODY_CHARS, PROTOCOL_VERSION } from "../core/constants.js";
 import type { Logger } from "../core/logger.js";
 import { BridgeNode, type BridgeNodeOptions } from "../core/node.js";
+import { ownProcessIdentity } from "../core/process-identity.js";
+import { retainedUiSender } from "./ui-sender.js";
 import { resolveDbPath } from "../core/paths.js";
 import { BridgeError, CODING_AGENTS, isUnsupportedOperation, type PeerInfo } from "../core/protocol.js";
 import { brokerFailureState } from "../core/health.js";
@@ -244,26 +246,12 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
   const dbPath = resolveDbPath(opts.home);
   const chatReceipts = new Set<string>();
   const queueChat = opts.chatQueue ?? codexQueue(loadConfig(opts.home, "other", opts.log).codexBin, opts.log);
-  /** The lazily started "you" peer; one shared start, so concurrent sends never start two. */
-  let sender: Promise<BridgeNode> | null = null;
-  let senderNode: BridgeNode | null = null;
-  const getSender = (): Promise<BridgeNode> => {
-    senderNode ??= new BridgeNode({ pipePath: opts.pipe, token, dbPath, agent: "other", name: UI_PEER_NAME, cwd: opts.home, autoWake: false, log: opts.log,
+  // Prewarm asynchronously; construction still retains metadata and restores
+  // durable read state before election. Unknown identity stays unknown.
+  const sender = retainedUiSender(ownProcessIdentity, () =>
+    new BridgeNode({ pipePath: opts.pipe, token, dbPath, agent: "other", name: UI_PEER_NAME, cwd: opts.home, autoWake: false, log: opts.log,
       daemon: opts.brokerDaemon,
-      network: { home: opts.home, config: loadConfig(opts.home, "other", opts.log).network } });
-    sender ??= (async () => {
-      try {
-        await senderNode!.start();
-        return senderNode!;
-      } catch (err) {
-        // A later send retries discovery through the SAME node/unknown-launch
-        // latch. It never creates a second node or competing daemon attempt.
-        sender = null;
-        throw err;
-      }
-    })();
-    return sender;
-  };
+      network: { home: opts.home, config: loadConfig(opts.home, "other", opts.log).network } }));
 
   const networkRequest = async <O extends Op>(op: O, args: RequestMap[O][0]): Promise<RequestMap[O][1]> => {
     const client = await BridgeClient.connect(opts.pipe, opts.log);
@@ -322,7 +310,8 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
 
   // Pushes "this conversation moved" to open dashboards as soon as the history worker retains new lines (AB-383).
   const historyFeed = new HistoryChangeFeed(opts.home);
-  const handle = async (req: IncomingMessage, res: ServerResponse) => {
+  const handle = async (req: IncomingMessage, res: ServerResponse, signal: AbortSignal) => {
+    const getSender = () => sender.get(signal);
     const host = String(req.headers.host ?? "").replace(/:\d+$/, "");
     if (!ALLOWED_HOSTS.has(host)) return send(res, 403, { error: "forbidden host" });
     const url = new URL(req.url ?? "/", `http://${UI_HOST}`);
@@ -744,9 +733,16 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
   };
 
   const server = createServer((req, res) => {
-    handle(req, res).catch((err) => {
+    const request = new AbortController();
+    const cancel = () => request.abort();
+    req.once("aborted", cancel);
+    res.once("close", cancel);
+    handle(req, res, request.signal).catch((err) => {
       opts.log.warn("ui request failed", { err: (err as Error).message });
-      if (!res.headersSent) send(res, 500, { error: String((err as Error).message) });
+      if (!res.headersSent && !res.destroyed) send(res, 500, { error: String((err as Error).message) });
+    }).finally(() => {
+      req.off("aborted", cancel);
+      res.off("close", cancel);
     });
   });
   // Open browser connections (event streams included) keep a broker daemon from exiting idle.
@@ -762,11 +758,11 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
     port,
     activity,
     close: async () => {
+      const stopped = sender.close();
       // End only the event streams; every other connection closes as before.
       historyFeed.close();
       server.closeIdleConnections();
-      await sender?.catch(() => null);
-      await senderNode?.stop();
+      await stopped;
       await new Promise<void>((r) => server.close(() => r()));
     },
   };
