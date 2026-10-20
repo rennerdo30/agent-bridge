@@ -215,7 +215,95 @@ afterEach(async () => {
   } finally { restoreClientCountObservation(); }
   publishClientCountObservation(); // Only after the original owned teardown succeeds.
 });
-function fixtureStartupLogger(): typeof nullLogger {
+// Only the unknown-UI case opts in. All times share one fixture-relative clock;
+// they are markers, not additive stage durations. Never retain request/error data.
+type UiUnknownStage = "http" | "start" | "launch";
+type UiUnknownError = "none" | "TimeoutError" | "AbortError" | "TypeError" | "Error" | "other";
+function uiUnknownDiagnostics() {
+  const started = performance.now(), limit = 32, countLimit = 255;
+  type Context = { request: number; start: number; node: number };
+  const events: Array<Context & { stage: UiUnknownStage | "constructor_logger"; boundary: "entry" | "return" | "fulfilled" | "rejected" | "threw";
+    atMs: number; errorClass: UiUnknownError }> = [];
+  const discovery: Array<Context & { code: string; firstMs: number; lastMs: number; count: number }> = [];
+  let request = 0, start = 0, node = 0, launches = 0, constructors = 0, overflow = false, incomplete = false, active = true;
+  let caseBodyOutcome: "incomplete" | "fulfilled" | "rejected" = "incomplete", caseErrorClass: UiUnknownError = "none";
+  let counts: { constructorLogger: number; start: number; node: number; launch: number; listen: number } | undefined;
+  const guard = (record: () => void): void => {
+    if (!active) return;
+    try { record(); } catch { incomplete = true; } // Diagnostic work only; never wraps a fixture action.
+  };
+  const bounded = (value: number, max = countLimit) => {
+    if (!Number.isSafeInteger(value) || value < 0) { incomplete = true; return 0; }
+    if (value > max) overflow = true;
+    return Math.min(value, max);
+  };
+  const now = () => bounded(Math.max(0, Math.round(performance.now() - started)), 120_000);
+  const context = (): Context => ({ request, start, node });
+  const classify = (error: unknown): UiUnknownError => {
+    const name = error instanceof Error || error instanceof DOMException ? error.name : "";
+    return name === "TimeoutError" || name === "AbortError" || name === "TypeError" || name === "Error" ? name : "other";
+  };
+  const record = (captured: Context, stage: typeof events[number]["stage"], boundary: typeof events[number]["boundary"], error?: unknown) => guard(() => {
+    if (events.length >= limit) { overflow = true; return; }
+    const errorClass = boundary !== "rejected" && boundary !== "threw" ? "none" : classify(error);
+    events.push({ ...captured, stage, boundary, atMs: now(), errorClass });
+  });
+  return {
+    observe<T>(stage: UiUnknownStage, action: () => Promise<T>): Promise<T> {
+      guard(() => {
+        if (stage === "http") request = bounded(request + 1, 3); // 1=initial GET, 2=send1, 3=send2.
+        if (stage === "launch") launches = bounded(launches + 1);
+      });
+      const captured = context(); record(captured, stage, "entry");
+      let originalPromise: Promise<T>;
+      try { originalPromise = action(); }
+      catch (error) { record(captured, stage, "threw", error); throw error; }
+      record(captured, stage, "return");
+      // Both handlers are guarded and return void: the observer promise cannot
+      // reject. The caller receives the EXACT original promise and native error.
+      guard(() => {
+        void originalPromise.then(() => record(captured, stage, "fulfilled"), error => record(captured, stage, "rejected", error));
+      });
+      return originalPromise;
+    },
+    start(starts: BridgeNode[], current: BridgeNode) {
+      guard(() => { start = bounded(start + 1); node = bounded(starts.indexOf(current) + 1); });
+    },
+    constructorLogger() {
+      guard(() => { constructors = bounded(constructors + 1); });
+      // node.ts calls child("node") BEFORE recordStorePresence/read-journal.
+      // This is inside the constructor, not its exact call entry. The next start
+      // entry proves it returned; no constructor/module/global mock is installed.
+      record(context(), "constructor_logger", "entry");
+    },
+    discovery(code: unknown) {
+      guard(() => {
+        if (typeof code !== "string" || !["ENOENT", "ECONNREFUSED", "ETIMEDOUT", "EUNSAFESOCKETDIR"].includes(code)) return;
+        const previous = discovery.find(value => value.request === request && value.start === start && value.node === node && value.code === code);
+        const atMs = now();
+        if (previous) { previous.lastMs = atMs; previous.count = bounded(previous.count + 1); }
+        else if (discovery.length < limit) discovery.push({ ...context(), code, firstMs: atMs, lastMs: atMs, count: 1 });
+        else overflow = true;
+      });
+    },
+    outcome(settlement: "fulfilled" | "rejected", error?: unknown) {
+      guard(() => { caseBodyOutcome = settlement; caseErrorClass = settlement === "rejected" ? classify(error) : "none"; });
+    },
+    captureCounts(starts: BridgeNode[], listens: () => number) {
+      guard(() => { counts = { constructorLogger: constructors, start: bounded(starts.length), node: bounded(new Set(starts).size), launch: launches, listen: bounded(listens()) }; });
+    },
+    publish() {
+      guard(() => {
+        process.stderr.write("AB453 UI unknown evidence " + JSON.stringify({ schema: 1, fixture: "ui_unknown_retained", clock: "fixture_relative_ms",
+          constructorBoundary: "logger_child_before_metadata_to_start_entry", events, discovery,
+          counts, caseBodyOutcome, caseErrorClass, incomplete, overflow }) + "\n");
+      });
+      active = false; // No late original settlement can emit or attach further diagnostics.
+    },
+  };
+}
+type UiUnknownDiagnostics = ReturnType<typeof uiUnknownDiagnostics>;
+function fixtureStartupLogger(diagnostics?: UiUnknownDiagnostics): typeof nullLogger {
   const evidence: typeof startupEvidence[number] = []; startupEvidence.push(evidence);
   const started = performance.now();
   const record = (phase: string, code?: string | number, stage?: string) => {
@@ -223,8 +311,10 @@ function fixtureStartupLogger(): typeof nullLogger {
     if (previous) { previous.count++; previous.elapsedMs = Math.round(performance.now() - started); }
     else evidence.push({ phase, ...(code === undefined ? {} : { code }), ...(stage ? { stage } : {}), elapsedMs: Math.round(performance.now() - started), count: 1 });
   };
-  const fixtureLog: typeof nullLogger = { ...nullLogger, child: () => fixtureLog,
-    debug: (message, data) => { if (message === "connect attempt failed" && ["ENOENT", "ECONNREFUSED", "ETIMEDOUT", "EUNSAFESOCKETDIR"].includes(String(data?.code))) record("discovery", String(data!.code)); },
+  const fixtureLog: typeof nullLogger = { ...nullLogger, child: scope => { if (scope === "node") diagnostics?.constructorLogger(); return fixtureLog; },
+    debug: (message, data) => { if (message === "connect attempt failed" && ["ENOENT", "ECONNREFUSED", "ETIMEDOUT", "EUNSAFESOCKETDIR"].includes(String(data?.code))) {
+      record("discovery", String(data!.code)); diagnostics?.discovery(data?.code);
+    } },
     info: (message, data) => {
       if (message === "connected to broker") record("authenticated_ready");
       else if (message === "daemon creation observation; authenticated readiness still required" && ["created", "unknown", "unavailable"].includes(String(data?.kind))) {
@@ -243,25 +333,30 @@ async function port() {
   const server = createServer(); await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
   const value = (server.address() as { port: number }).port; await new Promise<void>(resolve => server.close(() => resolve())); return value;
 }
-async function dashboard(options: Pick<UiOptions, "brokerDaemon" | "embeddedCompatibility"> = {}) {
-  const ui = await startUi({ home: env.home, pipe: env.pipe, port: 0, log: fixtureStartupLogger(), ...options }); dashboards.push(ui.close);
-  const visit = await fetch(ui.url, { redirect: "manual", signal: AbortSignal.timeout(10_000) });
+async function dashboard(options: Pick<UiOptions, "brokerDaemon" | "embeddedCompatibility"> = {}, diagnostics?: UiUnknownDiagnostics) {
+  const ui = await startUi({ home: env.home, pipe: env.pipe, port: 0, log: fixtureStartupLogger(diagnostics), ...options }); dashboards.push(ui.close);
+  const visitRequest = () => fetch(ui.url, { redirect: "manual", signal: AbortSignal.timeout(10_000) });
+  const visit = await (diagnostics ? diagnostics.observe("http", visitRequest) : visitRequest());
   const cookie = visit.headers.get("set-cookie")!.split(";")[0]!;
-  return dashboardSender(ui.url, cookie);
+  return dashboardSender(ui.url, cookie, diagnostics);
 }
-function dashboardSender(url: string, cookie: string) {
+function dashboardSender(url: string, cookie: string, diagnostics?: UiUnknownDiagnostics) {
   const origin = new URL(url).origin;
-  return (body: string, extra: Record<string, unknown> = {}) => fetch(origin + "/api/send", { method: "POST", signal: AbortSignal.timeout(10_000),
-    headers: { cookie, "x-agent-bridge": "1", "content-type": "application/json" }, body: JSON.stringify({ to: "ui-retained", body, ...extra }) });
+  return (body: string, extra: Record<string, unknown> = {}) => {
+    const sendRequest = () => fetch(origin + "/api/send", { method: "POST", signal: AbortSignal.timeout(10_000),
+      headers: { cookie, "x-agent-bridge": "1", "content-type": "application/json" }, body: JSON.stringify({ to: "ui-retained", body, ...extra }) });
+    return diagnostics ? diagnostics.observe("http", sendRequest) : sendRequest();
+  };
 }
-function observeUiSender() {
+function observeUiSender(diagnostics?: UiUnknownDiagnostics) {
   const starts: BridgeNode[] = [], metadataAtStart: boolean[] = [];
   const original = BridgeNode.prototype.start;
   const start = vi.spyOn(BridgeNode.prototype, "start").mockImplementation(function (this: BridgeNode) {
     // The existing constructor records metadata/read state before election.
     // Presence here is evidence about that path, not an elected broker.
     starts.push(this); metadataAtStart.push(existsSync(env.db));
-    return original.call(this);
+    diagnostics?.start(starts, this);
+    return diagnostics ? diagnostics.observe("start", () => original.call(this)) : original.call(this);
   });
   // Pass through every attempted listen, including attempts that reject.
   const listen = vi.spyOn(Broker.prototype, "listen");
@@ -459,9 +554,9 @@ describe("standalone demand-start broker", () => {
     } finally { observed.close(); }
   });
   it("UI unknown creation remains in one retained node across authorized sends", async () => {
-    const observed = observeUiSender();
+    const diagnostics = uiUnknownDiagnostics(), observed = observeUiSender(diagnostics);
     try {
-      const launch = vi.fn(async () => ({ kind: "unknown" as const })), send = await dashboard({ brokerDaemon: { cli, launch } });
+      const launch = vi.fn(() => diagnostics.observe("launch", async () => ({ kind: "unknown" as const }))), send = await dashboard({ brokerDaemon: { cli, launch } }, diagnostics);
       expect((await send("unconfirmed-1")).status).toBe(500);
       expect((await send("unconfirmed-2")).status).toBe(500);
       expect(launch).toHaveBeenCalledOnce(); expect(observed.starts).toHaveLength(2);
@@ -469,7 +564,15 @@ describe("standalone demand-start broker", () => {
       expect(observed.listen).not.toHaveBeenCalled();
       process.stderr.write("AB325 UI pre-election metadata evidence " + JSON.stringify(observed.metadataAtStart) + "\n");
       await expect(client()).rejects.toMatchObject({ code: "ENOENT" });
-    } finally { observed.close(); }
+      diagnostics.outcome("fulfilled");
+    } catch (error) {
+      diagnostics.outcome("rejected", error); throw error;
+    } finally {
+      diagnostics.captureCounts(observed.starts, () => observed.listen.mock.calls.length);
+      // The original restore still runs first. Diagnostic failure cannot replace
+      // an assertion, fetch rejection, original start error or restore failure.
+      try { observed.close(); } finally { diagnostics.publish(); }
+    }
   });
   it("UI definitive unavailable creation preserves explicit degraded compatibility only", async () => {
     const launch = vi.fn(async () => ({ kind: "unavailable" as const, reason: "windows_wmi_unavailable" as const }));
