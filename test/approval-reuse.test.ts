@@ -315,6 +315,25 @@ describe("identical approval reuse within a job (AB-402)", () => {
       expect(rc.jobs!.askParent).toHaveBeenCalledTimes(3);
     });
 
+    it("revokes MCP grants permanently when durable supervision becomes unreadable", async () => {
+      const rc = context([allowed(), allowed(), allowed()]);
+      const j = { ...job(), owner: "parent" };
+      stored(j);
+      const request = hook("claude", "mcp__other__lookup", { query: "x" });
+      vi.spyOn(DELEGATION_TARGETS.claude, "run").mockImplementation(async (_cfg, req) => {
+        expect((await req.approve!(request)).allow).toBe(true);
+        j.allowedServers?.clear();
+        writeFileSync(join(home, "jobs.json"), "{ not json");
+        expect((await req.approve!(request)).allow).toBe(true);
+        j.allowedServers?.clear();
+        stored(j);
+        expect((await req.approve!(request)).allow).toBe(true);
+        expect(rc.jobs!.askParent).toHaveBeenCalledTimes(3);
+        return { sessionId: "saved", text: "done", isError: false, details: {} };
+      });
+      await runDelegate(rc, "claude", { title: "reuse", prompt: "task", access: "read" }, j.controller.signal, undefined, true, j);
+    });
+
     it("asks when the store does not have the job (L2)", async () => {
       const rc = context([allowed(), allowed()]);
       const j = { ...job(), owner: "parent" };

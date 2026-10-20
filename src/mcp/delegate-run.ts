@@ -27,7 +27,7 @@ import { changedFiles, createWorktree, finishWorktree, git, trustArgs, gitChange
 import { formatSiblingMessages, formatUsage } from "./format.js";
 import { SiblingLink } from "./siblings.js";
 import { approvalOrigin, denyPendingApprovals, jobSupervision, waitForApproval, type ApprovalOutcome, type Job, type RunResult } from "./jobs.js";
-import { approvalIdentity, approvalScope, dropCommandGrants, isCommandRequest, isFileChangeRequest, jobCanSpawn, mcpCallEffect, readOnlyJob, recordGrant, reusableGrant } from "./approval-reuse.js";
+import { approvalIdentity, approvalScope, clearApprovalGrants, dropCommandGrants, isCommandRequest, isFileChangeRequest, jobCanSpawn, mcpCallEffect, readOnlyJob, recordGrant, reusableGrant } from "./approval-reuse.js";
 import { DELEGATION_TARGETS, supportsAsk, usageProbeFor, type Access, type RelayWiring, type TargetArgs } from "./targets.js";
 import { checkUsagePreflight, confirmUsageAdmission, currentUsage, usageAdmissionText, usageRefused } from "../core/usage.js";
 import { JOB_SETTING_KEYS } from "./job-settings.js";
@@ -261,7 +261,11 @@ async function runDelegateInner(
     // The supervisor comes from the durable store: a handoff from another process ends the grants. A store that
     // cannot be read, or that lacks the job, means the supervisor is unknown: ask, and keep no grant.
     const supervision = jobSupervision(rc.home, job, dlog);
-    if (supervision === null) return settle(await ask());
+    if (supervision === null) {
+      // An unknown supervisor invalidates every grant, including MCP grants, even if the store later recovers.
+      clearApprovalGrants(job);
+      return settle(await ask());
+    }
     const scope = approvalScope({ access: a.access, sandbox: a.sandbox, permission: profile.permission(cfg, a), reviewer: codexReviewer(),
       supervisor: JSON.stringify([supervision, rc.me()]) });
     const grant = reusableGrant(job, scope, identity);
