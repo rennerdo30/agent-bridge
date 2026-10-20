@@ -69,7 +69,9 @@ export interface JobChecklistResult { job: { name: string; status: string; agent
 export const changesJobChecklist = (change: SupervisorChange): boolean => Boolean(change.add || change.edit || change.require || change.unrequire || change.close || change.approve || change.reject);
 
 const authorityText = z.string().min(1).refine(value => value === value.trim() && !/[\p{Cc}\p{Cf}]/u.test(value));
-const authorityPath = authorityText.refine(isAbsolute);
+// Filesystem paths are not peer names. Canonical project/worktree writers emit absolute paths, but may contain
+// whitespace/format characters. runDelegate persists non-worktree workdir verbatim and accepts args.cwd="" as fallback.
+const authorityPath = z.string().refine(isAbsolute);
 const positiveInteger = z.number().int().positive().safe();
 const authorityIdentity = z.object({ id: authorityText, name: authorityText }).passthrough();
 const authorityWorktree = z.object({ repoRoot: authorityPath, path: authorityPath.optional(), cwd: authorityPath.optional() }).passthrough();
@@ -86,8 +88,8 @@ const checklistAuthoritySchema = authorityIdentity.extend({
     id: authorityText, at: positiveInteger, from: authorityText, to: authorityText,
     rootSession: authorityText, rootName: authorityText, fromRoot: authorityText.optional(), fromRootName: authorityText.optional(),
   }).passthrough()).optional(),
-  projectRoot: authorityPath.optional(), workdir: authorityPath.nullable().optional(), worktree: authorityWorktree.nullable().optional(),
-  args: z.object({ cwd: authorityText.optional(), _worktree: authorityWorktree.optional(), host: z.never().optional() }).passthrough().optional(),
+  projectRoot: authorityPath.optional(), workdir: z.string().nullable().optional(), worktree: authorityWorktree.nullable().optional(),
+  args: z.object({ cwd: z.string().optional(), _worktree: authorityWorktree.optional(), host: z.never().optional() }).passthrough().optional(),
   host: z.object({ pid: positiveInteger.nullable(), peer: authorityText, startedAt: positiveInteger }).passthrough().nullable().optional(),
 });
 

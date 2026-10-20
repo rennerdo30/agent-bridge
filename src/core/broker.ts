@@ -72,7 +72,7 @@ import { isJobSendTarget, MAX_JOB_SEND_TARGETS } from "./job-messaging.js";
 import { NetworkService, type NetworkStatus } from "../network/link.js";
 import { readNetworkConfig, writeNetworkConfig, type NetworkConfig } from "../network/config.js";
 import { z } from "zod";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, isAbsolute, join } from "node:path";
 import { ProjectGroups } from "./project-groups.js";
 import { accessJobChecklist, jobChecklistRequestSchema, readChecklistAuthority } from "./checklists.js";
 import { recoverJobRecordAsync, type RecoveryRefusal } from "./job-recovery.js";
@@ -223,6 +223,14 @@ type Handler<O extends Op> = (conn: Conn, args: RequestMap[O][0]) => RequestMap[
 /** A handoff commit retries a briefly held registry lease asynchronously, as long as a blocking writer would wait. */
 const HANDOFF_LOCK_WAIT_MS = 2_000;
 const HANDOFF_LOCK_RETRY_MS = 25;
+/** Retained relative context has no original cwd witness here. Preserve current project roles,
+ * but never rediscover these paths against the broker's unrelated current directory. */
+class ChecklistProjectGroups extends ProjectGroups {
+  override root(cwd: string): string | null {
+    return isAbsolute(cwd) ? super.root(cwd) : null;
+  }
+}
+
 export class Broker {
   private hosting: { mode: "daemon" | "embedded" | "embedded_degraded"; reason?: string } = { mode: "embedded" };
   setHostingMode(mode: "daemon" | "embedded_degraded", reason?: "windows_wmi_unavailable" | "windows_wmi_create_rejected"): void {
@@ -569,7 +577,7 @@ export class Broker {
           const peer = caller();
           current = this.currentChecklistAuthority(recovered);
           if (!current || current.name !== name || current.remote || !this.jobsPath ||
-              !new ProjectGroups(dirname(this.jobsPath)).canControl(peer, current, this.localPeers()))
+              !new ChecklistProjectGroups(dirname(this.jobsPath)).canControl(peer, current, this.localPeers()))
             throw new BridgeError("unauthorized", "Current authority does not allow this checklist operation.");
         };
         authorize();

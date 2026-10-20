@@ -1,4 +1,6 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
+import * as fs from "node:fs";
+import { EventEmitter } from "node:events";
 import * as sqlite from "node:sqlite";
 import * as childProcess from "node:child_process";
 import { Worker } from "node:worker_threads";
@@ -6,9 +8,10 @@ import * as worktrees from "../src/core/worktree.js";
 import * as admission from "../src/core/root-concurrency.js";
 import * as projectIdentity from "../src/core/project-identity.js";
 import { archiveJobs } from "../src/core/job-archive.js";
+import { readJsonSnapshot } from "../src/core/file-cache.js";
 import { DELEGATION_METADATA_VERSION } from "../src/core/constants.js";
 import { DatabaseSync } from "node:sqlite";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { DEFAULT_CONFIG } from "../src/core/config.js";
@@ -34,6 +37,12 @@ import { DELEGATION_TARGETS } from "../src/mcp/targets.js";
 import { makeEnv, type TestEnv } from "./helpers.js";
 
 const forbiddenLaunches = vi.hoisted(() => [] as string[]);
+const fixtureFs = vi.hoisted(() => ({ statSync: null as typeof import("node:fs").statSync | null }));
+vi.mock("node:fs", async original => {
+  const actual = await original<typeof import("node:fs")>();
+  fixtureFs.statSync = actual.statSync;
+  return { ...actual, statSync: vi.fn(actual.statSync) };
+});
 vi.mock("node:child_process", async original => {
   const actual = await original<typeof import("node:child_process")>();
   const refused = () => vi.fn(() => { const error = new Error("Subprocess forbidden in checklist fixture"); forbiddenLaunches.push(error.stack!); throw error; });
@@ -124,10 +133,18 @@ afterEach(async () => {
 });
 
 /** The real broker's authority handlers without listeners, discovery or provider processes. */
+let authorityFixtureRevision = 0;
+/** Match production atomic registry publication; even equal-size restores get a fresh file identity. */
+function writeAuthorityFixture(path: string, document: unknown) {
+  const incoming = path + '.fixture-' + ++authorityFixtureRevision;
+  writeFileSync(incoming, JSON.stringify(document));
+  renameSync(incoming, path);
+}
+
 function authorityFixture() {
   const saved = { ...job(), metadataVersion: DELEGATION_METADATA_VERSION, owner: "owner", supervisor: "owner-session", rootName: "owner", rootSession: "owner-session", status: "done", workdir: project };
   const registry = join(home, "jobs.json");
-  const save = (rows: unknown[] = [saved]) => writeFileSync(registry, JSON.stringify({ version: 4, jobs: rows }));
+  const save = (rows: unknown[] = [saved]) => writeAuthorityFixture(registry, { version: 4, jobs: rows });
   save();
   const broker = new Broker(env.pipe, {} as MessageStore, nullLogger, "fixture-only", Date.now, registry) as any;
   const conn = { authed: true, registered: true, retired: false, socket: { destroyed: false },
@@ -171,8 +188,8 @@ async function session(name: string, cwd = project) {
 async function supervisor(owned: Job = job()) {
   const node = await session("claude-parent");
   // The production broker operation authorizes the fixture's durable job, not the fake manager's find result.
-  writeFileSync(join(home, "jobs.json"), JSON.stringify({ version: 4, jobs: [{ ...owned, owner: node.name,
-    metadataVersion: DELEGATION_METADATA_VERSION, supervisor: node.currentSessionId, rootName: node.name, rootSession: node.currentSessionId, executionOwner: node.name, workdir: project }] }));
+  writeAuthorityFixture(join(home, "jobs.json"), { version: 4, jobs: [{ ...owned, owner: node.name,
+    metadataVersion: DELEGATION_METADATA_VERSION, supervisor: node.currentSessionId, rootName: node.name, rootSession: node.currentSessionId, executionOwner: node.name, workdir: project }] });
   const start = vi.fn((..._args: unknown[]) => owned);
   const ctx: ServerContext = { agent: "claude", node, home, cfg: { ...DEFAULT_CONFIG }, log: nullLogger, cwd: () => project, channelActive: () => false,
     jobs: { start, persist: vi.fn(), limit: 3, list: () => [owned], waiting: () => [], recent: () => [], limitWait: () => null,
@@ -226,6 +243,143 @@ describe("AB-428 job checklists", () => {
     { get: true }, { add: [{ text: "Unauthorized" }] }, { edit: [{ id: "c1", text: "Unauthorized" }] },
     { require: ["c1"] }, { unrequire: ["c1"] }, { close: ["c1"] }, { approve: ["c2"] }, { reject: ["c2"] },
   ];
+  it("restores authority with fresh file identity despite a same-length in-place timestamp collision", async () => {
+    const f = authorityFixture(), path = join(home, "jobs.json");
+    f.conn.peer.name = "owner";
+    writeFileSync(join(home, "config.json"), JSON.stringify({ projectGroups: false }));
+    seedJobChecklist(home, JOB, [{ text: "Required" }], null, "owner");
+    f.save([{ ...f.saved, startedAt: f.saved.startedAt + 1 }]);
+    const originalStat = fixtureFs.statSync!, pinned = originalStat(path, { bigint: true });
+    vi.spyOn(fs, "statSync").mockImplementation(((file: any, options: any) => {
+      const actual: any = originalStat(file, options);
+      // Controlled discovery boundary: same-file metadata is coarse, but real replacement identity is never hidden.
+      if (String(file) === path && options?.bigint && actual.dev === pinned.dev && actual.ino === pinned.ino && actual.birthtimeNs === pinned.birthtimeNs)
+        return Object.assign(Object.create(Object.getPrototypeOf(actual)), actual, { mtimeMs: pinned.mtimeMs, ctimeMs: pinned.ctimeMs, mtimeNs: pinned.mtimeNs, ctimeNs: pinned.ctimeNs });
+      return actual;
+    }) as typeof fs.statSync);
+    expect((readJsonSnapshot(path).value as any).jobs[0].startedAt).toBe(f.saved.startedAt + 1);
+    f.save(); // Must restore the ORIGINAL generation; the actual cache and broker authorizers are unchanged.
+    expect(JSON.parse(readFileSync(path, "utf8")).jobs[0].startedAt).toBe(f.saved.startedAt);
+    const result = await f.broker.handlers.jobChecklist(f.conn, { job: JOB, get: true }).then(() => "allowed", () => "denied");
+    f.jobs.setDormant(true);
+    expect(result).toBe("allowed");
+  });
+  it.each(["broker", "private"].flatMap(route => ["dot", "relative-folder", "empty", "space", "format"].map(context => ({ route, context }))))(
+    "preserves real persisted $context context through $route current/archive operations at both fences", async ({ route, context }) => {
+      const parentJob = "codex-job-parent01", rootSession = "root-session";
+      vi.stubEnv("AGENT_BRIDGE_PARENT_JOB", parentJob); vi.stubEnv("AGENT_BRIDGE_ROOT_SESSION", rootSession); vi.stubEnv("AGENT_BRIDGE_ROOT_NAME", "owner");
+      const coord = Object.assign(new LocalCoordinator(route === "private" ? parentJob : "owner", rootSession), { cwd: project });
+      const rootBudget = new admission.RootConcurrency(home, rootSession);
+      rootBudget.ensureLimit(DEFAULT_CONFIG.maxJobs); rootBudget.close(); // The fixture's established parent owns the budget.
+      const path = join(home, "jobs.json"), jobs = new JobManager(coord, nullLogger, path, 3,
+        route === "private" ? { parentJob, rootSession, rootName: "owner", escalate: async () => {} } : undefined);
+      const cwd = context === "dot" ? "." : context === "relative-folder" ? "relative-folder" : context === "empty" ? "" : join(project, context === "space" ? "folder\u2000" : "folder\u200c");
+      if (context === "space" || context === "format") mkdirSync(cwd);
+      if (context === "relative-folder") mkdirSync(join(project, cwd));
+      const args = { title: "Context persistence", prompt: "task", cwd, access: "read" as const };
+      // Creation-time discovery alone models the original process cwd. Restore it before all authorizers.
+      const canonical = projectIdentity.canonicalProjectRoot;
+      const discovery = vi.spyOn(projectIdentity, "canonicalProjectRoot").mockImplementationOnce(value => value && !isAbsolute(value) ? canonical(project) : canonical(value));
+      const tracked = jobs.track("codex", null, "Context persistence", undefined, args);
+      discovery.mockRestore();
+      const name = tracked.job.name;
+      seedJobChecklist(home, name, [{ text: "Required" }], null, coord.name);
+      changeJobChecklistAsJob(home, name, { propose: [{ text: "Pending" }] });
+      const node = Object.assign(new EventEmitter(), { start: vi.fn(async () => {}), unread: () => [], name, siblings: async () => [] });
+      const rc: RunContext = { agent: "codex", cfg: { ...DEFAULT_CONFIG }, home, log: nullLogger, me: () => coord.name, cwd: () => project,
+        jobs, jobNode: node as unknown as BridgeNode };
+      const ctx: ServerContext = { agent: "codex", node: null, parent: quietParent(), childInbox: coord, jobs, home,
+        cfg: { ...DEFAULT_CONFIG }, log: nullLogger, cwd: () => project, channelActive: () => false };
+      const privateTools = tools(ctx);
+      const broker = new Broker(env.pipe, {} as MessageStore, nullLogger, "fixture-only", Date.now, path) as any;
+      const conn = { authed: true, registered: true, retired: false, socket: { destroyed: false }, peer: { id: "owner", name: "owner", agent: "codex", cwd: project, startedAt: 1 } };
+      broker.conns.add(conn);
+      const db = metadataDb(home), exec = db.exec.bind(db);
+      const rows = () => db.prepare("SELECT * FROM job_checklist WHERE job=? ORDER BY seq").all(name);
+      const originalRows = rows(), outcomes: unknown[] = [];
+      const save = (records: unknown[]) => writeAuthorityFixture(path, { version: 4, jobs: records });
+      let phase = "", armed = false, replacement: (() => void) | undefined;
+      const inject = () => { if (armed) { armed = false; replacement!(); } };
+      vi.spyOn(broker, "jobForControl").mockImplementation(async () => { await Promise.resolve(); if (phase === "post-await") inject(); return { ...tracked.job }; });
+      const find = jobs.find.bind(jobs);
+      vi.spyOn(jobs, "find").mockImplementation((ref, recover) => { const actual = find(ref, recover); if (phase === "post-await" && recover === false) inject(); return actual; });
+      vi.spyOn(db, "exec").mockImplementation(sql => { if (phase === "admission" && sql === "BEGIN IMMEDIATE") inject(); return exec(sql); });
+      const call = async (operation: Record<string, unknown>) => route === "broker"
+        ? broker.handlers.jobChecklist(conn, { job: name, ...operation }).then(() => "allowed", () => "denied")
+        : privateTools.call("job_checklist", { job: name, ...operation }).then(result => result.isError ? "denied" : "allowed");
+      const exercise = async (stored: Record<string, unknown>, source: string) => {
+        expect(stored.args).toMatchObject({ cwd });
+        expect(stored.workdir).toBe(cwd || project);
+        for (phase of ["post-await", "admission"]) for (const operation of checklistOperations) {
+          const safe = { ...stored, projectRoot: project, workdir: project, args: { ...stored.args as object, cwd: project } };
+          armed = false;
+          if (source === "archive") { save([]); archiveJobs(path, [safe]); replacement = () => { archiveJobs(path, [stored]); }; }
+          else { save([safe]); replacement = () => { save([stored]); }; }
+          expect(await call({ get: true })).toBe("allowed");
+          armed = true;
+          const result = await call(operation);
+          outcomes.push({ source, phase, operation: Object.keys(operation)[0], result, checkedFence: !armed });
+          // Each authorized mutation is isolated in the temporary fixture; product rows are never deleted.
+          if (JSON.stringify(rows()) !== JSON.stringify(originalRows)) {
+            db.prepare("DELETE FROM job_checklist WHERE job=?").run(name);
+            for (const row of originalRows) {
+              const keys = Object.keys(row);
+              db.prepare(`INSERT INTO job_checklist (${keys.join(",")}) VALUES (${keys.map(() => "?").join(",")})`).run(...keys.map(key => row[key]!));
+            }
+          }
+        }
+        armed = false; phase = "";
+        save([stored]);
+      };
+      vi.spyOn(DELEGATION_TARGETS.codex, "run").mockImplementation(async (_cfg, request) => {
+        expect(request.cwd).toBe(cwd || project);
+        request.onSession?.("fixture-context-session"); // Actual JobManager.note -> persist -> toStored.
+        const stored = JSON.parse(readFileSync(path, "utf8")).jobs.find((row: any) => row.name === name);
+        expect(stored.status).toBe("running");
+        await exercise(stored, "current");
+        return { sessionId: "fixture-context-session", text: "Done", isError: false, details: {} };
+      });
+      const result = await runDelegate(rc, "codex", { ...args, _job: name }, tracked.job.controller.signal, tracked.onProgress, false, tracked.job);
+      tracked.end({ result }); // Actual completion writer persists workdir/args again.
+      const finished = JSON.parse(readFileSync(path, "utf8")).jobs.find((row: any) => row.name === name);
+      expect(finished.status).toBe("done");
+      await exercise(finished, "archive");
+      jobs.setDormant(true);
+      expect(node.start).toHaveBeenCalledOnce();
+      expect(outcomes).toEqual(["current", "archive"].flatMap(source => ["post-await", "admission"].flatMap(phase => checklistOperations.map(operation => ({ source, phase, operation: Object.keys(operation)[0], result: "allowed", checkedFence: true })))));
+    });
+
+  it("never rediscovers relative workdir/runner cwd or raw args as checklist group authority", async () => {
+    const f = authorityFixture();
+    f.conn.peer.name = "unrelated";
+    const runner = { ...f.conn, peer: { ...f.conn.peer, id: `job:${f.saved.id}`, name: JOB, agent: "other", jobAgent: "codex", cwd: "." } };
+    f.broker.conns.add(runner);
+    seedJobChecklist(home, JOB, [{ text: "Required" }], null, "owner");
+    changeJobChecklistAsJob(home, JOB, { propose: [{ text: "Pending" }] });
+    const canonical = projectIdentity.canonicalProjectRoot;
+    const discovery = vi.spyOn(projectIdentity, "canonicalProjectRoot").mockImplementation(value => {
+      if (!isAbsolute(value)) throw new Error("Relative context must not be rediscovered against this process cwd");
+      return canonical(value);
+    });
+    const { workdir: _workdir, ...identity } = f.saved;
+    const relative = { ...identity, projectRoot: undefined, worktree: null, workdir: ".", args: { cwd: project } };
+    let armed = false, phase = "";
+    const inject = () => { if (armed) { armed = false; f.save([relative]); } };
+    vi.spyOn(f.broker, "jobForControl").mockImplementation(async () => { await Promise.resolve(); if (phase === "post-await") inject(); return { ...f.saved }; });
+    const db = metadataDb(home), exec = db.exec.bind(db);
+    vi.spyOn(db, "exec").mockImplementation(sql => { if (phase === "admission" && sql === "BEGIN IMMEDIATE") inject(); return exec(sql); });
+    const before = readFileSync(join(home, "bridge.db")), outcomes = [];
+    for (phase of ["post-await", "admission"]) for (const operation of checklistOperations) {
+      armed = false; f.save([{ ...relative, workdir: project }]);
+      expect((await f.broker.handlers.jobChecklist(f.conn, { job: JOB, get: true })).items).toHaveLength(2);
+      armed = true;
+      const result = await f.broker.handlers.jobChecklist(f.conn, { job: JOB, ...operation }).then(() => "allowed", () => "denied");
+      outcomes.push({ result, checkedFence: !armed, bytesUnchanged: readFileSync(join(home, "bridge.db")).equals(before) });
+    }
+    f.jobs.setDormant(true);
+    expect(outcomes).toEqual(Array.from({ length: 16 }, () => ({ result: "denied", checkedFence: true, bytesUnchanged: true })));
+    expect(discovery.mock.calls.every(([value]) => isAbsolute(value))).toBe(true);
+  });
   const strictProofCases = [
     "both-missing", "both-invalid", "both-blank", "foreign-first", "foreign-last", "duplicate", "split-id", "split-name",
     "status-running-array", "status-done-array", "remote-empty", "remote-zero", "archive-paused", "archive-running",
@@ -246,7 +400,7 @@ describe("AB-428 job checklists", () => {
         seedJobChecklist(home, name, [{ text: "Keep required" }], null, "owner");
       }
       changeJobChecklistAsJob(home, name, { propose: [{ text: "Pending" }] });
-      const save = (rows: unknown[]) => writeFileSync(path, JSON.stringify({ version: 4, jobs: rows }));
+      const save = (rows: unknown[]) => writeAuthorityFixture(path, { version: 4, jobs: rows });
       // An older exact finished authority is present throughout. Unknown active identity must NEVER mean absence.
       const archived = { ...saved, status: "done" };
       archiveJobs(path, [archived]);
@@ -329,7 +483,7 @@ describe("AB-428 job checklists", () => {
     const f = nestedFixture(), path = join(home, "jobs.json");
     const saved = JSON.parse(readFileSync(path, "utf8")).jobs.find((row: any) => row.id === f.job.id);
     archiveJobs(path, [{ ...saved, status }]);
-    writeFileSync(path, JSON.stringify({ version: 4, jobs: [] }));
+    writeAuthorityFixture(path, { version: 4, jobs: [] });
     expect((await f.call("job_checklist", { job: f.job.name, get: true })).isError).not.toBe(true);
     expect((await f.call("job_checklist", { job: f.job.name, unrequire: ["c1"] })).isError).not.toBe(true);
     expect(readJobChecklist(home, f.job.name)[0]!.required).toBe(false);
@@ -355,7 +509,7 @@ describe("AB-428 job checklists", () => {
           if (mode === "missing") f.save([]);
           else if (mode === "ENOENT") renameSync(path, join(home, `missing-registry-${index}.json`));
           else if (mode === "malformed") writeFileSync(path, "{broken");
-          else if (mode === "container") writeFileSync(path, JSON.stringify({ jobs: "unknown" }));
+          else if (mode === "container") writeAuthorityFixture(path, { jobs: "unknown" });
           else if (mode === "conflict") f.save([f.saved, { ...f.saved, id: "other-id" }]);
           else {
             const current: Record<string, unknown> = { ...f.saved };
@@ -410,7 +564,7 @@ describe("AB-428 job checklists", () => {
     if (mode === "malformed") delete row.status;
     if (mode === "version") delete row.metadataVersion;
     if (mode === "missing") doc.jobs = [];
-    writeFileSync(path, JSON.stringify(doc));
+    writeAuthorityFixture(path, doc);
     const before = readFileSync(join(home, "bridge.db"));
     const result = await f.call("job_checklist", { job: f.job.name, unrequire: ["c1"] });
     if (mode === "legitimate") {
