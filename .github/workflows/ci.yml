@@ -104,6 +104,8 @@ jobs:
       # the same assertions and default deadlines for every test.
       - name: Integration tests
         if: success() || failure()
+        env:
+          AGENT_BRIDGE_SCAN_DIAGNOSTICS: ${{ matrix.os == 'macos-latest' && matrix.node == 24 && '1' || '0' }}
         run: npm run test:integration -- --reporter=default --reporter=json --reporter=./scripts/ci-reporter.mjs --outputFile.json=.agent-bridge-test/ci/integration-results.json
       # Known-flaky list: "skipped by known-flaky: N" per lane in the job summary; N must equal the
       # listed tests collected in this job, and every listed test must be reported skipped.
