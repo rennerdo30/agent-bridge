@@ -17,7 +17,11 @@ const SINGLE_QUERY_TIMEOUT_MS = 5_000;
  * failure or no answer the PowerShell probe runs with what remains, so the total bound is unchanged.
  */
 const NATIVE_QUERY_TIMEOUT_MS = 1_000;
-const remaining = (budget: number, started: number) => Math.max(1, budget - (Date.now() - started));
+function remaining(budget: number, started: number): number {
+  const left = budget - (performance.now() - started);
+  if (left <= 0) throw new Error("process identity query budget exhausted");
+  return Math.max(1, Math.ceil(left));
+}
 
 /** A PID alone can be reused. Bind reload recovery to the CLI process's creation time. */
 export function parentProcessIdentity(): Promise<string | null> {
@@ -32,7 +36,7 @@ export async function readProcessIdentity(pid: number, signal?: AbortSignal): Pr
       const start = stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19];
       return start ? `${boot.trim()}:${start}` : null;
     }
-    const started = Date.now();
+    const started = performance.now();
     if (process.platform === "win32") {
       // Native first: "" (running, times unreadable) and a missing entry (not running) both stay unknown/null.
       const pending = readNativeIdentities([pid], NATIVE_QUERY_TIMEOUT_MS, signal);
@@ -62,7 +66,7 @@ export async function readProcessIdentities(pids: number[]): Promise<Map<number,
   const result = new Map<number, string>();
   if (!valid.length) return result;
   if (process.platform === "win32") {
-    const started = Date.now();
+    const started = performance.now();
     // One native request for the whole batch. As with Get-Process, a running process whose start time cannot
     // be read is left out of this (asynchronous) result.
     const pending = readNativeIdentities(valid, NATIVE_QUERY_TIMEOUT_MS);
@@ -99,7 +103,7 @@ export function readProcessIdentitiesSync(pids: number[]): Map<number, string> |
     for (const pid of valid) { const identity = processIdentity(pid); if (identity) result.set(pid, identity); }
     return result;
   }
-  const started = Date.now();
+  const started = performance.now();
   // Native: the same shape as below ("" = running, start time unreadable; no entry = not running).
   const native = readNativeIdentitiesSync(valid, NATIVE_QUERY_TIMEOUT_MS);
   if (native) return native;
@@ -197,7 +201,7 @@ export function processIdentity(pid: number): string | undefined {
       const start = stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19];
       if (start) identity = `${readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim()}:${start}`;
     } else {
-      const started = Date.now();
+      const started = performance.now();
       const native = process.platform === "win32" ? readNativeIdentitiesSync([pid], NATIVE_QUERY_TIMEOUT_MS) : undefined;
       if (native) identity = native.get(pid) || undefined;
       else identity = (process.platform === "win32"
@@ -230,7 +234,7 @@ export function processStartMs(pid: number): number | undefined {
   if (!Number.isSafeInteger(pid) || pid <= 0) return undefined;
   try {
     if (process.platform === "win32") {
-      const started = Date.now();
+      const started = performance.now();
       const native = readNativeIdentitiesSync([pid], NATIVE_QUERY_TIMEOUT_MS);
       const ticks = native ? native.get(pid) ?? "" : execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", `(Get-Process -Id ${pid} -ErrorAction Stop).StartTime.ToUniversalTime().Ticks`], { windowsHide: true, timeout: remaining(SINGLE_QUERY_TIMEOUT_MS, started), encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
       if (!/^\d+$/.test(ticks)) return undefined;

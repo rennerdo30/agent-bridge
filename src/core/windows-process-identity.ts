@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { isMainThread, MessageChannel, receiveMessageOnPort, Worker, type MessagePort } from "node:worker_threads";
+import { jobEnvironment } from "./job-environment.js";
 
 /**
  * Windows process creation identities through direct kernel32 calls (AB-427): OpenProcess, WaitForSingleObject,
@@ -11,8 +12,7 @@ import { isMainThread, MessageChannel, receiveMessageOnPort, Worker, type Messag
  * reflection: nothing is compiled or emitted) and answers line requests.
  *
  * - Lazy: nothing starts until the first Windows identity query. A cold host never delays a caller: that call
- *   uses the PowerShell probe while the host starts (its first start in a process takes about 2 s on a
- *   Defender-scanned PC; later restarts about 0.25 s).
+ *   uses the PowerShell probe while the host starts.
  * - Idle: the host blocks in a pipe read (no CPU, no polling) and is closed after IDLE_MS without requests. It
  *   exits on EOF, i.e. with this process, and it is started (and only ever stopped) by this module, by PID.
  * - Spawned on the main thread only: on Windows a child inherits every inheritable handle that exists while it is
@@ -29,7 +29,7 @@ import { isMainThread, MessageChannel, receiveMessageOnPort, Worker, type Messag
  * (access denied, protected); no entry for a PID that is not a running process (invalid PID, or exited).
  */
 
-const READY = 1, FAILED = 2;
+const READY = 1;
 /** Close an idle host: a resident PowerShell costs memory in every bridge process. */
 const IDLE_MS = 5 * 60_000;
 /** A host that cannot start (no PowerShell, blocked script) is not retried for this long. */
@@ -191,9 +191,14 @@ interface Helper {
   host?: ChildProcess;
   /** Callers of nativeIdentityHostStarted waiting for the current start attempt. */
   started: Array<(ready: boolean) => void>;
+  retired?: boolean;
+  stopped?: Promise<number>;
+  startup?: NodeJS.Timeout;
 }
 
 let helper: Helper | undefined;
+// Do not overlap a restart with a child whose termination has only been requested, not observed.
+let closingHost: ChildProcess | undefined;
 let failedAt = 0;
 let startFailures = 0;
 let nextId = 0;
@@ -216,33 +221,44 @@ function enabled(): boolean {
 }
 
 function getHelper(): Helper | undefined {
-  if (!enabled()) return undefined;
+  if (!enabled() || closingHost) return undefined;
   if (helper) return helper;
+  let channel: MessageChannel | undefined;
   try {
+    const { port1, port2 } = channel = new MessageChannel();
     const state = new SharedArrayBuffer(12);
-    const { port1, port2 } = new MessageChannel();
     const worker = new Worker(WORKER, {
       eval: true,
+      env: jobEnvironment(),
       workerData: { idleMs: IDLE_MS, state, syncPort: port2 },
       transferList: [port2],
     });
     const created: Helper = { worker, state: new Int32Array(state), syncPort: port1, pending: new Map(), started: [] };
     worker.on("message", (message: { type?: string; id?: number; failed?: boolean; results?: string[]; error?: string }) => {
-      if (message.type === "connected") return settleStart(created, true);
+      if (created.retired) return;
+      if (message.type === "connected") { clearTimeout(created.startup); return settleStart(created, true); }
       if (message.type === "disconnected") {
         // The host exits on EOF; a connection that never became ready is a start failure.
         // A failed connection leaves the host waiting for one: stop the host this module started.
-        if (message.failed) { startFailed(); settleStart(created, false); created.host?.kill(); }
+        if (message.failed) startFailed();
+        retire(created);
         return;
       }
       const resolve = created.pending.get(message.id!);
       if (resolve) { created.pending.delete(message.id!); resolve(message as { id: number }); }
     });
-    worker.on("error", () => retire(created));
-    worker.on("exit", () => retire(created));
+    const workerEnded = () => {
+      if (created.retired) return;
+      if (Atomics.load(created.state, 1) !== READY) startFailed();
+      retire(created);
+    };
+    worker.on("error", workerEnded);
+    worker.on("exit", workerEnded);
+    port1.unref();
     worker.unref();
     return helper = created;
   } catch {
+    channel?.port1.close(); channel?.port2.close();
     startFailed();
     return undefined;
   }
@@ -254,7 +270,7 @@ function settleStart(current: Helper, ready: boolean): void {
 
 /** Start the host on THIS (the main) thread. Its readiness arrives asynchronously; callers do not wait for it. */
 function startHost(current: Helper): void {
-  if (current.host) return;
+  if (current.retired || current.host) return;
   const pipe = "\\\\.\\pipe\\agent-bridge-identity-" + process.pid + "-" + randomUUID();
   // Windows PowerShell 5.1 (.NET Framework): its System.dll NativeMethods and the legacy StartTime semantics.
   const bin = join(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
@@ -263,32 +279,35 @@ function startHost(current: Helper): void {
   try {
     // The script is read from stdin and run as one script block; stdin is closed after it.
     host = spawn(bin, ["-NoProfile", "-NonInteractive", "-Command", "& ([scriptblock]::Create([Console]::In.ReadToEnd()))"],
-      { windowsHide: true, stdio: ["pipe", "pipe", "ignore"] });
+      { windowsHide: true, stdio: ["pipe", "pipe", "ignore"], env: jobEnvironment() });
   } catch {
-    startFailed(); settleStart(current, false); return;
+    startFailed(); retire(current); return;
   }
   current.host = host;
   host.stdin!.on("error", () => { /* a host that died early is reported through exit */ });
   host.stdin!.end(script);
   Atomics.store(current.state, 2, host.pid ?? 0);
   let ready = false;
-  const startup = setTimeout(() => { if (!ready) host.kill(); }, STARTUP_TIMEOUT_MS);
+  const startup = current.startup = setTimeout(() => {
+    if (current.retired || current.host !== host) return;
+    startFailed(); retire(current);
+  }, STARTUP_TIMEOUT_MS);
   startup.unref();
   const stdout = host.stdout!;
   let buffer = "";
   stdout.setEncoding("utf8").on("data", (chunk: string) => {
+    if (current.retired || current.host !== host) return;
     buffer += chunk;
-    if (ready || !buffer.includes("ready")) return;
-    ready = true; clearTimeout(startup);
+    if (ready || buffer !== "ready\n" && buffer !== "ready\r\n") return;
+    ready = true;
     current.worker.postMessage({ type: "connect", path: pipe });
   });
   let ended = false;
   const end = () => {
-    if (ended) return;
+    if (ended || current.retired || current.host !== host) return;
     ended = true; clearTimeout(startup);
-    if (current.host === host) { current.host = undefined; Atomics.store(current.state, 2, 0); }
-    current.worker.postMessage({ type: "close" });
-    if (!ready) { startFailed(); settleStart(current, false); }
+    if (Atomics.load(current.state, 1) !== READY) startFailed();
+    retire(current);
   };
   // A spawn failure (ENOENT) reports "error" without "exit".
   host.on("error", () => { if (host.pid === undefined || host.exitCode !== null) end(); });
@@ -299,7 +318,21 @@ function startHost(current: Helper): void {
 }
 
 function retire(dead: Helper): void {
+  if (dead.retired) return;
+  dead.retired = true;
   if (helper === dead) helper = undefined;
+  clearTimeout(dead.startup);
+  Atomics.store(dead.state, 1, 0); Atomics.store(dead.state, 2, 0);
+  // Only the ChildProcess we created is a termination target, never a supplied PID or a process name.
+  const host = dead.host; dead.host = undefined;
+  if (host && host.pid !== undefined && host.exitCode === null && host.signalCode === null) {
+    closingHost = host;
+    host.once("exit", () => { if (closingHost === host) closingHost = undefined; });
+    host.kill();
+  }
+  host?.stdin?.destroy(); host?.stdout?.destroy();
+  dead.syncPort.close();
+  dead.stopped = dead.worker.terminate().catch(() => -1);
   for (const resolve of dead.pending.values()) resolve({ id: -1, error: "identity worker exited" });
   dead.pending.clear();
   settleStart(dead, false);
@@ -310,7 +343,10 @@ function parse(pids: number[], results: string[] | undefined): Map<number, strin
   const answers = new Map<number, string>();
   for (const entry of results) {
     const match = /^(\d+)=(\d+|-|\?)$/.exec(entry);
-    if (match) answers.set(Number(match[1]), match[2]!);
+    if (!match) return undefined;
+    const pid = Number(match[1]);
+    if (!pids.includes(pid) || answers.has(pid)) return undefined;
+    answers.set(pid, match[2]!);
   }
   const result = new Map<number, string>();
   for (const pid of pids) {
@@ -345,7 +381,7 @@ export function nativeIdentityHostReady(): boolean {
 
 /** The PID of the host this process started, if one is running (diagnostics and tests). */
 export function nativeIdentityHostPid(): number | undefined {
-  return helper && Atomics.load(helper.state, 2) || undefined;
+  return helper && Atomics.load(helper.state, 2) || closingHost?.pid;
 }
 
 /** Start the host and wait (bounded) until it is connected: true when ready, false on failure or timeout. */
@@ -377,20 +413,26 @@ export function readNativeIdentitiesSync(pids: number[], timeoutMs: number): Map
   const current = readyHelper();
   if (!current) return undefined;
   const id = ++nextId;
-  let seen = Atomics.load(current.state, 0);
-  current.worker.postMessage({ type: "query", id, pids: valid, sync: true });
-  const deadline = Date.now() + timeoutMs;
-  // Bounded: each wait is at most the remaining budget, and only stale answers of earlier timed-out
-  // requests can cause another round.
-  for (let round = 0; round < 8; round++) {
-    const outcome = Atomics.wait(current.state, 0, seen, Math.max(0, Math.min(timeoutMs, deadline - Date.now())));
-    for (let received = receiveMessageOnPort(current.syncPort); received; received = receiveMessageOnPort(current.syncPort)) {
-      const message = received.message as { id: number; results?: string[] };
-      if (message.id === id) return parse(valid, message.results);
+  const budget = Number.isFinite(timeoutMs) ? Math.max(0, Math.min(1_000, timeoutMs)) : 0;
+  const deadline = performance.now() + budget;
+  let result: Map<number, string> | undefined;
+  try {
+    current.worker.postMessage({ type: "query", id, pids: valid, sync: true });
+    // Snapshot BEFORE draining: an answer arriving during the drain changes the counter, so wait cannot
+    // sleep past its wake. Drain BEFORE waiting as the answer may already be queued. Never accept a late reply.
+    for (let round = 0; round < 8 && performance.now() < deadline; round++) {
+      const seen = Atomics.load(current.state, 0);
+      for (let received = receiveMessageOnPort(current.syncPort); received; received = receiveMessageOnPort(current.syncPort)) {
+        if (performance.now() >= deadline) return undefined;
+        const message = received.message as { id: number; results?: string[] };
+        if (message.id === id) return result = parse(valid, message.results);
+      }
+      const remaining = deadline - performance.now();
+      if (remaining <= 0) return undefined;
+      Atomics.wait(current.state, 0, seen, remaining);
     }
-    if (outcome === "timed-out") return undefined;
-    seen = Atomics.load(current.state, 0);
-  }
+  } catch { /* A failed worker or port proves nothing about the requested PIDs. */ }
+  finally { if (!result) retire(current); }
   return undefined;
 }
 
@@ -406,39 +448,46 @@ export function readNativeIdentities(pids: number[], timeoutMs: number, signal?:
   const current = readyHelper();
   if (!current) return undefined;
   const id = ++nextId;
+  const budget = Number.isFinite(timeoutMs) ? Math.max(0, Math.min(1_000, timeoutMs)) : 0;
+  const deadline = performance.now() + budget;
   return new Promise(resolve => {
     let timer: NodeJS.Timeout | undefined;
+    let settled = false;
     const finish = (value: Map<number, string> | undefined) => {
+      if (settled) return;
+      settled = true;
+      if (performance.now() >= deadline || signal?.aborted) value = undefined;
       clearTimeout(timer);
       signal?.removeEventListener("abort", onAbort);
       current.pending.delete(id);
       if (!current.pending.size) current.worker.unref();
+      // A stuck query must not retain outstanding work in the worker forever. Retire this owned helper;
+      // late messages cannot resolve another request or keep its pipe/host alive. Unknown remains unknown.
+      if (!value) retire(current);
       resolve(value);
     };
     const onAbort = () => finish(undefined);
     current.pending.set(id, message => finish(parse(valid, message.results)));
     // An awaited query keeps this process alive as the PowerShell probe did; an idle host never does.
     current.worker.ref();
-    timer = setTimeout(() => finish(undefined), timeoutMs);
+    timer = setTimeout(() => finish(undefined), budget);
     signal?.addEventListener("abort", onAbort, { once: true });
-    current.worker.postMessage({ type: "query", id, pids: valid, sync: false });
+    try { current.worker.postMessage({ type: "query", id, pids: valid, sync: false }); }
+    catch { finish(undefined); }
   });
 }
 
 /** Stop the host this module started (by its ChildProcess, never by name) and the worker (tests). */
 export async function stopNativeIdentityHost(): Promise<void> {
   const current = helper;
-  if (!current) return;
-  helper = undefined;
-  const host = current.host;
-  if (host && host.exitCode === null && host.signalCode === null) {
-    await new Promise<void>(resolve => {
+  const host = current?.host ?? closingHost;
+  const exit = host && host.exitCode === null && host.signalCode === null
+    ? new Promise<void>(resolve => {
       const timer = setTimeout(resolve, 5_000);
       host.once("exit", () => { clearTimeout(timer); resolve(); });
-      host.kill();
-    });
-  }
-  await current.worker.terminate();
+    }) : undefined;
+  if (current) retire(current);
+  await Promise.all([exit, current?.stopped]);
 }
 
 /** Reset the start-failure cooldown (tests); the per-process failure count is kept. */
