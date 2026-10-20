@@ -182,6 +182,10 @@ function fakeGitLfs(): void {
     "",
   ].join("\n"));
   chmodSync(script, 0o755);
+  // Git prepends its exec path to PATH before running filters. On Windows that contains the real git-lfs.exe,
+  // which otherwise wins over this extensionless fixture even when fakebin leads the parent PATH.
+  // Keep both overrides process-local; the canonical driver strings and all pointer assertions stay unchanged.
+  vi.stubEnv("GIT_EXEC_PATH", bin);
   vi.stubEnv("PATH", `${bin}${delimiter}${process.env.PATH ?? ""}`);
 }
 
@@ -452,7 +456,7 @@ describe("AB-422 guard decisions", () => {
     expect(fetch.env.GIT_NO_LAZY_FETCH).toBeUndefined();
   });
 
-  it("refuses promisor repositories when git cannot disable lazy fetching (before 2.44)", async () => {
+  it("refuses promisor repositories when git cannot enforce disabled lazy fetching", async () => {
     const promisor: [string, string, string][] = [["local", "remote.evil.promisor", "true"]];
     const at = (version: string, entries: [string, string, string][]) => async (args: string[]) =>
       args[0] === "--version" ? `git version ${version}\n` : configured(entries)(args);
@@ -464,7 +468,7 @@ describe("AB-422 guard decisions", () => {
       resetGitFeatureCache();
       expect((await repositoryGuards(["rev-parse", "HEAD"], root, at("2.43.0", []))).args).toEqual(NO_LAZY_FETCH_ARGS);
       resetGitFeatureCache();
-      expect((await repositoryGuards(["show", "HEAD"], root, at("2.44.0", promisor))).env.GIT_NO_LAZY_FETCH).toBe("1");
+      await expect(repositoryGuards(["show", "HEAD"], root, at("2.44.0", promisor))).rejects.toThrow(/lazy/);
     } finally { resetGitFeatureCache(); }
   });
 
@@ -472,6 +476,111 @@ describe("AB-422 guard decisions", () => {
     for (const [key, value] of [["protocol.ext.allow", "always"], ["protocol.allow", "always"], ["url.ext::sh -c evil.insteadof", "https://"], ["url.fd::3.pushinsteadof", "ssh://"]] as const) {
       await expect(repositoryGuards(["fetch"], root, configured([["local", key, value]])), key).rejects.toThrow(/refused/);
     }
+  });
+});
+
+describe("AB-422 round 4: enforcement floors and every reached repository", () => {
+  const config = (entries: [string, string, string][]) => entries.map(([scope, key, value]) =>
+    `${scope}\0file:fixture\0${key}\n${value}\0`).join("");
+  const promisor = config([["local", "remote.fixture.promisor", "true"]]);
+
+  // Source-verified official tags; these mock the version, not the installed old Git implementation.
+  it.each([
+    ["2.39.3", false], ["2.39.4", true], ["2.40.1", false], ["2.40.2", true],
+    ["2.41.0", false], ["2.41.1", true], ["2.42.1", false], ["2.42.2", true],
+    ["2.43.3", false], ["2.43.4", true], ["2.44.0.windows.99", false], ["2.44.1.windows.1", true],
+    ["2.45.0", false], ["2.45.1", true], ["2.46.0", true], ["2.55.0.windows.2", true],
+    ["2.38.99.vendor-backport", false], ["2.45", false], ["2.45.1-rc0", false], ["unknown", false],
+  ])("version %s has direct-prefetch enforcement: %s (mock)", async (version, supported) => {
+    resetGitFeatureCache();
+    try {
+      const pending = repositoryGuards(["show", "HEAD"], root, async (args) =>
+        args[0] === "--version" ? `git version ${version}\n` : args[0] === "config" ? promisor : "");
+      if (supported) expect((await pending).env.GIT_NO_LAZY_FETCH).toBe("1");
+      else await expect(pending).rejects.toThrow(/lazy/);
+    } finally { resetGitFeatureCache(); }
+  });
+
+  it.each(["show", "status", "fetch"])("denies arbitrary specific protocols for %s before dispatch", async (sub) => {
+    resetGitFeatureCache();
+    const entries = config([["local", "protocol.x/../payload.allow", "always"], ["global", "protocol.OwnerHelper.allow", "always"]]);
+    const pending = repositoryGuards([sub, "HEAD"], root, async (args) => args[0] === "--version" ? "git version 2.55.0" : args[0] === "config" ? entries : "");
+    if (sub === "fetch") await expect(pending).rejects.toThrow(/refused/);
+    else {
+      const guards = await pending;
+      expect(guards.args).toContain("protocol.x/../payload.allow=never");
+      expect(guards.args).toContain("protocol.OwnerHelper.allow=never");
+    }
+  });
+
+  it.each(["embedded", "gitfile", "nested"])("refuses legacy promisor config in a reached %s repo before its index read", async (layout) => {
+    const sub = join(repo, "sub");
+    embeddedRepository(sub, "fixture", layout === "gitfile" ? join(root, "external-git-dir") : undefined);
+    let target = sub;
+    if (layout === "nested") {
+      target = join(sub, "deep");
+      mkdirSync(target);
+      git(target, "init", "-q");
+      writeFileSync(join(target, "x"), "x");
+      git(target, "add", ".");
+      git(target, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "deep");
+      git(sub, "add", "deep");
+    }
+    git(target, "config", "remote.fixture.promisor", "true");
+    resetGitFeatureCache();
+    const reads: { args: string[]; dir: string | null }[] = [];
+    try {
+      await expect(repositoryGuards(["status"], repo, async (args, dir) => {
+        reads.push({ args, dir });
+        return args[0] === "--version" ? "git version 2.43.3.vendor" : git(dir ?? repo, ...args);
+      })).rejects.toThrow(/lazy/);
+      expect(reads.some((read) => read.dir === target && read.args[0] === "ls-files")).toBe(false);
+    } finally { resetGitFeatureCache(); }
+  });
+
+  it.each([["remove", false], ["move", false], ["remove", true], ["move", true]] as const)(
+    "refuses legacy promisor config.worktree in the %s target (shorthand %s)", async (command, shorthand) => {
+    const target = join(root, "target");
+    git(repo, "worktree", "add", "-qb", "fixture-target", target);
+    git(repo, "config", "extensions.worktreeConfig", "true");
+    git(target, "config", "--worktree", "remote.fixture.promisor", "true");
+    resetGitFeatureCache();
+    try {
+      await expect(repositoryGuards(["worktree", command, shorthand ? "target" : target, join(root, "moved")], repo, async (args, dir) =>
+        args[0] === "--version" ? "git version 2.45.0" : git(dir ?? repo, ...args))).rejects.toThrow(/lazy/);
+      expect(existsSync(join(target, ".git"))).toBe(true);
+    } finally { resetGitFeatureCache(); }
+  });
+
+  it.each(["configured", "explicit"])("checks nested network config with %s submodule recursion", async (recursion) => {
+    const sub = join(repo, "sub");
+    embeddedRepository(sub, "fixture");
+    git(repo, "config", "fetch.recurseSubmodules", "true");
+    git(sub, "config", "remote.fixture.uploadpack", "fixture-only-never-executed");
+    await expect(repositoryGuards(["fetch", ...(recursion === "explicit" ? ["--recurse-submodules"] : [])], repo,
+      async (args, dir) => git(dir ?? repo, ...args))).rejects.toThrow(/refused/);
+    expect(markerText()).toBe("");
+  });
+
+  it("refuses unreadable nested configuration and recovers from an unknown version without caching it", async () => {
+    embeddedRepository(join(repo, "sub"), "fixture");
+    resetGitFeatureCache();
+    try {
+      const pending = repositoryGuards(["status"], repo, async (args, dir) => {
+        if (args[0] === "--version") return "unknown";
+        if (dir && args[0] === "config") throw new Error("unreadable fixture config: fixture-secret-value");
+        return git(dir ?? repo, ...args);
+      });
+      await expect(pending).rejects.toThrow(/cannot read/);
+      await expect(pending).rejects.not.toThrow(/fixture-secret-value/);
+      const versions: string[] = [];
+      const guards = await repositoryGuards(["show", "HEAD"], repo, async (args) => {
+        if (args[0] === "--version") { versions.push("read"); return "git version 2.45.1"; }
+        return args[0] === "config" ? promisor : "";
+      });
+      expect(versions).toHaveLength(1);
+      expect(guards.env.GIT_NO_LAZY_FETCH).toBe("1");
+    } finally { resetGitFeatureCache(); }
   });
 });
 

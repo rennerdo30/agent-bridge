@@ -42,8 +42,9 @@ import { DEFAULT_HOME, ENV } from "./constants.js";
  * - lazy fetches: every command that is not meant to reach the network runs with GIT_NO_LAZY_FETCH=1 (process
  *   environment only) and `-c protocol.allow=never` plus `protocol.<ext|file|git|http|https|ssh>.allow=never`, so a
  *   promisor remote (`remote.<n>.promisor`, `extensions.partialClone`) cannot fetch a missing object through a
- *   planted transport behind a diff, show, status or checkout. With git before 2.44 (no GIT_NO_LAZY_FETCH; the
- *   version is read once per process) any promisor configuration refuses the command;
+ *   planted transport behind a diff, show, status or checkout. Discovered per-protocol permissions are denied
+ *   too. Without a source-verified patched Git version (see supportsNoLazyFetch), any reached repository's
+ *   promisor configuration refuses the command before its index or objects are read;
  * - commands that create commits: signing is switched off when repository-local config names a signing program;
  * - diff-like commands get `--no-ext-diff --no-textconv`;
  * - network commands (fetch, ls-remote, pull, push) are refused when repository-local config names a transport,
@@ -148,15 +149,20 @@ const PROMISOR_KEY = /^(remote\..+\.(promisor|partialclonefilter)|extensions\.pa
 export const NO_LAZY_FETCH_ARGS: readonly string[] = ["protocol.allow=never",
   ...["ext", "file", "git", "http", "https", "ssh"].map((name) => `protocol.${name}.allow=never`)].flatMap((value) => ["-c", value]);
 
-/** Whether the installed git honours GIT_NO_LAZY_FETCH (git 2.44 and later); read once per process. */
+/** Whether the installed Git enforces GIT_NO_LAZY_FETCH even in direct promisor prefetch; cached if known. */
 let lazyFetchSwitch: boolean | undefined;
 /** Forget the cached git version (tests). */
 export function resetGitFeatureCache(): void { lazyFetchSwitch = undefined; }
 function supportsNoLazyFetch(versionText: string): boolean | undefined {
-  const match = /git version (\d+)\.(\d+)/.exec(versionText);
+  const match = /^git version (\d+)\.(\d+)\.(\d+)(?:[.+-][\w.+-]+| \([^\r\n()]+\))?\s*$/.exec(versionText.trim());
   if (!match) return undefined;
-  const [major, minor] = [Number(match[1]), Number(match[2])];
-  return major > 2 || (major === 2 && minor >= 44);
+  if (/[.+-]rc\d/i.test(versionText)) return false;
+  const [major, minor, patch] = [Number(match[1]), Number(match[2]), Number(match[3])];
+  // Verified in git/git tags' promisor-remote.c fetch_objects(), and absent in each preceding patch.
+  // v2.45.0 has environment handling but lacks this direct-fetch check. Vendor suffixes prove no backport.
+  // https://github.com/git/git/blob/v2.45.1/promisor-remote.c#L16-L32
+  const floors: Record<number, number> = { 39: 4, 40: 2, 41: 1, 42: 2, 43: 4, 44: 1, 45: 1 };
+  return major === 2 && (minor! >= 46 || (floors[minor!] !== undefined && patch! >= floors[minor!]!));
 }
 
 /** `key` as git prints it (subsection case kept); `lower` for case-insensitive matching. */
@@ -192,13 +198,16 @@ type Plan<T> = Generator<GuardRead, T, string>;
 
 const message = (err: unknown) => (err instanceof Error ? err.message : String(err)).split("\n")[0];
 
-function* readRepository(dir: string | null, label: string): Plan<ScannedRepository> {
+function* readRepository(dir: string | null, label: string, check: (repo: ScannedRepository) => void): Plan<ScannedRepository> {
   let raw: string;
   // Reading configuration executes nothing (no hooks, filters or fsmonitor); includes are expanded and shown.
   try { raw = yield { args: ["config", "-z", "--list", "--includes", "--show-origin", "--show-scope"], dir }; }
-  catch (err) { throw new GitSafetyRefusal(`refused: cannot read the git config of ${label}: ${message(err)} (AB-422)`); }
+  // Git's diagnostics for invalid configuration can contain its values. Keep those out of refusal reports.
+  catch { throw new GitSafetyRefusal(`refused: cannot read the git config of ${label} (AB-422)`); }
   const entries = parseConfigList(raw);
-  return { label, entries, local: entries.filter((e) => REPOSITORY_SCOPES.has(e.scope)) };
+  const repo = { label, entries, local: entries.filter((e) => REPOSITORY_SCOPES.has(e.scope)) };
+  check(repo); // Must precede even the discovery reads inside this repository.
+  return repo;
 }
 
 /**
@@ -206,7 +215,8 @@ function* readRepository(dir: string | null, label: string): Plan<ScannedReposit
  * with that repository's own configuration inside each one. Populated means `<path>/.git` exists (a directory
  * or a `.git` file pointing anywhere), the same test git uses before it recurses.
  */
-function* nestedRepositories(dir: string | null, label: string, found: ScannedRepository[], seen: Set<string>, depth: number): Plan<void> {
+function* nestedRepositories(dir: string | null, label: string, found: ScannedRepository[], seen: Set<string>, depth: number,
+  check: (repo: ScannedRepository) => void): Plan<void> {
   let raw: string;
   // Paths relative to the top of the work tree, which core.worktree can put anywhere (not below `dir`).
   try { raw = yield { args: ["ls-files", "--full-name", "-s", "-z", "--", ":/"], dir }; }
@@ -232,8 +242,8 @@ function* nestedRepositories(dir: string | null, label: string, found: ScannedRe
     if (seen.has(key)) continue;
     seen.add(key);
     if (depth >= MAX_NESTING) throw new GitSafetyRefusal(`refused: repositories nested deeper than ${MAX_NESTING} levels at ${path} (AB-422)`);
-    found.push(yield* readRepository(path, `the nested repository ${path}`));
-    yield* nestedRepositories(path, `the nested repository ${path}`, found, seen, depth + 1);
+    found.push(yield* readRepository(path, `the nested repository ${path}`, check));
+    yield* nestedRepositories(path, `the nested repository ${path}`, found, seen, depth + 1, check);
   }
 }
 
@@ -264,37 +274,60 @@ function* guardPlan(rest: readonly string[], cwd: string): Plan<GitGuards> {
     lazySwitch = supportsNoLazyFetch(version);
     if (lazySwitch !== undefined) lazyFetchSwitch = lazySwitch;
   }
-  // Without GIT_NO_LAZY_FETCH support (git before 2.44) a promisor repository is refused for every command.
-  if (!filters && !signing && !network && lazySwitch) return { args: out, env };
-  const main = yield* readRepository(null, "the repository");
-  if (!lazySwitch) {
-    const promisor = [...new Set(main.entries.filter((e) => PROMISOR_KEY.test(e.lower)).map((e) => e.key))];
-    if (promisor.length) throw new GitSafetyRefusal(`refused: git config sets ${promisor.join(", ")} (lazy fetches from a promisor remote) and the installed git cannot switch lazy fetching off (GIT_NO_LAZY_FETCH needs git 2.44 or later) (AB-422)`);
-  }
-  if (network) {
-    const risky = [...new Set(main.local.filter((e) => isNetworkKey(e.lower)).map((e) => e.key))];
-    if (risky.length) throw new GitSafetyRefusal(`refused: repository-local git config sets ${risky.join(", ")}, which can start programs or redirect the connection during network access (AB-422)`);
-  }
-  let lfs = false;
-  if (filters) {
-    const repos = [main];
+  const protocols = new Set(["ext", "file", "git", "http", "https", "ssh"]);
+  const check = (repo: ScannedRepository) => {
+    if (!lazySwitch && repo.entries.some((e) => PROMISOR_KEY.test(e.lower))) {
+      throw new GitSafetyRefusal(`refused: ${repo.label} has promisor configuration (lazy fetches) and the installed git lacks verified GIT_NO_LAZY_FETCH enforcement (AB-422)`);
+    }
+    if (network) {
+      const risky = [...new Set(repo.local.filter((e) => isNetworkKey(e.lower)).map((e) => e.key))];
+      if (risky.length) throw new GitSafetyRefusal(`refused: repository-local git config in ${repo.label} sets ${risky.join(", ")}, which can start programs or redirect the connection during network access (AB-422)`);
+    } else for (const entry of repo.entries) {
+      const name = /^protocol\.(.+)\.allow$/i.exec(entry.key)?.[1];
+      if (!name || protocols.has(name)) continue;
+      if (/[=\r\n\0]/.test(name)) throw new GitSafetyRefusal("refused: a protocol permission cannot be safely overridden (AB-422)");
+      protocols.add(name);
+      out.push("-c", `protocol.${name}.allow=never`);
+    }
+  };
+  // Even a supported Git needs the config scan: specific permissions override protocol.allow=never.
+  const main = yield* readRepository(null, "the repository", check);
+  const repos = [main];
+  const recurses = rest.some((a) => /^--(?:recurse-submodules|submodule)(?:=|$)/.test(a)) || sub === "submodule";
+  if (filters || network || !lazySwitch || recurses) {
     const seen = new Set<string>();
-    // A status or diff told to ignore submodules never enters them.
-    const ignoresSubmodules = (sub === "status" || sub === "diff") && rest.some((a) => a === "--ignore-submodules" || a === "--ignore-submodules=all");
-    if (!ignoresSubmodules) yield* nestedRepositories(null, `the repository at ${cwd}`, repos, seen, 0);
+    yield* nestedRepositories(null, `the repository at ${cwd}`, repos, seen, 0, check);
     if (sub === "worktree" && (rest[1] === "remove" || rest[1] === "move")) {
       // Git runs a status inside the target worktree, with that worktree's own config.worktree and gitlinks.
       const target = rest.slice(2).find((a) => !a.startsWith("-"));
       if (target) {
-        const path = resolve(cwd, target);
+        let path = resolve(cwd, target);
         let exists = true;
         try { lstatSync(path); } catch { exists = false; }
+        if (!exists) {
+          // Git also accepts an unambiguous trailing directory name (e.g. `worktree remove topic`). Resolve
+          // that name through Git's registry so the checked config belongs to the target Git will enter.
+          let registered: string;
+          try { registered = yield { args: ["worktree", "list", "--porcelain", "-z"], dir: null }; }
+          catch { throw new GitSafetyRefusal("refused: cannot resolve the target worktree config (AB-422)"); }
+          const suffix = target.replace(/\\/g, "/").replace(/\/$/, "");
+          const candidates = registered.split("\0").filter((field) => field.startsWith("worktree "))
+            .map((field) => field.slice(9)).filter((dir) => {
+              const normal = dir.replace(/\\/g, "/");
+              return process.platform === "win32" ? normal.toLowerCase().endsWith(`/${suffix.toLowerCase()}`) : normal.endsWith(`/${suffix}`);
+            });
+          if (candidates.length > 1) throw new GitSafetyRefusal("refused: ambiguous target worktree config (AB-422)");
+          if (candidates.length === 1) { path = candidates[0]!; exists = true; }
+        }
         if (exists) {
-          repos.push(yield* readRepository(path, `the worktree ${path}`));
-          yield* nestedRepositories(path, `the worktree ${path}`, repos, seen, 0);
+          repos.push(yield* readRepository(path, `the worktree ${path}`, check));
+          yield* nestedRepositories(path, `the worktree ${path}`, repos, seen, 0, check);
         }
       }
     }
+  }
+  let lfs = false;
+  if (filters) {
     // An include, above all a conditional one (onbranch:, gitdir:), can be inactive in this checkout and active in
     // the context git really runs in (the new worktree's checkout, a target worktree): its drivers were never seen.
     const includes = [...new Set(repos.flatMap((r) => r.local).filter((e) => INCLUDE_KEY.test(e.lower)).map((e) => e.key))];
