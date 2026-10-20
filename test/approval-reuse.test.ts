@@ -13,6 +13,7 @@ import type { PeerInfo } from "../src/core/protocol.js";
 import { answerPendingApproval, listPendingApprovals, requestIdentity, type PermissionDecision, type PermissionRequest } from "../src/core/relay.js";
 import { approvalIdentity, jobCanSpawn, mcpCallEffect, readOnlyJob } from "../src/mcp/approval-reuse.js";
 import { DELEGATE_DEPTH_ENV } from "../src/core/delegate.js";
+import * as delegate from "../src/core/delegate.js";
 import * as worktree from "../src/core/worktree.js";
 import { runDelegate, type DelegateArgs, type RunContext } from "../src/mcp/delegate-run.js";
 import { tagApprovalOrigin, waitForApproval, type Job } from "../src/mcp/jobs.js";
@@ -700,6 +701,103 @@ describe("identical approval reuse within a job (AB-402)", () => {
       });
       await runDelegate(rc, "codex", { title: "reuse", prompt: "task", access: "edit" }, j.controller.signal, undefined, true, j);
     });
+  });
+});
+
+describe("PR99 review round 2", () => {
+  it("never retroactively makes an edit-capable launch read-only after a config downgrade", async () => {
+    const rc = context([allowed(), allowed()]);
+    rc.cfg.claudePermissionMode = "acceptEdits";
+    const j = job();
+    vi.spyOn(DELEGATION_TARGETS.claude, "run").mockImplementation(async (launchCfg, req, args) => {
+      const permissionAtLaunch = DELEGATION_TARGETS.claude.permission(launchCfg, args);
+      expect(permissionAtLaunch).toBe("acceptEdits");
+      rc.cfg.claudePermissionMode = "manual";
+      const request = hook("claude", "Bash", { command: "./check.sh" });
+      expect((await req.approve!(request)).allow).toBe(true);
+      // The child retains its launch flags and can accept this edit without another approval.
+      writeFileSync(join(repo, "check.sh"), "changed under the actual acceptEdits launch mode");
+      expect((await req.approve!(request)).allow).toBe(true);
+      expect(rc.jobs!.askParent).toHaveBeenCalledTimes(2);
+      expect(j.approvalGrants?.grants ?? []).toEqual([]);
+      expect(DELEGATION_TARGETS.claude.permission(launchCfg, args)).toBe(permissionAtLaunch);
+      return { sessionId: "saved", text: "done", isError: false, details: {} };
+    });
+    await runDelegate(rc, "claude", { title: "reuse", prompt: "task" }, j.controller.signal, undefined, true, j);
+  });
+
+  it.each(["command", "MCP"] as const)("revokes %s grants across reuse off, deny and re-enable", async (kind) => {
+    const fresh = allowed();
+    const rc = context([allowed(), denied(), fresh]);
+    const j = job();
+    vi.spyOn(DELEGATION_TARGETS.claude, "run").mockImplementation(async (_cfg, req) => {
+      const request = kind === "command" ? command("./check.sh") : hook("claude", "mcp__other__lookup", { query: "x" });
+      const ask = async () => { j.allowedServers?.clear(); return req.approve!(request); };
+      expect((await ask()).allow).toBe(true);
+      rc.cfg.jobs = { ...rc.cfg.jobs, reuseIdenticalApprovals: false };
+      expect((await ask()).allow).toBe(false);
+      expect(j.approvalGrants).toBeUndefined();
+      rc.cfg.jobs = { ...rc.cfg.jobs, reuseIdenticalApprovals: true };
+      expect((await ask()).allow).toBe(true);
+      expect(rc.jobs!.askParent).toHaveBeenCalledTimes(3);
+      expect((await ask()).allow).toBe(true);
+      expect(rc.jobs!.askParent).toHaveBeenCalledTimes(3);
+      expect(j.approvalGrants?.grants[0]?.approvalId).toBe(fresh.approvalId);
+      return { sessionId: "saved", text: "done", isError: false, details: {} };
+    });
+    await runDelegate(rc, "claude", { title: "reuse", prompt: "task", access: "read" }, j.controller.signal, undefined, true, j);
+  });
+
+  it("does not let an older pending allow repopulate grants after reuse was disabled", async () => {
+    const rc = context([]);
+    let complete!: (answer: Answer) => void;
+    rc.jobs!.askParent = vi.fn()
+      .mockImplementationOnce(() => new Promise<Answer>(resolve => { complete = resolve; }))
+      .mockResolvedValueOnce(denied()).mockResolvedValueOnce(allowed());
+    const j = job();
+    vi.spyOn(DELEGATION_TARGETS.claude, "run").mockImplementation(async (_cfg, req) => {
+      const request = command("./check.sh");
+      const pending = req.approve!(request);
+      await until(() => Boolean(complete));
+      rc.cfg.jobs = { ...rc.cfg.jobs, reuseIdenticalApprovals: false };
+      expect((await req.approve!(command("different command"))).allow).toBe(false);
+      rc.cfg.jobs = { ...rc.cfg.jobs, reuseIdenticalApprovals: true };
+      complete(allowed());
+      expect((await pending).allow).toBe(true); // Its explicit decision still applies to that request.
+      expect(j.approvalGrants).toBeUndefined();
+      expect((await req.approve!(request)).allow).toBe(true);
+      expect(rc.jobs!.askParent).toHaveBeenCalledTimes(3);
+      return { sessionId: "saved", text: "done", isError: false, details: {} };
+    });
+    await runDelegate(rc, "claude", { title: "reuse", prompt: "task", access: "read" }, j.controller.signal, undefined, true, j);
+  });
+
+  it("takes new launch authority for each retry without carrying the earlier launch's grants", async () => {
+    const rc = context([allowed(), allowed(), allowed()]);
+    rc.cfg.claudePermissionMode = "manual";
+    const j = job();
+    // Drive the real per-attempt callback twice, with no provider, process, timer or retry delay.
+    vi.spyOn(delegate, "retryTransient").mockImplementation(async (request, launch) => {
+      await launch(request);
+      rc.cfg.claudePermissionMode = "acceptEdits";
+      return launch({ ...request, sessionId: "retry" });
+    });
+    let launches = 0;
+    vi.spyOn(DELEGATION_TARGETS.claude, "run").mockImplementation(async (launchCfg, req, args) => {
+      const permissionAtLaunch = DELEGATION_TARGETS.claude.permission(launchCfg, args);
+      expect(permissionAtLaunch).toBe(++launches === 1 ? "manual" : "acceptEdits");
+      const request = command("./check.sh");
+      if (launches === 2) {
+        expect(j.approvalGrants).toBeUndefined();
+        rc.cfg.claudePermissionMode = "manual";
+      }
+      expect((await req.approve!(request)).allow).toBe(true);
+      expect((await req.approve!(request)).allow).toBe(true);
+      expect(rc.jobs!.askParent).toHaveBeenCalledTimes(launches === 1 ? 1 : 3);
+      return { sessionId: "saved", text: "done", isError: false, details: {} };
+    });
+    await runDelegate(rc, "claude", { title: "reuse", prompt: "task" }, j.controller.signal, undefined, true, j);
+    expect(launches).toBe(2);
   });
 });
 

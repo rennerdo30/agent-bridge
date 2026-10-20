@@ -225,22 +225,45 @@ async function runDelegateInner(
   // Set by an allowed own-server call that may start or steer a child job (spawn_*, ask_*, message_subagent,
   // decide): no command grant is reused or kept for the rest of this turn.
   let commandGrantsBlocked = false;
+  let launchPermission: string | undefined;
+  // Invalidations also fence answers already pending, so an off/on transition or retry cannot recreate old grants.
+  let reuseGeneration = 0;
+  const invalidateReuse = () => {
+    reuseGeneration++;
+    if (job) clearApprovalGrants(job);
+  };
+  const reuseEnabled = () => {
+    const enabled = cfg.jobs?.reuseIdenticalApprovals ?? DEFAULT_CONFIG.jobs.reuseIdenticalApprovals;
+    if (!enabled) invalidateReuse();
+    return enabled;
+  };
   const codexReviewer = () => target === "codex" ? a.approvals_reviewer ?? cfg.codexApprovalsReviewer : undefined;
-  const jobReadOnly = () => !commandGrantsBlocked && readOnlyJob({ target, permission: profile.permission(cfg, a), permissionProfile: a.permission_profile,
+  const readOnlyPermission = (permission: string) => readOnlyJob({ target, permission, permissionProfile: a.permission_profile,
     bypassPermissions: a.bypass_permissions, approvalsReviewer: codexReviewer(), allowPatterns: autoApprove,
     allowedServers: [...allowedServers], canSpawn });
+  // Config can further restrict reuse, but cannot retroactively change the flags of an already running child.
+  const jobReadOnly = () => !commandGrantsBlocked && launchPermission !== undefined &&
+    readOnlyPermission(launchPermission) && readOnlyPermission(profile.permission(cfg, a));
   // Every allowed MCP call, whichever path allowed it (a server allowed earlier, an allow pattern, a question or a
   // reuse): a server other than the Pair Desk may have written files, so it ends the job's command grants; an
   // own-server call that may start or steer a child job also blocks new ones for the rest of the turn.
   const mcpAllowed = (r: PermissionRequest) => {
     if (!job) return;
+    reuseEnabled(); // Automatic MCP allowances also observe disabled-state invalidation.
     const effect = mcpCallEffect(r, rc.me());
     if (effect === "block") commandGrantsBlocked = true;
     if ((effect === "drop" || effect === "block") && dropCommandGrants(job)) dlog.info("an MCP call that may change files was allowed; command grants dropped", { job: job.name, tool: r.tool });
   };
   const askOnce = async (r: PermissionRequest, ask: () => Promise<ApprovalOutcome>): Promise<ApprovalOutcome & { reusedFrom?: string }> => {
     // A runner spec written by an older release has no jobs section: the default (on) applies.
-    if (!job || !(cfg.jobs?.reuseIdenticalApprovals ?? DEFAULT_CONFIG.jobs.reuseIdenticalApprovals)) return ask();
+    if (!job) return ask();
+    if (!reuseEnabled()) {
+      const answer = await ask();
+      // Explicit decisions still apply, but neither old grants nor answers pending across the off period survive.
+      invalidateReuse();
+      if (answer.allow) mcpAllowed(r);
+      return answer;
+    }
     const command = isCommandRequest(r);
     // A read-only job changes files only through what it is allowed: an allowed file change, other command or request
     // without an exact identity ends every command grant (an allowed script may be what changed).
@@ -263,10 +286,10 @@ async function runDelegateInner(
     const supervision = jobSupervision(rc.home, job, dlog);
     if (supervision === null) {
       // An unknown supervisor invalidates every grant, including MCP grants, even if the store later recovers.
-      clearApprovalGrants(job);
+      invalidateReuse();
       return settle(await ask());
     }
-    const scope = approvalScope({ access: a.access, sandbox: a.sandbox, permission: profile.permission(cfg, a), reviewer: codexReviewer(),
+    const scope = approvalScope({ access: a.access, sandbox: a.sandbox, permission: JSON.stringify([launchPermission ?? null, profile.permission(cfg, a)]), reviewer: codexReviewer(),
       supervisor: JSON.stringify([supervision, rc.me()]) });
     const grant = reusableGrant(job, scope, identity);
     if (grant?.command && !jobReadOnly()) {
@@ -290,8 +313,12 @@ async function runDelegateInner(
     }
     // Read-only is checked when the question is asked and again with the answer: a command grant needs both.
     const readOnlyAsked = command && jobReadOnly();
+    const generation = reuseGeneration;
     const answer = settle(await ask());
-    recordGrant(job, scope, identity, answer, approvalOrigin(answer), command, readOnlyAsked && jobReadOnly());
+    const enabledAfterAnswer = reuseEnabled();
+    // A deny always revokes; an allow may create a grant only under the same uninterrupted reuse authority.
+    if (!answer.allow || (enabledAfterAnswer && generation === reuseGeneration))
+      recordGrant(job, scope, identity, answer, approvalOrigin(answer), command, readOnlyAsked && jobReadOnly());
     return answer;
   };
   // Native permission dialogs keep their existing eligibility; the dashboard can answer the same wait.
@@ -571,7 +598,14 @@ async function runDelegateInner(
           if (usage.type === "warn") usageWarning = usageAdmissionText(usage);
           if (job) { confirmUsageAdmission(job, (job.usagePendingControls ?? []).map(control => control.cid)); rc.jobs?.persist?.(); }
           onProgress?.("starting native CLI");
-          return await profile.run(cfg, { ...req, onSession: (id) => { release(); req.onSession?.(id); } }, { ...a, access, relay: wiring });
+          // Snapshot the same permission inputs the target actually receives, after admission and on every retry.
+          // An earlier write-capable launch blocks command grants for this turn, including any late callbacks.
+          const launchCfg = { ...cfg };
+          const launchArgs = { ...a, access, relay: wiring };
+          launchPermission = profile.permission(launchCfg, launchArgs);
+          if (!readOnlyPermission(launchPermission)) commandGrantsBlocked = true;
+          invalidateReuse();
+          return await profile.run(launchCfg, { ...req, onSession: (id) => { release(); req.onSession?.(id); } }, launchArgs);
         } finally { release(); }
       },
     );
