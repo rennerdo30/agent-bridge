@@ -182,7 +182,6 @@ it("loads a standalone low-level lease bundle without external npm runtime impor
   const { createRequire } = await import("node:module");
   const { mkdtempSync, writeFileSync } = await import("node:fs");
   const { join } = await import("node:path");
-  const { pathToFileURL } = await import("node:url");
   const require = createRequire(import.meta.url);
   // Keep the compiler synchronous and bounded, without starting an esbuild JS worker/service.
   vi.stubEnv("ESBUILD_WORKER_THREADS", "0");
@@ -209,9 +208,8 @@ it("loads a standalone low-level lease bundle without external npm runtime impor
     const npmImports = Object.values(bundle.metafile!.outputs).flatMap(output => output.imports)
       .filter(entry => entry.external && !entry.path.startsWith("node:")).map(entry => entry.path);
     expect(npmImports).toEqual([]);
-    // Native Node import deliberately bypasses the test transform and checkout's package resolution.
-    const load = new Function("url", "return import(url)") as (url: string) => Promise<Record<string, unknown>>;
-    expect(typeof (await load(pathToFileURL(outfile).href)).metadataFileLease).toBe("function");
+    // Node >=24 loads this synchronous ESM fixture through its native loader, outside the test transform.
+    expect(typeof (require(outfile) as Record<string, unknown>).metadataFileLease).toBe("function");
   } finally {
     childProcess.execFileSync = originalExec;
     vi.unstubAllEnvs();
