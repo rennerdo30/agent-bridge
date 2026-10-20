@@ -42,7 +42,10 @@ if (args[0] === "app-server") {
   process.stdin.on("end", () => {
     if (process.env.AB_ENV_AGENT === "claude") out({type:"result",subtype:"success",is_error:false,result:"done",session_id:"native-session"});
     if (process.env.AB_ENV_AGENT === "codex") { out({type:"thread.started",thread_id:"native-thread"});out({type:"item.completed",item:{type:"agent_message",text:"done"}});out({type:"turn.completed",usage:{}}); }
-    if (process.env.AB_ENV_AGENT === "opencode") out({type:"text",sessionID:"native-session",part:{messageID:"message",text:"done"}});
+    if (process.env.AB_ENV_AGENT === "opencode") {
+      out({type:"text",sessionID:"native-session",part:{messageID:"message",text:"done"}});
+      out({type:"step_finish",sessionID:"native-session",part:{messageID:"message",reason:"stop"}});
+    }
     if (process.env.AB_ENV_AGENT === "antigravity") out({event:"result",result:{conversation_id:"native-session",status:"SUCCESS",response:"done"}});
   });
 }

@@ -443,9 +443,9 @@ export const CODEX_NO_APPROVALS = 'approval_policy="never"';
 export const CODEX_ASK_HINT =
   "(The workspace is read-only on purpose: when you need to change files or run a command the sandbox blocks, request escalated permissions for it. The user is asked and decides; if denied, stop and report.)";
 /** Read-only for opencode: no file changes, no shell commands. Reading and searching stay allowed. */
-// "ask" rather than "deny": the tools stay listed (some providers reject a reduced tool set), and headless
-// `opencode run` rejects every ask without --auto, so nothing is changed.
-export const OPENCODE_READ_ONLY_PERMISSIONS = { edit: "ask", bash: "ask" } as const;
+// Headless "ask" rejects permission and terminates the model loop. "deny" returns a tool error
+// the model can recover from with read/glob/grep, without granting edits or shell access.
+export const OPENCODE_READ_ONLY_PERMISSIONS = { edit: "deny", bash: "deny" } as const;
 /** MCP tools (named <server>_<tool>) can change things too: read-only runs allow only the permitted bridge routes. */
 export const OPENCODE_READ_ONLY_TOOLS = {
   "*_*": false, bridge_send: true, bridge_report_progress: true, bridge_peers: true, bridge_health: true, bridge_search_history: true, bridge_get_conversation: true,
@@ -756,6 +756,14 @@ export async function delegateToClaude(
   };
 }
 
+/** A tool step or a truncated turn is not a final answer, even if it contains progress text. */
+export function opencodeCompletionError(text: string, finish: unknown, toolError?: string | null): string | null {
+  if (finish !== "stop" && finish !== "end_turn") {
+    return toolError || `opencode ended without a final response (finish: ${typeof finish === "string" ? finish : "missing"})`;
+  }
+  return text.trim() ? null : "opencode ended without final text";
+}
+
 /** Parse `opencode run --format json` output: one event per line, each carrying the sessionID. */
 export function parseOpencodeJsonl(stdout: string): {
   sessionId: string | null;
@@ -767,6 +775,8 @@ export function parseOpencodeJsonl(stdout: string): {
   let sessionId: string | null = null;
   const textByMessage = new Map<string, string[]>();
   let lastMessage = "";
+  let finish: unknown;
+  let toolError: string | null = null;
   let error: string | null = null;
   let input = 0;
   let output = 0;
@@ -782,6 +792,17 @@ export function parseOpencodeJsonl(stdout: string): {
       continue;
     }
     if (typeof ev.sessionID === "string" && ev.sessionID.trim()) sessionId ??= ev.sessionID;
+    // Tool-only messages must replace earlier progress text too. Otherwise a rejected tool
+    // call (including one after text in the same message) looks like a successful answer.
+    if (typeof ev.part?.messageID === "string" && ev.part.messageID !== lastMessage) {
+      lastMessage = ev.part.messageID;
+      finish = undefined;
+      toolError = null;
+    }
+    if (ev.type === "step_finish") finish = ev.part?.reason;
+    if (ev.part?.type === "tool" && ev.part.state?.status === "error") {
+      toolError = String(ev.part.state.error ?? "opencode tool call failed");
+    }
     if (ev.type === "step_finish" && ev.part?.tokens) {
       sawUsage = true;
       input += Number(ev.part.tokens.input) || 0;
@@ -798,6 +819,7 @@ export function parseOpencodeJsonl(stdout: string): {
     }
   }
   const text = (textByMessage.get(lastMessage) ?? []).join("");
+  error ??= opencodeCompletionError(text, finish, toolError);
   return sawUsage ? { sessionId, text, error, usage: { input, output }, cost } : { sessionId, text, error };
 }
 

@@ -40,6 +40,7 @@ if (args[0] === "run") {
   process.stdin.on("end", () => {
     record({args, cwd:process.cwd(), pwd:process.env.PWD, config:process.env.OPENCODE_CONFIG_CONTENT, prompt});
     console.log(JSON.stringify({type:"text",sessionID:"same-session",part:{messageID:"m",text:"done"}}));
+    console.log(JSON.stringify({type:"step_finish",sessionID:"same-session",part:{messageID:"m",reason:"stop"}}));
   });
 } else if (args[0] === "serve") {
   // V2 ties the private server's lifetime to its parent's stdin pipe.
@@ -84,9 +85,9 @@ it.each([1, 2])("uses process cwd and resumes with portable flags on OpenCode %i
   expect(runs[0].args).toEqual(expect.arrayContaining(["--format", "json", "--auto", "-m", major === 2 ? "provider/model#low" : "provider/model"]));
   expect(runs[1].args).toEqual(expect.arrayContaining(["-s", "same-session"]));
   expect(runs[1].args).not.toContain("--auto");
-  expect(JSON.parse(runs[1].config).permission.bash).toBe("ask");
+  expect(JSON.parse(runs[1].config).permission.bash).toBe("deny");
   const readOnly = JSON.parse(runs[1].config);
-  expect(readOnly.permission).toEqual({ edit: "ask", bash: "ask" });
+  expect(readOnly.permission).toEqual({ edit: "deny", bash: "deny" });
   expect(readOnly.tools).toMatchObject({ "*_*": false, bridge_ask_muse: true, bridge_spawn_muse: true,
     bridge_ask_codex: true, bridge_spawn_claude: true, bridge_send: true });
   expect(readOnly.tools.unrelated_write).toBeUndefined();

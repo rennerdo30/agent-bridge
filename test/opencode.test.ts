@@ -24,7 +24,7 @@ describe("parseOpencodeJsonl", () => {
       '{"type":"tool_use","sessionID":"ses_1","part":{"messageID":"m1"}}',
       '{"type":"text","sessionID":"ses_1","part":{"messageID":"m2","type":"text","text":"4"}}',
       '{"type":"text","sessionID":"ses_1","part":{"messageID":"m2","type":"text","text":"2"}}',
-      '{"type":"step_finish","sessionID":"ses_1","part":{"messageID":"m2"}}',
+      '{"type":"step_finish","sessionID":"ses_1","part":{"messageID":"m2","reason":"stop"}}',
     ].join("\n");
     expect(parseOpencodeJsonl(out)).toEqual({ sessionId: "ses_1", text: "42", error: null });
   });

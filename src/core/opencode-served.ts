@@ -3,7 +3,7 @@ import { randomBytes } from "node:crypto";
 import { extname } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { markerSafe, opencodePermissionText } from "./approval-display.js";
-import { checkDepthPublic, childEnvPublic, DelegateError, killTree, trackChild, resolveBinary, unwrapNpmShim, opencodeVersion, OPENCODE_READ_ONLY_TOOLS, type DelegateRequest, type DelegateResult } from "./delegate.js";
+import { checkDepthPublic, childEnvPublic, DelegateError, killTree, trackChild, resolveBinary, unwrapNpmShim, opencodeVersion, opencodeCompletionError, OPENCODE_READ_ONLY_TOOLS, type DelegateRequest, type DelegateResult } from "./delegate.js";
 import { createOpencodeNativeToolPlugin, OPENCODE_NATIVE_ACTION_PREFIX, OPENCODE_NATIVE_GATE_ID, opencodeNativeGateReportError, parseOpencodeVersion, unknownOpencodeVersionMessage, type OpencodeNativeAccess } from "./opencode-native-tools.js";
 import { progressEventHandler } from "./progress.js";
 import { boundedDetail, type PermissionDecision, type PermissionRequest } from "./relay.js";
@@ -237,6 +237,10 @@ export async function delegateToOpencodeServed(
       let failure: string | null = null;
       let usage: unknown = null;
       let costUsd: unknown = null;
+      let succeeded = false;
+      let textEvents = 0;
+      let rejectedAtText = -1;
+      let finish: unknown;
       const onEvent = progressEventHandler("opencode", req.onProgress);
       for await (const ev of sse(events.body)) {
         const p = ev.data ?? {};
@@ -244,7 +248,10 @@ export async function delegateToOpencodeServed(
         if (ev.type === "permission.asked") {
           const decision = await req.onPermission(opencodePermissionRequest({ ...p, permission: p.action, patterns: p.resources }, mcpServers, req.cwd));
           await api("POST", `/session/${sessionId}/permission/${p.id}/reply`, { decision: decision.allow ? "once" : "reject", ...(!decision.allow ? { message: decision.message } : {}) });
+          if (!decision.allow) rejectedAtText = textEvents;
         } else if (ev.type === "session.text.ended") {
+          textEvents++;
+          if (lastMessage !== p.assistantMessageID) finish = undefined;
           lastMessage = p.assistantMessageID;
           if (!textByMessage.has(lastMessage)) textByMessage.set(lastMessage, new Map());
           textByMessage.get(lastMessage)!.set(p.ordinal, p.text);
@@ -252,15 +259,23 @@ export async function delegateToOpencodeServed(
         } else if (ev.type === "session.usage.updated" || ev.type === "session.step.ended") {
           usage = p.tokens;
           costUsd = p.cost;
+          if (ev.type === "session.step.ended") {
+            if (typeof p.assistantMessageID === "string") lastMessage = p.assistantMessageID;
+            finish = p.reason ?? p.finish;
+          }
         } else if (ev.type === "session.execution.failed") {
           failure = p.error?.message ?? "opencode session error";
           break;
         } else if (ev.type === "session.execution.succeeded" || ev.type === "session.execution.interrupted") {
+          succeeded = ev.type === "session.execution.succeeded";
           if (ev.type.endsWith("interrupted")) failure = "opencode session interrupted";
           break;
         }
       }
       const text = [...(textByMessage.get(lastMessage) ?? [])].sort(([a], [b]) => a - b).map(([, value]) => value).join("");
+      failure ??= !succeeded ? "opencode event stream ended before completion"
+        : rejectedAtText >= 0 && textEvents <= rejectedAtText ? "opencode permission rejected without a final response"
+        : opencodeCompletionError(text, finish ?? "stop");
       if (failure && !text) throw new DelegateError(failure, "failed", "", "", sessionId);
       if (!text && !failure) throw new DelegateError("opencode event stream ended without a response", "failed", "", "", sessionId);
       return { sessionId, text, isError: failure !== null, details: { error: failure, usage, costUsd } };
@@ -270,6 +285,10 @@ export async function delegateToOpencodeServed(
     knownSession = sessionId;
     // MCP server names, to recognize MCP tool permissions; without them those are still asked, just one by one.
     const mcpServers = Object.keys((await api("GET", "/mcp").catch(() => null)) ?? {});
+    // Snapshot before the prompt: an idle/rejected resumed turn must not reuse its old answer.
+    const previous: Json[] = (await api("GET", `/session/${sessionId}/message`)) ?? [];
+    const messageKey = (m: Json) => m.info?.id ?? JSON.stringify(m);
+    const previousMessages = new Set(previous.map(messageKey));
     const events = await fetch(`${url}/event?${q}`, { headers: { authorization: auth, accept: "text/event-stream" }, signal: ac.signal });
     if (!events.ok || !events.body) throw new DelegateError(`opencode event stream failed: HTTP ${events.status}`, "failed");
 
@@ -281,6 +300,7 @@ export async function delegateToOpencodeServed(
     await api("POST", `/session/${sessionId}/prompt_async`, body);
 
     let failure: string | null = null;
+    let idle = false;
     const onEvent = progressEventHandler("opencode", req.onProgress);
     let alive = false;
     const watchdog = setTimeout(() => {
@@ -314,6 +334,7 @@ export async function delegateToOpencodeServed(
         failure = String(p.error?.data?.message ?? p.error?.message ?? "opencode session error");
         break;
       } else if ((type === "session.idle" && p.sessionID === sessionId) || (type === "session.status" && p.sessionID === sessionId && p.status?.type === "idle")) {
+        idle = true;
         break;
       }
     }
@@ -326,11 +347,15 @@ export async function delegateToOpencodeServed(
     if (failure && !alive) throw new DelegateError(failure, "failed", "", "", sessionId);
 
     const messages: Json[] = (await api("GET", `/session/${sessionId}/message`)) ?? [];
-    const last = [...messages].reverse().find((m) => m.info?.role === "assistant");
+    const last = [...messages].reverse().find((m) => m.info?.role === "assistant" && !previousMessages.has(messageKey(m)));
     const text = (last?.parts ?? [])
       .filter((part: Json) => part.type === "text" && typeof part.text === "string")
       .map((part: Json) => part.text)
       .join("");
+    const toolError = (last?.parts ?? []).find((part: Json) => part.type === "tool" && part.state?.status === "error")?.state?.error;
+    failure ??= last?.info?.error ? String(last.info.error.data?.message ?? last.info.error.message ?? "opencode assistant error")
+      : !idle ? "opencode event stream ended before completion"
+      : opencodeCompletionError(text, last?.info?.finish, toolError);
     if (failure && !text) throw new DelegateError(failure, "failed", "", "", sessionId);
     const tokens = last?.info?.tokens;
     return {

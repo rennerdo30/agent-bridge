@@ -86,7 +86,10 @@ import {appendFileSync} from 'node:fs';
 const args=process.argv.slice(2);
 if(args[0]==='--version'){console.log('opencode v${major === 1 ? "1.18.35" : "2.0.26"}');process.exit(0)}
 appendFileSync(new URL('calls.jsonl',import.meta.url),JSON.stringify({args,config:process.env.OPENCODE_CONFIG_CONTENT})+'\\n');
-process.stdin.resume();process.stdin.on('end',()=>console.log(JSON.stringify({type:'text',sessionID:'ses_fixture',part:{text:'done'}})));
+process.stdin.resume();process.stdin.on('end',()=>{
+console.log(JSON.stringify({type:'text',sessionID:'ses_fixture',part:{text:'done'}}));
+console.log(JSON.stringify({type:'step_finish',sessionID:'ses_fixture',part:{reason:'stop'}}));
+});
 `);
   const bin = process.platform === "win32" ? join(cwd, "opencode.cmd") : script;
   if (process.platform === "win32") writeFileSync(bin, '@ECHO off\r\n"%dp0%\\fake.mjs" %*\r\n');
@@ -95,7 +98,7 @@ process.stdin.resume();process.stdin.on('end',()=>console.log(JSON.stringify({ty
   const calls = readFileSync(join(cwd, "calls.jsonl"), "utf8").trim().split("\n").map(line => JSON.parse(line));
   expect(calls[0].args.includes("--standalone")).toBe(major === 2);
   expect(calls[0].args).not.toContain("--auto");
-  expect(JSON.parse(calls[0].config)).toEqual({ permission: { edit: "ask", bash: "ask" }, tools: OPENCODE_READ_ONLY_TOOLS });
+  expect(JSON.parse(calls[0].config)).toEqual({ permission: { edit: "deny", bash: "deny" }, tools: OPENCODE_READ_ONLY_TOOLS });
   expect(calls[1].args).toContain("--auto");
   expect(calls[1].config).toBeUndefined();
 });

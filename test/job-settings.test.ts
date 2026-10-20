@@ -121,7 +121,10 @@ const args = process.argv.slice(2);
 if (args[0] === "--version") { console.log("1.18.34"); process.exit(0); }
 appendFileSync(new URL("calls.jsonl", import.meta.url), JSON.stringify({ args, config: process.env.OPENCODE_CONFIG_CONTENT }) + "\\n");
 process.stdin.resume();
-process.stdin.on("end", () => console.log(JSON.stringify({ type: "text", sessionID: "same-session", part: { messageID: "m", text: "done" } })));
+process.stdin.on("end", () => {
+  console.log(JSON.stringify({ type: "text", sessionID: "same-session", part: { messageID: "m", text: "done" } }));
+  console.log(JSON.stringify({ type: "step_finish", sessionID: "same-session", part: { messageID: "m", reason: "stop" } }));
+});
 `);
     const bin = process.platform === "win32" ? join(dir, "opencode.cmd") : script;
     if (process.platform === "win32") writeFileSync(bin, '@ECHO off\r\n"%dp0%\\fake.mjs" %*\r\n');
@@ -137,7 +140,7 @@ process.stdin.on("end", () => console.log(JSON.stringify({ type: "text", session
       expect(calls[0].args).toContain("--auto");
       expect(calls[1].args).toEqual(expect.arrayContaining(["-m", "provider/new-model", "-s", "same-session"]));
       expect(calls[1].args).not.toContain("--auto");
-      expect(JSON.parse(calls[1].config).permission).toMatchObject({ edit: "ask", bash: "ask" });
+      expect(JSON.parse(calls[1].config).permission).toMatchObject({ edit: "deny", bash: "deny" });
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
