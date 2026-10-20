@@ -272,7 +272,7 @@ describe("AB-428 job checklists", () => {
   });
 
   it("does not replay a checklist mutation when its broker reply is lost", async () => {
-    const lost = Object.assign(new Error("reply lost"), { code: "ETIMEDOUT" });
+    const lost = Object.assign(new Error("broker request timed out: jobChecklist"), { code: "ETIMEDOUT" });
     const request = vi.fn(async () => { throw lost; });
     const node = { withClient: async (fn: (client: unknown) => Promise<unknown>) => fn({ request }) };
     const result = await BridgeNode.prototype.jobChecklist.call(node as never, { job: JOB, add: [{ text: "Exactly once request" }] }).catch(error => error);
