@@ -71,7 +71,7 @@ describe("delegation approval routing", () => {
   it.each(["codex", "claude", "opencode"] as const)("allows desk reads by default without granting writes for %s", async (target) => {
     const rc = context();
     // Read access alone grants desk reads; the default job allowance (AB-403) is cleared to isolate it.
-    rc.cfg.jobs = { defaultAllowTools: [] };
+    rc.cfg.jobs = { ...rc.cfg.jobs, defaultAllowTools: [] };
     const j = job();
     vi.spyOn(DELEGATION_TARGETS[target], "run").mockImplementation(async (_cfg, req) => {
       for (const server of ["pair-desk", "pair_desk", "plugin_agent-pair-programming_pair-desk"]) {
