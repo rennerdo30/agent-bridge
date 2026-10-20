@@ -175,20 +175,14 @@ export function readOnlyJob(job: {
   }
 }
 
-/** The job's grants under this scope; grants from another scope (or another job) are dropped. */
-function current(job: Job, scope: string): ApprovalGrants | undefined {
+/** Read-only storage selection. Scope transitions belong exclusively to ApprovalReuse's epoch observer. */
+function matchingGrants(job: Job, scope: string): ApprovalGrants | undefined {
   const grants = job.approvalGrants;
-  if (grants && (grants.jobId !== job.id || grants.scope !== scope)) job.approvalGrants = undefined;
-  return job.approvalGrants;
-}
-
-/** The earlier grant of an identical request in this job and scope, if any. */
-export function reusableGrant(job: Job, scope: string, identity: string): ApprovalGrant | undefined {
-  return current(job, scope)?.grants.find((grant) => grant.identity === identity);
+  return grants?.jobId === job.id && grants.scope === scope ? grants : undefined;
 }
 
 /** Drop every command grant of the job (it may have changed files); MCP tool grants stay. */
-export function dropCommandGrants(job: Job): number {
+function dropCommandGrants(job: Job): number {
   const grants = job.approvalGrants;
   if (!grants) return 0;
   const before = grants.grants.length;
@@ -197,7 +191,7 @@ export function dropCommandGrants(job: Job): number {
 }
 
 /** Forget all grants of the job (its turn finished). */
-export function clearApprovalGrants(job: Job): void {
+function clearApprovalGrants(job: Job): void {
   job.approvalGrants = undefined;
 }
 
@@ -205,16 +199,101 @@ export function clearApprovalGrants(job: Job): void {
  * Remember an explicit "allow" by the supervisor or the owner. Any deny of the same request revokes its grant.
  * command: a command grant, kept only when readOnly (the job's settings when it was granted).
  */
-export function recordGrant(job: Job, scope: string, identity: string, answer: { allow: boolean }, origin: ApprovalOrigin | undefined, command: boolean, readOnly: boolean): boolean {
+function recordGrant(job: Job, scope: string, identity: string, answer: { allow: boolean }, origin: ApprovalOrigin | undefined, command: boolean, readOnly: boolean): boolean {
   if (!answer.allow) {
     const grants = job.approvalGrants;
     if (grants) grants.grants = grants.grants.filter((grant) => grant.identity !== identity);
     return false;
   }
   if (!origin || !EXPLICIT_DECIDERS.has(origin.by) || (command && !readOnly)) return false;
-  const grants = current(job, scope) ?? (job.approvalGrants = { jobId: job.id, scope, grants: [] });
+  // Storage never changes scope itself: even an empty pending-only scope must be observed by the epoch owner.
+  if (job.approvalGrants && !matchingGrants(job, scope)) return false;
+  const grants = job.approvalGrants ?? (job.approvalGrants = { jobId: job.id, scope, grants: [] });
   grants.grants = grants.grants.filter((grant) => grant.identity !== identity);
   grants.grants.push({ identity, approvalId: origin.approvalId, by: origin.by, at: Date.now(), command, reuses: 0 });
   while (grants.grants.length > MAX_APPROVAL_GRANTS) grants.grants.shift();
   return true;
+}
+
+/** Captured authority for one request, independent of whether any grant is currently stored. */
+export interface ApprovalTicket {
+  readonly jobId: string;
+  readonly scope: string | null;
+  readonly epoch: number;
+  readonly commandEpoch: number;
+  readonly commandReadOnly: boolean;
+}
+
+/** One job turn's authority owner. All lookup, creation and invalidation use this observer, including late answers. */
+export class ApprovalReuse {
+  private scope: string | null = null;
+  private jobId: string;
+  private epoch = 0;
+  private commandEpoch = 0;
+  private commandReadOnly: boolean | undefined;
+  private closed = false;
+
+  constructor(private readonly job: Job, private readonly authority: () => { scope: string | null; commandReadOnly: boolean }) {
+    this.jobId = job.id;
+    this.invalidate();
+  }
+
+  /** Launch/retry and unknown authority discard both retained grants and pending creation rights. */
+  invalidate(): void {
+    this.epoch++;
+    this.commandEpoch++;
+    this.scope = null;
+    this.commandReadOnly = undefined;
+    clearApprovalGrants(this.job);
+  }
+
+  /** A turn can never regain authority after it ends, even if a late callback still has an explicit answer. */
+  close(): void { this.closed = true; this.invalidate(); }
+
+  /** Freshly observe scope even with no grants. A return to an old scope is a new epoch, never a revival. */
+  observe(): ApprovalTicket {
+    const current = this.closed ? { scope: null, commandReadOnly: false } : this.authority();
+    if (this.jobId !== this.job.id || this.scope !== current.scope) {
+      this.invalidate();
+      this.jobId = this.job.id;
+      this.scope = current.scope;
+    }
+    const readOnly = current.scope !== null && current.commandReadOnly;
+    if (this.commandReadOnly !== readOnly) {
+      this.dropCommands();
+      this.commandReadOnly = readOnly;
+    }
+    return { jobId: this.jobId, scope: this.scope, epoch: this.epoch, commandEpoch: this.commandEpoch, commandReadOnly: readOnly };
+  }
+
+  /** Write-capability changes fence pending commands even when the grant list is empty; exact MCP grants remain. */
+  dropCommands(): number { this.commandEpoch++; return dropCommandGrants(this.job); }
+
+  private matches(ticket: ApprovalTicket, command: boolean): boolean {
+    return !this.closed && this.scope !== null && ticket.jobId === this.jobId && ticket.scope === this.scope && ticket.epoch === this.epoch &&
+      (!command || (this.commandReadOnly === true && ticket.commandEpoch === this.commandEpoch));
+  }
+
+  find(ticket: ApprovalTicket, identity: string): ApprovalGrant | undefined {
+    this.observe();
+    if (!this.matches(ticket, false)) return undefined;
+    const grant = matchingGrants(this.job, this.scope!)?.grants.find(grant => grant.identity === identity);
+    return grant && this.matches(ticket, grant.command) ? grant : undefined;
+  }
+
+  /**
+   * An explicit answer still applies to its original request. A future grant requires fresh matching authority
+   * before AND after synchronous effects. An allowed command drops other command tickets, but can keep its own
+   * grant only if its pre-effect ticket was valid. Denials revoke irrespective of ticket validity.
+   */
+  settle(ticket: ApprovalTicket, identity: string | null, answer: { allow: boolean }, origin: ApprovalOrigin | undefined,
+    command: boolean, readOnlyAsked: boolean, effects: () => void): void {
+    this.observe();
+    const validBeforeEffects = this.matches(ticket, command);
+    effects();
+    this.observe();
+    if (!identity) return;
+    if (!answer.allow || (validBeforeEffects && this.matches(ticket, false)))
+      recordGrant(this.job, this.scope ?? "", identity, answer, origin, command, readOnlyAsked && this.commandReadOnly === true);
+  }
 }

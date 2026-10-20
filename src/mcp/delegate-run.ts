@@ -27,7 +27,7 @@ import { changedFiles, createWorktree, finishWorktree, git, trustArgs, gitChange
 import { formatSiblingMessages, formatUsage } from "./format.js";
 import { SiblingLink } from "./siblings.js";
 import { approvalOrigin, denyPendingApprovals, jobSupervision, waitForApproval, type ApprovalOutcome, type Job, type RunResult } from "./jobs.js";
-import { approvalIdentity, approvalScope, clearApprovalGrants, dropCommandGrants, isCommandRequest, isFileChangeRequest, jobCanSpawn, mcpCallEffect, readOnlyJob, recordGrant, reusableGrant } from "./approval-reuse.js";
+import { ApprovalReuse, approvalIdentity, approvalScope, isCommandRequest, isFileChangeRequest, jobCanSpawn, mcpCallEffect, readOnlyJob } from "./approval-reuse.js";
 import { DELEGATION_TARGETS, supportsAsk, usageProbeFor, type Access, type RelayWiring, type TargetArgs } from "./targets.js";
 import { checkUsagePreflight, confirmUsageAdmission, currentUsage, usageAdmissionText, usageRefused } from "../core/usage.js";
 import { JOB_SETTING_KEYS } from "./job-settings.js";
@@ -209,12 +209,13 @@ async function runDelegateInner(
   let relayCalls = 0;
   const codexHash = target === "codex" ? codexPermissionHookHash() : null;
   const journalPermission = async (request: PermissionRequest, decide: () => Promise<PermissionDecision>) => {
-    reuseEnabled(); // Observe policy at every request/outcome, including inexact and automatically decided requests.
+    reuse?.observe(); // All request/outcome paths observe scope, including automatic and inexact requests.
+    if (isFileChangeRequest(request) && reuse?.dropCommands()) dlog.info("file change requested; command grants dropped", { job: job?.name });
     const id = randomUUID();
     const context = { kind: "approval" as const, agent: target, project: workdir, job: job?.name ?? a._job, session: job?.sessionId ?? undefined };
     await appendContextEvent(rc.home, { ...context, payload: { id, stage: "request", request } });
     const decision = await decide();
-    reuseEnabled();
+    reuse?.observe();
     await appendContextEvent(rc.home, { ...context, payload: { id, stage: "decision", decision } });
     return decision;
   };
@@ -228,17 +229,6 @@ async function runDelegateInner(
   // decide): no command grant is reused or kept for the rest of this turn.
   let commandGrantsBlocked = false;
   let launchPermission: string | undefined;
-  // Invalidations also fence answers already pending, so an off/on transition or retry cannot recreate old grants.
-  let reuseGeneration = 0;
-  const invalidateReuse = () => {
-    reuseGeneration++;
-    if (job) clearApprovalGrants(job);
-  };
-  const reuseEnabled = () => {
-    const enabled = cfg.jobs?.reuseIdenticalApprovals ?? DEFAULT_CONFIG.jobs.reuseIdenticalApprovals;
-    if (!enabled) invalidateReuse();
-    return enabled;
-  };
   const codexReviewer = () => target === "codex" ? a.approvals_reviewer ?? cfg.codexApprovalsReviewer : undefined;
   const readOnlyPermission = (permission: string) => readOnlyJob({ target, permission, permissionProfile: a.permission_profile,
     bypassPermissions: a.bypass_permissions, approvalsReviewer: codexReviewer(), allowPatterns: autoApprove,
@@ -246,58 +236,35 @@ async function runDelegateInner(
   // Config can further restrict reuse, but cannot retroactively change the flags of an already running child.
   const jobReadOnly = () => !commandGrantsBlocked && launchPermission !== undefined &&
     readOnlyPermission(launchPermission) && readOnlyPermission(profile.permission(cfg, a));
+  // This observer is the sole scope authority for stored grants AND pending answers. Unknown/disabled/ended
+  // authority is null; every observed transition advances its epoch, even if no grant is currently stored.
+  const reuse = job ? new ApprovalReuse(job, () => {
+    if (signal.aborted || launchPermission === undefined || !(cfg.jobs?.reuseIdenticalApprovals ?? DEFAULT_CONFIG.jobs.reuseIdenticalApprovals))
+      return { scope: null, commandReadOnly: false };
+    const supervision = jobSupervision(rc.home, job, dlog);
+    if (supervision === null) return { scope: null, commandReadOnly: false };
+    return {
+      scope: approvalScope({ access: a.access, sandbox: a.sandbox, permission: JSON.stringify([launchPermission, profile.permission(cfg, a)]), reviewer: codexReviewer(),
+        supervisor: JSON.stringify([supervision, rc.me()]) }),
+      commandReadOnly: jobReadOnly(),
+    };
+  }) : undefined;
   // Every allowed MCP call, whichever path allowed it (a server allowed earlier, an allow pattern, a question or a
   // reuse): a server other than the Pair Desk may have written files, so it ends the job's command grants; an
   // own-server call that may start or steer a child job also blocks new ones for the rest of the turn.
   const mcpAllowed = (r: PermissionRequest) => {
     if (!job) return;
-    reuseEnabled(); // Automatic MCP allowances also observe disabled-state invalidation.
     const effect = mcpCallEffect(r, rc.me());
     if (effect === "block") commandGrantsBlocked = true;
-    if ((effect === "drop" || effect === "block") && dropCommandGrants(job)) dlog.info("an MCP call that may change files was allowed; command grants dropped", { job: job.name, tool: r.tool });
+    if ((effect === "drop" || effect === "block") && reuse?.dropCommands()) dlog.info("an MCP call that may change files was allowed; command grants dropped", { job: job.name, tool: r.tool });
   };
   const askOnce = async (r: PermissionRequest, ask: () => Promise<ApprovalOutcome>): Promise<ApprovalOutcome & { reusedFrom?: string }> => {
-    // A runner spec written by an older release has no jobs section: the default (on) applies.
-    if (!job) return ask();
-    if (!reuseEnabled()) {
-      const answer = await ask();
-      // Explicit decisions still apply, but neither old grants nor answers pending across the off period survive.
-      invalidateReuse();
-      if (answer.allow) mcpAllowed(r);
-      return answer;
-    }
+    if (!job || !reuse) return ask();
     const command = isCommandRequest(r);
-    // A read-only job changes files only through what it is allowed: an allowed file change, other command or request
-    // without an exact identity ends every command grant (an allowed script may be what changed).
-    const ended = (answer: ApprovalOutcome, why: string) => {
-      if (answer.allow && dropCommandGrants(job)) dlog.info(`${why} was allowed; command grants dropped`, { job: job.name });
-      if (answer.allow) mcpAllowed(r);
-      return answer;
-    };
-    // An asked command ends the command grants when allowed; so does an allowed MCP call to a server that may write.
-    const settle = (answer: ApprovalOutcome) => {
-      if (command) return ended(answer, "a command");
-      if (answer.allow) mcpAllowed(r);
-      return answer;
-    };
-    if (isFileChangeRequest(r) && dropCommandGrants(job)) dlog.info("file change requested; command grants dropped", { job: job.name });
     const identity = approvalIdentity(r);
-    if (!identity) return ended(await ask(), "a request without an exact identity");
-    // The supervisor comes from the durable store: a handoff from another process ends the grants. A store that
-    // cannot be read, or that lacks the job, means the supervisor is unknown: ask, and keep no grant.
-    const supervision = jobSupervision(rc.home, job, dlog);
-    if (supervision === null) {
-      // An unknown supervisor invalidates every grant, including MCP grants, even if the store later recovers.
-      invalidateReuse();
-      return settle(await ask());
-    }
-    const scope = approvalScope({ access: a.access, sandbox: a.sandbox, permission: JSON.stringify([launchPermission ?? null, profile.permission(cfg, a)]), reviewer: codexReviewer(),
-      supervisor: JSON.stringify([supervision, rc.me()]) });
-    const grant = reusableGrant(job, scope, identity);
-    if (grant?.command && !jobReadOnly()) {
-      dlog.info("job is not read-only; command grants dropped", { job: job.name, approval: grant.approvalId });
-      dropCommandGrants(job);
-    } else if (grant) {
+    const ticket = reuse.observe();
+    const grant = identity ? reuse.find(ticket, identity) : undefined;
+    if (grant) {
       grant.reuses++;
       const line = `Approval for ${job.name} reused: ${r.tool}: ${r.detail.slice(0, 200)} is identical to approval ${grant.approvalId}, allowed by ${grant.by} earlier in this job (jobs.reuseIdenticalApprovals).` +
         (grant.command ? " Commands are reused only in read-only jobs that cannot spawn subagents, and only until a file change, another command, a write-capable MCP call or a spawn is allowed." : "");
@@ -313,14 +280,15 @@ async function runDelegateInner(
       if (!grant.command) mcpAllowed(r);
       return { allow: true, reason: "allow", reusedFrom: grant.approvalId };
     }
-    // Read-only is checked when the question is asked and again with the answer: a command grant needs both.
-    const readOnlyAsked = command && jobReadOnly();
-    const generation = reuseGeneration;
-    const answer = settle(await ask());
-    const enabledAfterAnswer = reuseEnabled();
-    // A deny always revokes; an allow may create a grant only under the same uninterrupted reuse authority.
-    if (!answer.allow || (enabledAfterAnswer && generation === reuseGeneration))
-      recordGrant(job, scope, identity, answer, approvalOrigin(answer), command, readOnlyAsked && jobReadOnly());
+    const answer = await ask();
+    reuse.settle(ticket, identity, answer, approvalOrigin(answer), command, ticket.commandReadOnly, () => {
+      // An allowed command or inexact action can have changed the job's files. The epoch owner checks the
+      // captured command authority BEFORE these own-action effects and fresh scope again before recording.
+      if (answer.allow) {
+        if ((command || !identity) && reuse.dropCommands()) dlog.info("an action that may change files was allowed; command grants dropped", { job: job.name });
+        mcpAllowed(r);
+      }
+    });
     return answer;
   };
   // Native permission dialogs keep their existing eligibility; the dashboard can answer the same wait.
@@ -606,7 +574,8 @@ async function runDelegateInner(
           const launchArgs = { ...a, access, relay: wiring };
           launchPermission = profile.permission(launchCfg, launchArgs);
           if (!readOnlyPermission(launchPermission)) commandGrantsBlocked = true;
-          invalidateReuse();
+          reuse?.invalidate();
+          reuse?.observe();
           return await profile.run(launchCfg, { ...req, onSession: (id) => { release(); req.onSession?.(id); } }, launchArgs);
         } finally { release(); }
       },
@@ -619,6 +588,7 @@ async function runDelegateInner(
     // Settled after the cleanup below, so the WIP checkpoint never races the turn's own teardown.
     failure = { err };
   } finally {
+    reuse?.close();
     if (job) denyPendingApprovals(job);
     clearInterval(slotTimer);
     if (slots) {

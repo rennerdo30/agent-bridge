@@ -704,6 +704,122 @@ describe("identical approval reuse within a job (AB-402)", () => {
   });
 });
 
+describe("PR99 unified authority epochs", () => {
+  it.each([
+    ["command", true], ["command", false], ["MCP/reviewer", true], ["MCP/reviewer", false],
+  ] as const)("fences pending %s grants across an observed scope round trip (stored=%s)", async (kind, stored) => {
+    const rc = context([]);
+    rc.cfg.claudePermissionMode = "manual";
+    const j = job();
+    const target = kind === "command" ? "claude" : "codex";
+    const a = kind === "command" ? command("A") : hook("codex", "mcp__files__lookup", { id: "A" });
+    const b = kind === "command" ? command("B") : hook("codex", "mcp__files__lookup", { id: "B" });
+    const c = kind === "command" ? command("C") : hook("codex", "mcp__other__lookup", { id: "C" });
+    let complete!: (answer: Answer) => void;
+    let askedB = 0;
+    rc.jobs!.askParent = vi.fn(async (_job, _question, _timeout, request) => {
+      if (request?.identity === b.identity && ++askedB === 1)
+        return new Promise<Answer>(resolve => { complete = resolve; });
+      return request?.identity === c.identity ? denied() : allowed();
+    });
+    vi.spyOn(DELEGATION_TARGETS[target], "run").mockImplementation(async (_cfg, req) => {
+      const ask = (request: PermissionRequest) => { j.allowedServers?.clear(); return req.approve!(request); };
+      if (stored) expect((await ask(a)).allow).toBe(true);
+      const pending = ask(b);
+      await until(() => Boolean(complete));
+      if (kind === "command") rc.cfg.claudePermissionMode = "plan";
+      else rc.cfg.codexApprovalsReviewer = "auto_review";
+      expect((await ask(c)).allow).toBe(false); // Observes the new scope even with no retained grant.
+      complete(allowed());
+      expect((await pending).allow).toBe(true); // Still answers the original explicit request.
+      if (kind === "command") rc.cfg.claudePermissionMode = "manual";
+      else rc.cfg.codexApprovalsReviewer = "user";
+      expect((await ask(b)).allow).toBe(true);
+      expect(askedB).toBe(2);
+      expect((await ask(b)).allow).toBe(true); // Fresh, same-scope authority remains reusable.
+      expect(askedB).toBe(2);
+      return { sessionId: "saved", text: "done", isError: false, details: {} };
+    });
+    await runDelegate(rc, target, { title: "reuse", prompt: "task" }, j.controller.signal, undefined, true, j);
+  });
+
+  it.each(["permission", "durable supervision"] as const)("revalidates %s at the pending outcome without another request", async (kind) => {
+    const rc = context([]);
+    rc.cfg.claudePermissionMode = "manual";
+    const j = { ...job(), owner: "parent" };
+    const store = (owner: string) => writeFileSync(join(home, "jobs.json"), JSON.stringify({ version: JSON_STORE_VERSION, jobs: [
+      { id: j.id, name: j.name, agent: "codex", model: null, prompt: "task", owner, status: "running", startedAt: j.startedAt, sessionId: null, workdir: null, worktree: null, args: { title: "reuse" } },
+    ] }));
+    if (kind === "durable supervision") store("parent");
+    let complete!: (answer: Answer) => void;
+    rc.jobs!.askParent = vi.fn().mockImplementationOnce(() => new Promise<Answer>(resolve => { complete = resolve; })).mockResolvedValue(allowed());
+    vi.spyOn(DELEGATION_TARGETS.claude, "run").mockImplementation(async (_cfg, req) => {
+      const request = command("B");
+      const pending = req.approve!(request);
+      await until(() => Boolean(complete));
+      if (kind === "permission") rc.cfg.claudePermissionMode = "plan";
+      else store("other-parent");
+      complete(allowed());
+      expect((await pending).allow).toBe(true);
+      if (kind === "permission") rc.cfg.claudePermissionMode = "manual";
+      else store("parent");
+      expect((await req.approve!(request)).allow).toBe(true);
+      expect(rc.jobs!.askParent).toHaveBeenCalledTimes(2);
+      expect(j.owner).toBe("parent"); // The durable-only change never updates the runner's Job object.
+      return { sessionId: "saved", text: "done", isError: false, details: {} };
+    });
+    await runDelegate(rc, "claude", { title: "reuse", prompt: "task" }, j.controller.signal, undefined, true, j);
+  });
+
+  it("observes unknown supervision on an automatic call and fences a pending MCP allow after recovery", async () => {
+    const rc = context([]);
+    const j = { ...job(), owner: "parent" };
+    const saved = JSON.stringify({ version: JSON_STORE_VERSION, jobs: [
+      { id: j.id, name: j.name, agent: "codex", model: null, prompt: "task", owner: "parent", status: "running", startedAt: j.startedAt, sessionId: null, workdir: null, worktree: null, args: { title: "reuse" } },
+    ] });
+    writeFileSync(join(home, "jobs.json"), saved);
+    let complete!: (answer: Answer) => void;
+    rc.jobs!.askParent = vi.fn().mockImplementationOnce(() => new Promise<Answer>(resolve => { complete = resolve; })).mockResolvedValue(allowed());
+    vi.spyOn(DELEGATION_TARGETS.codex, "run").mockImplementation(async (_cfg, req) => {
+      const request = hook("codex", "mcp__files__lookup", { id: "B" });
+      const pending = req.approve!(request);
+      await until(() => Boolean(complete));
+      writeFileSync(join(home, "jobs.json"), "{ unreadable");
+      expect((await req.approve!(hook("codex", "mcp__pair-desk__comment", { id: 1 }))).allow).toBe(true);
+      writeFileSync(join(home, "jobs.json"), saved);
+      complete(allowed());
+      expect((await pending).allow).toBe(true);
+      j.allowedServers?.clear();
+      expect((await req.approve!(request)).allow).toBe(true);
+      expect(rc.jobs!.askParent).toHaveBeenCalledTimes(2);
+      return { sessionId: "saved", text: "done", isError: false, details: {} };
+    });
+    await runDelegate(rc, "codex", { title: "reuse", prompt: "task", access: "read" }, j.controller.signal, undefined, true, j);
+  });
+
+  it.each(["file change", "other command"] as const)("fences a pending command grant after an allowed %s with no stored grants", async (kind) => {
+    const rc = context([]);
+    const j = job();
+    let complete!: (answer: Answer) => void;
+    rc.jobs!.askParent = vi.fn().mockImplementationOnce(() => new Promise<Answer>(resolve => { complete = resolve; })).mockResolvedValue(allowed());
+    vi.spyOn(DELEGATION_TARGETS.claude, "run").mockImplementation(async (_cfg, req) => {
+      const request = command("B");
+      const pending = req.approve!(request);
+      await until(() => Boolean(complete));
+      const write = kind === "file change" ? hook("claude", "Edit", { file_path: "check.sh" }) : command("change check.sh");
+      expect((await req.approve!(write)).allow).toBe(true);
+      complete(allowed());
+      expect((await pending).allow).toBe(true);
+      expect((await req.approve!(request)).allow).toBe(true);
+      expect(rc.jobs!.askParent).toHaveBeenCalledTimes(3);
+      expect((await req.approve!(request)).allow).toBe(true);
+      expect(rc.jobs!.askParent).toHaveBeenCalledTimes(3);
+      return { sessionId: "saved", text: "done", isError: false, details: {} };
+    });
+    await runDelegate(rc, "claude", { title: "reuse", prompt: "task", access: "read" }, j.controller.signal, undefined, true, j);
+  });
+});
+
 describe("PR99 review round 2", () => {
   it("never retroactively makes an edit-capable launch read-only after a config downgrade", async () => {
     const rc = context([allowed(), allowed()]);
