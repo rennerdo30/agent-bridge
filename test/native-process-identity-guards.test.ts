@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
-// Every OS boundary is fake: no worker, PowerShell, native host, pipe or PID starts here.
+// Native host/worker boundaries are fake. The standalone case only compiles and loads a fixture.
 type Message = { type?: string; id?: number; pids?: number[]; sync?: boolean; results?: string[] };
 type Port = { queue: Message[]; close: ReturnType<typeof vi.fn>; unref: ReturnType<typeof vi.fn> };
 type FakeWorker = import("node:events").EventEmitter & {
@@ -183,7 +183,7 @@ it("loads a standalone low-level lease bundle without external npm runtime impor
   const { mkdtempSync, writeFileSync } = await import("node:fs");
   const { join } = await import("node:path");
   const require = createRequire(import.meta.url);
-  // Keep the compiler synchronous and bounded, without starting an esbuild JS worker/service.
+  // Keep the compiler synchronous and bounded, without a JS worker or persistent compiler service.
   vi.stubEnv("ESBUILD_WORKER_THREADS", "0");
   const esbuildPath = require.resolve("esbuild");
   delete require.cache[esbuildPath];
