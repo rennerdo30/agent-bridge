@@ -3,7 +3,7 @@ import { randomBytes } from "node:crypto";
 import { extname } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { markerSafe, opencodePermissionText } from "./approval-display.js";
-import { checkDepthPublic, childEnvPublic, DelegateError, killTree, trackChild, resolveBinary, unwrapNpmShim, opencodeVersion, OPENCODE_READ_ONLY_TOOLS, type DelegateRequest, type DelegateResult } from "./delegate.js";
+import { checkDepthPublic, childEnvPublic, DelegateError, killTree, trackChild, resolveBinary, unwrapNpmShim, opencodeVersion, opencodeCompletionError, OPENCODE_READ_ONLY_TOOLS, type DelegateRequest, type DelegateResult } from "./delegate.js";
 import { createOpencodeNativeToolPlugin, OPENCODE_NATIVE_ACTION_PREFIX, OPENCODE_NATIVE_GATE_ID, opencodeNativeGateReportError, parseOpencodeVersion, unknownOpencodeVersionMessage, type OpencodeNativeAccess } from "./opencode-native-tools.js";
 import { progressEventHandler } from "./progress.js";
 import { boundedDetail, requestIdentity, type PermissionDecision, type PermissionRequest } from "./relay.js";
@@ -23,6 +23,10 @@ const PASSWORD_BYTES = 24;
 export const OPENCODE_ASK_PERMISSIONS = { edit: "ask", bash: "ask" } as const;
 /** If the session shows no sign of life this long after the prompt, something is wrong (bad model, auth). */
 const START_WATCHDOG_MS = 60_000;
+// A malformed/cyclic ancestry or a stream of unknown sessions cannot cause unbounded discovery.
+const MAX_SESSION_ANCESTRY = 64;
+const MAX_SESSION_LOOKUPS = 256;
+const QUESTION_CANCELLED_FEEDBACK = "This delegated run cannot ask questions. Continue without an answer and state any assumptions.";
 /** Server output kept for error reports; the listen line and a failure's last words fit easily. */
 const SERVE_OUTPUT_TAIL_CHARS = 4_000;
 
@@ -241,6 +245,32 @@ export async function delegateToOpencodeServed(
       const sessionId: string = req.sessionId ?? (await api("POST", "/session", { location: { directory: req.cwd }, ...(model ? { model } : {}) })).id;
       knownSession = sessionId;
       req.onSession?.(sessionId);
+      // V2 noninteractive.ts:141-233 owns root + verified descendants for control requests,
+      // but only the root's text/execution events may settle the delegated answer.
+      const ownership = new Map<string, boolean>([[sessionId, true]]);
+      let lookupsLeft = MAX_SESSION_LOOKUPS;
+      const ownsSession = async (candidate: unknown): Promise<boolean> => {
+        if (typeof candidate !== "string" || !candidate.trim() || candidate === "global") return false;
+        let current = candidate;
+        const visited = new Set<string>();
+        let owned = false;
+        while (visited.size < MAX_SESSION_ANCESTRY) {
+          const cached = ownership.get(current);
+          if (cached !== undefined) { owned = cached; break; }
+          if (visited.has(current) || current === "global" || lookupsLeft <= 0) break;
+          visited.add(current);
+          lookupsLeft--;
+          const info = await api("GET", `/session/${encodeURIComponent(current)}`).catch(() => null);
+          // Bind the response to the queried session; an event's claimed parent is never proof.
+          if (info?.id !== current || typeof info.parentID !== "string" || !info.parentID.trim()) break;
+          current = info.parentID;
+          if (current === sessionId) { owned = true; break; }
+        }
+        if (owned) for (const id of visited) ownership.set(id, true);
+        // A depth-limited/unknown path does not disprove its ancestors' ownership.
+        else if (visited.has(candidate)) ownership.set(candidate, false);
+        return owned;
+      };
       if (req.sessionId && model) await api("POST", `/session/${sessionId}/model`, { model });
       const servers = await api("GET", `/mcp?${new URLSearchParams({ "location[directory]": req.cwd })}`).catch(() => []);
       const mcpServers = Array.isArray(servers) ? servers.map((s: Json) => s.name ?? s.id).filter((name): name is string => typeof name === "string") : [];
@@ -252,14 +282,45 @@ export async function delegateToOpencodeServed(
       let failure: string | null = null;
       let usage: unknown = null;
       let costUsd: unknown = null;
+      let succeeded = false;
+      let textEvents = 0;
+      let unansweredAtText = -1;
+      let unansweredReason = "";
+      let finish: unknown;
       const onEvent = progressEventHandler("opencode", req.onProgress);
       for await (const ev of sse(events.body)) {
         const p = ev.data ?? {};
-        if (p.sessionID !== sessionId) continue;
         if (ev.type === "permission.asked") {
+          if (typeof p.id !== "string" || !p.id || !await ownsSession(p.sessionID)) continue;
           const decision = await req.onPermission(opencodePermissionRequest({ ...p, permission: p.action, patterns: p.resources }, mcpServers, req.cwd));
-          await api("POST", `/session/${sessionId}/permission/${p.id}/reply`, { decision: decision.allow ? "once" : "reject", ...(!decision.allow ? { message: decision.message } : {}) });
-        } else if (ev.type === "session.text.ended") {
+          await api("POST", `/session/${encodeURIComponent(p.sessionID)}/permission/${encodeURIComponent(p.id)}/reply`, { decision: decision.allow ? "once" : "reject", ...(!decision.allow ? { message: decision.message } : {}) });
+          if (!decision.allow) { unansweredAtText = textEvents; unansweredReason = "permission rejected"; }
+          continue;
+        }
+        if (ev.type === "form.created") {
+          const form = p.form;
+          if (typeof form?.id !== "string" || !form.id || !await ownsSession(form.sessionID)) continue;
+          const continuing = form.metadata?.kind === "question";
+          // protocol/groups/session.ts:856: cancellation is DELETE; feedback is a query field.
+          const query = continuing ? `?${new URLSearchParams({ message: QUESTION_CANCELLED_FEEDBACK })}` : "";
+          try {
+            await api("DELETE", `/session/${encodeURIComponent(form.sessionID)}/form/${encodeURIComponent(form.id)}${query}`);
+          } catch (error) {
+            // Like the CLI, tolerate a form answered/cancelled while its event was in flight.
+            let settled = false;
+            if (error instanceof DelegateError && error.message.endsWith("HTTP 409")) {
+              try { settled = JSON.parse(error.stderrTail)._tag === "FormAlreadySettledError"; } catch { /* not the typed race */ }
+            }
+            if (!settled) throw error;
+          }
+          if (continuing) { unansweredAtText = textEvents; unansweredReason = "question cancelled"; }
+          else failure ??= "opencode form cancelled without an answer";
+          continue;
+        }
+        if (p.sessionID !== sessionId) continue;
+        if (ev.type === "session.text.ended") {
+          textEvents++;
+          if (lastMessage !== p.assistantMessageID) finish = undefined;
           lastMessage = p.assistantMessageID;
           if (!textByMessage.has(lastMessage)) textByMessage.set(lastMessage, new Map());
           textByMessage.get(lastMessage)!.set(p.ordinal, p.text);
@@ -267,15 +328,23 @@ export async function delegateToOpencodeServed(
         } else if (ev.type === "session.usage.updated" || ev.type === "session.step.ended") {
           usage = p.tokens;
           costUsd = p.cost;
+          if (ev.type === "session.step.ended") {
+            if (typeof p.assistantMessageID === "string") lastMessage = p.assistantMessageID;
+            finish = p.reason ?? p.finish;
+          }
         } else if (ev.type === "session.execution.failed") {
           failure = p.error?.message ?? "opencode session error";
           break;
         } else if (ev.type === "session.execution.succeeded" || ev.type === "session.execution.interrupted") {
+          succeeded = ev.type === "session.execution.succeeded";
           if (ev.type.endsWith("interrupted")) failure = "opencode session interrupted";
           break;
         }
       }
       const text = [...(textByMessage.get(lastMessage) ?? [])].sort(([a], [b]) => a - b).map(([, value]) => value).join("");
+      failure ??= !succeeded ? "opencode event stream ended before completion"
+        : unansweredAtText >= 0 && textEvents <= unansweredAtText ? `opencode ${unansweredReason} without a final response`
+        : opencodeCompletionError(text, finish ?? "stop");
       if (failure && !text) throw new DelegateError(failure, "failed", "", "", sessionId);
       if (!text && !failure) throw new DelegateError("opencode event stream ended without a response", "failed", "", "", sessionId);
       return { sessionId, text, isError: failure !== null, details: { error: failure, usage, costUsd } };
@@ -285,6 +354,10 @@ export async function delegateToOpencodeServed(
     knownSession = sessionId;
     // MCP server names, to recognize MCP tool permissions; without them those are still asked, just one by one.
     const mcpServers = Object.keys((await api("GET", "/mcp").catch(() => null)) ?? {});
+    // Snapshot before the prompt: an idle/rejected resumed turn must not reuse its old answer.
+    const previous: Json[] = (await api("GET", `/session/${sessionId}/message`)) ?? [];
+    const messageKey = (m: Json) => m.info?.id ?? JSON.stringify(m);
+    const previousMessages = new Set(previous.map(messageKey));
     const events = await fetch(`${url}/event?${q}`, { headers: { authorization: auth, accept: "text/event-stream" }, signal: ac.signal });
     if (!events.ok || !events.body) throw new DelegateError(`opencode event stream failed: HTTP ${events.status}`, "failed");
 
@@ -296,6 +369,7 @@ export async function delegateToOpencodeServed(
     await api("POST", `/session/${sessionId}/prompt_async`, body);
 
     let failure: string | null = null;
+    let idle = false;
     const onEvent = progressEventHandler("opencode", req.onProgress);
     let alive = false;
     const watchdog = setTimeout(() => {
@@ -329,6 +403,7 @@ export async function delegateToOpencodeServed(
         failure = String(p.error?.data?.message ?? p.error?.message ?? "opencode session error");
         break;
       } else if ((type === "session.idle" && p.sessionID === sessionId) || (type === "session.status" && p.sessionID === sessionId && p.status?.type === "idle")) {
+        idle = true;
         break;
       }
     }
@@ -341,11 +416,15 @@ export async function delegateToOpencodeServed(
     if (failure && !alive) throw new DelegateError(failure, "failed", "", "", sessionId);
 
     const messages: Json[] = (await api("GET", `/session/${sessionId}/message`)) ?? [];
-    const last = [...messages].reverse().find((m) => m.info?.role === "assistant");
+    const last = [...messages].reverse().find((m) => m.info?.role === "assistant" && !previousMessages.has(messageKey(m)));
     const text = (last?.parts ?? [])
       .filter((part: Json) => part.type === "text" && typeof part.text === "string")
       .map((part: Json) => part.text)
       .join("");
+    const toolError = (last?.parts ?? []).find((part: Json) => part.type === "tool" && part.state?.status === "error")?.state?.error;
+    failure ??= last?.info?.error ? String(last.info.error.data?.message ?? last.info.error.message ?? "opencode assistant error")
+      : !idle ? "opencode event stream ended before completion"
+      : opencodeCompletionError(text, last?.info?.finish, toolError);
     if (failure && !text) throw new DelegateError(failure, "failed", "", "", sessionId);
     const tokens = last?.info?.tokens;
     return {

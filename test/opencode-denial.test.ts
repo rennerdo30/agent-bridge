@@ -25,7 +25,7 @@ const server = createServer(async (req, res) => {
   if (path === "/mcp") response = { "pair-desk": {} };
   if (path === "/session/session/prompt_async") setTimeout(() => event("permission.asked", { id: "permission", sessionID: "session", permission: "pair-desk_set_build", patterns: ["*"] }), 10);
   if (path === "/permission/permission/reply") { decision = JSON.parse(text); setTimeout(() => event("session.idle", { sessionID: "session" }), 10); }
-  if (path === "/session/session/message") response = [{ info: { role: "assistant" }, parts: [{ type: "text", text: JSON.stringify(decision) }] }];
+  if (path === "/session/session/message") response = decision ? [{ info: { id: "current", role: "assistant", finish: "stop" }, parts: [{ type: "text", text: JSON.stringify(decision) }] }] : [];
   res.writeHead(200, { "content-type": "application/json" }); res.end(JSON.stringify(response));
 });
 server.listen(0, "127.0.0.1", () => console.log("listening on http://127.0.0.1:" + server.address().port));
