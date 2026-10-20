@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { fixtureProcessExists, fixtureProcessGeneration, signalFixtureProcess, stopFixtureChild } from "./fixture-process-generation.js";
+import { fixtureProcessExists, fixtureProcessGeneration, signalFixtureProcess, stopFixtureChild, withFixtureChildCleanup } from "./fixture-process-generation.js";
 
 // Every query/signal in this file is injected; accidentally using a real OS boundary must fail.
 vi.mock("../src/core/process-identity.js", () => ({
@@ -14,6 +14,47 @@ beforeEach(() => {
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
 
 const pid = 12345, expected = "fixture-start", refusal = "Fixture generation changed; no signal sent";
+
+it("fixture assertion reporting preserves both exact assertion and cleanup errors in order", async () => {
+  const assertionError = new Error("original no-kill assertion"), cleanupError = new Error("identity inspection failed");
+  const child = childFixture(), retained = vi.fn();
+  const probes = { identity: vi.fn().mockRejectedValue(cleanupError), signal: vi.fn() };
+  const failure = await withFixtureChildCleanup(
+    async () => { throw assertionError; },
+    async () => {
+      try { await stopFixtureChild(child, expected, refusal, probes); }
+      catch (error) { retained(); throw error; }
+    },
+    "fixture retained at owned-root",
+  ).catch(error => error);
+  expect(failure).toBeInstanceOf(AggregateError);
+  expect(failure.errors).toHaveLength(2);
+  expect(failure.errors[0]).toBe(assertionError);
+  expect(failure.errors[1]).toBe(cleanupError);
+  expect(failure.message).toBe("fixture retained at owned-root");
+  expect(retained).toHaveBeenCalledTimes(1); expect(probes.signal).not.toHaveBeenCalled();
+});
+
+it("fixture assertion reporting keeps the original assertion when cleanup succeeds", async () => {
+  const assertionError = new Error("original assertion"), cleanup = vi.fn().mockResolvedValue(undefined);
+  await expect(withFixtureChildCleanup(async () => { throw assertionError; }, cleanup, "fixture retained"))
+    .rejects.toBe(assertionError);
+  expect(cleanup).toHaveBeenCalledTimes(1);
+});
+
+it("fixture assertion reporting keeps a cleanup-only failure visible with the retention path", async () => {
+  const cleanupError = new Error("exact child exit not proved");
+  const failure = await withFixtureChildCleanup(async () => {}, async () => { throw cleanupError; }, "fixture retained at owned-root")
+    .catch(error => error);
+  expect(failure).not.toBeInstanceOf(AggregateError);
+  expect(failure.message).toBe("fixture retained at owned-root"); expect(failure.cause).toBe(cleanupError);
+});
+
+it("fixture assertion reporting succeeds when assertions and cleanup succeed", async () => {
+  const assertions = vi.fn().mockResolvedValue(undefined), cleanup = vi.fn().mockResolvedValue(undefined);
+  await expect(withFixtureChildCleanup(assertions, cleanup, "fixture retained")).resolves.toBeUndefined();
+  expect(assertions).toHaveBeenCalledTimes(1); expect(cleanup).toHaveBeenCalledTimes(1);
+});
 
 it("continues initial ownership verification only when the OS presence probe succeeds", () => {
   const exists = vi.fn();

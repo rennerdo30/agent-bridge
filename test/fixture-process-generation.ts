@@ -1,5 +1,20 @@
 import { readProcessIdentities, readProcessIdentity } from "../src/core/process-identity.js";
 
+/** Preserve the assertion failure even when owned-child cleanup also fails and retains the fixture. */
+export async function withFixtureChildCleanup(
+  assertions: () => Promise<void>, cleanup: () => Promise<void>, retainedMessage: string,
+): Promise<void> {
+  let assertionFailed = false, assertionError: unknown;
+  try { await assertions(); }
+  catch (error) { assertionFailed = true; assertionError = error; }
+  try { await cleanup(); }
+  catch (cleanupError) {
+    if (assertionFailed) throw new AggregateError([assertionError, cleanupError], retainedMessage);
+    throw new Error(retainedMessage, { cause: cleanupError });
+  }
+  if (assertionFailed) throw assertionError;
+}
+
 interface FixtureProcessProbes {
   identities(pids: number[]): Promise<Map<number, string>>;
   exists(pid: number): void;

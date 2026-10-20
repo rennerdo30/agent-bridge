@@ -13,7 +13,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { until } from "./helpers.js";
 import { readProcessIdentity } from "../src/core/process-identity.js";
 import { OwnedMcpStdio } from "../src/core/owned-mcp-stdio.js";
-import { stopFixtureChild } from "./fixture-process-generation.js";
+import { stopFixtureChild, withFixtureChildCleanup } from "./fixture-process-generation.js";
 
 // Lets a test force the job MCP cleanup to fail; every other test gets the real view unchanged.
 const jobMcp = vi.hoisted(() => ({ failStop: false }));
@@ -260,23 +260,23 @@ describe("granted plugin MCP exposure in headless Claude jobs", () => {
     // Keep the root running through close: the job cleanup would otherwise end its only child and let it exit.
     (transport as any).scope?.detach();
     (transport as any).scope = undefined;
-    try {
+    await withFixtureChildCleanup(async () => {
       await expect(transport.close()).rejects.toThrow("Cannot verify plugin MCP root identity");
       expect(child.stdin!.destroyed).toBe(true);
       expect(child.stdout!.destroyed).toBe(true);
       expect(child.connected).toBe(false);
       expect(child.killed).toBe(false);
       expect(child.signalCode).toBeNull();
-    } finally {
+    }, async () => {
       // Fixture cleanup only for this test-created root with its recorded identity.
       try { await stopFixtureChild(child, identity, "Cannot prove plugin MCP fixture root exit"); }
       catch (error) {
         // afterEach must retain this fixture when the exact owned root's exit was not proved.
         const retained = dirs.indexOf(f.root);
         if (retained >= 0) dirs.splice(retained, 1);
-        throw new Error(`Plugin MCP fixture retained at ${f.root}`, { cause: error });
+        throw error;
       }
-    }
+    }, `Plugin MCP fixture retained at ${f.root}`);
   });
 
   it("compares physical project paths without inventing drive aliases or folding case-sensitive folders", () => {
