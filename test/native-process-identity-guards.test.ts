@@ -175,3 +175,45 @@ it("returns fallback and releases owned resources on a startup I/O exception", (
   expect(thread.workers[0]!.terminate).toHaveBeenCalledTimes(1);
   expect(thread.ports[0]!.close).toHaveBeenCalledTimes(1);
 });
+
+it("loads a standalone low-level lease bundle without external npm runtime imports", async () => {
+  // Compile and load only: never acquire a lease or call any process/native-host function.
+  vi.useRealTimers(); Object.defineProperty(process, "platform", platform);
+  const { createRequire } = await import("node:module");
+  const { mkdtempSync, writeFileSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  const { pathToFileURL } = await import("node:url");
+  const require = createRequire(import.meta.url);
+  // Keep the compiler synchronous and bounded, without starting an esbuild JS worker/service.
+  vi.stubEnv("ESBUILD_WORKER_THREADS", "0");
+  const esbuildPath = require.resolve("esbuild");
+  delete require.cache[esbuildPath];
+  const childProcess = require("node:child_process") as typeof import("node:child_process");
+  const originalExec = childProcess.execFileSync;
+  childProcess.execFileSync = ((file: string, args: readonly string[], options: import("node:child_process").SpawnSyncOptions) => {
+    const result = childProcess.spawnSync(file, args, { ...options, timeout: 5_000 });
+    console.info(`fixture compiler PID=${result.pid} status=${result.status} timeout=5000ms`);
+    if (result.error) throw result.error;
+    if (result.status !== 0) throw new Error(`fixture compiler failed: ${result.stderr}`);
+    return result.stdout;
+  }) as typeof childProcess.execFileSync;
+  try {
+    const { buildSync } = require("esbuild") as typeof import("esbuild");
+    const home = mkdtempSync(join(process.env.AGENT_BRIDGE_TEST_ROOT!, "native-identity-bundle-"));
+    const outfile = join(home, "lease-helper.mjs");
+    const bundle = buildSync({ entryPoints: ["src/core/metadata-file-lease.ts"], outfile,
+      bundle: true, packages: "external", platform: "node", format: "esm", metafile: true, write: false });
+    writeFileSync(outfile, bundle.outputFiles![0]!.contents);
+    writeFileSync(join(home, "metafile.json"), JSON.stringify(bundle.metafile, null, 2));
+    console.info(`fixture bundle=${outfile}`);
+    const npmImports = Object.values(bundle.metafile!.outputs).flatMap(output => output.imports)
+      .filter(entry => entry.external && !entry.path.startsWith("node:")).map(entry => entry.path);
+    expect(npmImports).toEqual([]);
+    // Native Node import deliberately bypasses the test transform and checkout's package resolution.
+    const load = new Function("url", "return import(url)") as (url: string) => Promise<Record<string, unknown>>;
+    expect(typeof (await load(pathToFileURL(outfile).href)).metadataFileLease).toBe("function");
+  } finally {
+    childProcess.execFileSync = originalExec;
+    vi.unstubAllEnvs();
+  }
+});
