@@ -1713,7 +1713,8 @@ export class Broker {
           !(current.sessionId === null || text(current.sessionId)) ||
           current.threadId !== undefined && current.threadId !== null && !text(current.threadId) ||
           current.parentJob !== undefined && !text(current.parentJob) ||
-          !["running", "paused", "done", "failed", "cancelled", "interrupted"].includes(String(current.status)) ||
+          current.remote !== undefined && current.remote !== null && current.remote !== false ||
+          typeof current.status !== "string" || !["running", "paused", "done", "failed", "cancelled", "interrupted"].includes(current.status) ||
           !active && ["running", "paused"].includes(String(current.status))) return undefined;
       if (current.masters !== undefined && (!Array.isArray(current.masters) || !current.masters.every(text))) return undefined;
       if (current.ownershipHistory !== undefined && (!Array.isArray(current.ownershipHistory) ||

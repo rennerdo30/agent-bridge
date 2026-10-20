@@ -226,7 +226,7 @@ describe("AB-428 job checklists", () => {
     { get: true }, { add: [{ text: "Unauthorized" }] }, { edit: [{ id: "c1", text: "Unauthorized" }] },
     { require: ["c1"] }, { unrequire: ["c1"] }, { close: ["c1"] }, { approve: ["c2"] }, { reject: ["c2"] },
   ];
-  const brokenAuthority = ["missing", "ENOENT", "malformed", "container", "id", "name", "agent", "startedAt", "sessionId", "owner", "supervisor", "rootName", "rootSession", "metadataVersion", "reparented", "conflict"];
+  const brokenAuthority = ["missing", "ENOENT", "malformed", "container", "id", "name", "agent", "startedAt", "sessionId", "owner", "supervisor", "rootName", "rootSession", "metadataVersion", "status", "malformed-status", "malformed-remote", "reparented", "conflict"];
   it.each(brokenAuthority.flatMap(mode => ["post-await", "transaction"].map(phase => ({ mode, phase }))))(
     "refuses every operation from cached recovered authority with $mode durable proof at $phase", async ({ mode, phase }) => {
       const f = authorityFixture(), path = join(home, "jobs.json");
@@ -251,6 +251,8 @@ describe("AB-428 job checklists", () => {
           else {
             const current: Record<string, unknown> = { ...f.saved };
             if (mode === "reparented") current.parentJob = "other-parent";
+            else if (mode === "malformed-status") current.status = ["done"];
+            else if (mode === "malformed-remote") current.remote = "";
             else delete current[mode];
             f.save([current]);
           }
