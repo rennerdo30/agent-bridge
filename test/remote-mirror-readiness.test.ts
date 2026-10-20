@@ -99,6 +99,104 @@ it.each(["close", "replacement"])("%s fences a late-created owned feed and relea
   if (action === "close") expect((remote as any).mirrorIntents.size).toBe(0);
 });
 
+it.each((["done", "failed", "cancelled"] as const).flatMap(status =>
+  (["close", "replacement"] as const).map(action => ({ status, action })),
+))("$action retains the late-ready $status result and report", async ({ status, action }) => {
+  vi.useFakeTimers();
+  snapshot = { state: { pid: 123, peer: "codex-job-12345678", status: "running", updatedAt: 100, sessionId: "original-session" }, alive: true, approvals: [] };
+  let resolve!: (value: RunFeed) => void, original!: RunFeed, current!: RunFeed;
+  const create = (options: runfeed.RunFeedOptions, now: number) => {
+    const owned = runfeed.startRunFeed({ ...options, now: () => now });
+    vi.spyOn(owned, "meta"); vi.spyOn(owned, "report"); vi.spyOn(owned, "end");
+    return owned;
+  };
+  const ready = vi.spyOn(runfeed, "startRunFeedReady").mockImplementationOnce(options => {
+    original = create(options, action === "close" ? 1_000 : 3_000);
+    return new Promise(value => { resolve = value; });
+  }).mockImplementationOnce(async options => current = create(options, 4_000));
+  await remote.request("paired", peer, spawn);
+  const intent = (remote as any).mirrorIntents.get("paired/12345678"), task = intent.task;
+  const terminal = { ...snapshot, state: { ...snapshot.state!, status, updatedAt: 200, sessionId: "terminal-session", workdir: "terminal-workdir", model: "terminal-model", progress: "final progress", report: `${status} original report\nretained second line` }, alive: false };
+  snapshot = terminal;
+  expect(await remote.request("paired", peer, stateRequest)).toEqual(terminal);
+  expect(original.end).not.toHaveBeenCalled();
+  let oldPoll: Promise<RemoteJobSnapshot> | undefined, oldFrame: any;
+  if (action === "close") remote.close();
+  else {
+    sends.mockImplementation(async (_host, _type, frame) => {
+      if (frame.request.op === "state") { oldFrame = frame; return; }
+      await (remote as any).receive({ kind: "response", rid: frame.rid, value: snapshot }, { id: "paired-id", name: "paired" });
+    });
+    oldPoll = remote.request("paired", peer, stateRequest); await tick();
+    snapshot = { ...snapshot, state: { pid: 456, peer: "codex-job-12345678", status: "running", updatedAt: 1, sessionId: "replacement-session", progress: "replacement progress" }, alive: true };
+    await remote.request("paired", peer, { ...spawn, args: { ...spawn.args, prompt: "replacement context" } }); await tick();
+  }
+  expect(intent.controller.signal.aborted).toBe(true);
+  const currentMeta = current && vi.mocked(current.meta).mock.calls.slice();
+  const currentReports = current && vi.mocked(current.report).mock.calls.slice();
+  if (oldPoll) {
+    const stale = { ...terminal, state: { ...terminal.state, updatedAt: 999, sessionId: "stale-poll-session", report: "stale poll report" } };
+    await (remote as any).receive({ kind: "response", rid: oldFrame.rid, value: stale }, { id: "paired-id", name: "paired" });
+    expect(await oldPoll).toEqual(stale);
+  }
+  resolve(original); await task;
+  expect(original.end).toHaveBeenCalledExactlyOnceWith(status, terminal.state.report);
+  expect(original.meta).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ session: "terminal-session", workdir: "terminal-workdir", model: "terminal-model" }));
+  expect(original.report).toHaveBeenCalledExactlyOnceWith("final progress");
+  const retained = readFileSync(original.logPath, "utf8").replace(/^ {9}/gm, "");
+  expect(retained).toContain(spawn.args.prompt);
+  expect(retained).toContain(`answer: ${terminal.state.report}`);
+  expect(retained.match(/finished after .* · /g)).toHaveLength(1);
+  expect(retained).not.toContain("interrupted");
+  const meta = JSON.parse(readFileSync(runfeed.runMetaPath(original.logPath), "utf8"));
+  expect(meta).toMatchObject({ title: "Original", session: "terminal-session", remoteSpawnArgs: spawn.args });
+  expect(intent.task).toBeUndefined(); expect(intent.controller).toBeUndefined();
+  expect((remote as any).mirrorIntents.size).toBe(0); expect(remote.busy).toBe(false);
+  expect((remote as any).feeds.get("paired/12345678")).toBe(action === "close" ? undefined : current);
+  if (current) {
+    expect(current.meta).toHaveBeenCalledWith(expect.objectContaining({ session: "replacement-session" }));
+    expect(vi.mocked(current.meta).mock.calls).toEqual(currentMeta);
+    expect(vi.mocked(current.report).mock.calls).toEqual(currentReports);
+    expect(current.end).not.toHaveBeenCalled();
+  }
+  expect(readdirSync(join(home, ".storage-users"))).toHaveLength(current ? 1 : 0);
+  remote.close(); remote.close();
+  expect(original.end).toHaveBeenCalledTimes(1);
+  expect(readdirSync(join(home, ".storage-users"))).toEqual([]);
+  expect(vi.getTimerCount()).toBe(0);
+  expect(sends.mock.calls.filter(call => call[2].request.op === "spawn")).toHaveLength(action === "close" ? 1 : 2);
+  ready.mockRestore();
+});
+
+it.each(["close", "replacement"])("%s keeps late readiness without state evidence interrupted", async action => {
+  const original = feed(), current = feed(); let resolve!: (value: RunFeed) => void;
+  vi.spyOn(runfeed, "startRunFeedReady").mockImplementationOnce(() => new Promise(value => { resolve = value; })).mockResolvedValue(current);
+  snapshot = { state: null, alive: false, approvals: [] };
+  await remote.request("paired", peer, spawn);
+  const intent = (remote as any).mirrorIntents.get("paired/12345678"), task = intent.task;
+  if (action === "close") remote.close();
+  else {
+    snapshot = { state: { pid: 456, peer: "codex-job-12345678", status: "done", updatedAt: 300, report: "replacement report" }, alive: false, approvals: [] };
+    await remote.request("paired", peer, spawn); await tick();
+  }
+  resolve(original); await task;
+  expect(original.end).toHaveBeenCalledExactlyOnceWith("interrupted");
+  expect(original.meta).not.toHaveBeenCalled(); expect(original.report).not.toHaveBeenCalled();
+  if (action === "replacement") expect(current.end).toHaveBeenCalledExactlyOnceWith("done", "replacement report");
+  expect(intent.task).toBeUndefined(); expect(intent.controller).toBeUndefined();
+});
+
+it("does not end an already settled terminal feed again on close", async () => {
+  const owned = feed();
+  vi.spyOn(runfeed, "startRunFeedReady").mockResolvedValue(owned);
+  await remote.request("paired", peer, spawn); await tick();
+  snapshot = { ...snapshot, state: { ...snapshot.state!, status: "done", report: "original report" }, alive: false };
+  await remote.request("paired", peer, stateRequest);
+  expect((remote as any).feeds.size).toBe(0);
+  remote.close(); remote.close();
+  expect(owned.end).toHaveBeenCalledExactlyOnceWith("done", "original report");
+});
+
 it("does not apply an old poll's late response to a successfully replaced spawn generation", async () => {
   const first = feed(), replacement = feed();
   vi.spyOn(runfeed, "startRunFeedReady").mockResolvedValueOnce(first).mockResolvedValue(replacement);

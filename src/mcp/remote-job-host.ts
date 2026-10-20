@@ -8,7 +8,6 @@ import { REMOTE_JOB_POLL_MS, remoteSpawnArgsSchema, type RemoteJobRequest } from
 import type { DelegateArgs } from "./delegate-run.js";
 import type { Job, JobHostInfo, RunnerControl, RunnerState } from "./jobs.js";
 
-const REMOTE_STATE_GRACE_MS = 90_000;
 interface Cached { fetchedAt: number; snapshot: RemoteJobSnapshot }
 
 /** Runner facade on the requesting PC. A remote PID is metadata, never a local process handle. */
@@ -61,7 +60,9 @@ export class RemoteJobHost {
   }
   alive(job: Job): boolean {
     const cached = this.read(job);
-    return cached ? cached.snapshot.alive && Date.now() - cached.fetchedAt < REMOTE_STATE_GRACE_MS : Date.now() - (job.host?.startedAt ?? 0) < REMOTE_STATE_GRACE_MS;
+    // Lost observations do not prove runner loss. In this boolean facade, unknown must
+    // keep the job hosted until a remote snapshot supplies positive evidence of death.
+    return cached?.snapshot.alive ?? true;
   }
   send(job: Job, control: RunnerControl): void {
     // One pause per turn reaches the remote runner; repeated polls or retries never resend it (AB-398).

@@ -12,6 +12,8 @@ import { archiveJobs, readArchivedJobSteps } from "../src/core/job-archive.js";
 import { archiveIndexCounters } from "../src/core/job-archive-index.js";
 import { drainScan, SCAN_SLICE_MS, SCAN_STEPS_PER_SLICE } from "../src/core/responsive-scan.js";
 import { makeEnv, type TestEnv } from "./helpers.js";
+import * as responsiveScan from "../src/core/responsive-scan.js";
+import { scanDiagnostics, threadCpuReader } from "./scan-diagnostics.js";
 
 let env: TestEnv, outside: TestEnv;
 beforeEach(() => { env = makeEnv(); outside = makeEnv(); });
@@ -56,7 +58,15 @@ it("serves the complete cold 307-archive/1024-log corpus while timers keep runni
     return parse(text, reviver);
   });
   const now = Date.now(), ticks: number[] = [];
-  const timer = setInterval(() => ticks.push(performance.now()), 1);
+  // Retained passive evidence, explicitly default off; no production scan API.
+  // Hosted opt-in: AGENT_BRIDGE_SCAN_DIAGNOSTICS=1. Never replay this corpus locally.
+  const diagnostics = process.env.AGENT_BRIDGE_SCAN_DIAGNOSTICS === "1"
+    ? scanDiagnostics(true, { now: () => performance.now(), threadCpu: threadCpuReader(process) }) : undefined;
+  const drain = responsiveScan.drainScanResponsive;
+  const tracing = diagnostics ? vi.spyOn(responsiveScan, "drainScanResponsive")
+    .mockImplementation(scan => drain(diagnostics.wrap(scan))) : undefined;
+  const timer = setInterval(() => { const at = performance.now(); ticks.push(at); diagnostics?.interval(at); }, 1);
+  try {
   let asyncRuns;
   try { asyncRuns = await listRunsResponsive(env.home, now); } finally { clearInterval(timer); decoding.mockRestore(); }
   expect(asyncRuns).toHaveLength(307 * 16 + 1024 + 1);
@@ -72,6 +82,10 @@ it("serves the complete cold 307-archive/1024-log corpus while timers keep runni
   const state = await readDashboard({ home: env.home, log: nullLogger, peers: () => [] }, { path: "/api/state" });
   expect(state.status).toBe(200);
   expect((state.body as { runsTotal: number }).runsTotal).toBe(asyncRuns.length);
+  } finally {
+    tracing?.mockRestore();
+    diagnostics?.emit(line => { process.stderr.write(line); });
+  }
   // Writing ~5,000 fixture files dominates on a loaded Windows runner (AB-255).
 }, 60_000);
 

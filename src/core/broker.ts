@@ -53,6 +53,7 @@ import {
   type SendModeReport,
 } from "./protocol.js";
 import { agentQueueKey, MessageStore, registrationIdentity } from "./store.js";
+import { sameFrontend, t3BindingSchema } from "./t3-identity.js";
 import { tokensEqual } from "./token.js";
 import { commitHandoff, handoffJournal, handoffSchema, type HandoffReceipt } from "./job-handoff.js";
 import { setTimeout as delay } from "node:timers/promises";
@@ -134,8 +135,9 @@ const HANDOFF_STORE_READY_MS = 5_500;
 
 type StoredSibling = SiblingPeer & { id: string; report: string | null };
 type QueueRegistration = Pick<PeerInfo, "id" | "name" | "sessionId"> & { generation: number };
-type ProjectMainIdentity = Pick<PeerInfo, "id" | "agent" | "sessionId" | "name">;
-const ownsProjectMain = (owner: ProjectMainIdentity, peer: PeerInfo) => owner.agent === peer.agent && (owner.sessionId ? owner.sessionId === peer.sessionId : owner.id === peer.id);
+type ProjectMainIdentity = Pick<PeerInfo, "id" | "agent" | "sessionId" | "name" | "frontend">;
+const ownsProjectMain = (owner: ProjectMainIdentity, peer: ProjectMainIdentity) => owner.agent === peer.agent && sameFrontend(owner, peer) &&
+  (owner.frontend ? true : owner.sessionId ? owner.sessionId === peer.sessionId : owner.id === peer.id);
 
 interface Conn {
   socket: Socket;
@@ -276,7 +278,7 @@ export class Broker {
   private handoverRefusal(op: string): BridgeError {
     // auth/hello answer like an incompatible broker, so every client release backs off and re-elects;
     // the flag lets current clients retry at once and demand-start after the endpoint is released.
-    return op === "auth" || op === "hello"
+    return op === "auth" || op === "hello" || op === "helloT3"
       ? new BridgeError("protocol_mismatch", `agent-bridge ${APP_VERSION} broker is stopping (handover or idle exit); retry shortly.`, { brokerProtocol: PROTOCOL_VERSION, brokerVersion: APP_VERSION, handover: true })
       : new BridgeError("bad_request", "The broker is stopping (handover to a newer release or idle exit); this request was not applied. Retry shortly.", { handover: true, applied: false, retryLater: true });
   }
@@ -607,6 +609,12 @@ export class Broker {
         return { brokerPid: process.pid };
       },
       hello: async (c, a) => { const result = await this.onHello(c, a); const job = this.storedJobs().find((j) => `job:${j.id}` === c.peer?.id); if (job?.ownershipHistory) this.refreshJobPeer(job); void this.routePendingJobMail().catch((err) => this.log.warn("pending job reroute deferred", { err: String(err) })); this.store.history.rememberPeer(c.peer!); this.afterRegistration(c); return result; },
+      helloT3: async (c, a) => {
+        if (a.peer?.jobAgent || !t3BindingSchema.safeParse(a.peer?.frontend).success) throw new BridgeError("bad_request", "Hosted hello requires an exact T3 frontend binding.");
+        const result = await this.onHello(c, a);
+        void this.routePendingJobMail().catch((err) => this.log.warn("pending job reroute deferred", { err: String(err) }));
+        this.store.history.rememberPeer(c.peer!); this.afterRegistration(c); return result;
+      },
       send: (c, a) => this.onSend(c, { ...a, messageId: undefined }),
       trackedSend: (c, a) => this.onTrackedSend(c, a),
       sendState: (c, a) => this.sendState(c, z.uuid().parse(a.id).toLowerCase()),
@@ -1427,15 +1435,15 @@ export class Broker {
     if (old && ownsProjectMain(old, peer)) { this.transferProjectMain(old, peer); return; }
     const previous = old?.name, main = peer.name;
     const route = { address, main, since: this.now(), previous };
-    this.projectMains.set(key, { id: peer.id, agent: peer.agent, sessionId: peer.sessionId, name: peer.name }); this.projectRoutes.set(key, route);
+    this.projectMains.set(key, { id: peer.id, agent: peer.agent, sessionId: peer.sessionId, name: peer.name, frontend: peer.frontend }); this.projectRoutes.set(key, route);
     if (previous) void this.notifyProjectMainChange(route).catch((err) => this.log.warn("project main notice deferred", { err: String(err) }));
   }
 
   /** Only an owning live connection (or an exact reconnect) may carry its role across resume/rename. */
   private transferProjectMain(old: ProjectMainIdentity, peer: PeerInfo): void {
     for (const [key, main] of this.projectMains) {
-      if (main.agent !== old.agent || (main.sessionId ? main.sessionId !== old.sessionId : main.id !== old.id)) continue;
-      this.projectMains.set(key, { id: peer.id, agent: peer.agent, sessionId: peer.sessionId, name: peer.name });
+      if (!ownsProjectMain(main, old)) continue;
+      this.projectMains.set(key, { id: peer.id, agent: peer.agent, sessionId: peer.sessionId, name: peer.name, frontend: peer.frontend });
       const route = this.projectRoutes.get(key);
       if (route) this.projectRoutes.set(key, { ...route, main: peer.name });
     }
@@ -2022,6 +2030,7 @@ export class Broker {
       agentPid: p.agentPid ?? null,
       agentStartedAt: typeof p.agentStartedAt === "string" && p.agentStartedAt.length <= 128 ? p.agentStartedAt : null,
       sessionId: p.sessionId ?? null,
+      ...(p.frontend ? { frontend: t3BindingSchema.parse(p.frontend) } : {}),
       startedAt: Number(p.startedAt) || this.now(),
       autoWake: Boolean(p.autoWake),
       wakeOnDirect: Boolean(p.wakeOnDirect),
@@ -2048,8 +2057,8 @@ export class Broker {
     // Recover the identity before allocating a name. Arrival order cannot swap an
     // established suffixed session with another session's base name on reconnect.
     const identity = registrationIdentity(peer);
-    const liveOwner = this.localPeers().find(old => old.agent === peer.agent && (peer.sessionId ? old.sessionId === peer.sessionId :
-      (old.pid !== peer.pid || old.id === peer.id) && identity && identity === registrationIdentity(old)));
+    const liveOwner = this.localPeers().find(old => old.agent === peer.agent && sameFrontend(old, peer) && (peer.frontend || (peer.sessionId ? old.sessionId === peer.sessionId :
+      (old.pid !== peer.pid || old.id === peer.id) && identity && identity === registrationIdentity(old))));
     const remembered = this.store.namesFor(peer).find(name => name.replace(/-\d+$/, "") === p.name.replace(/-\d+$/, "") && !this.connByName(name));
     peer.name = liveOwner?.name ?? this.uniqueName(remembered ?? p.name);
     this.store.rememberSession(peer, this.now());
@@ -2078,7 +2087,7 @@ export class Broker {
     if (!peer.jobAgent) this.broadcastEvent("peer_joined", peer, conn);
     // Deliver the backlog right after the hello response has been written.
     this.replayMail(conn, peer, () => { this.queueCurrentDecisions(peer); });
-    return { brokerPid: process.pid, brokerVersion: APP_VERSION, name: peer.name, sessionId: peer.sessionId, peers: this.livePeers().filter((x) => x.id !== peer.id) };
+    return { brokerPid: process.pid, brokerVersion: APP_VERSION, name: peer.name, sessionId: peer.sessionId, ...(peer.frontend ? { frontend: peer.frontend } : {}), peers: this.livePeers().filter((x) => x.id !== peer.id) };
   }
 
   /**
@@ -2111,7 +2120,7 @@ export class Broker {
   private async onUpdatePeer(conn: Conn, args: RequestMap["updatePeer"][0]): Promise<PeerInfo> {
     if (typeof args.cwd === "string" && isPluginCacheCwd(args.cwd)) throw new BridgeError("bad_request", "Plugin-cache processes cannot register as sessions.");
     const peer = this.requirePeer(conn);
-    const previousIdentity = { id: peer.id, agent: peer.agent, sessionId: peer.sessionId, name: peer.name };
+    const previousIdentity = { id: peer.id, agent: peer.agent, sessionId: peer.sessionId, name: peer.name, frontend: peer.frontend };
     const previousName = peer.name;
     if (args.sessionId !== undefined && args.sessionId !== peer.sessionId || args.name !== undefined && args.name !== peer.name) await this.nativeChildren.endParent(peer, true);
     const aliases: string[] = [];
@@ -2176,14 +2185,14 @@ export class Broker {
     const aliases: string[] = [];
     for (const c of [...this.conns]) {
       const old = c.peer;
-      if (c === conn || !old || old.agent !== peer.agent) continue;
-      const sameSession = peer.sessionId && old.sessionId === peer.sessionId;
+      if (c === conn || !old || old.agent !== peer.agent || !sameFrontend(old, peer)) continue;
+      const sameSession = peer.frontend || peer.sessionId && old.sessionId === peer.sessionId;
       const identity = registrationIdentity(peer);
       // Separate MCP processes of the same CLI can overlap before a hook learns its session id.
       const sameProcess = (old.pid !== peer.pid || old.id === peer.id) && identity && identity === registrationIdentity(old) &&
         (!old.sessionId || !peer.sessionId || old.sessionId === peer.sessionId);
       if (!sameSession && !sameProcess) continue;
-      const previousIdentity = { id: old.id, agent: old.agent, sessionId: old.sessionId, name: old.name };
+      const previousIdentity = { id: old.id, agent: old.agent, sessionId: old.sessionId, name: old.name, frontend: old.frontend };
       this.store.rememberName(old, this.now());
       this.log.info("session connected again from a new server; replacing the old connection", { name: old.name, by: peer.name, sessionId: peer.sessionId });
       this.emit(c, "replaced", { by: peer.name, ...(peer.version ? { version: peer.version } : {}), agentPid: peer.agentPid ?? null, agentStartedAt: peer.agentStartedAt ?? null });

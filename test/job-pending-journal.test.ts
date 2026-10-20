@@ -23,6 +23,11 @@ function snapshot(extra: Record<string, unknown> = {}) {
     args: { access: "read-only", futureSetting: { keep: true } }, unknownFutureFields: { keep: [1, 2, 3] }, deliveryHistory: [], host: null, ...extra };
 }
 function retain(job = snapshot(), name = "owner") { return retainPendingJob(path, { name, session: "owner-session", nonce: randomUUID() }, job); }
+function receiptPath(receipt: { path: string }, order: number) {
+  const dir = join(pendingJobRoot(path), `00000000-0000-4000-8000-${String(order).padStart(12, "0")}`);
+  renameSync(dirname(receipt.path), dir);
+  return join(dir, "receipt.json");
+}
 function manager(name = "owner", eligible = true) {
   const node = new LocalCoordinator(name, "owner-session"), jobs = new JobManager(node, nullLogger, path, 4, undefined,
     { canRestore: () => eligible, canReceiveHandoff: () => false }); managers.push(jobs); return jobs;
@@ -89,29 +94,56 @@ it.each(["done", "cancelled"])("preserves newer same-turn durable queues, forwar
 it("recovers an initial executor and its final envelope from the same writer before registry admission", () => {
   const writer = { name: "owner", session: "owner-session", nonce: randomUUID() };
   const now = Date.now();
+  vi.spyOn(Date, "now").mockReturnValue(now);
   const initial = snapshot({ status: "running", startedAt: now - 2, finishedAt: undefined });
   const admitted = { ...initial, startedAt: now - 1, executionOwner: "owner", executionPid: process.pid };
   const message = { id: "initial-final", body: "exact cancelled startup envelope" };
   const final = { ...admitted, status: "cancelled", finishedAt: now, deliveryHistory: [message] };
-  retainPendingJob(path, writer, initial);
-  retainPendingJob(path, writer, admitted, initial);
-  const receipt = retainPendingJob(path, writer, final, admitted), bytes = readFileSync(receipt.path, "utf8");
+  receiptPath(retainPendingJob(path, writer, initial), 3);
+  receiptPath(retainPendingJob(path, writer, admitted, initial), 2);
+  const finalPath = receiptPath(retainPendingJob(path, writer, final, admitted), 1), bytes = readFileSync(finalPath, "utf8");
   manager().restore(() => undefined);
   expect(readStore(path)[0]).toMatchObject(final);
   expect(readdirSync(join(pendingJobRoot(path), "archive")).some(dir =>
     readFileSync(join(pendingJobRoot(path), "archive", dir, "receipt.json"), "utf8") === bytes)).toBe(true);
 });
 
-it("does not take initial executor authority from a different receipt writer", () => {
+it.each([1, 2])("does not take initial executor authority from a different receipt writer (initial directory %s)", initialOrder => {
+  vi.spyOn(Date, "now").mockReturnValue(1000);
   const initial = snapshot({ status: "running", startedAt: 100, finishedAt: undefined });
-  retainPendingJob(path, { name: "owner", session: "owner-session", nonce: randomUUID() }, initial);
+  const original = retainPendingJob(path, { name: "owner", session: "owner-session", nonce: randomUUID() }, initial);
+  const initialPath = receiptPath(original, initialOrder);
   const foreign = retainPendingJob(path, { name: "owner", session: "owner-session", nonce: randomUUID() },
     { ...initial, startedAt: 101, executionOwner: "owner", executionPid: process.pid, status: "cancelled",
       deliveryHistory: [{ id: "foreign-final", body: "must not become delivery authority" }] }, initial);
+  const foreignPath = receiptPath(foreign, 3 - initialOrder), bytes = readFileSync(foreignPath, "utf8");
+  const receipts = readPendingJobs(path);
+  expect(receipts.map(receipt => receipt.value.recordedAt)).toEqual([1000, 1000]);
+  expect(receipts.map(receipt => receipt.path)).toEqual(initialOrder === 1 ? [initialPath, foreignPath] : [foreignPath, initialPath]);
   manager().restore(() => undefined);
   expect(readStore(path)[0]).toMatchObject({ startedAt: 100, deliveryHistory: [] });
   expect(readStore(path)[0]!.executionOwner).toBeUndefined();
-  expect(existsSync(foreign.path)).toBe(true);
+  expect(readStore(path)[0]!.executionPid).toBeUndefined();
+  expect(readFileSync(foreignPath, "utf8")).toBe(bytes);
+});
+
+it("retains a dependent executor receipt without an initial authority witness", () => {
+  const initial = snapshot({ status: "running", startedAt: 100, finishedAt: undefined });
+  const receipt = retainPendingJob(path, { name: "owner", session: "owner-session", nonce: randomUUID() },
+    { ...initial, startedAt: 101, executionOwner: "owner", executionPid: process.pid }, initial);
+  const bytes = readFileSync(receipt.path, "utf8");
+  manager().restore(() => undefined);
+  expect(readStore(path)).toEqual([]);
+  expect(readFileSync(receipt.path, "utf8")).toBe(bytes);
+});
+
+it("retains conflicting initial writers without choosing authority by time or directory", () => {
+  const initial = snapshot({ status: "running", startedAt: 100, finishedAt: undefined });
+  const receipts = [retain(initial), retain({ ...initial, startedAt: 101 })];
+  const bytes = receipts.map(receipt => readFileSync(receipt.path, "utf8"));
+  manager().restore(() => undefined);
+  expect(readStore(path)).toEqual([]);
+  expect(receipts.map(receipt => readFileSync(receipt.path, "utf8"))).toEqual(bytes);
 });
 
 it("uses writer sequence to recover the latest final envelope even when all writes share a timestamp", () => {

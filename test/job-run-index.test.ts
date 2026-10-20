@@ -6,6 +6,8 @@ import { setImmediate as yieldTurn } from "node:timers/promises";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { makeEnv, until, type TestEnv } from "./helpers.js";
 import * as history from "../src/core/run-history.js";
+import * as archive from "../src/core/job-archive-index.js";
+import * as recoveryFeed from "../src/core/job-recovery-feed.js";
 import { recoverJobRecord, recoverJobRecordAsync } from "../src/core/job-recovery.js";
 import * as index from "../src/core/job-run-index.js";
 import { indexedJobRun, indexJobRun, JOB_INDEX_BUSY_WAIT_MS, jobRunIndexReady, JOB_INDEX_WAIT_MS, startBrokerJobRunIndex, startJobRunBackfill, stopJobRunBackfill, waitForJobRunIndex } from "../src/core/job-run-index.js";
@@ -273,6 +275,49 @@ it("uses durable exact lookups after reopen while an unrelated catalog dependenc
   const results = await Promise.all(fixtures.map(f => owner.jobAuthority(f.name)));
   for (let i = 0; i < fixtures.length; i++) expect(results[i]).toMatchObject({ prompt: fixtures[i]!.prompt, sessionId: `native-legacy${i}`, args: { access: "read" } });
   expect(scan).not.toHaveBeenCalled();
+});
+it("retains exact recovery after reopen when projection publication follows the indexed snapshot", async () => {
+  const f = fixture(), path = join(env.home, "jobs.json");
+  const jobs = [{ id: "legacy", name: f.name, agent: "codex", owner: "owner", status: "done", startedAt: 1 }];
+  writeFileSync(path, JSON.stringify({ version: 4, jobs }));
+  const bytes = [path, f.file, f.metadata].map(file => readFileSync(file));
+  await startJobRunBackfill(env.home); closeMetadataDb(env.home);
+  const syncScan = vi.spyOn(history, "readRunLogs").mockImplementation(() => { throw new Error("indexed recovery must bypass the catalog"); });
+  const scan = vi.spyOn(history, "readRunLogsResponsive").mockRejectedValue(new Error("indexed recovery must bypass the catalog"));
+  const read = archive.readIndexedJobSteps;
+  const publication = vi.spyOn(archive, "readIndexedJobSteps").mockImplementationOnce(function* (...args) {
+    const snapshot = yield* read(...args);
+    expect(snapshot.jobs).toEqual([]);
+    // Publish through the migration's writer APIs after capture, before history checks the witness.
+    archive.storeJobRecords(path, jobs);
+    archive.markJobProjection(path, jobs);
+    expect(archive.indexedJobProjectionCurrent(path)).toBe(true);
+    expect(archive.indexedJobProjectionCurrent(path, snapshot.signature)).toBe(false);
+    return snapshot;
+  });
+  const header = vi.spyOn(recoveryFeed, "readRecoveryHeader"), refusal = vi.fn();
+  const recovered = await recoverJobRecordAsync(env.home, f.name, { onUnavailable: refusal });
+  expect(refusal).not.toHaveBeenCalled();
+  expect(recovered).toMatchObject({
+    id: "legacy", name: f.name, startedAt: 1, owner: "owner", prompt: f.prompt,
+    sessionId: "native-legacy", args: { access: "read", effort: "high" },
+  });
+  expect(publication).toHaveBeenCalledTimes(2); expect(header).toHaveBeenCalledTimes(1);
+  expect(syncScan).not.toHaveBeenCalled(); expect(scan).not.toHaveBeenCalled();
+  expect([path, f.file, f.metadata].map(file => readFileSync(file))).toEqual(bytes);
+});
+it("still refuses a genuinely changed native context after one header read", async () => {
+  const f = fixture(); await startJobRunBackfill(env.home); closeMetadataDb(env.home);
+  const read = recoveryFeed.readRecoveryHeader;
+  const header = vi.spyOn(recoveryFeed, "readRecoveryHeader").mockImplementationOnce(async (...args) => {
+    const payload = await read(...args);
+    writeFileSync(f.metadata, JSON.stringify({ job: f.name, jobStartedAt: 1, session: "changed-native", by: "owner", access: "read", effort: "high" }));
+    return payload;
+  });
+  const refusal = vi.fn();
+  expect(await recoverJobRecordAsync(env.home, f.name, { onUnavailable: refusal })).toBeUndefined();
+  expect(refusal).toHaveBeenCalledExactlyOnceWith({ reason: "recovery_context_changed", stage: "context_recheck" });
+  expect(header).toHaveBeenCalledTimes(1);
 });
 it("shares another owner's backfill lease and cancels a waiting observer without starting a second scan", async () => {
   fixture();
