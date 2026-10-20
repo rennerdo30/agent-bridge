@@ -104,15 +104,18 @@ const command = (line: string): PermissionRequest => codexCommand({ command: lin
 const hook = (agent: "claude" | "codex", tool: string, input: Record<string, unknown>): PermissionRequest =>
   hookRequest(agent, { tool_name: tool, tool_input: input, cwd: repo });
 
-/** One turn of the job in which the subagent asks for each request in order; returns the decisions. Command grants
- * are reused only in read-only jobs, so the default is a Codex job with read access (its sandbox is read-only). */
-async function turn(rc: RunContext, j: Job, requests: PermissionRequest[], args: Partial<DelegateArgs> = {}): Promise<boolean[]> {
+/** AB-426: common grant/identity tests use a mocked, eligible Claude adapter. Requests from each source are
+ * synthetic normalized PermissionRequests; no Claude process runs. Codex runtime eligibility is tested explicitly
+ * below and is now false because CLI-run MCP write safety is unknown.
+ * One turn of the job in which the subagent asks for each request in order; returns the decisions. Command grants
+ * are reused only in read-only jobs, so the default is the mocked Claude read-only adapter. */
+async function turn(rc: RunContext, j: Job, requests: PermissionRequest[], args: Partial<DelegateArgs> = {}, target: "claude" | "codex" = "claude"): Promise<boolean[]> {
   const decisions: boolean[] = [];
-  vi.spyOn(DELEGATION_TARGETS.codex, "run").mockImplementation(async (_cfg, req) => {
+  vi.spyOn(DELEGATION_TARGETS[target], "run").mockImplementation(async (_cfg, req) => {
     for (const request of requests) decisions.push((await req.approve!(request)).allow);
     return { sessionId: "saved", text: "done", isError: false, details: {} };
   });
-  await runDelegate(rc, "codex", { title: "reuse", prompt: "task", access: "read", ...args }, j.controller.signal, undefined, true, j);
+  await runDelegate(rc, target, { title: "reuse", prompt: "task", access: "read", ...args }, j.controller.signal, undefined, true, j);
   return decisions;
 }
 
@@ -136,7 +139,7 @@ describe("identical approval reuse within a job (AB-402)", () => {
     rc.jobs!.askParent = vi.fn((j: Job, question: string, timeoutMs: number, request?: PermissionRequest) => waitForApproval(j, question, timeoutMs, () => {}, nullLogger, home, request));
     const j = job();
     let approval = "";
-    vi.spyOn(DELEGATION_TARGETS.codex, "run").mockImplementation(async (_cfg, req) => {
+    vi.spyOn(DELEGATION_TARGETS.claude, "run").mockImplementation(async (_cfg, req) => {
       const first = req.approve!(command("npm test"));
       await until(() => listPendingApprovals(home).length === 1);
       approval = listPendingApprovals(home)[0]!.id;
@@ -145,7 +148,7 @@ describe("identical approval reuse within a job (AB-402)", () => {
       expect(await req.approve!(command("npm test"))).toEqual({ allow: true });
       return { sessionId: "saved", text: "done", isError: false, details: {} };
     });
-    const result = await runDelegate(rc, "codex", { title: "reuse", prompt: "task", access: "read" }, j.controller.signal, undefined, true, j);
+    const result = await runDelegate(rc, "claude", { title: "reuse", prompt: "task", access: "read" }, j.controller.signal, undefined, true, j);
     expect(rc.jobs!.askParent).toHaveBeenCalledTimes(1);
     expect(listPendingApprovals(home)).toEqual([]);
     expect(vi.mocked(rc.jobs!.fromSubagent).mock.calls.some(([, body]) => body.includes(`reused`) && body.includes(approval))).toBe(true);
@@ -156,7 +159,7 @@ describe("identical approval reuse within a job (AB-402)", () => {
     const rc = context([]);
     rc.jobs!.askParent = vi.fn((j: Job, question: string, timeoutMs: number, request?: PermissionRequest) => waitForApproval(j, question, timeoutMs, () => {}, nullLogger, home, request));
     const j = job();
-    vi.spyOn(DELEGATION_TARGETS.codex, "run").mockImplementation(async (_cfg, req) => {
+    vi.spyOn(DELEGATION_TARGETS.claude, "run").mockImplementation(async (_cfg, req) => {
       for (let i = 0; i < 2; i++) {
         const decision = req.approve!(command("npm test"));
         await until(() => listPendingApprovals(home).length === 1);
@@ -167,7 +170,7 @@ describe("identical approval reuse within a job (AB-402)", () => {
       }
       return { sessionId: "saved", text: "done", isError: false, details: {} };
     });
-    await runDelegate(rc, "codex", { title: "reuse", prompt: "task", access: "read" }, j.controller.signal, undefined, true, j);
+    await runDelegate(rc, "claude", { title: "reuse", prompt: "task", access: "read" }, j.controller.signal, undefined, true, j);
     expect(rc.jobs!.askParent).toHaveBeenCalledTimes(2);
   });
 
@@ -213,7 +216,7 @@ describe("identical approval reuse within a job (AB-402)", () => {
     const pending: ((answer: Answer) => void)[] = [];
     rc.jobs!.askParent = vi.fn(() => new Promise<Answer>((resolve) => pending.push(resolve)));
     const j = job();
-    vi.spyOn(DELEGATION_TARGETS.codex, "run").mockImplementation(async (_cfg, req) => {
+    vi.spyOn(DELEGATION_TARGETS.claude, "run").mockImplementation(async (_cfg, req) => {
       const first = req.approve!(command("npm test"));
       const second = req.approve!(command("npm test"));
       await until(() => pending.length === 2);
@@ -228,7 +231,7 @@ describe("identical approval reuse within a job (AB-402)", () => {
       expect((await third).allow).toBe(false);
       return { sessionId: "saved", text: "done", isError: false, details: {} };
     });
-    await runDelegate(rc, "codex", { title: "reuse", prompt: "task", access: "read" }, j.controller.signal, undefined, true, j);
+    await runDelegate(rc, "claude", { title: "reuse", prompt: "task", access: "read" }, j.controller.signal, undefined, true, j);
     expect(rc.jobs!.askParent).toHaveBeenCalledTimes(3);
   });
 
@@ -253,13 +256,13 @@ describe("identical approval reuse within a job (AB-402)", () => {
     const rc = context([allowed(), allowed()]);
     const j = job();
     j.owner = "parent";
-    vi.spyOn(DELEGATION_TARGETS.codex, "run").mockImplementation(async (_cfg, req) => {
+    vi.spyOn(DELEGATION_TARGETS.claude, "run").mockImplementation(async (_cfg, req) => {
       await req.approve!(command("npm test"));
       j.supervisor = "other-main";
       await req.approve!(command("npm test"));
       return { sessionId: "saved", text: "done", isError: false, details: {} };
     });
-    await runDelegate(rc, "codex", { title: "reuse", prompt: "task", access: "read" }, j.controller.signal, undefined, true, j);
+    await runDelegate(rc, "claude", { title: "reuse", prompt: "task", access: "read" }, j.controller.signal, undefined, true, j);
     expect(rc.jobs!.askParent).toHaveBeenCalledTimes(2);
   });
 
@@ -269,14 +272,14 @@ describe("identical approval reuse within a job (AB-402)", () => {
       { id: j.id, name: j.name, agent: "codex", model: null, prompt: "task", owner: "parent", status: "running", startedAt: j.startedAt, sessionId: null, workdir: null, worktree: null, args: { title: "reuse" } },
     ] }));
     async function handoffTurn(rc: RunContext, j: Job, handoff: boolean): Promise<void> {
-      vi.spyOn(DELEGATION_TARGETS.codex, "run").mockImplementation(async (_cfg, req) => {
+      vi.spyOn(DELEGATION_TARGETS.claude, "run").mockImplementation(async (_cfg, req) => {
         expect((await req.approve!(command("npm test"))).allow).toBe(true);
         // Another process hands the job over: only the durable store changes, this runner's job stays as it was.
         if (handoff) commitHandoff(join(home, "jobs.json"), peer("parent"), peer("other-main"), { to: "other-main", jobs: [j.name] });
         expect((await req.approve!(command("npm test"))).allow).toBe(true);
         return { sessionId: "saved", text: "done", isError: false, details: {} };
       });
-      await runDelegate(rc, "codex", { title: "reuse", prompt: "task", access: "read" }, j.controller.signal, undefined, true, j);
+      await runDelegate(rc, "claude", { title: "reuse", prompt: "task", access: "read" }, j.controller.signal, undefined, true, j);
     }
 
     it("keeps reusing while the store names the same supervisor", async () => {
@@ -300,7 +303,7 @@ describe("identical approval reuse within a job (AB-402)", () => {
       const rc = context([allowed(), allowed(), allowed()]);
       const j = { ...job(), owner: "parent" };
       stored(j);
-      vi.spyOn(DELEGATION_TARGETS.codex, "run").mockImplementation(async (_cfg, req) => {
+      vi.spyOn(DELEGATION_TARGETS.claude, "run").mockImplementation(async (_cfg, req) => {
         expect((await req.approve!(command("npm test"))).allow).toBe(true);
         // A read failure right after a store-only handoff must not reuse the old supervisor's grant.
         writeFileSync(join(home, "jobs.json"), "{ not json");
@@ -308,7 +311,7 @@ describe("identical approval reuse within a job (AB-402)", () => {
         expect((await req.approve!(command("npm test"))).allow).toBe(true);
         return { sessionId: "saved", text: "done", isError: false, details: {} };
       });
-      await runDelegate(rc, "codex", { title: "reuse", prompt: "task", access: "read" }, j.controller.signal, undefined, true, j);
+      await runDelegate(rc, "claude", { title: "reuse", prompt: "task", access: "read" }, j.controller.signal, undefined, true, j);
       expect(rc.jobs!.askParent).toHaveBeenCalledTimes(3);
     });
 
@@ -350,12 +353,12 @@ describe("identical approval reuse within a job (AB-402)", () => {
     const rc = context([]);
     rc.askUser = vi.fn(async (): Promise<PermissionDecision> => ({ allow: true }));
     const j = { ...job(), owner: "parent", foreground: true };
-    vi.spyOn(DELEGATION_TARGETS.codex, "run").mockImplementation(async (_cfg, req) => {
+    vi.spyOn(DELEGATION_TARGETS.claude, "run").mockImplementation(async (_cfg, req) => {
       expect(await req.approve!(command("npm test"))).toEqual({ allow: true });
       expect(await req.approve!(command("npm test"))).toEqual({ allow: true });
       return { sessionId: "saved", text: "done", isError: false, details: {} };
     });
-    const result = await runDelegate(rc, "codex", { title: "reuse", prompt: "task", access: "read" }, j.controller.signal, undefined, false, j);
+    const result = await runDelegate(rc, "claude", { title: "reuse", prompt: "task", access: "read" }, j.controller.signal, undefined, false, j);
     expect(rc.askUser).toHaveBeenCalledOnce();
     expect(rc.jobs!.askParent).not.toHaveBeenCalled();
     expect(result.text).toMatch(/allowed \(reused approval [0-9a-f-]{36}\): command npm test/);
@@ -423,7 +426,7 @@ describe("identical approval reuse within a job (AB-402)", () => {
     it("drops the command grants after an allowed file change request or another allowed command", async () => {
       const rc = context(Array.from({ length: 6 }, () => allowed()));
       const j = job();
-      vi.spyOn(DELEGATION_TARGETS.codex, "run").mockImplementation(async (_cfg, req) => {
+      vi.spyOn(DELEGATION_TARGETS.claude, "run").mockImplementation(async (_cfg, req) => {
         const ask = async (r: PermissionRequest) => expect((await req.approve!(r)).allow).toBe(true);
         await ask(command("./deploy.sh"));
         await ask(command("./deploy.sh"));
@@ -440,17 +443,17 @@ describe("identical approval reuse within a job (AB-402)", () => {
         expect(rc.jobs!.askParent).toHaveBeenCalledTimes(5);
         return { sessionId: "saved", text: "done", isError: false, details: {} };
       });
-      await runDelegate(rc, "codex", { title: "reuse", prompt: "task", access: "read" }, j.controller.signal, undefined, true, j);
+      await runDelegate(rc, "claude", { title: "reuse", prompt: "task", access: "read" }, j.controller.signal, undefined, true, j);
       expect(rc.jobs!.askParent).toHaveBeenCalledTimes(5);
     });
   });
 
   describe("command grants only in read-only jobs", () => {
-    it("reuses a command grant in a read-only job (Codex read access and an explicit read-only sandbox)", async () => {
+    it("asks every Codex command despite read-only sandbox settings (AB-426: MCP write safety is unknown)", async () => {
       for (const args of [{ access: "read" as const }, { access: "ask" as const, sandbox: "read-only" }, { access: "edit" as const, sandbox: "read-only" }]) {
         const rc = context([allowed(), allowed()]);
-        expect(await turn(rc, job(), [command("npm test"), command("npm test")], args)).toEqual([true, true]);
-        expect(rc.jobs!.askParent).toHaveBeenCalledTimes(1);
+        expect(await turn(rc, job(), [command("npm test"), command("npm test")], args, "codex")).toEqual([true, true]);
+        expect(rc.jobs!.askParent).toHaveBeenCalledTimes(2);
       }
     });
 
@@ -458,7 +461,7 @@ describe("identical approval reuse within a job (AB-402)", () => {
       for (const args of [{ access: "edit" as const }, { access: "read" as const, sandbox: "workspace-write" }, { access: "read" as const, sandbox: "danger-full-access" }]) {
         const rc = context([allowed(), allowed()]);
         const j = job();
-        expect(await turn(rc, j, [command("npm test"), command("npm test")], args)).toEqual([true, true]);
+        expect(await turn(rc, j, [command("npm test"), command("npm test")], args, "codex")).toEqual([true, true]);
         expect(rc.jobs!.askParent).toHaveBeenCalledTimes(2);
         expect(j.approvalGrants?.grants ?? []).toEqual([]);
       }
@@ -472,41 +475,41 @@ describe("identical approval reuse within a job (AB-402)", () => {
 
     it("asks when the job's access changes from read to edit between the grant and the reuse", async () => {
       const rc = context([allowed(), allowed(), allowed()]);
-      // No access argument: the sandbox comes from the configuration, which changes while the job runs.
-      rc.cfg = { ...rc.cfg, codexSandbox: "read-only" };
+      // No access argument: the effective permission comes from the configuration, which changes while the job runs.
+      rc.cfg = { ...rc.cfg, claudePermissionMode: "manual" };
       const j = job();
-      vi.spyOn(DELEGATION_TARGETS.codex, "run").mockImplementation(async (_cfg, req) => {
+      vi.spyOn(DELEGATION_TARGETS.claude, "run").mockImplementation(async (_cfg, req) => {
         expect((await req.approve!(command("npm test"))).allow).toBe(true);
-        rc.cfg.codexSandbox = "workspace-write";
+        rc.cfg.claudePermissionMode = "acceptEdits";
         expect((await req.approve!(command("npm test"))).allow).toBe(true);
         expect(rc.jobs!.askParent).toHaveBeenCalledTimes(2);
         // Back to read-only: the grant made while it could write was not kept.
-        rc.cfg.codexSandbox = "read-only";
+        rc.cfg.claudePermissionMode = "manual";
         expect((await req.approve!(command("npm test"))).allow).toBe(true);
         return { sessionId: "saved", text: "done", isError: false, details: {} };
       });
-      await runDelegate(rc, "codex", { title: "reuse", prompt: "task" }, j.controller.signal, undefined, true, j);
+      await runDelegate(rc, "claude", { title: "reuse", prompt: "task" }, j.controller.signal, undefined, true, j);
       expect(rc.jobs!.askParent).toHaveBeenCalledTimes(3);
     });
 
     it("keeps no command grant when the job's access changes while the question waits", async () => {
       const rc = context([]);
-      rc.cfg = { ...rc.cfg, codexSandbox: "read-only" };
-      rc.jobs!.askParent = vi.fn(async () => { rc.cfg.codexSandbox = "workspace-write"; return allowed(); });
+      rc.cfg = { ...rc.cfg, claudePermissionMode: "manual" };
+      rc.jobs!.askParent = vi.fn(async () => { rc.cfg.claudePermissionMode = "acceptEdits"; return allowed(); });
       const j = job();
-      vi.spyOn(DELEGATION_TARGETS.codex, "run").mockImplementation(async (_cfg, req) => {
+      vi.spyOn(DELEGATION_TARGETS.claude, "run").mockImplementation(async (_cfg, req) => {
         expect((await req.approve!(command("npm test"))).allow).toBe(true);
         expect(j.approvalGrants?.grants ?? []).toEqual([]);
         return { sessionId: "saved", text: "done", isError: false, details: {} };
       });
-      await runDelegate(rc, "codex", { title: "reuse", prompt: "task" }, j.controller.signal, undefined, true, j);
+      await runDelegate(rc, "claude", { title: "reuse", prompt: "task" }, j.controller.signal, undefined, true, j);
     });
 
     it("reuses an identical MCP tool call in an edit job, and a command does not end it", async () => {
       const rc = context([allowed(), allowed()]);
       const j = job();
       const mcp = hook("claude", "mcp__other__lookup", { query: "x" });
-      vi.spyOn(DELEGATION_TARGETS.codex, "run").mockImplementation(async (_cfg, req) => {
+      vi.spyOn(DELEGATION_TARGETS.claude, "run").mockImplementation(async (_cfg, req) => {
         expect((await req.approve!(mcp)).allow).toBe(true);
         expect((await req.approve!(command("npm test"))).allow).toBe(true);
         // Isolate the grant store from the per-server allow that covers the rest of the run.
@@ -514,7 +517,7 @@ describe("identical approval reuse within a job (AB-402)", () => {
         expect((await req.approve!(mcp)).allow).toBe(true);
         return { sessionId: "saved", text: "done", isError: false, details: {} };
       });
-      await runDelegate(rc, "codex", { title: "reuse", prompt: "task", access: "edit" }, j.controller.signal, undefined, true, j);
+      await runDelegate(rc, "claude", { title: "reuse", prompt: "task", access: "edit" }, j.controller.signal, undefined, true, j);
       expect(rc.jobs!.askParent).toHaveBeenCalledTimes(2);
       expect(vi.mocked(rc.jobs!.fromSubagent).mock.calls.some(([, body]) => body.includes("reused") && body.includes("mcp:other"))).toBe(true);
     });
@@ -523,7 +526,7 @@ describe("identical approval reuse within a job (AB-402)", () => {
       const spawned = [childProcess.spawn, childProcess.spawnSync, childProcess.execFile, childProcess.execFileSync, childProcess.exec, childProcess.execSync, childProcess.fork, worktree.git].map((fn) => vi.mocked(fn));
       const rc = context(Array.from({ length: 4 }, () => allowed()));
       const j = job();
-      vi.spyOn(DELEGATION_TARGETS.codex, "run").mockImplementation(async (_cfg, req) => {
+      vi.spyOn(DELEGATION_TARGETS.claude, "run").mockImplementation(async (_cfg, req) => {
         for (const fn of spawned) fn.mockClear();
         for (const r of [command("npm test"), command("npm test"), hook("claude", "mcp__other__lookup", {}), hook("claude", "Edit", { file_path: join(repo, "a.ts"), old_string: "a", new_string: "b" }), command("npm test")]) {
           expect((await req.approve!(r)).allow).toBe(true);
@@ -532,7 +535,7 @@ describe("identical approval reuse within a job (AB-402)", () => {
         expect(spawned.map((fn) => fn.mock.calls.length), `execFile calls: ${JSON.stringify(execFileCalls)}`).toEqual(spawned.map(() => 0));
         return { sessionId: "saved", text: "done", isError: false, details: {} };
       });
-      await runDelegate(rc, "codex", { title: "reuse", prompt: "task", access: "read" }, j.controller.signal, undefined, true, j);
+      await runDelegate(rc, "claude", { title: "reuse", prompt: "task", access: "read" }, j.controller.signal, undefined, true, j);
       expect(rc.jobs!.askParent).toHaveBeenCalledTimes(4);
     });
   });
@@ -544,7 +547,7 @@ describe("identical approval reuse within a job (AB-402)", () => {
       j.approvalGrants.grants.push({ identity: "planted", approvalId: "planted", by: "MCP decide", at: 0, command: true, reuses: 0 });
     };
     const commandGrants = (j: Job) => (j.approvalGrants?.grants ?? []).filter((grant) => grant.command).length;
-    const ownCall = (tool: string) => hook("claude", `mcp__plugin_agent-bridge_bridge__${tool}`, { prompt: "x" });
+    const ownCall = (tool: string) => hook("claude", `mcp__plugin_agent-bridge_bridge__${tool}`, tool === "send" ? { to: "parent", message: "status" } : { prompt: "x" });
 
     it("asks every command in a job that can start subagents (its delegate depth is below the limit)", async () => {
       for (const [max, depth] of [[2, "0"], [3, "1"]] as const) {
@@ -567,7 +570,7 @@ describe("identical approval reuse within a job (AB-402)", () => {
     it("drops the command grants on an own-server spawn or steering call and keeps none for the rest of the turn", async () => {
       const rc = context(Array.from({ length: 4 }, () => allowed()));
       const j = job();
-      vi.spyOn(DELEGATION_TARGETS.codex, "run").mockImplementation(async (_cfg, req) => {
+      vi.spyOn(DELEGATION_TARGETS.claude, "run").mockImplementation(async (_cfg, req) => {
         const ask = async (r: PermissionRequest) => expect((await req.approve!(r)).allow).toBe(true);
         await ask(command("npm test"));
         // Read and status tools of its own server keep the grant.
@@ -584,7 +587,7 @@ describe("identical approval reuse within a job (AB-402)", () => {
         expect(commandGrants(j)).toBe(0);
         return { sessionId: "saved", text: "done", isError: false, details: {} };
       });
-      await runDelegate(rc, "codex", { title: "reuse", prompt: "task", access: "read" }, j.controller.signal, undefined, true, j);
+      await runDelegate(rc, "claude", { title: "reuse", prompt: "task", access: "read" }, j.controller.signal, undefined, true, j);
       // Codex names its own server "agent-bridge": message_subagent ends the grants the same way.
       const steer: PermissionRequest = { agent: "codex", tool: "mcp:agent-bridge", detail: 'Allow the agent-bridge MCP server to run tool "message_subagent"?' };
       const codex = context([allowed(), allowed()]);
@@ -618,7 +621,7 @@ describe("identical approval reuse within a job (AB-402)", () => {
       const rc = context([allowed()]);
       const j = job();
       const lookup = hook("claude", "mcp__other__lookup", { query: "x" });
-      vi.spyOn(DELEGATION_TARGETS.codex, "run").mockImplementation(async (_cfg, req) => {
+      vi.spyOn(DELEGATION_TARGETS.claude, "run").mockImplementation(async (_cfg, req) => {
         // Asked once: the call's grant is kept and its server is allowed for the rest of the job.
         expect((await req.approve!(lookup)).allow).toBe(true);
         // Through the allowed server, without a question.
@@ -633,11 +636,11 @@ describe("identical approval reuse within a job (AB-402)", () => {
         expect(rc.jobs!.askParent).toHaveBeenCalledTimes(1);
         return { sessionId: "saved", text: "done", isError: false, details: {} };
       });
-      await runDelegate(rc, "codex", { title: "reuse", prompt: "task", access: "read" }, j.controller.signal, undefined, true, j);
+      await runDelegate(rc, "claude", { title: "reuse", prompt: "task", access: "read" }, j.controller.signal, undefined, true, j);
       // Through an allow pattern; a Pair Desk call keeps the grants.
       const auto = context([]);
       const k = job("auto");
-      vi.spyOn(DELEGATION_TARGETS.codex, "run").mockImplementation(async (_cfg, req) => {
+      vi.spyOn(DELEGATION_TARGETS.claude, "run").mockImplementation(async (_cfg, req) => {
         plant(k);
         expect((await req.approve!(hook("claude", "mcp__plugin_agent-pair-programming_pair-desk__comment", { id: 1 }))).allow).toBe(true);
         expect(commandGrants(k)).toBe(1);
@@ -645,7 +648,7 @@ describe("identical approval reuse within a job (AB-402)", () => {
         expect(commandGrants(k)).toBe(0);
         return { sessionId: "saved", text: "done", isError: false, details: {} };
       });
-      await runDelegate(auto, "codex", { title: "reuse", prompt: "task", access: "read", allow_tools: ["files.write_file", "pair-desk:worker"] }, k.controller.signal, undefined, true, k);
+      await runDelegate(auto, "claude", { title: "reuse", prompt: "task", access: "read", allow_tools: ["files.write_file", "pair-desk:worker"] }, k.controller.signal, undefined, true, k);
       expect(auto.jobs!.askParent).not.toHaveBeenCalled();
     });
 
@@ -654,7 +657,7 @@ describe("identical approval reuse within a job (AB-402)", () => {
         const rc = context([allowed(), allowed()]);
         rc.cfg.codexApprovalsReviewer = cfgReviewer;
         const j = job();
-        expect(await turn(rc, j, [command("npm test"), command("npm test")], argReviewer ? { approvals_reviewer: argReviewer } : {})).toEqual([true, true]);
+        expect(await turn(rc, j, [command("npm test"), command("npm test")], argReviewer ? { approvals_reviewer: argReviewer } : {}, "codex")).toEqual([true, true]);
         expect(rc.jobs!.askParent).toHaveBeenCalledTimes(2);
         expect(j.approvalGrants?.grants ?? []).toEqual([]);
       }
@@ -681,16 +684,90 @@ describe("identical approval reuse within a job (AB-402)", () => {
   });
 });
 
+describe("AB-426 product regressions", () => {
+  it("blocks command grants after sibling send while parent sends preserve them", async () => {
+    const rc = context([allowed(), allowed(), allowed()]);
+    const j = job();
+    const request = hook("claude", "Bash", { command: "./check.sh" });
+    vi.spyOn(DELEGATION_TARGETS.claude, "run").mockImplementation(async (_cfg, req) => {
+      const ask = async (r: PermissionRequest) => expect((await req.approve!(r)).allow).toBe(true);
+      await ask(request);
+      await ask(hook("claude", "mcp__agent-bridge__send", { to: "parent", message: "status" }));
+      await ask(request);
+      expect(rc.jobs!.askParent).toHaveBeenCalledTimes(1);
+      await ask(hook("claude", "mcp__agent-bridge__send", { to: "editing-sibling", message: "change check.sh" }));
+      expect(j.approvalGrants?.grants.filter(grant => grant.command)).toEqual([]);
+      await ask(request);
+      await ask(request);
+      expect(rc.jobs!.askParent).toHaveBeenCalledTimes(3);
+      expect(j.approvalGrants?.grants.filter(grant => grant.command)).toEqual([]);
+      return { sessionId: "saved", text: "done", isError: false, details: {} };
+    });
+    await runDelegate(rc, "claude", { title: "reuse", prompt: "task", access: "read" }, j.controller.signal, undefined, true, j);
+  });
+
+  it("freezes spawn eligibility and the depth passed to the child at launch", async () => {
+    const rc = context([allowed(), allowed(), allowed()]);
+    rc.cfg.maxDelegateDepth = 2;
+    const j = job();
+    vi.spyOn(DELEGATION_TARGETS.claude, "run").mockImplementation(async (_cfg, req) => {
+      expect(req.maxDelegateDepth).toBe(2);
+      expect(req.extraEnv?.AGENT_BRIDGE_MAX_DELEGATE_DEPTH).toBe("2");
+      const request = hook("claude", "Bash", { command: "./check.sh" });
+      expect((await req.approve!(request)).allow).toBe(true);
+      rc.cfg.maxDelegateDepth = 1; // The running child still has its registered spawn tools.
+      expect((await req.approve!(request)).allow).toBe(true);
+      expect((await req.approve!(request)).allow).toBe(true);
+      expect(rc.jobs!.askParent).toHaveBeenCalledTimes(3);
+      expect(j.approvalGrants?.grants ?? []).toEqual([]);
+      return { sessionId: "saved", text: "done", isError: false, details: {} };
+    });
+    await runDelegate(rc, "claude", { title: "reuse", prompt: "task", access: "read" }, j.controller.signal, undefined, true, j);
+  });
+
+  it("refuses command reuse when Codex or opencode can write through unobserved MCP calls", async () => {
+    for (const target of ["codex", "opencode"] as const) {
+      const rc = context([allowed(), allowed(), allowed()]);
+      const j = job(target);
+      vi.spyOn(DELEGATION_TARGETS[target], "run").mockImplementation(async (_cfg, req) => {
+        const request = target === "codex" ? command("./check.sh") : opencodePermissionRequest({ permission: "bash", metadata: { command: "./check.sh" } }, [], repo);
+        expect((await req.approve!(request)).allow).toBe(true);
+        writeFileSync(join(repo, "check.sh"), "changed by a CLI-run MCP tool, without req.approve");
+        expect((await req.approve!(request)).allow).toBe(true);
+        expect(rc.jobs!.askParent).toHaveBeenCalledTimes(2);
+        expect(j.approvalGrants?.grants ?? []).toEqual([]);
+        // Exact MCP-call reuse remains available at every access level, independently of command eligibility.
+        const mcp = hook("codex", "mcp__other__lookup", { query: "x" });
+        expect((await req.approve!(mcp)).allow).toBe(true);
+        j.allowedServers?.clear();
+        expect((await req.approve!(mcp)).allow).toBe(true);
+        expect(rc.jobs!.askParent).toHaveBeenCalledTimes(3);
+        return { sessionId: "saved", text: "done", isError: false, details: {} };
+      });
+      await runDelegate(rc, target, { title: "reuse", prompt: "task", access: "read" }, j.controller.signal, undefined, true, j);
+    }
+  });
+
+  it("refuses Codex exec-relay command reuse even when the requested reviewer is user", async () => {
+    vi.stubEnv("AGENT_BRIDGE_CODEX_EXEC", "1");
+    const rc = context([allowed(), allowed()]);
+    const j = job();
+    expect(await turn(rc, j, [command("./check.sh"), command("./check.sh")], { access: "ask", approvals_reviewer: "user" }, "codex")).toEqual([true, true]);
+    expect(rc.jobs!.askParent).toHaveBeenCalledTimes(2);
+    expect(j.approvalGrants?.grants ?? []).toEqual([]);
+  });
+});
+
 describe("readOnlyJob", () => {
   const ro = (target: string, permission: string, more: Partial<Parameters<typeof readOnlyJob>[0]> = {}) =>
     readOnlyJob({ target, permission, approvalsReviewer: target === "codex" ? "user" : undefined, allowPatterns: [], allowedServers: [], canSpawn: false, ...more });
   it("counts only settings in which the job writes nothing without asking", () => {
-    expect(ro("codex", "read-only")).toBe(true);
+    expect(ro("codex", "read-only")).toBe(false);
     expect(ro("codex", "workspace-write")).toBe(false);
     expect(ro("codex", "danger-full-access")).toBe(false);
     for (const mode of ["default", "manual", "plan"]) expect(ro("claude", mode)).toBe(true);
     for (const mode of ["acceptEdits", "auto", "dontAsk", "bypassPermissions"]) expect(ro("claude", mode)).toBe(false);
-    expect(ro("opencode", "read-only")).toBe(true);
+    expect(ro("opencode", "read-only")).toBe(false);
     expect(ro("opencode", "auto-approve")).toBe(false);
     for (const target of ["antigravity", "muse"]) {
       expect(ro(target, "read")).toBe(true);
@@ -706,22 +783,22 @@ describe("readOnlyJob", () => {
     expect(ro("other", "read-only")).toBe(false);
     expect(ro("codex", "")).toBe(false);
     expect(ro("claude", "something-new")).toBe(false);
-    expect(ro("codex", "read-only", { allowPatterns: ["pair-desk:worker", "pair-desk.get_*", "pair-desk"] })).toBe(true);
-    expect(ro("codex", "read-only", { allowPatterns: ["pair-desk.get_*", "files.*"] })).toBe(false);
-    expect(ro("codex", "read-only", { allowPatterns: ["*"] })).toBe(false);
-    expect(ro("codex", "read-only", { allowPatterns: ["pair-desk-evil.write"] })).toBe(false);
+    expect(ro("claude", "manual", { allowPatterns: ["pair-desk:worker", "pair-desk.get_*", "pair-desk"] })).toBe(true);
+    expect(ro("claude", "manual", { allowPatterns: ["pair-desk.get_*", "files.*"] })).toBe(false);
+    expect(ro("claude", "manual", { allowPatterns: ["*"] })).toBe(false);
+    expect(ro("claude", "manual", { allowPatterns: ["pair-desk-evil.write"] })).toBe(false);
   });
   it("is never read-only when the job can start subagents (H1)", () => {
     for (const [target, permission] of [["codex", "read-only"], ["claude", "default"], ["opencode", "read-only"], ["antigravity", "read"], ["muse", "read"]] as const) {
-      expect(ro(target, permission)).toBe(true);
+      expect(ro(target, permission)).toBe(target !== "codex" && target !== "opencode");
       expect(ro(target, permission, { canSpawn: true })).toBe(false);
     }
   });
   it("is never read-only with a server other than the Pair Desk allowed for the rest of the job (M2)", () => {
-    expect(ro("codex", "read-only", { allowedServers: ["mcp:pair-desk", "mcp:plugin_agent-pair-programming_pair-desk"] })).toBe(true);
-    expect(ro("codex", "read-only", { allowedServers: ["mcp:pair-desk", "mcp:files"] })).toBe(false);
-    expect(ro("codex", "read-only", { allowedServers: ["mcp:pair-desk-evil"] })).toBe(false);
-    expect(ro("codex", "read-only", { allowedServers: ["pair-desk"] })).toBe(false);
+    expect(ro("claude", "manual", { allowedServers: ["mcp:pair-desk", "mcp:plugin_agent-pair-programming_pair-desk"] })).toBe(true);
+    expect(ro("claude", "manual", { allowedServers: ["mcp:pair-desk", "mcp:files"] })).toBe(false);
+    expect(ro("claude", "manual", { allowedServers: ["mcp:pair-desk-evil"] })).toBe(false);
+    expect(ro("claude", "manual", { allowedServers: ["pair-desk"] })).toBe(false);
   });
   it("requires the Codex approvals reviewer user (L4)", () => {
     expect(ro("codex", "read-only", { approvalsReviewer: "auto_review" })).toBe(false);
@@ -746,9 +823,9 @@ describe("mcpCallEffect", () => {
     expect(mcpCallEffect({ tool: "mcp:plugin_agent-pair-programming_pair-desk", detail: "comment: {}" })).toBe("keep");
     expect(mcpCallEffect({ tool: "mcp:pair-desk", detail: 'Allow the pair-desk MCP server to run tool "progress"?' })).toBe("keep");
     expect(mcpCallEffect({ tool: "mcp:other", detail: "lookup: {}" })).toBe("drop");
-    for (const tool of ["send", "report_progress", "peers", "inbox", "wait_for_message", "usage_limits"])
+    for (const tool of ["report_progress", "peers", "inbox", "wait_for_message", "usage_limits"])
       expect(mcpCallEffect({ tool: "mcp:plugin_agent-bridge_bridge", detail: `${tool}: {}` })).toBe("keep");
-    for (const tool of ["spawn_codex", "ask_claude", "message_subagent", "decide", "cancel_subagent"])
+    for (const tool of ["send", "spawn_codex", "ask_claude", "message_subagent", "decide", "cancel_subagent"])
       expect(mcpCallEffect({ tool: "mcp:plugin_agent-bridge_bridge", detail: `${tool}: {}` })).toBe("block");
     expect(mcpCallEffect({ tool: "mcp:agent-bridge", detail: 'Allow the agent-bridge MCP server to run tool "spawn_codex"?' })).toBe("block");
     expect(mcpCallEffect({ tool: "mcp:bridge", detail: "bridge_message_subagent: {}" })).toBe("block");

@@ -183,6 +183,9 @@ async function runDelegateInner(
   job?: Job,
 ): Promise<RunResult> {
   const { cfg, log } = rc;
+  // The child's tool registration and its depth environment must use the same launch snapshot (AB-426).
+  const launchMaxDelegateDepth = cfg.maxDelegateDepth;
+  const canSpawn = jobCanSpawn(launchMaxDelegateDepth);
   const profile = DELEGATION_TARGETS[target];
   const defaultModel = profile.defaultModel(cfg);
   const dlog = log.child("delegate");
@@ -225,13 +228,13 @@ async function runDelegateInner(
   const codexReviewer = () => target === "codex" ? a.approvals_reviewer ?? cfg.codexApprovalsReviewer : undefined;
   const jobReadOnly = () => !commandGrantsBlocked && readOnlyJob({ target, permission: profile.permission(cfg, a), permissionProfile: a.permission_profile,
     bypassPermissions: a.bypass_permissions, approvalsReviewer: codexReviewer(), allowPatterns: autoApprove,
-    allowedServers: [...allowedServers], canSpawn: jobCanSpawn(cfg.maxDelegateDepth) });
+    allowedServers: [...allowedServers], canSpawn });
   // Every allowed MCP call, whichever path allowed it (a server allowed earlier, an allow pattern, a question or a
   // reuse): a server other than the Pair Desk may have written files, so it ends the job's command grants; an
   // own-server call that may start or steer a child job also blocks new ones for the rest of the turn.
   const mcpAllowed = (r: PermissionRequest) => {
     if (!job) return;
-    const effect = mcpCallEffect(r);
+    const effect = mcpCallEffect(r, rc.me());
     if (effect === "block") commandGrantsBlocked = true;
     if ((effect === "drop" || effect === "block") && dropCommandGrants(job)) dlog.info("an MCP call that may change files was allowed; command grants dropped", { job: job.name, tool: r.tool });
   };
@@ -505,7 +508,7 @@ async function runDelegateInner(
         cwd: workdir,
         sessionId: a.session_id ?? null,
         timeoutSec: a.timeout_sec ?? (background ? MAX_JOB_TIMEOUT_SEC : DEFAULT_DELEGATE_TIMEOUT_SEC),
-        maxDelegateDepth: cfg.maxDelegateDepth,
+        maxDelegateDepth: launchMaxDelegateDepth,
         model: a.model ?? defaultModel,
         effort: a.effort ?? cfg.effort[target] ?? null,
         // What it really runs (a CLI default or an alias resolved), for the dashboard.
@@ -513,7 +516,7 @@ async function runDelegateInner(
         log: dlog,
         signal,
         onProgress: feed.report,
-        extraEnv: { ...link?.childEnv(), [ENV.home]: rc.home, [ENV.maxDelegateDepth]: String(cfg.maxDelegateDepth),
+        extraEnv: { ...link?.childEnv(), [ENV.home]: rc.home, [ENV.maxDelegateDepth]: String(launchMaxDelegateDepth),
           // AGENT_BRIDGE_JOB_ID: the stable job name for tools in the job's processes that prove "same job" ownership.
           ...(job ? { [PARENT_JOB_ENV]: job.name, AGENT_BRIDGE_JOB_ID: job.name, [ROOT_SESSION_ENV]: job.rootSession ?? job.supervisor ?? me, [ROOT_NAME_ENV]: job.rootName ?? me } : {}),
           ...(slots ? { [SLOT_OWNER_ENV]: slotOwner.id, [SLOT_PID_ENV]: String(slotOwner.pid) } : {}) },

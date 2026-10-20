@@ -70,21 +70,20 @@ Limits that keep it safe:
   checked when the grant is made (both when the question is asked and when it is answered)
   and again at each reuse; if either is not read-only, the command is asked. Read-only means:
   - The job cannot start or continue subagents of its own: its delegation depth reached
-    `maxDelegateDepth`, so its bridge server has no `spawn_*`, `ask_*`, `message_subagent`
+    the effective `maxDelegateDepth` captured at launch (later config edits cannot change this), so its bridge server has no `spawn_*`, `ask_*`, `message_subagent`
     or `decide`. A job that has them could start a child job with edit access in the same
     folder and answer that child's approvals itself.
   - No MCP server other than the Pair Desk was allowed for the rest of the job (one "allow"
     of a server covers its later calls, also in follow-ups).
-  - Codex: the effective sandbox is `read-only` (`access` `read` or `ask`, `sandbox:
-    "read-only"`, or `codexSandbox` when neither is given) and the approvals reviewer is
-    `user` (`approvals_reviewer` or `codexApprovalsReviewer`; `auto_review` lets a reviewer
-    model approve requests). `workspace-write` and `danger-full-access` are not, so Codex
-    `edit` jobs and worktree edit jobs are not.
+  - Codex and opencode command reuse is unavailable. Their CLIs may run configured MCP
+    tools without forwarding an approval here, and the current launch paths provide no
+    trustworthy evidence that those servers cannot write. A `read-only` shell sandbox,
+    `user` reviewer, empty bridge allowance or auto-approve being off cannot prove it.
+    Codex exec-relay is also excluded: it can select `auto_review` despite the requested
+    reviewer. Explicit per-request approvals and exact MCP-call reuse still work.
   - Claude: permission mode `default`, `manual` or `plan` (agent-bridge denies `Write`,
     `Edit`, `MultiEdit`, `NotebookEdit`, `Bash` and `PowerShell` in these). `acceptEdits`,
     `auto`, `dontAsk` and `bypassPermissions` are not.
-  - opencode: the effective permission is read-only (`access` `read` or `ask`, or
-    `auto_approve: false`); auto-approve is not.
   - Antigravity: `access` `read` or `ask` without `bypass_permissions`. Muse: `access` `read`
     or `ask` without a `permission_profile`.
   - Every auto-approved MCP pattern (`autoApproveTools`, `allow_tools` or the default
@@ -96,10 +95,12 @@ Limits that keep it safe:
   allowed request without an exact identity or any allowed MCP call to a server other than
   the Pair Desk (whether through an earlier "allow" of its server, an allow pattern, a
   question or a reused grant) ends the job's command grants. A call to the job's own
-  agent-bridge server other than a read or status tool (`send`, `report_progress`, `peers`,
+  agent-bridge server other than an exact send to the parent/supervisor or a read or status tool (`report_progress`, `peers`,
   `health`, `search_history`, `get_conversation`, `inbox`, `wait_for_message`, `decisions`,
   `list_models`, `usage_limits`, `network_status`, `resource_slots`), such as `spawn_*`,
   `ask_*`, `message_subagent` or `decide`, ends them and keeps none for the rest of the turn.
+  A `send` to a sibling or peer does the same; an inexact send or unknown recipient is
+  treated conservatively because a recipient could change the job's files.
 - **No Git, no file reads**: the approval path runs no Git command and reads none of the
   job's files. A job-controlled repository could run code through Git (`core.fsmonitor`,
   filters) and hide files from it (`.git/info/exclude`, `assume-unchanged`).

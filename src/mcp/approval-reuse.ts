@@ -87,19 +87,30 @@ export function isDeskServer(server: string): boolean {
 }
 
 /** Tools of the job's own agent-bridge server that only read or report status: they cannot reach the job's files. */
-const OWN_READ_TOOLS: ReadonlySet<string> = new Set(["send", "report_progress", "peers", "health", "search_history", "get_conversation",
+const OWN_READ_TOOLS: ReadonlySet<string> = new Set(["report_progress", "peers", "health", "search_history", "get_conversation",
   "inbox", "wait_for_message", "decisions", "list_models", "usage_limits", "network_status", "resource_slots"]);
 
 /**
  * What an allowed MCP call means for the job's command grants (AB-402): "keep" for a Pair Desk call or a read or
- * status tool of the job's own agent-bridge server, "block" for any other own-server call (spawn_*, ask_*,
+ * status tool of the job's own agent-bridge server (or an exact send to its supervisor), "block" for any other own-server call (spawn_*, ask_*,
  * message_subagent, decide: a child job may change files; the grants end and none are kept for the rest of the
  * turn), "drop" for any other MCP call (its server may write files). Null for a request that is no MCP call.
  */
-export function mcpCallEffect(r: Pick<PermissionRequest, "tool" | "detail">): "keep" | "drop" | "block" | null {
+export function mcpCallEffect(r: Pick<PermissionRequest, "tool" | "detail" | "identity" | "inexact" | "detailLength">, supervisor?: string): "keep" | "drop" | "block" | null {
   const call = mcpToolOf(r);
   if (!call) return null;
-  if (isOwnServerCall(r)) return call.tool && OWN_READ_TOOLS.has(call.tool) ? "keep" : "block";
+  if (isOwnServerCall(r)) {
+    if (call.tool === "send") {
+      // Only a full, exact send to the parent is harmless. A sibling can write files on the job's behalf;
+      // summaries and missing recipients cannot prove which route the child will use (AB-426).
+      if (!r.identity || r.inexact || r.detailLength !== undefined) return "block";
+      try {
+        const args = JSON.parse(r.detail.slice(r.detail.indexOf(":") + 1));
+        return typeof args?.to === "string" && (args.to === "parent" || args.to === supervisor) ? "keep" : "block";
+      } catch { return "block"; }
+    }
+    return call.tool && OWN_READ_TOOLS.has(call.tool) ? "keep" : "block";
+  }
   return isDeskServer(call.server) ? "keep" : "drop";
 }
 
@@ -126,13 +137,10 @@ function deskOnlyPattern(pattern: string): boolean {
  *   spawn_* or message_subagent may start a child job with edit access in the same folder and answer that child's
  *   approvals itself.
  * - No MCP server other than the Pair Desk is in allowedServers (one "allow" of a server covers the rest of the job).
- * - Codex: the effective sandbox is "read-only" (access read or ask, or sandbox "read-only", or the configured
- *   codexSandbox when neither is given) and the approvals reviewer is "user" (auto_review lets a reviewer model
- *   approve requests). workspace-write and danger-full-access are not.
+ * - Codex and opencode: unavailable. Their CLI-run MCP calls do not necessarily reach this approval path,
+ *   and neither launch path supplies trustworthy evidence that those tools cannot write (AB-426).
  * - Claude: the permission mode is default, manual or plan (the bridge denies Write, Edit, MultiEdit,
  *   NotebookEdit, Bash and PowerShell in these). acceptEdits, auto, dontAsk and bypassPermissions are not.
- * - opencode: the effective permission is "read-only" (edit and bash need a permission request, which is asked or
- *   refused). auto-approve is not.
  * - Antigravity: access read or ask, without bypass_permissions (true or false). Muse: access read or ask, without
  *   a permission_profile.
  * - Every auto-approved MCP pattern (autoApproveTools, allow_tools or the default allowance) names only the Pair
@@ -155,9 +163,12 @@ export function readOnlyJob(job: {
   if (!job.allowedServers.every((tool) => tool.startsWith("mcp:") && isDeskServer(tool.slice("mcp:".length)))) return false;
   const lookOrAsk = job.permission === "read" || job.permission === "ask";
   switch (job.target) {
-    case "codex": return job.permission === "read-only" && job.approvalsReviewer === "user";
+    // These CLIs may execute configured MCP tools without sending a permission request here. Neither launch
+    // path proves those servers cannot write; a read-only shell sandbox/reviewer is insufficient (AB-426).
+    // This also excludes Codex exec-relay, which selects auto_review regardless of the requested reviewer.
+    case "codex": return false;
     case "claude": return isClaudeReadOnly(job.permission as ClaudePermissionMode);
-    case "opencode": return job.permission === "read-only";
+    case "opencode": return false;
     case "antigravity": return job.bypassPermissions === undefined && lookOrAsk;
     case "muse": return job.permissionProfile === undefined && lookOrAsk;
     default: return false;
