@@ -40,9 +40,11 @@ if (args[0] === "run") {
   process.stdin.on("end", () => {
     record({args, cwd:process.cwd(), pwd:process.env.PWD, config:process.env.OPENCODE_CONFIG_CONTENT, prompt});
     console.log(JSON.stringify({type:"text",sessionID:"same-session",part:{messageID:"m",text:"done"}}));
-    console.log(JSON.stringify({type:"step_finish",sessionID:"same-session",part:{messageID:"m",reason:"stop"}}));
+    // V2 reconciliation may emit text without a final step_finish; never use it as completion proof.
+    if (${major === 1}) console.log(JSON.stringify({type:"step_finish",sessionID:"same-session",part:{messageID:"m",reason:"stop"}}));
   });
 } else if (args[0] === "serve") {
+  record({args, cwd:process.cwd(), pwd:process.env.PWD, config:process.env.OPENCODE_CONFIG_CONTENT});
   // V2 ties the private server's lifetime to its parent's stdin pipe.
   if (${exitOnStdinEnd}) {
     process.stdin.resume();
@@ -73,7 +75,7 @@ if (args[0] === "run") {
   return { cwd, bin, calls: () => readFileSync(join(cwd, "calls.jsonl"), "utf8").trim().split("\n").map(line => JSON.parse(line)) };
 }
 
-it.each([1, 2])("uses process cwd and resumes with portable flags on OpenCode %i", async major => {
+it.each([1, 2])("uses process cwd and resumes with the supported V%i transport", async major => {
   const fixture = cli(major);
   const base = { ...fixture, prompt: "trivial prompt", model: "provider/model", effort: "low", timeoutSec: 10, log: nullLogger };
   const first = await delegateToOpencode({ ...base, autoApprove: true });
@@ -81,6 +83,22 @@ it.each([1, 2])("uses process cwd and resumes with portable flags on OpenCode %i
   const calls = fixture.calls();
   expect(calls.filter(c => c.probe)).toHaveLength(1);
   const runs = calls.filter(c => c.args?.[0] === "run");
+  if (major === 2) {
+    expect(runs).toHaveLength(0);
+    const serves = calls.filter(c => c.args?.[0] === "serve");
+    expect(serves).toHaveLength(2);
+    expect(serves[0]).toMatchObject({ cwd: fixture.cwd, pwd: fixture.cwd });
+    expect(serves[0].config).toBeUndefined();
+    const readOnly = JSON.parse(serves[1].config);
+    expect(readOnly.permission).toEqual({ edit: "deny", bash: "deny" });
+    expect(readOnly.tools).toMatchObject({ "*_*": false, bridge_ask_muse: true, bridge_spawn_muse: true,
+      bridge_ask_codex: true, bridge_spawn_claude: true, bridge_send: true });
+    expect(readOnly.tools.unrelated_write).toBeUndefined();
+    expect(calls.find(c => c.path?.endsWith("/model")).path).toBe("/api/session/ses_test/model");
+    expect(calls.find(c => c.path?.endsWith("/model")).body.model).toEqual({ providerID: "provider", id: "model", variant: "low" });
+    expect(calls.filter(c => c.path?.endsWith("/prompt")).map(c => c.body)).toEqual([{ text: base.prompt }, { text: base.prompt }]);
+    return;
+  }
   expect(runs[0]).toMatchObject({ cwd: fixture.cwd, pwd: fixture.cwd, prompt: base.prompt });
   expect(runs[0].args).toEqual(expect.arrayContaining(["--format", "json", "--auto", "-m", major === 2 ? "provider/model#low" : "provider/model"]));
   expect(runs[1].args).toEqual(expect.arrayContaining(["-s", "same-session"]));

@@ -863,9 +863,12 @@ export async function delegateToOpencode(req: DelegateRequest & { bin: string; a
   const { api } = parseOpencodeVersion(versionOutput);
   // Unknown output could be any API: never pick flags (or skip the native gate) on a guess.
   if (api === "unknown") throw new DelegateError(unknownOpencodeVersionMessage(versionOutput), "failed");
-  const v2 = api !== "v1";
-  if (api === "v2-native") {
-    // A private server lets us verify the gate loaded before any model/tool execution.
+  if (api !== "v1") {
+    // V2.0.26 run/noninteractive.ts:544-650,732-735 reconciles history after session.wait(),
+    // possibly without draining/emitting the final step_finish. Exit-0 text cannot prove completion.
+    // Use explicit execution terminal events for all supported V2s. The served path additionally
+    // verifies the native gate before model/tool execution when the version requires it (2.0.27+).
+    if (api === "v2" && req.effort && !req.model) throw new DelegateError("OpenCode 2 requires an explicit model when selecting effort", "failed");
     const { delegateToOpencodeServed } = await import("./opencode-served.js");
     return delegateToOpencodeServed({ ...req,
       nativeAccess: req.autoApprove ? "edit" : "read",
@@ -873,12 +876,10 @@ export async function delegateToOpencode(req: DelegateRequest & { bin: string; a
       onPermission: async () => req.autoApprove ? { allow: true } : { allow: false, message: "This delegated run cannot request approval." },
     });
   }
-  // runProcess sets both cwd and PWD; --dir was removed in OpenCode 2.
+  // V1 CLI: runProcess sets both cwd and PWD.
   const args = ["run", "--format", "json"];
-  if (v2) args.push("--standalone");
-  if (req.model) args.push("-m", v2 && req.effort ? `${req.model.split("#")[0]}#${req.effort}` : req.model);
-  if (req.effort && !v2) args.push("--variant", req.effort);
-  if (req.effort && v2 && !req.model) throw new DelegateError("OpenCode 2 requires an explicit model when selecting effort", "failed");
+  if (req.model) args.push("-m", req.model);
+  if (req.effort) args.push("--variant", req.effort);
   if (req.sessionId) args.push("-s", req.sessionId);
   // opencode's default rules allow edits and commands without asking, so read access must be enforced
   // explicitly: an extra config layer (merged over the user's) denies them. --auto approves the rest.

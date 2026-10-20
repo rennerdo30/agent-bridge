@@ -6,6 +6,14 @@ import { delegateToOpencodeServed } from "../src/core/opencode-served.js";
 import { nullLogger } from "../src/core/logger.js";
 
 const dirs: string[] = [];
+// Source-grounded v2.0.26 replay: noninteractive.ts reconcile() lines 544-650 writes
+// projected text after session.wait() wins (732-735); it does not synthesize step_finish.
+// https://github.com/anomalyco/opencode/blob/v2.0.26/packages/cli/src/run/noninteractive.ts
+const reconciledV2Text = {
+  type: "text", timestamp: 1792500000020, sessionID: "session",
+  part: { id: "prt_current_text-0", sessionID: "session", messageID: "msg_current", type: "text",
+    text: "Final answer", time: { start: 1792500000000, end: 1792500000020 } },
+};
 afterEach(() => {
   for (const dir of dirs.splice(0)) {
     const pids = readFileSync(join(dir, "pids"), "utf8").trim().split("\n").map(Number);
@@ -36,6 +44,7 @@ const parts=scenario==='empty'?[]:scenario==='rejected'?[text,tool]:[{...text,te
 const finish=scenario==='rejected'?'tool-calls':scenario==='length'?'length':'stop';
 if(process.argv[2]==='run'){
  process.stdin.resume();process.stdin.on('end',()=>{
+  if(version===2){console.log(JSON.stringify(${JSON.stringify(reconciledV2Text)}));clearTimeout(timer);return}
   for(const part of parts) console.log(JSON.stringify({type:part.type==='tool'?'tool_use':'text',sessionID:'session',part}));
   if(scenario!=='truncated')console.log(JSON.stringify({type:'step_finish',sessionID:'session',part:{messageID:'current',reason:finish}}));
   clearTimeout(timer);
@@ -61,7 +70,10 @@ if(process.argv[2]==='run'){
      if(scenario!=='empty'&&scenario!=='stale')emit('session.text.ended',{sessionID:'session',assistantMessageID:'current',ordinal:0,text:scenario==='rejected'?'I will inspect the files.':'Final answer'});
      if(scenario==='rejected'||scenario==='recovered')emit('permission.asked',{sessionID:'session',id:'permission',action:'bash',resources:['ls']});
      else if(scenario==='truncated')stream.end();
-     else {emit('session.step.ended',{sessionID:'session',assistantMessageID:'current',reason:finish});emit('session.execution.succeeded',{sessionID:'session'});}
+     else {
+      if(scenario!=='reconciled')emit('session.step.ended',{sessionID:'session',assistantMessageID:'current',finish});
+      emit('session.execution.succeeded',{sessionID:'session'});
+     }
     }
    },5);
   }
@@ -105,8 +117,28 @@ it("preserves auto-approved CLI edits and served editable configuration", async 
   expect(JSON.parse(readFileSync(join(served.cwd, "config.json"), "utf8"))).toBeNull();
 });
 
+it("does not treat a V2 reconciliation-shaped CLI text event as terminal proof", () => {
+  // Identical JSON is possible when output is truncated. Neither the projected id,
+  // text end time nor exit code can prove the execution outcome on their own.
+  expect(parseOpencodeJsonl(JSON.stringify(reconciledV2Text))).toMatchObject({
+    sessionId: "session", text: "Final answer", error: expect.stringContaining("finish: missing"),
+  });
+});
+
 for (const sessionId of [undefined, "session"]) {
   const turn = sessionId ? "resumed" : "initial";
+  for (const scenario of ["reconciled", "empty", "rejected", "truncated", "stale", "length", "recovered"]) {
+    it(`settles ${turn} V2 ${scenario} using execution evidence instead of reconciled CLI text`, async () => {
+      const req = fixture(2, scenario);
+      const result = await delegateToOpencode({ ...req, autoApprove: false, sessionId }).catch(error => error);
+      if (scenario === "reconciled" || scenario === "recovered") expect(result).toMatchObject({ sessionId: "session", isError: false, text: expect.stringContaining("answer") });
+      else expect(result.name === "DelegateError" ? result.kind === "failed" : result.isError).toBe(true);
+      expect(JSON.parse(readFileSync(join(req.cwd, "args.json"), "utf8"))[0]).toBe("serve");
+      expect(JSON.parse(readFileSync(join(req.cwd, "config.json"), "utf8"))).toMatchObject({
+        permission: { bash: "deny", edit: "deny" }, tools: { "*_*": false, bridge_send: true },
+      });
+    });
+  }
   for (const scenario of ["empty", "rejected", "truncated", "length", "success"]) {
     it(`classifies ${turn} CLI ${scenario} replies and enforces deny`, async () => {
       const req = fixture(1, scenario);

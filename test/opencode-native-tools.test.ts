@@ -78,28 +78,46 @@ it.each(["opencode v1.18.35", "2.0.26", "opencode v2.0.27", "opencode v2.0.29", 
   if (version === "v2.1.0") expect(parseOpencodeVersion(version)).toEqual({ api: "unknown", version: "2.1.0" });
 });
 
-it.each([1, 2])("keeps the V%i pre-native run flags and read restrictions unchanged", async major => {
+it.each([1, 2])("keeps V%i pre-native read restrictions across CLI and served transports", async major => {
   const cwd = mkdtempSync(join(process.env.AGENT_BRIDGE_TEST_ROOT!, "opencode-old-"));
   const script = join(cwd, "fake.mjs");
   writeFileSync(script, `#!/usr/bin/env node
-import {appendFileSync} from 'node:fs';
+import {appendFileSync,writeFileSync} from 'node:fs';import {createServer} from 'node:http';
 const args=process.argv.slice(2);
 if(args[0]==='--version'){console.log('opencode v${major === 1 ? "1.18.35" : "2.0.26"}');process.exit(0)}
 appendFileSync(new URL('calls.jsonl',import.meta.url),JSON.stringify({args,config:process.env.OPENCODE_CONFIG_CONTENT})+'\\n');
-process.stdin.resume();process.stdin.on('end',()=>{
+writeFileSync(new URL('pid',import.meta.url),String(process.pid));
+if(args[0]==='serve'){
+ let events;
+ createServer(async(req,res)=>{
+  const path=req.url.split('?')[0];
+  if(path==='/api/event'){events=res;res.writeHead(200,{'content-type':'text/event-stream'});res.write(': connected\\n\\n');return}
+  for await(const chunk of req){}
+  if(path.endsWith('/prompt'))setTimeout(()=>{
+   for(const ev of [{type:'session.text.ended',data:{sessionID:'ses_fixture',assistantMessageID:'m',ordinal:0,text:'done'}},
+    {type:'session.execution.succeeded',data:{sessionID:'ses_fixture'}}])events.write('data: '+JSON.stringify(ev)+'\\n\\n');
+  },5);
+  res.end(JSON.stringify({data:path==='/api/session'?{id:'ses_fixture'}:{}}));
+ }).listen(0,'127.0.0.1',function(){console.log('listening on http://127.0.0.1:'+this.address().port)});
+}else{process.stdin.resume();process.stdin.on('end',()=>{
 console.log(JSON.stringify({type:'text',sessionID:'ses_fixture',part:{text:'done'}}));
 console.log(JSON.stringify({type:'step_finish',sessionID:'ses_fixture',part:{reason:'stop'}}));
-});
+});}
 `);
   const bin = process.platform === "win32" ? join(cwd, "opencode.cmd") : script;
   if (process.platform === "win32") writeFileSync(bin, '@ECHO off\r\n"%dp0%\\fake.mjs" %*\r\n');
   else chmodSync(script, 0o755);
-  for (const autoApprove of [false, true]) await delegateToOpencode({ bin, cwd, prompt: "fixture", autoApprove, timeoutSec: 10, log: nullLogger });
+  for (const autoApprove of [false, true]) {
+    expect(await delegateToOpencode({ bin, cwd, prompt: "fixture", autoApprove, timeoutSec: 10, log: nullLogger })).toMatchObject({ text: "done", isError: false });
+    expect(pidAlive(Number(readFileSync(join(cwd, "pid"), "utf8")))).toBe(false);
+  }
   const calls = readFileSync(join(cwd, "calls.jsonl"), "utf8").trim().split("\n").map(line => JSON.parse(line));
-  expect(calls[0].args.includes("--standalone")).toBe(major === 2);
+  expect(calls[0].args[0]).toBe(major === 2 ? "serve" : "run");
+  expect(calls[0].args).not.toContain("--standalone");
   expect(calls[0].args).not.toContain("--auto");
   expect(JSON.parse(calls[0].config)).toEqual({ permission: { edit: "deny", bash: "deny" }, tools: OPENCODE_READ_ONLY_TOOLS });
-  expect(calls[1].args).toContain("--auto");
+  if (major === 1) expect(calls[1].args).toContain("--auto");
+  else expect(calls[1].args[0]).toBe("serve");
   expect(calls[1].config).toBeUndefined();
 });
 
