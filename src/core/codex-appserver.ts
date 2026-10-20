@@ -230,7 +230,7 @@ export async function delegateToCodexAppServer(
       }
       case "item/fileChange/requestApproval": {
         const paths = editPaths.get(params.itemId) ?? [];
-        // A file change is always asked (AB-402): paths are display text, not the change itself.
+        // A file change is always asked (AB-402): the paths are display text, not the change itself.
         const decision: PermissionDecision = req.sandbox === "danger-full-access" ? { allow: true } : req.canApprove || req.askMode || req.sandbox === "workspace-write" ? await decide("edit", codexFileChangeApprovalText(params, paths.length ? paths.join(", ") : String(params.reason ?? "file changes"))) : sandboxDenial;
         return answer(decision, { decision: decision.allow ? "accept" : "decline" }, "edit");
       }

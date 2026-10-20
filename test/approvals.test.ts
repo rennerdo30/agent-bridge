@@ -37,6 +37,7 @@ describe("Claude subagent permission prompts", () => {
       identity: expect.stringMatching(/^[0-9a-f]{64}$/),
     });
     expect(hookRequest("claude", { tool_name: "Bash", tool_input: { command: "git init x" } })).toEqual({ agent: "claude", tool: "Bash", detail: "git init x", cwd: undefined, identity: expect.stringMatching(/^[0-9a-f]{64}$/) });
+    // Codex permission hooks use the same MCP tool naming convention.
     // Codex permission hooks use the same MCP tool naming convention. An MCP call shows its whole input as JSON,
     // even with a `command` argument (AB-417 review): every MCP argument is part of the request.
     expect(hookRequest("codex", { tool_name: "mcp__s__t", tool_input: { command: "ls" } })).toMatchObject({ tool: "mcp:s", detail: 't: {"command":"ls"}' });

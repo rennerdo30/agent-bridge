@@ -24,7 +24,8 @@ export const FILE_CHANGE_TOOLS: ReadonlySet<string> = new Set(["Write", "Edit", 
 
 /**
  * The question text: the command or path, with security-relevant arguments marked first (AB-417). An MCP tool call
- * always shows its whole input as JSON (`mcp`), since every MCP argument is part of the request. Display only.
+ * always shows its whole input as JSON (`mcp`), since every MCP argument is part of the request. The approval identity
+ * uses the full tool input independently of this display text (AB-402).
  */
 function describe(toolInput: unknown, mcp: boolean): string {
   return describeToolInput(toolInput, { mcp });

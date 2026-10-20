@@ -64,9 +64,10 @@ export interface BridgeConfig {
   autoApproveTools: string[];
   /**
    * Spawned and asked jobs (AB-403). defaultAllowTools is the allow_tools of a job whose spawn_* / ask_* call
-   * passes none; an explicit list replaces it and an explicit [] turns it off. Home config only.
+   * passes none; an explicit list replaces it and an explicit [] turns it off. reuseIdenticalApprovals: an approval
+   * identical to one explicitly allowed earlier in the same job is reused (AB-402). Both home config only.
    */
-  jobs: { defaultAllowTools: string[] };
+  jobs: { defaultAllowTools: string[]; reuseIdenticalApprovals: boolean };
   /** Machine-wide named resource capacities, shared by all jobs using this home directory. */
   resourceSlots: Record<string, number>;
   delivery: DeliveryMode;
@@ -83,8 +84,6 @@ export interface BridgeConfig {
   codexWindowsSandbox: "unelevated" | "elevated";
   /** Push and safely reap explicitly closed worktree jobs. Never enabled implicitly. */
   jobCloseCleanup: boolean;
-  /** Job approval behaviour. reuseIdenticalApprovals: an approval identical to one explicitly allowed earlier in the same job is reused (AB-402). */
-  jobs: { reuseIdenticalApprovals: boolean };
   /** Reviewer for eligible delegated Codex approvals; does not change the sandbox. */
   codexApprovalsReviewer: CodexApprovalsReviewer;
   /** Worktree edits: null inherits codexSandbox; read-only default becomes full access on Windows. */
@@ -134,7 +133,7 @@ export const DEFAULT_CONFIG: BridgeConfig = {
   maxJobs: DEFAULT_MAX_JOBS,
   maxDelegateDepth: DEFAULT_MAX_DELEGATE_DEPTH,
   autoApproveTools: [],
-  jobs: { defaultAllowTools: ["pair-desk:worker"] },
+  jobs: { defaultAllowTools: ["pair-desk:worker"], reuseIdenticalApprovals: true },
   resourceSlots: {},
   delivery: "auto",
   claudeBin: DEFAULT_CLAUDE_BIN,
@@ -143,7 +142,6 @@ export const DEFAULT_CONFIG: BridgeConfig = {
   codexSandbox: "read-only",
   codexWindowsSandbox: "unelevated",
   jobCloseCleanup: false,
-  jobs: { reuseIdenticalApprovals: true },
   codexApprovalsReviewer: DEFAULT_CODEX_APPROVALS_REVIEWER,
   codexWorktreeSandbox: null,
   codexWorkspaceWriteNetworkAccess: null,
@@ -261,6 +259,17 @@ function jobDefaultAllowTools(sources: Record<string, unknown>[], log: Logger): 
     const parsed = toolPatterns(jobs.defaultAllowTools);
     if (parsed) return parsed;
     log.warn("ignoring invalid config value", { key: "jobs.defaultAllowTools", value: String(jobs.defaultAllowTools) });
+  }
+  return undefined;
+}
+
+/** jobs.reuseIdenticalApprovals from the first home source that sets it to a boolean (AB-402). */
+function jobReuseIdenticalApprovals(sources: Record<string, unknown>[], log: Logger): boolean | undefined {
+  for (const source of sources) {
+    const jobs = source.jobs;
+    if (!isRecord(jobs) || jobs.reuseIdenticalApprovals === undefined) continue;
+    if (typeof jobs.reuseIdenticalApprovals === "boolean") return jobs.reuseIdenticalApprovals;
+    log.warn("ignoring invalid config value", { key: "jobs.reuseIdenticalApprovals", value: String(jobs.reuseIdenticalApprovals) });
   }
   return undefined;
 }
@@ -386,7 +395,10 @@ export function loadConfig(home: string, agent: AgentKind, log: Logger, env: Nod
     maxDelegateDepth: pick("maxDelegateDepth", ENV.maxDelegateDepth, (v) => parseIntInRange(v, 1, MAX_DELEGATE_DEPTH_LIMIT)) ?? d.maxDelegateDepth,
     autoApproveTools: pick("autoApproveTools", ENV.autoApproveTools, toolPatterns) ?? d.autoApproveTools,
     // Home config only (agent section, then top level); a project config cannot loosen approvals.
-    jobs: { defaultAllowTools: [...(jobDefaultAllowTools([section, file], log) ?? d.jobs.defaultAllowTools)] },
+    jobs: {
+      defaultAllowTools: [...(jobDefaultAllowTools([section, file], log) ?? d.jobs.defaultAllowTools)],
+      reuseIdenticalApprovals: jobReuseIdenticalApprovals([section, file], log) ?? d.jobs.reuseIdenticalApprovals,
+    },
     // Capacities must agree across agents; per-agent sections cannot override shared resources.
     resourceSlots: resourceSlots(file.resourceSlots) ?? d.resourceSlots,
     delivery: pick("delivery", ENV.delivery, (v) => oneOf(v, DELIVERY_MODES)) ?? d.delivery,
@@ -401,7 +413,6 @@ export function loadConfig(home: string, agent: AgentKind, log: Logger, env: Nod
     codexSandbox: pick("codexSandbox", null, (v) => oneOf(v, CODEX_SANDBOXES)) ?? d.codexSandbox,
     codexWindowsSandbox: pick("codexWindowsSandbox", null, (v) => oneOf(v, ["unelevated", "elevated"] as const)) ?? d.codexWindowsSandbox,
     jobCloseCleanup: pick("jobCloseCleanup", null, parseBool) ?? d.jobCloseCleanup,
-    jobs: { reuseIdenticalApprovals: pick("jobs", null, (v) => isRecord(v) && typeof v.reuseIdenticalApprovals === "boolean" ? v.reuseIdenticalApprovals : undefined) ?? d.jobs.reuseIdenticalApprovals },
     codexApprovalsReviewer: pick("codexApprovalsReviewer", null, (v) => oneOf(v, CODEX_APPROVALS_REVIEWERS)) ?? d.codexApprovalsReviewer,
     codexWorktreeSandbox: pick("codexWorktreeSandbox", null, (v) => oneOf(v, CODEX_SANDBOXES)) ?? d.codexWorktreeSandbox,
     codexWorkspaceWriteNetworkAccess: pick("codexWorkspaceWriteNetworkAccess", null, parseBool) ?? d.codexWorkspaceWriteNetworkAccess,
