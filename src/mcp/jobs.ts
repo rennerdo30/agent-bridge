@@ -894,7 +894,7 @@ export class JobManager {
     const appliedReceipts = new Map<string, PendingJobReceipt>();
     // Receipts are never authority to claim foreign/headless jobs. Apply the
     // ordinary restore policy and ownership proof before importing any bytes.
-    if (!this.dormant && !this.reportsStopped) for (const receipt of readPendingJobs(this.storePath,
+    const pending = this.dormant || this.reportsStopped ? [] : readPendingJobs(this.storePath,
       error => this.log.warn("pending job receipt retained", { err: String(error) }), index => {
         const handoff = isRecord(index.handoff) ? index.handoff : undefined;
         const explicit = this.restorePolicy?.canReceiveHandoff() && handoff?.reason === "explicit-handoff" && handoff.to === this.node.name &&
@@ -903,13 +903,39 @@ export class JobManager {
           (this.isMine(index.writerName as string) || Boolean(explicit)) &&
           (this.lineage ? index.parentJob === this.lineage.parentJob : !index.parentJob) &&
           (!this.restorePolicy || this.restorePolicy.canRestore() || Boolean(explicit));
-      })) {
+      }).filter(receipt => {
+        const saved = receipt.value.job;
+        const handoff = isStoredJob(saved) ? saved.ownershipHistory?.at(-1) : undefined;
+        const explicit = this.restorePolicy?.canReceiveHandoff() && handoff?.reason === "explicit-handoff" && handoff.to === this.node.name &&
+          (handoff.rootSession === this.node.currentSessionId || handoff.rootSession === this.node.id);
+        return isStoredJob(saved) && this.canRestoreSaved(saved) && this.isMine(saved.owner) && (this.isMine(receipt.value.writer.name) || explicit) &&
+          (this.lineage ? saved.parentJob === this.lineage.parentJob : !saved.parentJob);
+      });
+    const byJob = new Map<string, PendingJobReceipt[]>();
+    for (const receipt of pending) {
+      const id = receipt.value.job.id as string;
+      const receipts = byJob.get(id) ?? [];
+      receipts.push(receipt); byJob.set(id, receipts);
+    }
+    const replay: PendingJobReceipt[] = [];
+    for (const [id, receipts] of byJob) {
+      if (durableIds.has(id)) { replay.push(...receipts); continue; }
+      // Fresh jobs are retained before admission without a base; later
+      // transitions carry their prior snapshot. A dependent receipt cannot
+      // establish authority just because its timestamp/directory sorts first.
+      const roots = receipts.filter(receipt => receipt.value.baseJob === undefined);
+      if (new Set(roots.map(receipt => receipt.value.writer.nonce)).size !== 1) continue;
+      const initial = roots.reduce((a, b) => a.value.sequence < b.value.sequence ? a : b);
+      const writer = initial.value.writer.nonce;
+      // Resolve the original writer before replaying any dependent transition.
+      // Missing or conflicting roots stay retained, as do earlier dependents.
+      replay.push(...receipts.filter(receipt => receipt.value.writer.nonce === writer && receipt.value.sequence >= initial.value.sequence)
+        .sort((a, b) => a.value.sequence - b.value.sequence));
+      replay.push(...receipts.filter(receipt => receipt.value.writer.nonce !== writer));
+    }
+    for (const receipt of replay) {
       const saved = receipt.value.job;
-      const handoff = isStoredJob(saved) ? saved.ownershipHistory?.at(-1) : undefined;
-      const explicit = this.restorePolicy?.canReceiveHandoff() && handoff?.reason === "explicit-handoff" && handoff.to === this.node.name &&
-        (handoff.rootSession === this.node.currentSessionId || handoff.rootSession === this.node.id);
-      if (!isStoredJob(saved) || !this.canRestoreSaved(saved) || !this.isMine(saved.owner) || !(this.isMine(receipt.value.writer.name) || explicit) ||
-          (this.lineage ? saved.parentJob !== this.lineage.parentJob : Boolean(saved.parentJob))) continue;
+      if (!isStoredJob(saved)) continue;
       const index = stored.findIndex(job => job.id === saved.id);
       const priorReceipt = appliedReceipts.get(saved.id);
       const base = !durableIds.has(saved.id) && priorReceipt?.value.writer.nonce === receipt.value.writer.nonce &&
