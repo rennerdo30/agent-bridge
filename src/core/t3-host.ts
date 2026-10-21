@@ -64,7 +64,7 @@ export const t3DelegateInput = z.object({
   // This adapter never raises permission modes. T3 also enforces the caller's native policy.
   target: z.object({ providerInstanceId: id, model: id,
     options: z.union([z.array(optionSetting).max(64), z.record(id, optionValue).refine(o => Object.keys(o).length <= 64)
-      .transform(o => Object.entries(o).map(([id, value]) => ({ id, value }))]).optional(),
+      .transform(o => Object.entries(o).map(([id, value]) => ({ id, value })))]).optional(),
   }).optional(),
 }).strict();
 export type T3DelegateInput = z.input<typeof t3DelegateInput>;
