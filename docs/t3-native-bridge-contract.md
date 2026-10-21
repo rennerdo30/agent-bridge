@@ -64,7 +64,7 @@ Reproducible non-secret gate checks for the follow-on package:
 
 Local artifact directory: `E:/AgentData/reports/ab458-native-contract-20261022-t32af0942b`.
 
-`t3-native-bridge-gated.patch` SHA-256: `B379FB0825BEDD4B7CFBC86CBD137C01CA4EDDD2784DEDC01B5D039B80849CF6`. It applies to the pinned T3 source and contains exactly:
+`t3-native-bridge-gated.patch` SHA-256: `E02C37A288D221A54B53CC2D381CE12C672917BC054A9A5A9F543A46C410210C`. It applies to the pinned T3 source and contains exactly:
 
 - `packages/provider-core/src/server/mcpSession.ts`: optional trusted registration ID, absent by default.
 - `packages/provider-core/src/server/nativeBridgeMcp.ts`: pure, default-off projection into two named-server env leaves, bounded validation and sanitized refusal.
@@ -85,7 +85,7 @@ Native-child fixes, if required in Codex, start at `codex-rs/core/src/agent/chil
 & 'E:/AgentData/reports/ab458-native-contract-20261022-t32af0942b/verify-artifact.ps1'
 ```
 
-`verification-v2.log` starts with the Bridge base and T3 pin. Preparation PID 5208 exited 0; its `git diff --no-index` PID 54448 exited 1 (expected differences), and `git apply --check` PID 66920 exited 0. Projection PID 32332 passed 7/7, exit 0. Deliberately replacing the enabled path with an empty result made PID 29400 fail 4/7, exit 1 as expected. Every child deadline was 15 seconds. The earlier receipt is retained separately; v2 is the final artifact receipt. Public source fetches used 20-second request timeouts and no provider process.
+`verification-v3.log` starts with the Bridge base and T3 pin. Preparation PID 79108 exited 0; its `git diff --no-index` PID 68836 exited 1 (expected differences), and `git apply --check` PID 48752 exited 0. Projection PID 26088 passed 7/7, exit 0. Deliberately replacing the enabled path with an empty result made PID 56488 fail 4/7, exit 1 as expected. Every child deadline was 15 seconds. The earlier receipt is retained separately; v3 is the final artifact receipt. Public source fetches used 20-second request timeouts and no provider process.
 
 Not run: upstream TypeScript/package build, upstream logger test, Codex child-isolation/persistence tests, native T3 smoke, installed update, cross-PC delivery and full suites. The seven projection fixtures prove the artifact helper's output/refusals, not Codex merge semantics, launch inheritance, credential rotation or either enablement gate. Parent review and hosted CI remain required before integration.
 
