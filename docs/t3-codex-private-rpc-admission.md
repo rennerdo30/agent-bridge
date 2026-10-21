@@ -77,3 +77,31 @@ CI=true AB458_CI_OWNED_CHECKOUT=1 node /work/ab458-artifact/run-ci.mjs /work/t3c
 The guarded runner rejects the owner Windows PC, wrong/dirty pin and wrong provisioned Node/pnpm/Effect. It installs nothing, loads no environment file, launches no provider, checks hashes and applies the patch only to the explicitly supplied disposable checkout. It runs `pnpm exec tsc-rs --noEmit -p .ab458-ci.typecheck.json` (120-second bound), then `pnpm exec vp test run --config .ab458-ci.vitest.config.ts` (90-second bound), then each restored production mutation (45-second bound). Only the four Bridge/admission test files are selected, one worker; full suites remain a separate CI gate. The actual adapter's transitive types and actual protocol/client sources are included in typechecking. No CI submission or result is claimed here.
 
 Owner/parent action is limited to reviewing/building these **T3-owned** workspace changes, accepting the explicit connection-lifetime/replay policy, and implementing the still-missing generation-pinned app-owned Bridge connector/lifecycle contract. That connector must retain atomic durable admission, main lineage/ownership/depth guards, exact recipient binding, bounded owned disposal with unresolved-resource accounting, and scoped revocation/host callbacks. Real warm-resume/root-child/close/native acceptance and existing T3 MCP child borrowing remain open. No Codex runtime patch, Effect library patch, installed dependency edit, release, PR or enablement is authorized or performed by this package.
+
+## Tracked hosted follow-on (round-three review)
+
+The historical package and receipts above remain unchanged. The owner authorized
+the separately reviewable hosted package at
+[`scripts/t3-native-integration`](../scripts/t3-native-integration/README.md),
+including a path-filtered PR-only Linux workflow. It preserves the exact original
+patch and applies separately hashed disposal-test and round-three corrections in
+the manifest's order. Review must cover the effective combined ten-file upstream
+diff, runner, and workflow. Parent opens/links the PR; this child does not trigger CI.
+
+The old adapter candidate observed outgoing pre-write logger events; those were
+not delivery evidence. The follow-on captures decoded frames at the actual private
+writer boundary and asserts the correlated RPC ID and full result. It replaces the
+20-yield close loop with explicit bounded disposal/completion waits. Additional
+protocol tests exercise committed-effect writer failure, handler defects, ordinary
+managed approvals, pre-handler admission exhaustion, and shutdown. Mutation gates
+require their named assertion in a structured executed-test report; an arbitrary
+exit 1, timeout, import/collection/setup failure is not accepted as proof.
+
+Offline package checks, layered application, syntax, and validator tests are
+distinct from the mandatory **NOT RUN** pinned upstream typecheck, real production
+adapter/protocol tests, and production mutations. No local dependency install,
+provider launch, installed modification, hosted workflow invocation, PR, or native
+acceptance occurred. The all-managed-request lifetime budget and the still-missing
+transport-terminal-signal-to-broker-revocation interface require upstream review
+before production enablement. The tracked README records exact hosted commands,
+tool/source pins, evidence boundaries, and connector ownership requirements.

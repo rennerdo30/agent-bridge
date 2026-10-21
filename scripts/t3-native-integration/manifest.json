@@ -1,0 +1,269 @@
+{
+  "schema": 1,
+  "status": "prepared-not-hosted-executed",
+  "upstream": {
+    "repository": "https://github.com/pingdotgg/t3code.git",
+    "commit": "968dd51704441138559a3fe9c348719f2b11e0c6"
+  },
+  "codexInspectedSourcePin": "6203846fb3ef040f62eed9b35bc6629c8e88980a",
+  "parentBridgeBase": "70820a0fd090bd12f8245e9cf7e51db13a78eef0",
+  "packageInputBridgeHead": "2ecd3dc7318da1490f2135ff8afcf0eb50f276e9",
+  "patchOrder": [
+    "01-reviewed.patch",
+    "02-disposal-test.patch",
+    "03-round3.patch"
+  ],
+  "historicalArtifact": {
+    "sha256": "e0b3c5ba6357eaf656aed86f8980b7a83338617efabbc4c4e0ce0d583e348f61",
+    "review": "AB45842197-42198; historical only"
+  },
+  "tools": {
+    "node": "24.13.1",
+    "pnpm": "12.14.0",
+    "pnpmArchive": {
+      "url": "https://registry.npmjs.org/@pnpm/exe.linux-x64/-/exe.linux-x64-12.14.0.tgz",
+      "integrity": "sha512-F6K8e/jWxiuEYJaQtRRUG9ynBSTEHa+t7Lf86MKuOO5UA7WVVMbi+oB8nY6iKW++ncWS2yG6T9faXZGxqNsfoQ=="
+    },
+    "effect": "4.0.5",
+    "effectVitest": "4.0.5",
+    "vitePlus": "1.3.0",
+    "typescript": "7.0.2",
+    "tscRs": "0.7.0",
+    "effectTsgo": "0.51.1"
+  },
+  "installedPackages": [
+    [
+      "effect",
+      "packages/effect-codex-app-server",
+      "4.0.5"
+    ],
+    [
+      "@effect/vitest",
+      "apps/server",
+      "4.0.5"
+    ],
+    [
+      "@effect/platform-node",
+      "apps/server",
+      "4.0.5"
+    ],
+    [
+      "vite-plus",
+      ".",
+      "1.3.0"
+    ],
+    [
+      "typescript",
+      ".",
+      "7.0.2"
+    ],
+    [
+      "tsc-rs",
+      ".",
+      "0.7.0"
+    ],
+    [
+      "@effect/tsgo",
+      ".",
+      "0.51.1"
+    ]
+  ],
+  "sources": [
+    {
+      "path": ".github/actions/setup-ci-deps/action.yml",
+      "sha256": "22986e04357885db069b8feacafba570d5f4654c6be41660301f815a12226554",
+      "gitBlob": "d53722f57dd75c99a5bcf931ffb45ed41160fd51"
+    },
+    {
+      "path": ".repos/effect-smol/LLMS.md",
+      "sha256": "b904e15c3c7136ae72a05f081ac78b134e25f949bcebd151fd36146a6c32baea",
+      "gitBlob": "963a7a5bd51e1fb7cea7d6668fc635247679a478"
+    },
+    {
+      "path": "AGENTS.md",
+      "sha256": "bac7846bad92afdd15f7d967f9a8a5b8d129b23437e80e6dd55b74b109aff3a2",
+      "gitBlob": "9bcafc5cceb2b3b5155dd24990c74a1d23beaa3f"
+    },
+    {
+      "path": "apps/server/package.json",
+      "sha256": "2a0a2055ba2a6c7be7feaa02a4bb4d5fad361b192c82bc0dc6c6c0011eacad63",
+      "gitBlob": "44a2abf380049881fb6a0c9b90e4865c56c07c98"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.test.ts",
+      "sha256": "42d79e9b64b2a03d6c78dfefc9d567935d5867aa7b0003cd5bb0af6b8684a277",
+      "gitBlob": "5f00beb2fbc3be56af8bd0b5add2fd9365f4cc44"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.testkit.ts",
+      "sha256": "62fe79f7031329569d54a586fef136ddc4319273462dc8fd7422318fcace25c4",
+      "gitBlob": "ea949828076da2c0c129b4d8a8f2debd4bd7453f"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts",
+      "sha256": "420d5b88b5bde002f08071c728682dc52f90670f5e624228b9d04b4a6f75a632",
+      "gitBlob": "5c4df98d310d15437c3ca54366f807e0428b9107"
+    },
+    {
+      "path": "CLAUDE.md",
+      "sha256": "336cc4fbf19beaada7ccf9986414fa91851a8d7a07dfb3ccbe800a69eed0ab49",
+      "gitBlob": "43c994c2d3617f947bcb5adf1933e21dabe46bb5"
+    },
+    {
+      "path": "docs/internals/effect-services.md",
+      "sha256": "fae8660b72755c235a9fb569a4107c07e0eea41203ade3c80298a96a15285286",
+      "gitBlob": "f2d93b9d8e84b4afc75152b3e4cd8c443d79c527"
+    },
+    {
+      "path": "package.json",
+      "sha256": "2b54a5a208bb93b3979f0cabb66887aecf6a9bc2aac7007bc4480ec1cffa287d",
+      "gitBlob": "be1f45d4f20cc9f02ec1e006536fbd08f0d00380"
+    },
+    {
+      "path": "packages/effect-codex-app-server/package.json",
+      "sha256": "1724926119a89650e61051f5f582f3bf812fccb98757e1d68fbbd07df628113e",
+      "gitBlob": "624d96b91f033154fa4d3f9a5ad964937bce3be5"
+    },
+    {
+      "path": "packages/effect-codex-app-server/src/_internal/stdio.ts",
+      "sha256": "fc6103f6dae012d365445a2ef3e6aa0db458fcbe73a6c481f6cdd962d7aee56d",
+      "gitBlob": "e77f53e4b5cccc62a94d5d9f527223f86036cd86"
+    },
+    {
+      "path": "packages/effect-codex-app-server/src/client.ts",
+      "sha256": "d60165961c79bd11d8342d84b388217db6a07b4d9f0a7035a37224a1d3ea7d47",
+      "gitBlob": "e7c5f50b57045eba8f2119bdc95efb6ae8be3595"
+    },
+    {
+      "path": "packages/effect-codex-app-server/src/errors.ts",
+      "sha256": "da009cb3c6a75eff143bde062f313d53bd2f345f249a4c7b3fbe0289eacd6db3",
+      "gitBlob": "6e7569f64291caf02576c95213f63bd34124b200"
+    },
+    {
+      "path": "packages/effect-codex-app-server/src/protocol.test.ts",
+      "sha256": "7f8ba54edb85df184fbc8a4e5e15962c126d0bfe95e3ca78d849661650bb340d",
+      "gitBlob": "10e979c6501087a5b0daa1a235ff35b111b5f729"
+    },
+    {
+      "path": "packages/effect-codex-app-server/src/protocol.ts",
+      "sha256": "19f5b1cf8d2fac5075b13028171ffdfaf01b9865bfebbfec8148b5e346d426e7",
+      "gitBlob": "bf67174033f4d07a1f7e479d3cb0be4e01050526"
+    },
+    {
+      "path": "packages/provider-core/src/server/McpProviderSessions.ts",
+      "sha256": "196c6afa2b063fbc165024c9d7e0996b347cb91788d0e0bad6cbbb804e464f88",
+      "gitBlob": "2da992cfb852d5fb7aa60607c877ca1858b83d92"
+    },
+    {
+      "path": "packages/provider-core/src/server/ProviderAdapter.ts",
+      "sha256": "97e35c0038c2f32f9ea2bc3566240ba14e8182d2a668451614e6767709962548",
+      "gitBlob": "db5a18f77b46f7e2d01ba300b077f1a0e50df579"
+    },
+    {
+      "path": "pnpm-lock.yaml",
+      "sha256": "3acdbe519411fe68efb09ed3fda1c10adfbff87ce75cb5508311de654d85d3b3",
+      "gitBlob": "fa96b326cc4c03e419cb86485008938a7aa45651"
+    },
+    {
+      "path": "pnpm-workspace.yaml",
+      "sha256": "39d55fa21a0b2f675a3f68ea2359360b542acd432faa82f9eb800caf6d58e57c",
+      "gitBlob": "2bc5c47593203476cce8810805802effa420af84"
+    },
+    {
+      "path": "tsconfig.base.json",
+      "sha256": "5cec5b77eeaebd310c3c8ac4e4b89951b903559b01472b4eb69d1134326e08a3",
+      "gitBlob": "07c4224cf8d2539d6bfa3883f53b3ecf3b97eac2"
+    }
+  ],
+  "effectiveFiles": [
+    {
+      "path": "apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts",
+      "sha256": "5ef4e28d960a97d4ef53ed1426ecc3e6fa2519000464b8a884dd9f93f4b384fb"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/Adapters/CodexBridgeDynamicTools.adapter.test.ts",
+      "sha256": "a9483ee8a53cbdf8ae7ae155d383fb938846c478def0b6bb39d75025b123c0e5"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/Adapters/CodexBridgeDynamicTools.replay.test.ts",
+      "sha256": "5088a0d51cd032d6f488683133baa5cde9aff381e3c95e5fa75a5968f0b8cc61"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/Adapters/CodexBridgeDynamicTools.test.ts",
+      "sha256": "25136da37277a9245e867666098f8d29b74b8893329cfc1fcfee0f6a65d1e13e"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/Adapters/CodexBridgeDynamicTools.ts",
+      "sha256": "a8713533a7b93d49baf4703e0808460f917bc8ffbc99f99452ec92ac65434244"
+    },
+    {
+      "path": "packages/effect-codex-app-server/src/errors.ts",
+      "sha256": "97a60c6a14cff0e7d74f85578c6d7289e69645330b78462bcfa0ea381fbab959"
+    },
+    {
+      "path": "packages/effect-codex-app-server/src/PrivateProtocolLifecycle.test.ts",
+      "sha256": "032a761a340af90f9a396cfbd30b14c98afb4fc339d04fa70f1fe73595123cd1"
+    },
+    {
+      "path": "packages/effect-codex-app-server/src/PrivateRequestAdmission.test.ts",
+      "sha256": "ca1114f711094acfebe6fd6efe280c91012ca7e97efd14b4497ab4e63d582e72"
+    },
+    {
+      "path": "packages/effect-codex-app-server/src/PrivateRequestAdmission.ts",
+      "sha256": "7e5e5d403b6932d7970d4929cf9ba470eccfa4f452fd3abf70375f9ba82c7ea1"
+    },
+    {
+      "path": "packages/effect-codex-app-server/src/protocol.ts",
+      "sha256": "f6c1267360c9bfdb6ec133c8bec821ea6754d09caeb8e0c30ad2475428724bcf"
+    }
+  ],
+  "effectiveTreeHashAlgorithm": "SHA256 of path+NUL+sha256+LF for files sorted by localeCompare(en); changed/new upstream source files only",
+  "effectiveTreeSha256": "64519d9fa4d284c6c0ff8f1b8c9bb6fc3f17c4939c8d934209f52f5c83ff76f4",
+  "artifacts": [
+    {
+      "path": "01-reviewed.patch",
+      "sha256": "e0b3c5ba6357eaf656aed86f8980b7a83338617efabbc4c4e0ce0d583e348f61"
+    },
+    {
+      "path": "02-disposal-test.patch",
+      "sha256": "c799b3e14096ab75ffa60528faa3800a8b7057a5487d25238afd893b3ed0d4f7"
+    },
+    {
+      "path": "03-round3.patch",
+      "sha256": "4fc67d2a06951a851a597ea83c090c486aefdd74c0b15e087fe0c8ea253d7307"
+    },
+    {
+      "path": "ci.typecheck.json",
+      "sha256": "bab00e3cc1be9b79fb6b0e32096d2b324d9d430435beee357ca41ea6cce1302b"
+    },
+    {
+      "path": "ci.vitest.config.ts",
+      "sha256": "43b4ab80ef6e94cc2b4306acc4975f59602314b35ad008066cf499da7a5b6ac3"
+    },
+    {
+      "path": "gate.mjs",
+      "sha256": "432c772298cecf0b60af4f767043327837785bffaf1e0420ad699ab345737feb"
+    },
+    {
+      "path": "gate.test.mjs",
+      "sha256": "bf58f54e09f26429ba39b7dee502afb3306d4596d87785483e4baefab1ee3c9e"
+    },
+    {
+      "path": "offline-evidence.json",
+      "sha256": "890784b8adb5b2635692c402759d3f3a12ee3989667c0d7e601e11ba40794911"
+    },
+    {
+      "path": "README.md",
+      "sha256": "a267dc9fdedda9deb6c9193b8bdd9a07c1fa68e86dc4fa2f529b497bd58237d3"
+    },
+    {
+      "path": "run.mjs",
+      "sha256": "012630938e3fb125ff44644d8fa6abad9790951c4c0615e81aed30c9d0d8a981"
+    },
+    {
+      "path": "verify.mjs",
+      "sha256": "607b09c5f17052f2e0f12d03e2f065ef1f3e4c6aa938e9fa3eb598e40848a018"
+    }
+  ],
+  "workflowSha256": "c87b24ae47cd1341788f20e2efe108e78b108816b69d812c6c57e88ac21ddf07"
+}

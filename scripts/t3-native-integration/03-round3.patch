@@ -1,0 +1,377 @@
+diff --git a/apps/server/src/orchestration-v2/Adapters/CodexBridgeDynamicTools.adapter.test.ts b/apps/server/src/orchestration-v2/Adapters/CodexBridgeDynamicTools.adapter.test.ts
+index a4e5d26..44cf48c 100644
+--- a/apps/server/src/orchestration-v2/Adapters/CodexBridgeDynamicTools.adapter.test.ts
++++ b/apps/server/src/orchestration-v2/Adapters/CodexBridgeDynamicTools.adapter.test.ts
+@@ -64,10 +64,12 @@ function turnInput(threadId: ThreadId, providerThread: OrchestrationV2ProviderTh
+   };
+ }
+ 
++// The test owns one adapter operation; harness construction adds no service span.
+ const makeHarness = Effect.fnUntraced(function* (scope: Scope.Scope) {
+   const pipe = yield* makeInMemoryStdio();
+   const outgoing: Array<Record<string, unknown>> = [];
+   const markers = new Map<string, ReturnType<typeof latch<void>>>();
++  const wireMarkers = new Map<string, ReturnType<typeof latch<void>>>();
+   const replyWaiters = new Map<number, { readonly count: number; readonly ready: ReturnType<typeof latch<void>> }>();
+   let closed = 0, sends = 0, phase: "hold" | "fault" | "shutdown" = "hold";
+   const allStarted = latch<void>(), release = latch<Protocol.DynamicToolCallParams["arguments"]>();
+@@ -81,16 +83,6 @@ const makeHarness = Effect.fnUntraced(function* (scope: Scope.Scope) {
+   const logger = (event: CodexAppServerProtocolLogEvent) => Effect.sync(() => {
+     if (event.stage !== "decoded" || !event.payload || typeof event.payload !== "object") return;
+     const frame = event.payload as Record<string, unknown>;
+-    if (event.direction === "outgoing") {
+-      outgoing.push(frame);
+-      if (typeof frame.id === "number" && !frame.method) {
+-        if (frame.id >= 100 && frame.id < 132) prematureReply.resolve();
+-        const pending = replyWaiters.get(frame.id);
+-        if (pending && outgoing.filter((candidate) => candidate.id === frame.id && !candidate.method).length >= pending.count) {
+-          pending.ready.resolve(); replyWaiters.delete(frame.id);
+-        }
+-      }
+-    }
+     if (event.direction === "incoming" && frame.method === "ab458/barrier") {
+       const nonce = (frame.params as Record<string, unknown>).nonce;
+       if (typeof nonce === "string") markers.get(nonce)?.resolve();
+@@ -99,10 +91,23 @@ const makeHarness = Effect.fnUntraced(function* (scope: Scope.Scope) {
+   const client = yield* Client.make(pipe.stdio, { logIncoming: true, logOutgoing: true, logger });
+   yield* Stream.fromQueue(pipe.output).pipe(Stream.runForEach((line) => Effect.gen(function* () {
+     const frame = JSON.parse(line) as Record<string, unknown>;
+-    if (typeof frame.method !== "string") return; // Actual encoded server-request responses are observed by logger.
++    outgoing.push(frame);
++    if (typeof frame.id === "number" && !frame.method) {
++      if (frame.id >= 100 && frame.id < 132) prematureReply.resolve();
++      const pending = replyWaiters.get(frame.id);
++      if (pending && outgoing.filter((candidate) => candidate.id === frame.id && !candidate.method).length >= pending.count) {
++        pending.ready.resolve(); replyWaiters.delete(frame.id);
++      }
++    }
++    if (typeof frame.method !== "string") return;
+     if (frame.method === "initialized") return;
+     let result: unknown;
+     switch (frame.method) {
++      case "ab458/wire-barrier": {
++        const key = (frame.params as Record<string, unknown>).nonce;
++        if (typeof key === "string") wireMarkers.get(key)?.resolve();
++        return;
++      }
+       case "initialize": result = { userAgent: "mock", codexHome: "/mock", platformFamily: "unix", platformOs: "linux" }; break;
+       case "thread/start": result = threadReply; break;
+       case "thread/resume": {
+@@ -144,6 +149,11 @@ const makeHarness = Effect.fnUntraced(function* (scope: Scope.Scope) {
+   });
+   const appId = ThreadId.make("app-ab458");
+   const runtime = yield* adapter.openSession({ threadId: appId, providerSessionId: ProviderSessionId.make("session-ab458"), modelSelection: selection, runtimePolicy: policy });
++  // An assertion mutation may exit before the deliberate shutdown suspension.
++  // Release only that failure-cleanup path; the explicit close test stays held.
++  yield* Effect.addFinalizer(() => Effect.sync(() => {
++    if (phase !== "shutdown") releaseClose.resolve();
++  }));
+   const providerThread = yield* runtime.ensureThread({ threadId: appId, modelSelection: selection, runtimePolicy: policy });
+   const events: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
+   yield* runtime.events.pipe(Stream.runForEach((event) => Effect.sync(() => {
+@@ -154,7 +164,7 @@ const makeHarness = Effect.fnUntraced(function* (scope: Scope.Scope) {
+     }
+   })), Effect.forkScoped);
+   const start = outgoing.find((frame) => frame.method === "thread/start");
+-  assert.deepEqual((start?.params as Record<string, unknown>).dynamicTools, bridgeDynamicTools);
++  assert.deepEqual((start?.params as Record<string, unknown>)?.dynamicTools, bridgeDynamicTools, "AB458_REGISTRATION");
+   yield* runtime.startTurn(turnInput(appId, providerThread, yield* DateTime.now));
+   const waitTurn = (id: string) => Effect.promise(() => {
+     if (nativeTurns.has(id)) return Promise.resolve();
+@@ -162,10 +172,14 @@ const makeHarness = Effect.fnUntraced(function* (scope: Scope.Scope) {
+   });
+   yield* waitTurn(rootTurn);
+   let nonce = 0;
++  // Per-frame synchronization shares the test operation boundary.
+   const barrier = Effect.fnUntraced(function* () {
+     const key = String(++nonce), pending = latch<void>(); markers.set(key, pending);
+     yield* Queue.offer(pipe.input, encode({ method: "ab458/barrier", params: { nonce: key } }));
+     yield* Effect.promise(() => pending.promise); markers.delete(key);
++    const written = latch<void>(); wireMarkers.set(key, written);
++    yield* client.raw.notify("ab458/wire-barrier", { nonce: key });
++    yield* Effect.promise(() => written.promise); wireMarkers.delete(key);
+   });
+   const emit = (value: unknown) => Queue.offer(pipe.input, encode(value));
+   const replies = (id: number) => outgoing.filter((frame) => frame.id === id && !frame.method);
+@@ -193,7 +207,7 @@ it.effect("AB458 production admission: actual adapter registration, 32-limit war
+     const admitted = yield* Effect.promise(() => Promise.race([
+       h.allStarted.promise.then(() => true), h.prematureReply.promise.then(() => false),
+     ]));
+-    assert.equal(admitted, true, "production handler must reach 32 suspended effects before replying");
++    assert.equal(admitted, true, "AB458_HANDLER_MUST_SUSPEND32");
+     // Actual adapter warm resume while the 32 original effects remain suspended.
+     yield* h.runtime.resumeThread({ threadId: h.appId, providerThread: h.providerThread });
+     for (let id = 100; id < 132; id++) yield* h.emit(rpc(id));
+@@ -201,10 +215,15 @@ it.effect("AB458 production admission: actual adapter registration, 32-limit war
+     yield* h.emit({ ...rpc(100), method: "other/method" });
+     yield* h.emit(rpc(999)); yield* h.barrier();
+     assert.equal(h.sends(), 32);
+-    for (let id = 100; id < 132; id++) assert.equal(h.replies(id).length, 0);
++    for (let id = 100; id < 132; id++) assert.equal(h.replies(id).length, 0, "AB458_REPLAY_MUST_REMAIN_PENDING");
+     assert.equal(h.replies(999).length, 1); assert.notEqual(h.replies(999)[0]!.error, undefined);
+     h.release.resolve({ accepted: "mock" });
+-    for (let id = 100; id < 132; id++) { yield* h.waitReplies(id, 1); assert.equal((h.replies(id)[0]!.result as Protocol.DynamicToolCallResponse).success, true); }
++    for (let id = 100; id < 132; id++) {
++      yield* h.waitReplies(id, 1);
++      assert.deepEqual(h.replies(id)[0], {
++        id, result: { success: true, contentItems: [{ type: "inputText", text: '{"accepted":"mock"}' }] },
++      }, "AB458_WIRE_RESULT");
++    }
+     yield* h.emit(rpc(100)); yield* h.barrier();
+     assert.equal(h.replies(100).length, 1); assert.equal(h.sends(), 32); // completed same-ID tombstone, no cached transport payload
+ 
+diff --git a/packages/effect-codex-app-server/src/PrivateProtocolLifecycle.test.ts b/packages/effect-codex-app-server/src/PrivateProtocolLifecycle.test.ts
+new file mode 100644
+index 0000000..0da6130
+--- /dev/null
++++ b/packages/effect-codex-app-server/src/PrivateProtocolLifecycle.test.ts
+@@ -0,0 +1,144 @@
++import { assert, it } from "@effect/vitest";
++import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as Deferred from "effect/Deferred";
++import * as Effect from "effect/Effect";
++import * as Fiber from "effect/Fiber";
++import * as Queue from "effect/Queue";
++import * as Sink from "effect/Sink";
++import * as Stdio from "effect/Stdio";
++import * as Stream from "effect/Stream";
++import * as CodexError from "./errors.ts";
++import * as Protocol from "./protocol.ts";
++import { makeInMemoryStdio } from "./_internal/stdio.ts";
++
++const encode = (value: unknown) => new TextEncoder().encode(`${JSON.stringify(value)}\n`);
++const request = { id: 7, method: "item/tool/call", params: { mock: true } };
++
++it.layer(NodeServices.layer)("AB458 real protocol lifecycle", (it) => {
++  it.effect.each(["writer", "defect-before", "defect-after", "throw-before"] as const)(
++    "terminalizes unknown outcome %s without replay or fresh admission",
++    (failureKind) => Effect.gen(function* () {
++      const pipe = yield* makeInMemoryStdio();
++      const terminated = yield* Deferred.make<CodexError.CodexAppServerError>();
++      const readerStopped = yield* Deferred.make<void>();
++      const committed = yield* Deferred.make<void>();
++      let effects = 0, admissions = 0, writes = 0, terminations = 0;
++      const stdio = Stdio.make({
++        args: pipe.stdio.args,
++        stdin: pipe.stdio.stdin.pipe(Stream.ensuring(
++          Deferred.succeed(readerStopped, undefined).pipe(Effect.asVoid),
++        )),
++        stdout: () => Sink.forEach((chunk: string | Uint8Array) => {
++          const text = typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk);
++          const frame = JSON.parse(text) as Record<string, unknown>;
++          if (failureKind === "writer" && frame.id === 7) {
++            writes++;
++            return Effect.die(new Error("mock owned writer failure after effect"));
++          }
++          return Queue.offer(pipe.output, text).pipe(Effect.asVoid);
++        }),
++        stderr: pipe.stdio.stderr,
++      });
++      const transport = yield* Protocol.makeCodexAppServerPatchedProtocol({
++        stdio,
++        onRequest: () => {
++          admissions++;
++          if (failureKind === "throw-before") throw new Error("mock callback construction defect");
++          if (failureKind === "defect-before") return Effect.die(new Error("mock handler defect"));
++          return Effect.sync(() => effects++).pipe(
++            Effect.andThen(Deferred.succeed(committed, undefined)),
++            Effect.andThen(failureKind === "defect-after"
++              ? Effect.die(new Error("mock defect after commit"))
++              : Effect.succeed({ committed: true })),
++          );
++        },
++        onTermination: (error) => Effect.sync(() => terminations++).pipe(
++          Effect.andThen(Deferred.succeed(terminated, error)), Effect.asVoid,
++        ),
++      });
++      const pending = yield* transport.request("thread/read", {}).pipe(Effect.forkScoped);
++      yield* Queue.take(pipe.output);
++      yield* Queue.offer(pipe.input, encode(request));
++      if (failureKind === "writer" || failureKind === "defect-after") yield* Deferred.await(committed);
++      const failure = yield* Deferred.await(terminated).pipe(Effect.timeout("2 seconds"));
++      assert.instanceOf(failure, CodexError.CodexAppServerTransportError, "AB458_TERMINAL_CAUSE");
++      if (failure instanceof CodexError.CodexAppServerTransportError) {
++        assert.equal(failure.operation, failureKind === "writer" ? "write-output-stream" : "handle-server-request");
++      }
++      assert.strictEqual(yield* Fiber.join(pending).pipe(Effect.flip), failure);
++      yield* Deferred.await(readerStopped).pipe(Effect.timeout("2 seconds"));
++      yield* Queue.offer(pipe.input, encode(request));
++      yield* Queue.offer(pipe.input, encode({ ...request, id: 8 }));
++      assert.strictEqual(yield* transport.request("thread/read", {}).pipe(Effect.flip), failure);
++      assert.strictEqual(yield* transport.notify("initialized").pipe(Effect.flip), failure);
++      assert.equal(admissions, 1, "AB458_NO_REEXECUTION");
++      assert.equal(effects, failureKind === "writer" || failureKind === "defect-after" ? 1 : 0);
++      assert.equal(writes, failureKind === "writer" ? 1 : 0);
++      assert.equal(terminations, 1);
++      assert.equal(yield* Queue.size(pipe.input), 2);
++    }),
++  );
++
++  it.effect("preserves non-Bridge managed typed errors and subsequent approvals", () =>
++    Effect.gen(function* () {
++      const pipe = yield* makeInMemoryStdio();
++      let count = 0, terminated = 0;
++      yield* Protocol.makeCodexAppServerPatchedProtocol({
++        stdio: pipe.stdio,
++        onRequest: () => ++count === 1
++          ? Effect.fail(CodexError.CodexAppServerRequestError.overloaded("mock recoverable"))
++          : Effect.succeed({ decision: "accept" }),
++        onTermination: () => Effect.sync(() => { terminated++; }),
++      });
++      yield* Queue.offer(pipe.input, encode({ id: "approval-A", method: "item/tool/requestUserInput", params: {} }));
++      assert.deepEqual(JSON.parse(yield* Queue.take(pipe.output)), {
++        id: "approval-A", error: { code: -32001, message: "mock recoverable" },
++      });
++      yield* Queue.offer(pipe.input, encode({ id: "approval-B", method: "item/tool/requestUserInput", params: {} }));
++      assert.deepEqual(JSON.parse(yield* Queue.take(pipe.output)), { id: "approval-B", result: { decision: "accept" } });
++      assert.equal(count, 2); assert.equal(terminated, 0);
++    }),
++  );
++
++  it.effect("fails closed before handler admission on an exhausted request fingerprint budget", () =>
++    Effect.gen(function* () {
++      const pipe = yield* makeInMemoryStdio();
++      const terminated = yield* Deferred.make<CodexError.CodexAppServerError>();
++      let admissions = 0;
++      const transport = yield* Protocol.makeCodexAppServerPatchedProtocol({
++        stdio: pipe.stdio,
++        onRequest: () => Effect.sync(() => { admissions++; return {}; }),
++        onTermination: (error) => Deferred.succeed(terminated, error).pipe(Effect.asVoid),
++      });
++      let nested: unknown = null;
++      for (let index = 0; index < 130; index++) nested = [nested];
++      yield* Queue.offer(pipe.input, encode({ ...request, params: nested }));
++      const failure = yield* Deferred.await(terminated).pipe(Effect.timeout("2 seconds"));
++      assert.instanceOf(failure, CodexError.CodexAppServerTransportError);
++      assert.equal(admissions, 0);
++      assert.strictEqual(yield* transport.notify("initialized").pipe(Effect.flip), failure);
++    }),
++  );
++
++  it.effect("classifies shutdown cancellation separately from defects and interrupts owned handlers", () =>
++    Effect.gen(function* () {
++      const pipe = yield* makeInMemoryStdio();
++      const started = yield* Deferred.make<void>(), interrupted = yield* Deferred.make<void>();
++      const terminated = yield* Deferred.make<CodexError.CodexAppServerError>();
++      const transport = yield* Protocol.makeCodexAppServerPatchedProtocol({
++        stdio: pipe.stdio,
++        onRequest: () => Deferred.succeed(started, undefined).pipe(
++          Effect.andThen(Effect.never),
++          Effect.onInterrupt(() => Deferred.succeed(interrupted, undefined).pipe(Effect.asVoid)),
++        ),
++        onTermination: (error) => Deferred.succeed(terminated, error).pipe(Effect.asVoid),
++      });
++      yield* Queue.offer(pipe.input, encode(request)); yield* Deferred.await(started);
++      yield* Queue.end(pipe.input);
++      const failure = yield* Deferred.await(terminated).pipe(Effect.timeout("2 seconds"));
++      assert.instanceOf(failure, CodexError.CodexAppServerInputStreamEndedError);
++      yield* Deferred.await(interrupted).pipe(Effect.timeout("2 seconds"));
++      assert.strictEqual(yield* transport.notify("initialized").pipe(Effect.flip), failure);
++    }),
++  );
++});
+diff --git a/packages/effect-codex-app-server/src/errors.ts b/packages/effect-codex-app-server/src/errors.ts
+index 6e7569f..fa31104 100644
+--- a/packages/effect-codex-app-server/src/errors.ts
++++ b/packages/effect-codex-app-server/src/errors.ts
+@@ -110,6 +110,8 @@ export type CodexAppServerProtocolParseOperation = typeof CodexAppServerProtocol
+ export const CodexAppServerTransportOperation = Schema.Literals([
+   "read-input-stream",
+   "read-process-exit-status",
++  "write-output-stream",
++  "handle-server-request",
+ ]);
+ export type CodexAppServerTransportOperation = typeof CodexAppServerTransportOperation.Type;
+ 
+diff --git a/packages/effect-codex-app-server/src/protocol.ts b/packages/effect-codex-app-server/src/protocol.ts
+index 9c0c539..64f234c 100644
+--- a/packages/effect-codex-app-server/src/protocol.ts
++++ b/packages/effect-codex-app-server/src/protocol.ts
+@@ -208,8 +208,12 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
+         }
+         return [
+           Effect.gen(function* () {
+-            const error = yield* classify();
++            // Seal synchronously, before classification or any cleanup can suspend.
+             requestAdmission.close();
++            const error = yield* classify().pipe(Effect.timeoutOrElse({
++              duration: "2 seconds",
++              orElse: () => Effect.succeed(new CodexError.CodexAppServerInputStreamEndedError({})),
++            }));
+             yield* Ref.set(terminationFailure, Option.some(error));
+             yield* failAllPending(error);
+             yield* Queue.end(outgoing);
+@@ -229,9 +233,9 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
+     const offerOutgoing =
+       /* Every protocol write reaches this helper; request spans cover the operation. */
+       Effect.fnUntraced(function* (message: Record<string, unknown>) {
+-        if (!requestAdmission.isOpen()) return yield* new CodexError.CodexAppServerInputStreamEndedError({});
+         const failure = yield* Ref.get(terminationFailure);
+         if (Option.isSome(failure)) return yield* failure.value;
++        if (!requestAdmission.isOpen()) return yield* new CodexError.CodexAppServerInputStreamEndedError({});
+ 
+         yield* logProtocol({
+           direction: "outgoing",
+@@ -306,6 +310,17 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
+       );
+     };
+ 
++    // Defect and cancellation are distinct terminal causes. Neither may leave a
++    // live generation with an unanswered request after a possible external effect.
++    const terminateCause = (cause: Cause.Cause<unknown>,
++      operation: CodexError.CodexAppServerTransportOperation) =>
++      handleTermination(() => Effect.succeed(
++        Cause.hasInterruptsOnly(cause)
++          ? new CodexError.CodexAppServerInputStreamEndedError({})
++          : Option.getOrElse(Option.filter(Cause.findErrorOption(cause), isCodexAppServerError), () =>
++              new CodexError.CodexAppServerTransportError({ operation, cause })),
++      ));
++
+     const handleRequest = (request: CodexAppServerIncomingRequest) =>
+       Effect.suspend(() => {
+         const handler = options.onRequest;
+@@ -333,21 +348,17 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
+         }
+         const ticket = decision.ticket;
+         return Queue.offer(incomingRequests, request).pipe(
+-          Effect.andThen(handler(request).pipe(
++          Effect.andThen(Effect.suspend(() => handler(request)).pipe(
+             Effect.matchEffect({
+               onFailure: (error) => respondError(request.id,
+                 CodexError.CodexAppServerRequestError.fromAppServerError(error, request.method)),
+               onSuccess: (result) => respond(request.id, result),
+             }),
+             Effect.ensuring(Effect.sync(() => requestAdmission.finish(ticket))),
+-            // Interruption without a response must end this generation, rather
+-            // than leave an unanswered tombstone on an otherwise live channel.
++            Effect.catchCause((cause) => terminateCause(cause, "handle-server-request")),
+             Effect.onInterrupt(() => handleTermination(() => Effect.succeed(
+               new CodexError.CodexAppServerInputStreamEndedError({}),
+-            )).pipe(Effect.forkIn(protocolScope, { startImmediately: true }), Effect.asVoid)),
+-            Effect.catch((error) => handleTermination(() => Effect.succeed(error)).pipe(
+-              Effect.forkIn(protocolScope), Effect.asVoid,
+-            )),
++            ))),
+             Effect.forkIn(requestHandlerScope, { startImmediately: true }),
+             Effect.asVoid,
+           )),
+@@ -457,10 +468,18 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
+             }),
+           ),
+       }),
++      Effect.catchCause((cause) => terminateCause(cause, "read-input-stream")),
+       Effect.forkScoped,
+     );
+ 
+-    yield* Stream.fromQueue(outgoing).pipe(Stream.run(options.stdio.stdout()), Effect.forkScoped);
++    yield* Stream.fromQueue(outgoing).pipe(
++      Stream.run(options.stdio.stdout()),
++      Effect.catchCause((cause) => terminateCause(cause, "write-output-stream")),
++      Effect.onInterrupt(() => handleTermination(() => Effect.succeed(
++        new CodexError.CodexAppServerInputStreamEndedError({}),
++      ))),
++      Effect.forkScoped,
++    );
+ 
+     const request = Effect.fn("CodexAppServerProtocol.request")(function* (
+       method: string,

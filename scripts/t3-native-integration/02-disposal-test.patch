@@ -1,0 +1,51 @@
+diff --git a/apps/server/src/orchestration-v2/Adapters/CodexBridgeDynamicTools.adapter.test.ts b/apps/server/src/orchestration-v2/Adapters/CodexBridgeDynamicTools.adapter.test.ts
+index 79c3f3c..a4e5d26 100644
+--- a/apps/server/src/orchestration-v2/Adapters/CodexBridgeDynamicTools.adapter.test.ts
++++ b/apps/server/src/orchestration-v2/Adapters/CodexBridgeDynamicTools.adapter.test.ts
+@@ -75,6 +75,7 @@ const makeHarness = Effect.fnUntraced(function* (scope: Scope.Scope) {
+   const faultEntered = latch<void>(), fault = latch<Protocol.DynamicToolCallParams["arguments"]>();
+   const shutdownEntered = latch<void>(), closeEntered = latch<void>(), releaseClose = latch<void>();
+   const hanging = latch<Protocol.DynamicToolCallParams["arguments"]>();
++  const lateBrokerCompleted = latch<void>();
+   const nativeTurns = new Set<string>();
+   const turnWaiters = new Map<string, ReturnType<typeof latch<void>>>();
+   const logger = (event: CodexAppServerProtocolLogEvent) => Effect.sync(() => {
+@@ -120,7 +121,15 @@ const makeHarness = Effect.fnUntraced(function* (scope: Scope.Scope) {
+     send: async (_lease, _args, guard, signal) => {
+       assert.equal(await guard(), true); assert.equal(signal.aborted, false); sends++;
+       if (phase === "fault") { faultEntered.resolve(); return fault.promise; }
+-      if (phase === "shutdown") { shutdownEntered.resolve(); return hanging.promise; }
++      if (phase === "shutdown") {
++        shutdownEntered.resolve();
++        return hanging.promise.then(async (value) => {
++          assert.equal(signal.aborted, true);
++          assert.equal(await guard(), false);
++          lateBrokerCompleted.resolve();
++          return value;
++        });
++      }
+       if (sends === 32) allStarted.resolve();
+       return release.promise;
+     },
+@@ -166,7 +175,7 @@ const makeHarness = Effect.fnUntraced(function* (scope: Scope.Scope) {
+   });
+   return { scope, runtime, providerThread, appId, emit, barrier, replies, waitReplies, waitTurn, events,
+     sends: () => sends, closed: () => closed, allStarted, prematureReply, release, faultEntered, fault, shutdownEntered,
+-    closeEntered, releaseClose, hanging, phase: (next: "hold" | "fault" | "shutdown") => { phase = next; } };
++    closeEntered, releaseClose, hanging, lateBrokerCompleted, phase: (next: "hold" | "fault" | "shutdown") => { phase = next; } };
+ });
+ 
+ const rpc = (id: number, changes: Partial<Protocol.DynamicToolCallParams> = {}) => ({ id, method: "item/tool/call", params: {
+@@ -223,10 +232,10 @@ it.effect("AB458 production admission: actual adapter registration, 32-limit war
+     const closing = yield* Scope.close(scope, Exit.void).pipe(Effect.forkScoped);
+     yield* Effect.promise(() => h.closeEntered.promise);
+     yield* h.emit(rpc(900)); // closing connection cannot allocate a replacement operation
+-    h.releaseClose.resolve(); yield* Fiber.join(closing);
++    h.releaseClose.resolve(); yield* Fiber.join(closing).pipe(Effect.timeout("2 seconds"));
+     const count = h.replies(900).length;
+     h.hanging.resolve({ private: "late-mock" });
+-    for (let i = 0; i < 20; i++) yield* Effect.yieldNow;
++    yield* Effect.promise(() => h.lateBrokerCompleted.promise).pipe(Effect.timeout("2 seconds"));
+     assert.equal(h.sends(), 34); assert.equal(h.closed(), 1); assert.equal(h.replies(900).length, count);
+     assert.equal(JSON.stringify(h.replies(900)).includes("late-mock"), false);
+   }).pipe(Effect.scoped, Effect.provide(services)),

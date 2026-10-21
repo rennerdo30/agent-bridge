@@ -1,0 +1,54 @@
+{
+  "name": "T3 pinned native integration",
+  "on": {
+    "pull_request": {
+      "paths": [
+        "scripts/t3-native-integration/**",
+        ".github/workflows/t3-native-integration.yml"
+      ]
+    }
+  },
+  "permissions": { "contents": "read" },
+  "jobs": {
+    "pinned-mocked-integration": {
+      "runs-on": "ubuntu-24.04",
+      "timeout-minutes": 25,
+      "steps": [
+        {
+          "name": "Checkout reviewed package",
+          "uses": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+          "with": {
+            "ref": "${{ github.event.pull_request.head.sha }}",
+            "persist-credentials": false,
+            "fetch-depth": 1
+          }
+        },
+        {
+          "name": "Use exact Node",
+          "uses": "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020",
+          "with": { "node-version": "24.13.1", "package-manager-cache": false }
+        },
+        {
+          "name": "Verify tracked package and gate validator",
+          "run": "node scripts/t3-native-integration/verify.mjs\nnode scripts/t3-native-integration/run.mjs --verify\nnode --test scripts/t3-native-integration/gate.test.mjs"
+        },
+        {
+          "name": "Pinned upstream typecheck, real adapter/protocol tests and mutations",
+          "env": { "AB458_BRIDGE_HEAD": "${{ github.event.pull_request.head.sha }}" },
+          "run": "node scripts/t3-native-integration/run.mjs --hosted"
+        },
+        {
+          "name": "Retain exact gate evidence",
+          "if": "${{ always() }}",
+          "uses": "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+          "with": {
+            "name": "ab458-t3-native-${{ github.event.pull_request.head.sha }}",
+            "path": "${{ runner.temp }}/ab458-evidence/",
+            "if-no-files-found": "warn",
+            "retention-days": 7
+          }
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,147 @@
+{
+  "schema": 1,
+  "kind": "offline-only; not hosted or native acceptance",
+  "node": "26.4.0",
+  "verificationPid": 62540,
+  "sourceGitBlobCount": 21,
+  "t3Pin": "968dd51704441138559a3fe9c348719f2b11e0c6",
+  "codexInspectedSourcePin": "6203846fb3ef040f62eed9b35bc6629c8e88980a",
+  "bridgeInputHead": "2ecd3dc7318da1490f2135ff8afcf0eb50f276e9",
+  "effectiveTreeSha256": "64519d9fa4d284c6c0ff8f1b8c9bb6fc3f17c4939c8d934209f52f5c83ff76f4",
+  "patches": [
+    {
+      "path": "01-reviewed.patch",
+      "sha256": "e0b3c5ba6357eaf656aed86f8980b7a83338617efabbc4c4e0ce0d583e348f61"
+    },
+    {
+      "path": "02-disposal-test.patch",
+      "sha256": "c799b3e14096ab75ffa60528faa3800a8b7057a5487d25238afd893b3ed0d4f7"
+    },
+    {
+      "path": "03-round3.patch",
+      "sha256": "4fc67d2a06951a851a597ea83c090c486aefdd74c0b15e087fe0c8ea253d7307"
+    }
+  ],
+  "focusedValidator": {
+    "passed": 14,
+    "failed": 0,
+    "exit": 0
+  },
+  "validatorInfrastructureMutation": {
+    "passed": 10,
+    "failed": 4,
+    "exit": 1,
+    "reason": "Expected assertion reds when infrastructure rejection is disabled; not upstream production mutation evidence"
+  },
+  "checks": [
+    {
+      "label": "verify-workflow",
+      "pid": 29832,
+      "timeoutMs": 20000,
+      "exit": 0,
+      "expected": 0,
+      "signal": null,
+      "error": null
+    },
+    {
+      "label": "verify-entry",
+      "pid": 73856,
+      "timeoutMs": 20000,
+      "exit": 0,
+      "expected": 0,
+      "signal": null,
+      "error": null
+    },
+    {
+      "label": "gate-tests",
+      "pid": 78484,
+      "timeoutMs": 20000,
+      "exit": 0,
+      "expected": 0,
+      "signal": null,
+      "error": null
+    },
+    {
+      "label": "local-install-refused",
+      "pid": 23088,
+      "timeoutMs": 20000,
+      "exit": 1,
+      "expected": 1,
+      "signal": null,
+      "error": null
+    },
+    {
+      "label": "check-01-reviewed.patch",
+      "pid": 50136,
+      "timeoutMs": 20000,
+      "exit": 0,
+      "expected": 0,
+      "signal": null,
+      "error": null
+    },
+    {
+      "label": "apply-01-reviewed.patch",
+      "pid": 68664,
+      "timeoutMs": 20000,
+      "exit": 0,
+      "expected": 0,
+      "signal": null,
+      "error": null
+    },
+    {
+      "label": "check-02-disposal-test.patch",
+      "pid": 27848,
+      "timeoutMs": 20000,
+      "exit": 0,
+      "expected": 0,
+      "signal": null,
+      "error": null
+    },
+    {
+      "label": "apply-02-disposal-test.patch",
+      "pid": 22764,
+      "timeoutMs": 20000,
+      "exit": 0,
+      "expected": 0,
+      "signal": null,
+      "error": null
+    },
+    {
+      "label": "check-03-round3.patch",
+      "pid": 66696,
+      "timeoutMs": 20000,
+      "exit": 0,
+      "expected": 0,
+      "signal": null,
+      "error": null
+    },
+    {
+      "label": "apply-03-round3.patch",
+      "pid": 27008,
+      "timeoutMs": 20000,
+      "exit": 0,
+      "expected": 0,
+      "signal": null,
+      "error": null
+    },
+    {
+      "label": "validator-infrastructure-mutation",
+      "pid": 7932,
+      "timeoutMs": 20000,
+      "exit": 1,
+      "expected": 1,
+      "signal": null,
+      "error": null
+    }
+  ],
+  "allEffectiveSourceAndMutationSyntaxChecks": "exit 0; Node syntax only",
+  "notRun": [
+    "Hosted workflow",
+    "Pinned upstream typecheck",
+    "Effect/CodexClient/production adapter execution",
+    "Four actual production mutations",
+    "Native/provider/broker acceptance"
+  ],
+  "localRawEvidenceDirectory": "E:/AgentData/reports/ab458-hosted-ci-20261022-t32af0942b",
+  "rawReceiptSha256": "a1f3ccea6cb7b0a1e88cff40b8f4f70e25497cd0db4bc16773687bdd3d61246d"
+}
