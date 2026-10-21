@@ -5,6 +5,7 @@ import { z } from "zod";
 import { MAX_BODY_CHARS } from "../core/constants.js";
 import type { Logger } from "../core/logger.js";
 import { AGENT_KINDS, BridgeError, type BridgeMessage, type PeerInfo, type SendResult } from "../core/protocol.js";
+import { sameFrontend, t3BindingSchema } from "../core/t3-identity.js";
 import type { NetworkConfig } from "./config.js";
 import { MAX_NETWORK_FRAME_BYTES, MAX_NETWORK_LINKS, MAX_NETWORK_PEERS, MAX_NETWORK_REQUESTS, NETWORK_NAME_PATTERN, NETWORK_REFRESH_MS, NETWORK_TIMEOUT_MS, NETWORK_HEARTBEAT_TIMEOUT_MS, NETWORK_VERSION, PAIRING_KEY_BYTES, TLS_CIPHER } from "./constants.js";
 import { NetworkDiscovery, type DiscoveredInstance, type DiscoveryDiagnostics } from "./discovery.js";
@@ -37,6 +38,7 @@ const peerSchema = z.object({
   rootName: z.string().max(MAX_METADATA_CHARS).optional(), subagent: z.boolean().optional(), title: z.string().max(MAX_METADATA_CHARS).optional(),
   projectGroup: z.string().min(1).max(MAX_METADATA_CHARS).optional(), projectAddress: z.string().min(1).max(MAX_METADATA_CHARS).optional(),
   projectMain: z.boolean().optional(), unavailable: z.boolean().optional(),
+  frontend: t3BindingSchema.optional(),
 });
 /** The last set of left-out local peers each service logged, so a persistent one is reported once. */
 const droppedPeersLogged = new WeakMap<object, string>();
@@ -53,7 +55,11 @@ export const networkHelloSchema = publicIdentitySchema.extend({
   capabilities: z.array(textId).max(MAX_EXTENSION_HANDLERS).optional(),
   // Shipped readers strip unknown hello fields; keep their eight-capability list intact.
   additionalCapabilities: z.array(textId).max(MAX_EXTENSION_HANDLERS).optional(),
+  // Separate feature bit: shipped readers retain their bounded capability arrays.
+  t3ThreadRouting: z.boolean().optional(),
 });
+const destinationSchema = z.object({ peerId: textId, frontend: t3BindingSchema.optional() });
+export type NetworkDestination = z.infer<typeof destinationSchema>;
 const frameSchema = z.discriminatedUnion("type", [
   networkHelloSchema,
   z.object({ type: z.literal("file-stream"), payload: z.record(z.string(), z.unknown()) }),
@@ -61,7 +67,7 @@ const frameSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("dashboard-read"), payload: z.record(z.string(), z.unknown()) }),
   z.object({ type: z.literal("decision-sync"), payload: z.record(z.string(), z.unknown()) }),
   z.object({ type: z.literal("peers"), peers: peersSchema }),
-  z.object({ type: z.literal("send"), rid: z.uuid(), message: messageSchema }),
+  z.object({ type: z.literal("send"), rid: z.uuid(), message: messageSchema, destination: destinationSchema.optional() }),
   z.object({ type: z.literal("echo"), rid: z.uuid() }),
   z.object({ type: z.literal("receipt"), rid: z.uuid(), id: z.uuid(), sender: textId, recipient: z.string().regex(NETWORK_NAME_PATTERN).optional() }),
   z.object({ type: z.literal("files"), rid: z.uuid(), transfer: transferSchema }),
@@ -73,7 +79,8 @@ export interface NetworkBroker {
   peers(): PeerInfo[];
   receipt?(id: string, sender: string, recipient?: string): number | null;
   recipientReceipts?: boolean;
-  receive(message: BridgeMessage): DeliveryResult;
+  /** null marks legacy network ingress; undefined remains internal/local notification. */
+  receive(message: BridgeMessage, destination?: NetworkDestination | null): DeliveryResult;
 }
 export interface NetworkStatus {
   enabled: boolean;
@@ -101,6 +108,7 @@ class Link {
   private echoSupported = false;
   private heartbeatPending = false;
   private receiptsSupported = false;
+  t3ThreadRouting = false;
   private capabilities: string[] = [];
   private advertisedPeers: string | null = null;
   private extensionHandlers = 0;
@@ -158,6 +166,7 @@ class Link {
           this.peers = frame.peers;
           this.echoSupported = frame.echo === true;
           this.receiptsSupported = frame.receipts === true;
+          this.t3ThreadRouting = frame.t3ThreadRouting === true;
           this.capabilities = [...new Set([...(frame.capabilities ?? []), ...(frame.additionalCapabilities ?? [])])];
           this.service.attach(this);
           clearTimeout(this.deadline); this.readyResolve();
@@ -225,8 +234,9 @@ class Link {
     this.advertisedPeers = signature;
   }
 
-  send(message: BridgeMessage): Promise<DeliveryResult> {
-    return this.request({ type: "send", rid: randomUUID(), message: messageSchema.parse(message) }) as Promise<DeliveryResult>;
+  send(message: BridgeMessage, destination?: NetworkDestination): Promise<DeliveryResult> {
+    return this.request({ type: "send", rid: randomUUID(), message: messageSchema.parse(message),
+      ...(destination ? { destination: destinationSchema.parse(destination) } : {}) }) as Promise<DeliveryResult>;
   }
 
   /** Detect a half-open link even when nobody sends work; activity never expires a peer. */
@@ -307,7 +317,7 @@ class Link {
         return;
       }
       const message = { ...frame.message, from: { ...frame.message.from, id: `${remote.id}/${frame.message.from.id}`, name: `${remote.name}/${frame.message.from.name}` } };
-      const result = this.service.receive(message);
+      const result = this.service.receive(message, frame.destination);
       this.refresh();
       this.write({ type: "result", rid: frame.rid, ...result });
     } catch (err) {
@@ -386,11 +396,12 @@ export class NetworkService {
     return [...this.extensions.values()].flatMap((extension) => [extension.capability, ...extension.aliases]).concat([FILE_STREAM_WINDOW_CAPABILITY], this.broker.recipientReceipts ? ["recipient-receipts-v1"] : []);
   }
 
-  extensionHelloCapabilities(): { capabilities: string[]; additionalCapabilities: string[] } {
+  extensionHelloCapabilities(): { capabilities: string[]; additionalCapabilities: string[]; t3ThreadRouting: boolean } {
     const capabilities = this.extensionCapabilities();
     return {
       capabilities: capabilities.filter(capability => capability !== REMOTE_JOB_USAGE_CAPABILITY),
       additionalCapabilities: capabilities.filter(capability => capability === REMOTE_JOB_USAGE_CAPABILITY),
+      t3ThreadRouting: true,
     };
   }
 
@@ -462,7 +473,16 @@ export class NetworkService {
     }
     return out;
   }
-  receive(message: BridgeMessage): DeliveryResult { this.requireAuthority(); return this.broker.receive(message); }
+  receive(message: BridgeMessage, destination?: NetworkDestination): DeliveryResult {
+    this.requireAuthority();
+    const current = this.localPeers().find(peer => peer.name === message.recipient);
+    // A missing fence must never downgrade hosted mail to name-only routing. Check
+    // synchronously before broker storage/emission, including hosted -> native swaps.
+    if (destination ? !current || current.id !== destination.peerId || !sameFrontend(current, destination) : current?.frontend) {
+      throw new BridgeError("unknown_target", "T3 destination binding changed or is missing; refresh peers and select the exact thread.");
+    }
+    return this.broker.receive(message, destination ?? null);
+  }
 
   async start(deferAuthority = false): Promise<void> {
     if (!this.cfg.enabled) throw new Error("networking is disabled");
@@ -614,7 +634,15 @@ export class NetworkService {
 
   async send(message: BridgeMessage): Promise<SendResult> {
     const { link, target } = this.target(message.recipient);
-    const result = await link.send({ ...message, recipient: target });
+    const destination = link.peers.find(peer => peer.name === target);
+    const sender = this.localPeers().find(peer => peer.id === message.from.id);
+    if ((sender?.frontend || destination?.frontend) && (!link.t3ThreadRouting || !destination)) {
+      throw new BridgeError("unknown_target", "Paired host lacks T3 thread routing or destination is not advertised; no native fallback was attempted.");
+    }
+    // Advertise a just-reconnected sender before the receiver authenticates its frame.
+    link.refresh();
+    const result = await link.send({ ...message, recipient: target }, link.t3ThreadRouting && destination ?
+      { peerId: destination.id, ...(destination.frontend ? { frontend: destination.frontend } : {}) } : undefined);
     const actual = result.recipient ?? target;
     const recipient = `${link.remote!.name}/${actual}`;
     return { messages: [{ ...message, recipient }], deliveredTo: result.delivered ? [recipient] : [], queuedFor: result.delivered ? [] : [recipient],
