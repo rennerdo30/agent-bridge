@@ -9,9 +9,15 @@ import { withoutT3Context } from "../src/core/job-environment.js";
 import { childEnv } from "../src/core/delegate.js";
 import { jobEnvironment } from "../src/core/job-environment.js";
 import { daemonEnvironment } from "../src/core/daemon-launcher.js";
+import { BridgeError } from "../src/core/protocol.js";
+import type { ChecklistItem, JobChecklistRequest } from "../src/core/checklists.js";
+import * as jobOutcomes from "../src/core/job-outcomes.js";
+import * as metadataDb from "../src/core/metadata-db.js";
+import * as metadataImport from "../src/core/metadata-import.js";
+import * as jobClose from "../src/core/job-close.js";
 import { instructionsFor, registerTools, startServer, type ServerContext } from "../src/mcp/server.js";
 
-const boundary = vi.hoisted(() => ({ hello: vi.fn(), usage: vi.fn(), run: vi.fn(), remote: vi.fn() }));
+const boundary = vi.hoisted(() => ({ hello: vi.fn(), usage: vi.fn(), run: vi.fn(), remote: vi.fn(), slotsRead: vi.fn(), slotsClose: vi.fn() }));
 vi.mock("node:child_process", () => ({ spawn: () => { throw Error("Unexpected subprocess"); }, execFile: () => { throw Error("Unexpected exec"); }, execFileSync: () => { throw Error("Unexpected exec"); }, spawnSync: () => { throw Error("Unexpected exec"); } }));
 vi.mock("node:net", async original => ({ ...await original<typeof import("node:net")>(), connect: () => { throw Error("Unexpected socket"); }, createServer: () => { throw Error("Unexpected server"); } }));
 vi.mock("node:worker_threads", async original => ({ ...await original<typeof import("node:worker_threads")>(), Worker: class { constructor() { throw Error("Unexpected production worker"); } } }));
@@ -25,6 +31,10 @@ vi.mock("../src/core/usage.js", () => ({ usageProbeFor: vi.fn(), checkUsagePrefl
 vi.mock("../src/mcp/delegate-run.js", () => ({ isInside: () => false, isBridgeWorktree: () => false, runDelegate: boundary.run, resumeArgs: vi.fn() }));
 vi.mock("../src/mcp/remote-ask.js", () => ({ runRemoteAsk: boundary.remote }));
 vi.mock("../src/mcp/message-wait.js", async original => ({ ...await original<typeof import("../src/mcp/message-wait.js")>(), MessageWaitStore: class { attach() {} } }));
+vi.mock("../src/core/resource-slots.js", async original => ({ ...await original<typeof import("../src/core/resource-slots.js")>(), ResourceSlots: class {
+  snapshot() { return boundary.slotsRead(); }
+  close() { boundary.slotsClose(); }
+} }));
 // No worker, socket, daemon, lifecycle or provider is started by registration.
 vi.mock("../src/mcp/jobs.js", async original => ({ ...await original<typeof import("../src/mcp/jobs.js")>(), JobManager: class {} }));
 
@@ -157,11 +167,103 @@ async function registry(profile?: string, hosted = true, agent: "codex" | "claud
 }
 const extra = () => ({ signal: new AbortController().signal });
 
+/** Simulate re-registration of the retained session context, without job restoration IO. */
+function reducedTools(ctx: ServerContext): Map<string, Entry> {
+  vi.stubEnv("AGENT_BRIDGE_MCP_PROFILE", "auto");
+  const entries = new Map<string, Entry>();
+  registerTools({ registerTool: (name: string, spec: Entry["spec"], call: Entry["call"]) => entries.set(name, { spec, call }) } as unknown as McpServer, ctx, ["codex"]);
+  return entries;
+}
+
+it("retained Bridge job checklist proposals remain approvable/rejectable through the same mocked broker authority", async () => {
+  const r = await registry("full");
+  const job = { name: "codex-job-retained", status: "running", agent: "codex" };
+  const proposals: ChecklistItem[] = ["c1", "c2"].map(id => ({ id, text: `Proposed ${id}`, required: false, source: "job", status: "proposed", note: "", why: "child proposal", createdAt: 1, updatedAt: 1, updatedBy: job.name }));
+  let supervisor = r.node.name;
+  // Explicit fixture boundary: production broker/durable transaction is not run.
+  const brokerChecklist = vi.fn(async (a: JobChecklistRequest) => {
+    if (a.job !== job.name || supervisor !== r.node.name) throw new BridgeError("unauthorized", "Fixture broker: not this job's supervisor.");
+    for (const item of proposals) {
+      if (a.approve?.includes(item.id)) item.status = "open";
+      if (a.reject?.includes(item.id)) item.status = "rejected";
+    }
+    return { job, items: proposals };
+  });
+  Object.assign(r.node, { jobChecklist: brokerChecklist });
+  const before = await r.entries.get("job_checklist")!.call({ job: job.name }, extra());
+  expect(before.isError).not.toBe(true); expect(proposals.map(i => i.status)).toEqual(["proposed", "proposed"]);
+  const entries = reducedTools(r.ctx), tool = entries.get("job_checklist");
+  expect(tool, "reduced reload must retain the unique Bridge checklist control").toBeDefined();
+  const change = { job: job.name, approve: ["c1"], reject: ["c2"], note: "Retained job review" };
+  const result = await tool!.call(change, extra());
+  expect(result.isError, JSON.stringify(result)).not.toBe(true); expect(brokerChecklist).toHaveBeenLastCalledWith(change);
+  expect(proposals.map(i => i.status)).toEqual(["open", "rejected"]);
+  supervisor = "foreign-supervisor";
+  const refused = await tool!.call({ job: job.name, approve: ["c2"] }, extra());
+  expect(refused.isError).toBe(true); expect(proposals.map(i => i.status)).toEqual(["open", "rejected"]);
+  expect(r.jobs.start).not.toHaveBeenCalled(); expect(boundary.run).not.toHaveBeenCalled();
+});
+
+it("retained Bridge job hold/discard uses real outcome ownership/finished-state guards with mocked storage and cleanup", async () => {
+  const r = await registry("full"), entries = reducedTools(r.ctx), tool = entries.get("set_job_outcome");
+  expect(tool, "reduced reload must retain unique Bridge outcome bookkeeping").toBeDefined();
+  let stored: unknown;
+  vi.spyOn(metadataImport, "importMetadataDomain").mockImplementation(() => {});
+  vi.spyOn(metadataDb, "metadataValue").mockImplementation(() => stored);
+  const save = vi.spyOn(metadataDb, "saveMetadataValue").mockImplementation((_home, _domain, _key, value) => { stored = structuredClone(value); });
+  vi.spyOn(jobOutcomes, "deriveJobOutcome").mockImplementation(async (_home, job) => ({ fixtureDecision: jobOutcomes.readOutcomeDecision(r.ctx.home, job) }) as unknown as jobOutcomes.JobOutcome);
+  const cleanup = vi.spyOn(jobClose, "closeJobWorktree").mockResolvedValue({ action: "disabled", reason: "Fixture: cleanup never executes" });
+  const job = { id: "retained", name: "codex-job-retained", owner: r.node.name, startedAt: 1, status: "done" };
+  r.jobs.find.mockReturnValue(job);
+  expect(r.ctx.cfg.jobCloseCleanup).toBe(false);
+  const held = await tool!.call({ job: job.name, state: "held", reason: "Parent review pending" }, extra());
+  expect(held.isError, JSON.stringify(held)).not.toBe(true);
+  expect(jobOutcomes.readOutcomeDecision(r.ctx.home, job)).toMatchObject({ state: "held", reason: "Parent review pending", by: r.node.name });
+  expect(cleanup).not.toHaveBeenCalled();
+  const discarded = await tool!.call({ job: job.name, state: "discarded" }, extra());
+  expect(discarded.isError, JSON.stringify(discarded)).not.toBe(true);
+  expect(stored).toMatchObject({ decision: { state: "discarded", by: r.node.name }, history: [{ state: "held", reason: "Parent review pending" }] });
+  expect(cleanup).toHaveBeenCalledOnce(); expect(cleanup).toHaveBeenCalledWith(expect.objectContaining({ job, enabled: false }));
+  const prior = structuredClone(stored);
+  for (const invalid of [{ ...job, owner: "foreign-supervisor" }, { ...job, status: "running" }]) {
+    r.jobs.find.mockReturnValue(invalid);
+    const refused = await tool!.call({ job: job.name, state: "discarded" }, extra());
+    expect(refused.isError).toBe(true); expect(stored).toEqual(prior);
+  }
+  expect(save).toHaveBeenCalledTimes(2); expect(cleanup).toHaveBeenCalledOnce(); expect(r.jobs.start).not.toHaveBeenCalled();
+});
+
+it("retained Bridge job queue limit, admission visibility and ownership handoff remain registered with mocked effect boundaries", async () => {
+  const r = await registry("full"), entries = reducedTools(r.ctx);
+  for (const name of ["max_subagents", "resource_slots", "handoff_subagents"]) expect(entries.has(name), name).toBe(true);
+  // Queue execution is mocked: verify the handler updates the Bridge manager, not T3.
+  const setLimit = vi.fn(), refreshOwnership = vi.fn();
+  Object.assign(r.jobs, { setLimit, runningCount: () => 1, refreshOwnership });
+  const limit = await entries.get("max_subagents")!.call({ count: 2 }, extra());
+  expect(limit.isError).not.toBe(true); expect(setLimit).toHaveBeenCalledExactlyOnceWith(2); expect(r.ctx.cfg.maxJobs).toBe(2);
+  boundary.slotsRead.mockReturnValue([{ resource: "fixture", id: "holder", pid: 1, ticket: 1, held: true, expiresAt: 100 }, { resource: "fixture", id: "waiting", pid: 2, ticket: 2, held: false, expiresAt: 100 }]);
+  const slots = await entries.get("resource_slots")!.call({}, extra());
+  expect(JSON.stringify(slots)).toMatch(/holder/); expect(JSON.stringify(slots)).toMatch(/waiting/);
+  expect(boundary.slotsRead).toHaveBeenCalledOnce(); expect(boundary.slotsClose).toHaveBeenCalledOnce();
+  const handoff = vi.fn(async (a: { to: string; jobs: string[] }) => {
+    // Explicit broker authorization fixture; no real ownership or job is moved.
+    if (a.to !== "authorized-successor" || a.jobs[0] !== "codex-job-retained") throw new BridgeError("unauthorized", "Fixture broker: handoff refused.");
+    return { to: a.to, jobs: a.jobs };
+  });
+  Object.assign(r.node, { handoffSubagents: handoff });
+  const args = { to: "authorized-successor", jobs: ["codex-job-retained"] };
+  const moved = await entries.get("handoff_subagents")!.call(args, extra());
+  expect(moved.isError).not.toBe(true); expect(handoff).toHaveBeenLastCalledWith(args); expect(refreshOwnership).toHaveBeenCalledOnce();
+  const refused = await entries.get("handoff_subagents")!.call({ ...args, to: "foreign-session" }, extra());
+  expect(refused.isError).toBe(true); expect(refreshOwnership).toHaveBeenCalledOnce();
+  expect(r.jobs.start).not.toHaveBeenCalled(); expect(boundary.run).not.toHaveBeenCalled(); expect(boundary.remote).not.toHaveBeenCalled();
+});
+
 it("defaults validated T3 to reduced registration with remote-only spawn/ask; full and ordinary keep the legacy surface", async () => {
   const reduced = await registry();
-  const hidden = ["t3_capabilities", "t3_delegate", "t3_task_status", "t3_task_cancel", "t3_send", "list_models", "usage_limits", "max_subagents", "resource_slots", "handoff_subagents", "job_checklist", "set_job_outcome"];
+  const hidden = ["t3_capabilities", "t3_delegate", "t3_task_status", "t3_task_cancel", "t3_send", "list_models", "usage_limits"];
   for (const name of hidden) expect(reduced.entries.has(name), name).toBe(false);
-  for (const name of ["send", "inbox", "wait_for_message", "peers", "health", "decide", "decisions", "ask_owner", "auto_wake", "hook_event", "project_main", "project_checklist", "search_history", "get_conversation", "send_files", "fetch_files", "spawn_codex", "ask_codex", "message_subagent", "pause_subagent", "resume_subagent", "cancel_subagent"]) expect(reduced.entries.has(name), name).toBe(true);
+  for (const name of ["send", "inbox", "wait_for_message", "peers", "health", "decide", "decisions", "ask_owner", "auto_wake", "hook_event", "project_main", "project_checklist", "search_history", "get_conversation", "send_files", "fetch_files", "spawn_codex", "ask_codex", "message_subagent", "pause_subagent", "resume_subagent", "cancel_subagent", "job_checklist", "set_job_outcome", "max_subagents", "resource_slots", "handoff_subagents"]) expect(reduced.entries.has(name), name).toBe(true);
   for (const name of ["spawn_codex", "ask_codex"]) {
     const tool = reduced.entries.get(name)!;
     expect(tool.spec.description).toMatch(/remote|paired/i);
@@ -202,6 +304,10 @@ it("retains native Codex/Claude child refusal before ordinary tool side effects"
     const result = await r.entries.get("spawn_codex")!.call({ host: "paired-pc", prompt: "work", title: "Work" }, { ...extra(), _meta: { agentId: "child" } });
     expect(result.isError).toBe(true); expect(JSON.stringify(result)).toMatch(/child|parent authority/i);
     expect(r.jobs.start).not.toHaveBeenCalled();
+    for (const name of ["job_checklist", "set_job_outcome", "max_subagents", "handoff_subagents"]) {
+      const refused = await r.entries.get(name)!.call({ job: "codex-job-retained", state: "discarded", count: 2, to: "successor" }, { ...extra(), _meta: { agentId: "child" } });
+      expect(refused.isError, name).toBe(true); expect(JSON.stringify(refused)).toMatch(/child|parent authority/i);
+    }
   }
 });
 
@@ -232,7 +338,9 @@ it("uses profile-specific server instructions without advertising hidden tools",
   const reduced = (instructionsFor as (...a: any[]) => string)("codex", ["codex"], "reduced");
   expect(reduced).toMatch(/T3.*native|native.*T3/i);
   expect(reduced).toMatch(/host/);
-  for (const name of ["list_models", "usage_limits", "max_subagents", "job_checklist", "t3_delegate"]) expect(reduced).not.toContain(`"${name}"`);
+  for (const name of ["list_models", "usage_limits", "t3_delegate"]) expect(reduced).not.toContain(`"${name}"`);
+  for (const name of ["job_checklist", "set_job_outcome", "max_subagents", "resource_slots", "handoff_subagents"]) expect(reduced).toContain(`"${name}"`);
+  expect(reduced).toContain("do not manage native T3 tasks or permit new local spawn/ask");
   expect(instructionsFor("codex", ["codex"])).toContain('"list_models"');
 });
 

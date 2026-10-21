@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- AB-457: automatically detect injected scoped T3 transport, validate the host before Bridge registration, and default validated sessions to a reduced MCP profile. Keep peer/cross-machine functions and remote-only spawn/ask; `AGENT_BRIDGE_MCP_PROFILE=full` restores the legacy surface. Ordinary sessions remain full. Accept current and legacy catalog options, preserve inherited settings and discover omitted custom models with bounded search. Native Codex without deliberate transport injection remains unsupported; live-host acceptance is pending.
+- AB-457: automatically detect injected scoped T3 transport, validate the host before Bridge registration, and default validated sessions to a reduced MCP profile. Keep peer/cross-machine functions, remote-only spawn/ask and Bridge-owned retained-job checklist, outcome, queue-limit, admission-status and supervisor-handoff controls; `AGENT_BRIDGE_MCP_PROFILE=full` restores the legacy surface. Ordinary sessions remain full. Accept current and legacy catalog options, preserve inherited settings and discover omitted custom models with bounded search. Native Codex without deliberate transport injection remains unsupported; live-host acceptance is pending.
 
 ## 0.30.32
 

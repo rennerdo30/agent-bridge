@@ -20,7 +20,7 @@ export function mcpProfileFromEnv(env: NodeJS.ProcessEnv, frontend?: T3Binding):
 
 /** Keep the unique messaging, security, lifecycle, project and remote-job surfaces. */
 const REDUCED_HIDDEN = new Set(["t3_capabilities", "t3_delegate", "t3_task_status", "t3_task_cancel", "t3_send",
-  "list_models", "usage_limits", "max_subagents", "resource_slots", "handoff_subagents", "job_checklist", "set_job_outcome"]);
+  "list_models", "usage_limits"]);
 export function profileAllowsTool(profile: McpProfile, name: string): boolean {
   return profile !== "reduced" || !REDUCED_HIDDEN.has(name);
 }
