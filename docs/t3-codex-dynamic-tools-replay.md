@@ -1,5 +1,7 @@
 # AB-458 dynamic-tool replay and disposal correction
 
+Round-two review follow-up: use the [private RPC admission and production adapter test package](t3-codex-private-rpc-admission.md) for further review. The artifact below does not protect replay ahead of the protocol's 32-handler cap, and its manually wired transport candidate is not production adapter coverage.
+
 Status: correction artifact for independent native design review `AB45842181`, awaiting parent review. **Default-off; no production connector, installed modification or native acceptance.** This supersedes the replay/disposal behavior of the first [private dynamic-tool artifact](t3-codex-dynamic-tools.md); the earlier artifact and receipts are preserved.
 
 Bridge docs input: `9e3a1baf10359f04d4c97fd1240f88c3593cd598`. Original parent base `70820a0fd090bd12f8245e9cf7e51db13a78eef0` remains an ancestor. Source pins remain T3 `968dd51704441138559a3fe9c348719f2b11e0c6` and official Codex `6203846fb3ef040f62eed9b35bc6629c8e88980a`. Nothing here changes the private-stdio-only trust conclusion or existing T3 MCP child-borrowing limitation.
