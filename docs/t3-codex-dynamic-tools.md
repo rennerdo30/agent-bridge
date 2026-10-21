@@ -1,5 +1,7 @@
 # Native Codex private dynamic-tool route (AB-458)
 
+Review follow-up: the first artifact's replay/disposal behavior requires the [AB45842181 correction](t3-codex-dynamic-tools-replay.md). Use that corrected patch for further review; the original receipts below remain historical evidence.
+
 Status: source-supported, default-off upstream T3 patch artifact. **Not native acceptance or a shipped integration.** This is the final bounded follow-up to the unchanged [injection contract](t3-native-bridge-contract.md) and [app-owned proxy contract](t3-app-owned-bridge-contract.md). It selects private app-server dynamic tools for Bridge messaging; it does not extend the HTTP attestation proposal.
 
 Bridge research input is `2d66b180d8083735fcfb8280ce89a211fabc1afe`, descending from parent base `70820a0fd090bd12f8245e9cf7e51db13a78eef0` (ancestor check exit 0). T3 source is pinned to `968dd51704441138559a3fe9c348719f2b11e0c6`. Current official Codex `main`, resolved on 2026-10-22, is `6203846fb3ef040f62eed9b35bc6629c8e88980a`. This proves those sources, not the installed provider version. No provider was launched, config or runtime credential read, or installed T3 source modified.
