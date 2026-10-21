@@ -1,22 +1,44 @@
-# T3 Code host adapter (experimental, opt-in)
+# T3 Code host adapter (experimental, automatically detected)
 
-AB-446 adds a scoped MCP HTTP adapter for session messaging and T3-owned tasks. It does not install, update or configure T3. Ordinary Bridge sessions retain their provider paths unless explicitly opted in.
+AB-446 adds a scoped MCP HTTP adapter for session messaging and T3-owned tasks. AB-457 automatically detects deliberately injected transport and defaults validated T3 sessions to a reduced MCP surface. It does not install, update or configure T3. Ordinary Bridge sessions without injected transport retain their provider paths and full tool surface.
 
 ## Prerequisites
 
 The process starting the Bridge MCP server must deliberately supply:
 
-- `AGENT_BRIDGE_HOST=t3`.
 - `T3_ACP_MCP_ENDPOINT` and `T3_ACP_MCP_AUTHORIZATION` from that exact T3 caller's runtime environment.
 - The normal underlying provider selection, such as `--agent=opencode`, `--agent=muse`, `--agent=claude` or `--agent=codex`. T3 is a frontend, not a new provider kind.
 
-Never copy a scoped token into command arguments, URLs, Bridge configuration or logs. The adapter reads only these runtime environment variables. It does not inspect provider MCP configuration, credential files, T3 databases or session stores for credentials. Ordinary Bridge children, detached job runners and shared broker daemons strip the host selector and every `T3_ACP_MCP_*` variable, including extra environment overrides. Windows daemon creation also supplies the cleaned environment to its creation helper and the daemon's explicit environment block.
+`AGENT_BRIDGE_HOST` absent or `auto` enables detection only when at least one transport field is present; both must then validate and negotiate successfully. No transport fields means an ordinary session. Partial, malformed, expired, rejected or wrongly scoped automatic transport refuses with a sanitized error before Bridge registration; it never falls back to a native provider route. Node/entrypoint hints alone, process names and tools in the model's inventory are not transport evidence. Explicit `t3` retains the former opt-in behavior and requires transport even when both fields are absent. Explicit `off` or `native` disables host detection. For backward compatibility every other explicit value (including `full`, empty and unknown selectors) also retains the old no-host behavior and is never auto-overridden. To keep host delivery with all tools, use the independent MCP profile selector below.
+
+Never copy a scoped token into command arguments, URLs, Bridge configuration or logs. The adapter reads only these runtime environment variables. It does not inspect provider MCP configuration, credential files, T3 databases or session stores for credentials. Ordinary Bridge children, detached job runners and shared broker daemons strip the host selector, `AGENT_BRIDGE_MCP_PROFILE` and every `T3_ACP_MCP_*` variable, including extra environment overrides. Windows daemon creation also supplies the cleaned environment to its creation helper and the daemon's explicit environment block. An inherited active host transport on a delegated/internal Bridge server is refused before negotiation.
 
 The endpoint must use HTTPS or literal loopback HTTP (`127.0.0.1` or `[::1]`). URL user information, queries, fragments, control characters and redirects are rejected. Each operation has a 15-second total deadline, an eight-page tool-discovery limit and a two-MiB HTTP response limit. Connections close after each operation; shutdown aborts outstanding requests. The MCP client's optional notification GET is disabled locally; there is no host watcher, SSE reconnection loop, polling job or terminal/CLI transport fallback.
 
 Source evidence: upstream pin `67c0fc0cdaf963b103518862dd7b68a9c758ecf2`, `packages/provider-acp/src/server/adapter.ts:629-641,1435-1460` exports the scoped ACP transport into MCP-server and provider process environments. Actual inheritance into the Bridge subprocess is still a prerequisite. The audited app version was `0.1.1-nightly.20261019.3360`; the adapter feature-detects rather than relying on that version string.
 
-**Native Codex is currently unsupported without new, deliberate upstream transport injection.** The audited native Codex shell has no `T3_*` environment. Its scoped T3 MCP token exists only in provider MCP configuration; Bridge never extracts it. Native Claude's injected SDK MCP configuration likewise does not establish inherited ACP transport. Having T3 tools in the model's tool list alone is insufficient for a separate Bridge server to call them. An explicit opt-in with absent, partial, expired, rejected or wrongly scoped transport refuses; it never silently switches to native Codex queue or Claude rewake.
+**Native Codex is currently unsupported without new, deliberate upstream transport injection.** The AB-446 audited native Codex shell had no `T3_*` environment. Its scoped T3 MCP token existed only in provider MCP configuration; Bridge never extracts it. Native Claude's injected SDK MCP configuration likewise does not establish inherited ACP transport. Having T3 tools in the model's tool list alone is insufficient for a separate Bridge server to call them. Automatic detection does not change this boundary or claim that every native T3 session receives reduced tools. No new live host probe was performed for AB-457.
+
+## MCP profiles
+
+Set `AGENT_BRIDGE_MCP_PROFILE` at server startup:
+
+| Value | Behavior |
+| --- | --- |
+| absent or `auto` | Reduced only after successful T3 capabilities/current-thread negotiation; full for ordinary sessions. |
+| `reduced` | Requires a validated T3 binding; otherwise refuses startup. |
+| `full` | Retains the legacy full tool surface, including T3 wrappers when hosted. Host identity, delivery, native-child and permission checks still apply. |
+
+Unknown profile values refuse with a sanitized configuration error. Profile selection happens after the handshake and before Bridge registration; an untrusted environment hint cannot hide core tools. The central registration filter removes tools from MCP inventory and applies matching server instructions and delegation parameter hints, rather than asking the model to ignore tools.
+
+| Reduced surface | Tools and behavior |
+| --- | --- |
+| Hidden app duplicates | `t3_capabilities`, `t3_delegate`, `t3_task_status`, `t3_task_cancel`, `t3_send`; use T3's native tools. |
+| Hidden redundant catalogs | `list_models`, `usage_limits`; use T3's native provider/model tools for local tasks. |
+| Remote delegation retained | Existing `ask_*`/`spawn_*` names require a nonempty valid paired-machine `host` in both schema and handler. Locality refusal precedes checklist reads, usage checks and job creation. Remote cwd, remoteJobs allowlists, ownership, depth and permission checks remain; a host request never falls back locally. No remote aliases are added. |
+| Existing Bridge jobs retained | `peers` status/results and `message_subagent`, `pause_subagent`, `resume_subagent`, `cancel_subagent`, including remote controls. Pre-existing local jobs remain manageable across reloads with the same ownership checks; reduced spawn/ask cannot start new local jobs. Manager initialization/restoration is unchanged. |
+| Bridge-owned job management retained | `job_checklist` approves/rejects child proposals and updates retained local job checklists (`project_checklist` changes the template for future jobs). `set_job_outcome` records hold/discard decisions for finished owned jobs with the existing cleanup policy. `max_subagents` controls the Bridge continuation queue when requested by the user; `resource_slots` exposes Bridge admission holders/waiters; `handoff_subagents` transfers owned local Bridge jobs to an authorized local supervisor (remote jobs stay excluded). These operations have no native-T3 task equivalent. Their existing ownership, registration and child/role guards remain; none enables new local spawn/ask. |
+| Unique Bridge functions retained | Peer messaging/inbox/notify waits, quiet-mail controls, health/discovery, history, files/transfers, project main/availability/checklists, owner questions/permissions/decisions, native child grants and internal lifecycle hooks. Native child and mail scopes still restrict these tools. |
 
 ## Identity and session delivery
 
@@ -36,11 +58,11 @@ Provider-native admission is retained. Codex still requires proven main-thread r
 
 ## Explicit host tools
 
-These tools are registered only for an opted-in session with a verified host binding:
+These tools are registered only in the **full** profile with a verified host binding:
 
 | Tool | Contract |
 | --- | --- |
-| `t3_capabilities` | Re-negotiate the scoped binding, supported tools, inherited settings and live composer provider/model/options catalog, including configured custom models. |
+| `t3_capabilities` | Re-negotiate the scoped binding, supported tools, inherited settings and live composer provider/model/options catalog, including configured custom models. Optional `search` discovers models omitted from the short default list; `omittedModels` is retained. |
 | `t3_delegate` | Supply `task` and a stable `clientRequestId`; optionally select a catalog `target` with `providerInstanceId`, `model` and option `{id,value}` entries. Always async, default `isolation: "worktree"`; optional `shared`, title, role and interaction mode. Runtime permissions inherit; no permission override is exposed. Bridge's local depth gate and T3's own provider/permission/ownership gates remain. |
 | `t3_task_status` | Read an app-owned `taskId` when its result is needed mid-turn. Preserve `childThreadId`, original run, descendants, pending questions, original summary, later terminal result and `workState` separately. Reading terminal results acknowledges T3's automatic parent delivery. |
 | `t3_task_cancel` | Supply `taskId`, stable `clientRequestId` and optional reason. T3 handles cancellation, including later child turns. A terminal published result may stay terminal. No OS process or Bridge job is stopped. |
@@ -48,9 +70,15 @@ These tools are registered only for an opted-in session with a verified host bin
 
 Effects use a six-tool literal upstream allowlist: capabilities, current-thread listing, thread send, delegate, task status and task cancel. There is no anonymous RPC passthrough or top-level thread-launch tool. Result schemas and `isError` are checked; transport/error response text is never passed through. An effect whose result is missing, malformed, rejected or mismatched is reported as **outcome unknown**. Retain its request ID and inspect T3 before deciding on any retry; use a fresh ID only for a new operation. Independent review rounds use a fresh `t3_delegate` operation and ID with full context.
 
-These tasks belong to T3. They are not `JobManager` jobs, do not occupy Bridge job slots, are not listed as Bridge subagents and do not create Bridge completion/read receipts. T3 supplies its own admission and automatic completion notifications; end the turn rather than polling. For pending child questions use T3's pending-request tools or the owner. Existing `ask_*`, `spawn_*`, `message_subagent` and related tools continue to mean ordinary Bridge jobs, with host environment removed from their children.
+Catalog negotiation accepts bounded current compact option descriptors (`id`, optional `label`, typed `values`, optional `default`) and legacy boolean/select descriptors, preserving their reported shapes and inherited option settings. Options accept `{id,value}` arrays or an object keyed by advertised IDs. Duplicate/unknown IDs, wrong types and unadvertised values refuse before delegation. Settings inherit only for the same provider instance and model; explicit entries override individual settings and `[]`/`{}` clears inheritance. If the requested model is absent from the short catalog, delegation makes one bounded search on that same negotiated connection and rechecks its caller binding/settings. It never substitutes a favorite model. Applied option receipts must match requested/inherited settings; a mismatch is an unknown effect with no retry. Legacy hosts without option receipts remain compatible when no options were requested or inherited.
+
+These tasks belong to T3. They are not `JobManager` jobs, do not occupy Bridge job slots, are not listed as Bridge subagents and do not create Bridge completion/read receipts. T3 supplies its own admission and automatic completion notifications; end the turn rather than polling. For pending child questions use T3's pending-request tools or the owner. Existing `ask_*`, `spawn_*`, `message_subagent` and related tools continue to mean Bridge jobs, with host environment removed from their children; reduced spawn/ask requires a remote host.
 
 ## Verification boundary
+
+`test/t3-profile.test.ts` adds mocked automatic detection, handshake-before-registration/refusal, current/legacy catalogs and option receipts/search, reduced/full registration/instructions, remote locality refusal and routing, native child/depth guards and shared environment stripping. Its initial 11-case selection produced 10 behavior failures on unchanged production base `9babf816800e1f70a983b86cddf1814f01d0fbc1`. All subprocess, broker, provider and job execution boundaries are mocked. This file is the AB-457 local verification scope; the existing transport/broker fixtures below were not rerun locally.
+
+The retained-control regression adds reduced re-registration of a full session's fixture context: checklist proposal approve/reject through an explicit mocked broker authority, hold/discard through the real outcome owner/finished-state guards with metadata/cleanup mocked, and queue-limit/admission/handoff handler calls with effect boundaries mocked. These three cases fail on unchanged production head `654c1d45935ee0e8967d7006064caa0ab8274437` because the controls are missing. This simulates retained job context, not production restoration or broker authorization transactions. Startup ordering uses a mocked negotiated result; the Codex child test injects a refusing admission callback and proves wrapper enforcement, not rollout-lineage authentication. Live acceptance remains unrun.
 
 `test/t3-code.test.ts` contains only offline fixtures: SDK HTTP replay, schema and wrong-parent refusals, unknown effects, custom catalogs, T3 task handles, native admission/depth guards, durable wake reload/read receipts, persistence failures/corruption/capacity, child and mocked daemon environment cleanup, explicit child-result reads and isolated broker registration/recovery. The initial identity assertion failed on base `4277dc248013b8bc158ac3166974a6c0b07b464f`; accepted/unknown reload, daemon inheritance and implicit-result-acknowledgment regressions failed on reviewed head `ee1b6144a652ec437140b34d623324c69c97cd08`.
 

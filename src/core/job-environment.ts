@@ -1,7 +1,7 @@
 /** Used at every normal Bridge child boundary, including detached runner launches. */
 export function withoutT3Context(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return Object.fromEntries(Object.entries(env).filter(([key]) =>
-    key.toUpperCase() !== "AGENT_BRIDGE_HOST" && !key.toUpperCase().startsWith("T3_ACP_MCP_")));
+    key.toUpperCase() !== "AGENT_BRIDGE_HOST" && key.toUpperCase() !== "AGENT_BRIDGE_MCP_PROFILE" && !key.toUpperCase().startsWith("T3_ACP_MCP_")));
 }
 
 /**
