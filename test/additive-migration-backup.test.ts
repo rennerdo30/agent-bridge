@@ -2,7 +2,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, expect, it } from "vitest";
-import { migrateMessageSchema } from "../src/core/store.js";
+import { migrateMessageSchema, SQLITE_STORE_VERSION } from "../src/core/store.js";
 import { migrateSqlite } from "../src/core/sqlite-migrations.js";
 import { nullLogger } from "../src/core/logger.js";
 import { CONVERSATION_MIGRATION } from "../src/core/conversation-schema.js";
@@ -20,19 +20,19 @@ function fixture(): DatabaseSync {
   return db;
 }
 
-it("backs up additive v8→v9 inputs and complete schema without copying unrelated large tables", () => {
+it("backs up additive v8 inputs and complete schema without copying unrelated large tables", () => {
   const db = fixture();
   try {
     migrateMessageSchema(db, env.db, true, nullLogger);
-    expect(db.prepare("PRAGMA user_version").get()!.user_version).toBe(9);
+    expect(db.prepare("PRAGMA user_version").get()!.user_version).toBe(SQLITE_STORE_VERSION);
     expect(db.prepare("SELECT length(raw) AS n FROM opaque_owner_data").get()!.n).toBe(8 * 1024 * 1024);
     const folder = join(env.home, ".migration-snapshots");
     const name = readdirSync(folder).find(name => name.endsWith(".db"))!;
-    expect(name).toMatch(/^bridge\.db\.metadata-v8-to-v9-/);
+    expect(name).toMatch(new RegExp(`^bridge\\.db\\.metadata-v8-to-v${SQLITE_STORE_VERSION}-`));
     const path = join(folder, name);
     expect(statSync(path).size).toBeLessThan(1024 * 1024);
     const manifest = JSON.parse(readFileSync(`${path}.manifest.json`, "utf8"));
-    expect(manifest).toMatchObject({ version: 1, kind: "sqlite-migration-metadata", sourceVersion: 8, targetVersion: 9, tables: [{ name: "peer_names", rows: 1 }] });
+    expect(manifest).toMatchObject({ version: 1, kind: "sqlite-migration-metadata", sourceVersion: 8, targetVersion: SQLITE_STORE_VERSION, tables: [{ name: "peer_names", rows: 1 }] });
     expect(manifest.schema).toEqual(expect.arrayContaining([expect.objectContaining({ name: "opaque_owner_data", type: "table" })]));
     const snapshot = new DatabaseSync(path, { readOnly: true });
     try {

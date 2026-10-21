@@ -122,6 +122,8 @@ export interface MessageAddress {
 }
 
 export interface BridgeMessage {
+  /** Durable recipient ownership; absent means legacy/native mail, never an arbitrary T3 thread. */
+  recipientFrontend?: T3Binding;
   /** Local broker's live authorization; omitted from retained mail so replay fails closed. */
   jobControlAuthorized?: boolean;
   id: string;

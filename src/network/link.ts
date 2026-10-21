@@ -60,6 +60,13 @@ export const networkHelloSchema = publicIdentitySchema.extend({
 });
 const destinationSchema = z.object({ peerId: textId, frontend: t3BindingSchema.optional() });
 export type NetworkDestination = z.infer<typeof destinationSchema>;
+/** Durable identity excludes the replaceable local registration/process ID. */
+export interface RemoteDestination {
+  hostId: string;
+  hostFingerprint: string;
+  name: string;
+  frontend?: PeerInfo["frontend"];
+}
 const frameSchema = z.discriminatedUnion("type", [
   networkHelloSchema,
   z.object({ type: z.literal("file-stream"), payload: z.record(z.string(), z.unknown()) }),
@@ -81,6 +88,8 @@ export interface NetworkBroker {
   recipientReceipts?: boolean;
   /** null marks legacy network ingress; undefined remains internal/local notification. */
   receive(message: BridgeMessage, destination?: NetworkDestination | null): DeliveryResult;
+  pinDestination?(message: BridgeMessage, destination: RemoteDestination): { message: BridgeMessage; destination: RemoteDestination };
+  pinnedDestinations?(id: string): RemoteDestination[];
 }
 export interface NetworkStatus {
   enabled: boolean;
@@ -449,6 +458,11 @@ export class NetworkService {
   }
   async receipt(address: string, id: string, sender: string, requireRecipient = false): Promise<number | null> {
     const { link, target } = this.target(address);
+    const retained = this.broker.pinnedDestinations?.(id) ?? [];
+    if (retained.length && !retained.some(destination => destination.hostId === link.remote!.id &&
+        destination.hostFingerprint === link.remote!.fingerprint && destination.name === target)) {
+      throw new BridgeError("unauthorized", "Receipt host does not match the retained authenticated destination.");
+    }
     return link.receipt(id, sender, target, requireRecipient);
   }
 
@@ -639,6 +653,17 @@ export class NetworkService {
     if ((sender?.frontend || destination?.frontend) && (!link.t3ThreadRouting || !destination)) {
       throw new BridgeError("unknown_target", "Paired host lacks T3 thread routing or destination is not advertised; no native fallback was attempted.");
     }
+    if (!this.broker.pinDestination && (sender?.frontend || destination?.frontend)) throw new BridgeError("protocol_mismatch", "Durable remote destination storage is unavailable; no hosted send was dispatched.");
+    const proposed: RemoteDestination = { hostId: link.remote!.id, hostFingerprint: link.remote!.fingerprint,
+      name: target, ...(destination?.frontend ? { frontend: destination.frontend } : {}) };
+    // Legacy native-only embedders have no recovery store; production brokers always
+    // supply the durable callback, including for native tracked remote sends.
+    const pinned = this.broker.pinDestination?.(message, proposed) ?? { message, destination: proposed };
+    if (pinned.destination.hostId !== link.remote!.id || pinned.destination.hostFingerprint !== link.remote!.fingerprint ||
+        pinned.destination.name !== target || !sameFrontend(pinned.destination, destination ?? {})) {
+      throw new BridgeError("unknown_target", "Original authenticated remote host or destination binding changed; retained send was not retargeted.");
+    }
+    message = { ...pinned.message, from: message.from, ...(pinned.destination.frontend ? { recipientFrontend: pinned.destination.frontend } : {}) };
     // Advertise a just-reconnected sender before the receiver authenticates its frame.
     link.refresh();
     const result = await link.send({ ...message, recipient: target }, link.t3ThreadRouting && destination ?

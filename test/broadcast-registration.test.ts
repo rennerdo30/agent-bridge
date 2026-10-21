@@ -81,7 +81,7 @@ it("backs up v8 before adding last-seen registrations and preserves original reg
     const folder = join(env.home, ".migration-snapshots");
     const snapshots = readdirSync(folder).filter((name) => name.endsWith(".db"));
     expect(snapshots).toHaveLength(1);
-    expect(snapshots[0]).toMatch(/^bridge\.db\.metadata-v8-to-v9-/);
+    expect(snapshots[0]).toMatch(new RegExp(`^bridge\\.db\\.metadata-v8-to-v${SQLITE_STORE_VERSION}-`));
     const path = join(folder, snapshots[0]!);
     const manifest = JSON.parse(readFileSync(`${path}.manifest.json`, "utf8"));
     expect(manifest).toMatchObject({ version: 1, kind: "sqlite-migration-metadata", sourceVersion: 8, targetVersion: SQLITE_STORE_VERSION });
