@@ -68,6 +68,8 @@ Journal compatibility is additive: existing hashed name/session rows remain inta
 
 Round-two qualified red evidence on the exact review head plus tests only: PID `77572`, 7 failed / 24 passed, exit `1`; expanded production regression set PID `16112`, 11 failed / 24 passed, exit `1`. An additional alternate-opcode audit regression failed before its fix at PID `56904`, exit `1`: legacy `send` discarded a supplied durable ID and accepted changed local routing. The final expanded base run, PID `79088`, failed all 13 new cases while the prior 24 passed, exit `1`. Exact committed-head test/typecheck receipts are recorded on AB-458 and in the implementation handoff. Every runner has a 60-second outer timeout, one Vitest worker, and subprocess/provider launch mocks. The existing 24 regressions remain in every complete focused run.
 
+The added positive online-reconnect fixture initially raced an automatic persisted-pairing reconnect with another explicit pairing request. At `cca32254e00cb3d24ca5147b2fb1d3b7d6e40563`, PID `47228` passed 36/37 with that fixture failure, exit `1`; compiler PID `28704` exited `0`. The fixture now waits for the production automatic reconnect. Its separate corrected base proof, PID `56964`, exited `1` at the routing-result assertion, qualifying the online case independently of the pairing race in the earlier expanded run. Final corrected-head evidence follows on AB-458.
+
 ## Live acceptance prerequisites (not performed)
 
 - Owner-authorized operation on two reachable PCs with paired/authenticated Bridge hosts containing this change. Record each machine's Bridge and T3 versions and the negotiated feature; an old broker cannot certify exact T3 routing.
