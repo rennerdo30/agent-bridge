@@ -8,15 +8,17 @@ import { DatabaseSync } from "node:sqlite";
 import type { Logger } from "./logger.js";
 import { t3BindingSchema, type T3Binding } from "./t3-identity.js";
 
-/** Old name/session marks remain native evidence only. A hosted identity is
+/** Old name/session marks remain ambiguous evidence only. A hosted identity is
  * independent of registration names and native provider session IDs. No legacy
  * record contains enough information to infer its complete frontend owner. */
-export function readJournalIdentities(name: string, sessionId?: string | null, frontend?: T3Binding): string[] {
+export function readJournalIdentities(_name: string, _sessionId?: string | null, frontend?: T3Binding, nativeIdentity?: string): string[] {
  if (frontend) {
   const binding = t3BindingSchema.parse(frontend);
   return [`frontend:v1:${JSON.stringify([binding.kind, binding.scope, binding.threadId, binding.providerInstanceId])}`];
  }
- return [`name:${name}`, ...(sessionId ? [`session:${sessionId}`] : [])];
+ // Pre-v11 hosted and native readers shared these namespaces. Retain them for
+ // inspection, but they cannot establish consumption by any successor.
+ return nativeIdentity ? [`native-copy:v1:${nativeIdentity}`] : [];
 }
 
 /** The metadata store cannot open yet: its fail-closed migration lease needs this process's

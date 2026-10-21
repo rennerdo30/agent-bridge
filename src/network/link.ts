@@ -57,6 +57,7 @@ export const networkHelloSchema = publicIdentitySchema.extend({
   additionalCapabilities: z.array(textId).max(MAX_EXTENSION_HANDLERS).optional(),
   // Separate feature bit: shipped readers retain their bounded capability arrays.
   t3ThreadRouting: z.boolean().optional(),
+  recipientOwnershipV1: z.boolean().optional(),
 });
 const destinationSchema = z.object({ peerId: textId, frontend: t3BindingSchema.optional() });
 export type NetworkDestination = z.infer<typeof destinationSchema>;
@@ -118,6 +119,7 @@ class Link {
   private heartbeatPending = false;
   private receiptsSupported = false;
   t3ThreadRouting = false;
+  recipientOwnershipV1 = false;
   private capabilities: string[] = [];
   private advertisedPeers: string | null = null;
   private extensionHandlers = 0;
@@ -176,6 +178,7 @@ class Link {
           this.echoSupported = frame.echo === true;
           this.receiptsSupported = frame.receipts === true;
           this.t3ThreadRouting = frame.t3ThreadRouting === true;
+          this.recipientOwnershipV1 = frame.recipientOwnershipV1 === true;
           this.capabilities = [...new Set([...(frame.capabilities ?? []), ...(frame.additionalCapabilities ?? [])])];
           this.service.attach(this);
           clearTimeout(this.deadline); this.readyResolve();
@@ -311,6 +314,8 @@ class Link {
     }
     if (frame.type === "echo") { this.write({ type: "result", rid: frame.rid, delivered: true }); return; }
     try {
+      if ((frame.type === "send" || frame.type === "receipt") && !this.recipientOwnershipV1)
+        throw new Error("Paired host lacks recipientOwnershipV1; mailbox and receipt access refused pending owner-coordinated upgrade.");
       if (frame.type === "receipt") {
         const readAt = this.service.readReceipt(frame.id, `${this.remote!.id}/${frame.sender}`, frame.recipient);
         this.write({ type: "result", rid: frame.rid, readAt });
@@ -405,12 +410,13 @@ export class NetworkService {
     return [...this.extensions.values()].flatMap((extension) => [extension.capability, ...extension.aliases]).concat([FILE_STREAM_WINDOW_CAPABILITY], this.broker.recipientReceipts ? ["recipient-receipts-v1"] : []);
   }
 
-  extensionHelloCapabilities(): { capabilities: string[]; additionalCapabilities: string[]; t3ThreadRouting: boolean } {
+  extensionHelloCapabilities(): { capabilities: string[]; additionalCapabilities: string[]; t3ThreadRouting: boolean; recipientOwnershipV1: boolean } {
     const capabilities = this.extensionCapabilities();
     return {
       capabilities: capabilities.filter(capability => capability !== REMOTE_JOB_USAGE_CAPABILITY),
       additionalCapabilities: capabilities.filter(capability => capability === REMOTE_JOB_USAGE_CAPABILITY),
       t3ThreadRouting: true,
+      recipientOwnershipV1: true,
     };
   }
 
@@ -458,6 +464,7 @@ export class NetworkService {
   }
   async receipt(address: string, id: string, sender: string, requireRecipient = false): Promise<number | null> {
     const { link, target } = this.target(address);
+    if (!link.recipientOwnershipV1) throw new BridgeError("unknown_target", "Paired host cannot attest recipient ownership for this receipt.");
     const retained = this.broker.pinnedDestinations?.(id) ?? [];
     if (retained.length && !retained.some(destination => destination.hostId === link.remote!.id &&
         destination.hostFingerprint === link.remote!.fingerprint && destination.name === target)) {
@@ -656,9 +663,19 @@ export class NetworkService {
     if (!this.broker.pinDestination && (sender?.frontend || destination?.frontend)) throw new BridgeError("protocol_mismatch", "Durable remote destination storage is unavailable; no hosted send was dispatched.");
     const proposed: RemoteDestination = { hostId: link.remote!.id, hostFingerprint: link.remote!.fingerprint,
       name: target, ...(destination?.frontend ? { frontend: destination.frontend } : {}) };
+    message = { ...message, recipientFrontend: undefined, recipientNative: undefined, recipientAmbiguous: undefined,
+      ...(destination?.frontend ? { recipientFrontend: destination.frontend } : destination ?
+        { recipientNative: JSON.stringify(["authenticated-native-advertisement", proposed.hostId, proposed.hostFingerprint, target]) } :
+        { recipientAmbiguous: true as const }) };
     // Legacy native-only embedders have no recovery store; production brokers always
     // supply the durable callback, including for native tracked remote sends.
     const pinned = this.broker.pinDestination?.(message, proposed) ?? { message, destination: proposed };
+    if (!link.recipientOwnershipV1) {
+      throw new BridgeError("unknown_target", "Paired host lacks verified recipient ownership; payload was withheld without native fallback.");
+    }
+    if (!pinned.destination.frontend && !pinned.message.recipientNative) {
+      throw new BridgeError("unknown_target", "Original destination ownership is unproven; no unadvertised native fallback was dispatched.");
+    }
     if (pinned.destination.hostId !== link.remote!.id || pinned.destination.hostFingerprint !== link.remote!.fingerprint ||
         pinned.destination.name !== target || !sameFrontend(pinned.destination, destination ?? {})) {
       throw new BridgeError("unknown_target", "Original authenticated remote host or destination binding changed; retained send was not retargeted.");

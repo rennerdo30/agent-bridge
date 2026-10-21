@@ -122,8 +122,12 @@ export interface MessageAddress {
 }
 
 export interface BridgeMessage {
-  /** Durable recipient ownership; absent means legacy/native mail, never an arbitrary T3 thread. */
+  /** Durable hosted ownership. Absence alone proves neither native nor hosted authority. */
   recipientFrontend?: T3Binding;
+  /** Internal recipient evidence from an authenticated native registration/route. */
+  recipientNative?: string;
+  /** Retained content whose recipient ownership cannot be proven. Never deliver/ACK. */
+  recipientAmbiguous?: true;
   /** Local broker's live authorization; omitted from retained mail so replay fails closed. */
   jobControlAuthorized?: boolean;
   id: string;
@@ -235,6 +239,8 @@ export interface SendResult {
 
 export interface AckArgs {
   ids: string[];
+  /** Original per-copy native ownership; never reconstructed from a later registration. */
+  nativeOwners?: Record<string, string>;
 }
 
 export interface PendingArgs {
@@ -259,7 +265,7 @@ export interface UpdatePeerArgs {
 export interface AuthArgs {
   protocol: number;
   token: string;
-  /** As HelloArgs.canHost: omitted (CLI commands, job runners, older clients) never triggers a handover. */
+  /** Legacy wire field. Protocol mismatch never authorizes handover; new clients omit this during auth. */
   canHost?: boolean;
 }
 

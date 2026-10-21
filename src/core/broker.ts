@@ -4,7 +4,7 @@ import { HealthMonitor } from "./health.js";
 import { loadConfig } from "./config.js";
 import { conversationPageSchema } from "./conversations.js";
 import { historySearchSchema } from "./history.js";
-import { ReadJournal } from "./read-journal.js";
+import { ReadJournal, readJournalIdentities } from "./read-journal.js";
 import { recordStorePeer, refreshStorePeerIdentities, validStoreCapabilities } from "./store-compatibility.js";
 import { randomUUID } from "node:crypto";
 import { existsSync, lstatSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
@@ -262,7 +262,7 @@ export class Broker {
   private readonly drainWaiters = new Set<() => void>();
   private idle: { ms: number; onIdle: () => void; keepAlive?: () => string | undefined; timer: NodeJS.Timeout | null } | undefined;
   /**
-   * Daemon hosting only: an authenticated client of a newer release (APP_VERSION or PROTOCOL_VERSION) asks this
+   * Daemon hosting only: an authenticated client of a newer release using the same protocol asks this
    * broker to step aside. The broker stops admitting work at once; the handler drains, closes and exits, and the
    * newer client then demand-starts its own release. Embedded brokers never hand over (they live with a session).
    */
@@ -720,7 +720,13 @@ export class Broker {
         return this.onSend(c, a);
       },
       messageReceipt: (c, a) => this.messageReceipt(c, a.id),
-      ack: async (c, a) => ({ acked: await this.store.retryWrite(() => this.store.markRead(this.requirePeer(c).name, a.ids ?? [], this.now(), this.requirePeer(c).frontend)) }),
+      ack: async (c, a) => {
+        const peer = this.requirePeer(c), registration = { id: peer.id, name: peer.name, sessionId: peer.sessionId, generation: c.mailGeneration };
+        return { acked: await this.store.retryWrite(() => {
+          this.assertQueueRegistration(c, peer, registration);
+          return this.store.markRead(registration.name, a.ids ?? [], this.now(), peer.frontend, a.nativeOwners ?? {});
+        }) };
+      },
       pending: (c, a) => {
         const peer = this.requirePeer(c);
         return this.queueReady(c, peer) ? this.pendingMail(peer.name, Math.min(Math.max(1, a.limit ?? PENDING_DEFAULT_LIMIT), PENDING_MAX_LIMIT)) : [];
@@ -1265,7 +1271,11 @@ export class Broker {
   }
 
   private emit<E extends EventName>(conn: Conn, ev: E, data: EventMap[E]): void {
-    if (ev === "message" && !sameFrontend(conn.peer ?? {}, { frontend: (data as BridgeMessage).recipientFrontend })) return;
+    if (ev === "message") {
+      const message = data as BridgeMessage;
+      if (message.recipientAmbiguous || (!message.recipientFrontend && !message.recipientNative) ||
+          !sameFrontend(conn.peer ?? {}, { frontend: message.recipientFrontend })) return;
+    }
     const publicData = ev === "peer_joined" || ev === "peer_left" ? this.publicPeer(data as PeerInfo) as EventMap[E] : data;
     const frame: EventFrame<E> = { t: "evt", ev, data: publicData };
     this.write(conn, frame as EventFrame);
@@ -1280,9 +1290,11 @@ export class Broker {
     return conn.peer;
   }
 
-  /** Internal local notifications acquire their intended live recipient before persistence. */
+  /** Fresh copies acquire live or verified offline ownership before persistence. */
   private bindLocalMessage(message: BridgeMessage): BridgeMessage {
-    message.recipientFrontend = this.recipientConn(message.recipient)?.peer?.frontend;
+    const evidence = this.store.recipientOwnership(message.recipient, this.recipientConn(message.recipient)?.peer ?? undefined);
+    delete message.recipientFrontend; delete message.recipientNative; delete message.recipientAmbiguous;
+    Object.assign(message, evidence);
     return message;
   }
 
@@ -1638,15 +1650,19 @@ export class Broker {
             // AB-380: an oversized stored envelope is persisted and sent as a stub; jobs.json keeps the original.
             const message = this.wireMessage({ ...envelope, to: recipient, recipient, conversationId: this.jobConversation(job, recipient, String(envelope.conversationId)) } as unknown as BridgeMessage);
             const inserted = this.store.insertJobDelivery(message);
-            const names = new Set([recipient, envelope.to, envelope.recipient, ...mastersFor(job)]);
-            const consumed = !target?.peer?.frontend && this.jobsPath && [...names].some((name) => typeof name === "string" &&
-              new ReadJournal(dirname(this.jobsPath!)).read(`name:${name}`).includes(message.id));
-            if (consumed) this.store.markRead(recipient, [message.id], this.now());
+            const identities = message.recipientAmbiguous ? [] : readJournalIdentities(recipient, null, message.recipientFrontend, message.recipientNative);
+            const consumed = this.jobsPath && identities.some(key => new ReadJournal(dirname(this.jobsPath!)).receipt(key, message.id).read);
+            if (consumed) this.store.markRead(recipient, [message.id], this.now(), message.recipientFrontend,
+              message.recipientNative ? { [message.id]: message.recipientNative } : undefined);
             else if (inserted && target && !target.peer?.unavailable) this.emit(target, "message", message);
           }
           if (!target || target.peer?.unavailable) return;
           for (const from of this.store.pendingJobRecipients(String(job.id))) {
-            if (this.jobsPath) this.store.markRead(from, new ReadJournal(dirname(this.jobsPath)).read(`name:${from}`), this.now());
+            if (this.jobsPath) for (const copy of this.store.unread(from, 500, target.peer?.frontend)) {
+              const keys = readJournalIdentities(from, null, copy.recipientFrontend, copy.recipientNative);
+              if (keys.some(key => new ReadJournal(dirname(this.jobsPath!)).receipt(key, copy.id).read))
+                this.store.markRead(from, [copy.id], this.now(), copy.recipientFrontend, copy.recipientNative ? { [copy.id]: copy.recipientNative } : undefined);
+            }
             const moved = this.store.handoffMail(from, recipient, String(job.id), this.now(), recipient !== job.parentJob && recipient !== primaryFor(job), target.peer?.frontend);
             const previous = this.connByName(from);
             if (previous && moved.length) this.emit(previous, "mail_retracted", { ids: moved.map((m) => m.id) });
@@ -2066,11 +2082,7 @@ export class Broker {
 
   private checkAuth(protocol: number, token: unknown, canHost?: unknown): void {
     if (protocol !== PROTOCOL_VERSION) {
-      // Only a client proving the shared token that can demand-start its own daemon can make this one step aside,
-      // and only for a newer protocol. CLI commands, job runners and connect-only nodes never send canHost.
-      if (this.handoverHandler && canHost === true && typeof protocol === "number" && protocol > PROTOCOL_VERSION && typeof token === "string" && tokensEqual(token, this.token)
-        && this.requestHandover({ protocol })) throw this.handoverRefusal("auth");
-      throw new BridgeError("protocol_mismatch", `broker speaks protocol ${PROTOCOL_VERSION}, client ${protocol}`, {
+      throw new BridgeError("protocol_mismatch", `broker speaks protocol ${PROTOCOL_VERSION}, client ${protocol}; mailbox access refused. Owner-coordinated client/broker upgrade required; no automatic daemon replacement.`, {
         brokerProtocol: PROTOCOL_VERSION,
       });
     }
@@ -2450,7 +2462,7 @@ export class Broker {
 
   private assertSendOwner(peer: PeerInfo, id: string, retained: boolean): void {
     const owner = this.store.sendIntentOwner(id);
-    if (owner ? owner !== JSON.stringify([peer.name, peer.agent, peer.frontend ?? null]) : retained && peer.frontend) {
+    if (owner ? owner !== JSON.stringify([peer.name, peer.agent, peer.frontend ?? null]) : retained) {
       throw new BridgeError("unauthorized", "Retained send ownership does not match this frontend; no legacy sender attribution was inferred.");
     }
   }
@@ -2675,7 +2687,8 @@ export class Broker {
       check();
       const previous = recovered();
       if (previous) return previous;
-      this.store.insertBatch([message, ...copies].map(m => this.bindLocalMessage(m)), () => {
+      this.store.insertBatch([message, ...copies].map(m => m.recipient === child.address ?
+        { ...m, recipientNative: `native-child:${JSON.stringify([child.owner, child.session, child.parent, child.agentId])}` } : this.bindLocalMessage(m)), () => {
         if (current) check(); // New one-shot queue: recheck after BEGIN IMMEDIATE.
         if (guard && this.store.replyConflicts(senderName, [to], conversationId, guard).length) throw new BridgeError("bad_request", "Stale reply refused: newer unread mail exists.");
       });
@@ -2864,7 +2877,7 @@ export class Broker {
       });
     const envelope = (recipient: string): BridgeMessage => {
       const restriction = replyRestrictions.find((r) => r.name === recipient);
-      return { ...base, recipient, recipientFrontend: this.recipientConn(recipient)?.peer?.frontend, body: restriction ? base.body +
+      return { ...base, recipient, ...this.store.recipientOwnership(recipient, this.recipientConn(recipient)?.peer ?? undefined), body: restriction ? base.body +
         `\n\n[agent-bridge routing hint: this sender can't receive your direct reply; answer via your supervisor ${restriction.supervisor} if needed.]` : base.body };
     };
     const messages: BridgeMessage[] = [];
@@ -3043,17 +3056,19 @@ export class Broker {
     const target = this.recipientConn(message.recipient);
     // Retained aliases are resolved only here. Legacy name-only ingress must not
     // use an alias to bypass the network's exact T3 destination fence.
+    const evidence = this.store.recipientOwnership(message.recipient, target?.peer ?? undefined);
     if (destination !== undefined && (destination ? !target?.peer || target.peer.id !== destination.peerId ||
-        !sameFrontend(target.peer, destination) : target?.peer?.frontend)) {
+        !sameFrontend(target.peer, destination) : evidence.recipientFrontend)) {
       throw new BridgeError("unknown_target", "T3 destination binding changed or is missing; refresh peers and select the exact thread.");
     }
-    message = { ...message, recipientFrontend: target?.peer?.frontend };
+    message = { ...message, recipientFrontend: undefined, recipientNative: undefined, recipientAmbiguous: undefined, ...evidence };
     if (target?.peer) message = { ...message, recipient: target.peer.name };
     const existing = this.store.byId(message.id);
     if (existing) {
       const broadcastCopy = existing.to === BROADCAST && message.to === BROADCAST;
       const originalCopy = this.store.messagesById(message.id).find(copy => copy.recipient === message.recipient) ?? (!broadcastCopy ? existing : undefined);
-      if (originalCopy && !sameFrontend({ frontend: originalCopy.recipientFrontend }, { frontend: message.recipientFrontend })) {
+      if (originalCopy && (originalCopy.recipientAmbiguous || (!originalCopy.recipientFrontend && !originalCopy.recipientNative) ||
+          !sameFrontend({ frontend: originalCopy.recipientFrontend }, { frontend: message.recipientFrontend }) || originalCopy.recipientNative !== message.recipientNative)) {
         throw new BridgeError("unauthorized", "Stored recipient ownership does not match this destination; no duplicate receipt was acknowledged.");
       }
       // A reloaded sending session has a new process id, but retains its authenticated paired

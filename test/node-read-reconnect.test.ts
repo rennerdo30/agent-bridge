@@ -24,7 +24,10 @@ function holdPeers(node: unknown) {
 
 it("reconnects one actual in-flight peers read across broker retirement and preserves retained mail", async () => {
   const { previous, reader } = await connected();
+  const registered = env.node("later"); await registered.start(); await registered.stop();
   const stored = await reader.send({ to: "later", body: "retained during read retry" });
+  expect(stored.messages[0]!.recipientNative).toBeTruthy();
+  expect(stored.messages[0]!.recipientAmbiguous).toBeUndefined();
   const held = holdPeers(previous), peers = reader.peers();
   try {
     await until(held.entered); await previous.stop();

@@ -37,7 +37,8 @@ export function localResultReceipt(home: string, name: string, owner: string | u
   const envelope = isRecord(record.envelope) ? record.envelope : undefined;
   const binding = envelope?.recipientFrontend === undefined ? undefined : t3BindingSchema.safeParse(envelope.recipientFrontend);
   // Malformed ownership is not evidence of native consumption.
-  const identity = binding && !binding.success ? undefined : readJournalIdentities(record.recipient as string, null, binding?.data)[0];
+  const identity = envelope?.recipientAmbiguous || binding && !binding.success || !binding && !envelope?.recipientNative ? undefined :
+    readJournalIdentities(record.recipient as string, null, binding?.data, typeof envelope?.recipientNative === "string" ? envelope.recipientNative : undefined)[0];
   const receipt = identity ? new ReadJournal(home).receipt(identity, record.id as string) : { read: false, at: null };
   return { status: receipt.read ? "read" : "delivered", messageId: record.id as string, recipient: record.recipient as string,
     deliveredAt: record.deliveredAt as number, readAt: receipt.at };

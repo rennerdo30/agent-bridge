@@ -123,6 +123,22 @@ const MIGRATIONS = [
     );
     PRAGMA user_version = 10;
   ` },
+  // Add columns and project only new metadata; original rows/binding bytes stay
+  // unchanged. No snapshot of a table that a v9 source has not created yet.
+  { version: 11, backupTables: [], sql: `
+    ALTER TABLE message_frontends ADD COLUMN state TEXT NOT NULL DEFAULT 'ambiguous';
+    ALTER TABLE message_frontends ADD COLUMN identity TEXT NOT NULL DEFAULT '';
+    UPDATE message_frontends SET state='hosted',identity=binding
+      WHERE CASE WHEN json_valid(binding) THEN json_extract(binding,'$.kind')='t3'
+        AND json_type(binding,'$.scope')='text' AND length(json_extract(binding,'$.scope'))=64
+        AND json_extract(binding,'$.scope') NOT GLOB '*[^a-f0-9]*'
+        AND json_type(binding,'$.threadId')='text' AND length(json_extract(binding,'$.threadId')) BETWEEN 1 AND 512
+        AND json_type(binding,'$.providerInstanceId')='text' AND length(json_extract(binding,'$.providerInstanceId')) BETWEEN 1 AND 256 ELSE 0 END;
+    CREATE TABLE recipient_registrations (
+      name TEXT PRIMARY KEY, identity TEXT NOT NULL, binding TEXT NOT NULL, state TEXT NOT NULL, peer_id TEXT NOT NULL
+    );
+    PRAGMA user_version = 11;
+  ` },
 ] as const;
 
 /** Upgrade only the schema, without broker startup, archive movement or retention. */
@@ -142,6 +158,9 @@ export function registrationIdentity(peer: PeerInfo): string | null {
   return JSON.stringify([peer.agent, peer.agentPid, peer.agentStartedAt, cwd, peer.name.replace(/-\d+$/, "")]);
 }
 function frontendKey(frontend?: T3Binding): string { return frontend ? JSON.stringify(t3BindingSchema.parse(frontend)) : ""; }
+function nativeCopyIdentity(peer: PeerInfo): string {
+  return JSON.stringify(["native-copy", peer.name, peer.agent, peer.sessionId ?? registrationIdentity(peer) ?? peer.id]);
+}
 
 interface Row {
   id: string;
@@ -366,9 +385,7 @@ export class MessageStore {
   readonly file: string;
   private readonly stmt: {
     insert: StoreStatement;
-    unread: StoreStatement;
     markRead: StoreStatement;
-    claim: StoreStatement;
     byId: StoreStatement;
     replyConflicts: StoreStatement;
   };
@@ -399,7 +416,7 @@ export class MessageStore {
       if (file !== ":memory:") attachStoreCompatibility(this.db, file, log, deferred);
       configureSqlite(this.db);
       ensureMessageQuarantine(this.db);
-      this.ownershipReady = Number(this.statement(this.db, "PRAGMA user_version").get()!.user_version) >= 10;
+      this.ownershipReady = Number(this.statement(this.db, "PRAGMA user_version").get()!.user_version) >= 11;
     } catch (err) {
       this.closeCapturedHandle(this.db);
       this.release();
@@ -430,14 +447,7 @@ export class MessageStore {
         `INSERT INTO messages (id, recipient, from_id, from_name, from_agent, to_target, conversation_id, reply_to, hop, body, created_at, read_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
       )),
-      unread: this.captureStatement(this.db.prepare(
-        `SELECT * FROM deliverable_messages WHERE recipient = ? AND read_at IS NULL
-         ORDER BY CASE WHEN (conversation_id LIKE '%:note' OR conversation_id LIKE '%:ack' OR conversation_id LIKE 'files-progress-%') THEN 1 ELSE 0 END,
-                  created_at ASC, id ASC LIMIT ?`,
-      )),
       markRead: this.captureStatement(this.db.prepare(`UPDATE messages SET read_at = ? WHERE id = ? AND recipient = ? AND read_at IS NULL AND ${unquarantined("messages")}`)),
-      claim: this.captureStatement(this.db.prepare(`UPDATE OR IGNORE messages SET recipient = ? WHERE recipient = ? AND read_at IS NULL AND ${unquarantined("messages")}
-        ${this.frontendOwnership ? "AND NOT EXISTS (SELECT 1 FROM message_frontends f WHERE f.id=messages.id AND f.recipient=messages.recipient)" : ""}`)),
       byId: this.captureStatement(this.db.prepare(`SELECT * FROM messages WHERE id = ? ORDER BY created_at ASC LIMIT 1`)),
       replyConflicts: this.captureStatement(this.db.prepare(`SELECT id, from_name, conversation_id FROM deliverable_messages WHERE recipient = ? AND read_at IS NULL
         AND (conversation_id = ? OR from_name IN (SELECT value FROM json_each(?)))
@@ -494,6 +504,9 @@ export class MessageStore {
       // Even an older or unidentified server supersedes historical ownership of its exact name.
       this.statement(this.db, `INSERT INTO peer_name_owners VALUES (?,?) ON CONFLICT(name)
         DO UPDATE SET identity=excluded.identity`).run(peer.name, identity ?? `unidentified:${peer.id}`);
+      if (this.frontendOwnership) this.statement(this.db, `INSERT INTO recipient_registrations VALUES (?,?,?,?,?)
+        ON CONFLICT(name) DO UPDATE SET identity=excluded.identity,binding=excluded.binding,state=excluded.state,peer_id=excluded.peer_id`)
+        .run(peer.name, identity ?? `unidentified:${peer.id}`, peer.frontend ? frontendKey(peer.frontend) : nativeCopyIdentity(peer), peer.frontend ? "hosted" : "native", peer.id);
       if (!peer.jobAgent && !peer.subagent) this.markPeerSeen(peer.name, at);
       this.exec(this.db, "COMMIT");
     } catch (err) { this.exec(this.db, "ROLLBACK"); throw err; }
@@ -627,9 +640,11 @@ export class MessageStore {
 
   insert(m: BridgeMessage): void {
     return this.acceptedOperation("direct", () => {
-    if (m.recipientFrontend && !this.frontendOwnership) throw new Error("Frontend ownership storage upgrade is required; mail was not stored.");
-    const retainedOwner = this.frontendOwnership ? this.statement(this.db, "SELECT binding FROM message_frontends WHERE id=? AND recipient=?").get(m.id, m.recipient) : undefined;
-    if (retainedOwner && retainedOwner.binding !== frontendKey(m.recipientFrontend)) throw new Error("Retained message ownership cannot be overwritten.");
+    if (!this.frontendOwnership) throw new Error("Verified recipient ownership storage upgrade is required; mail was not stored.");
+    const state = m.recipientAmbiguous ? "ambiguous" : m.recipientFrontend ? "hosted" : m.recipientNative ? "native" : "ambiguous";
+    const binding = frontendKey(m.recipientFrontend), identity = state === "hosted" ? binding : state === "native" ? m.recipientNative! : "";
+    const retainedOwner = this.statement(this.db, "SELECT binding,state,identity FROM message_frontends WHERE id=? AND recipient=?").get(m.id, m.recipient);
+    if (retainedOwner && (retainedOwner.binding !== binding || retainedOwner.state !== state || retainedOwner.identity !== identity)) throw new Error("Retained message ownership cannot be overwritten.");
     this.exec(this.db, "SAVEPOINT owned_message_insert");
     try {
     this.stmt.insert.run(
@@ -646,8 +661,8 @@ export class MessageStore {
       m.createdAt,
     );
     this.notifyHistoryChanged();
-    if (m.recipientFrontend) this.statement(this.db, "INSERT OR IGNORE INTO message_frontends(id,recipient,binding) VALUES (?,?,?)")
-      .run(m.id, m.recipient, frontendKey(m.recipientFrontend));
+    this.statement(this.db, "INSERT OR IGNORE INTO message_frontends(id,recipient,binding,state,identity) VALUES (?,?,?,?,?)")
+      .run(m.id, m.recipient, binding, state, identity);
     this.exec(this.db, "RELEASE owned_message_insert");
     } catch (error) { cleanupSavepoint(this.db, "owned_message_insert", true, error); }
     });
@@ -656,13 +671,69 @@ export class MessageStore {
   /** Old retained readers block the schema upgrade: hosted operations fail closed. */
   get frontendOwnership(): boolean { return this.ownershipReady; }
 
+  /** Only registration evidence, never a missing field or the next name claimant,
+   * may select ownership for a NEW copy. Historical copies are never backfilled. */
+  recipientOwnership(name: string, live?: PeerInfo): Pick<BridgeMessage, "recipientFrontend" | "recipientNative" | "recipientAmbiguous"> {
+    return this.acceptedOperation("direct", () => {
+      if (live) return live.frontend ? { recipientFrontend: t3BindingSchema.parse(live.frontend) } :
+        { recipientNative: nativeCopyIdentity(live) };
+      if (!this.frontendOwnership) return { recipientAmbiguous: true };
+      const row = this.statement(this.db, `SELECT r.* FROM recipient_registrations r JOIN peer_name_owners n
+        ON n.name=r.name AND n.identity=r.identity WHERE r.name=?`).get(name);
+      if (row?.state === "hosted") return { recipientFrontend: t3BindingSchema.parse(JSON.parse(String(row.binding))) };
+      if (row?.state === "native" && row.binding) return { recipientNative: String(row.binding) };
+      // Older authenticated helloT3 registrations retained the complete binding.
+      // This proves a current offline destination, not the owner of older mail.
+      const old = this.statement(this.db, `SELECT n.identity FROM peer_name_owners n JOIN peer_names p
+        ON n.name=p.name AND n.identity=p.identity WHERE n.name=?`).get(name);
+      if (old) {
+        try {
+          const parts: unknown = JSON.parse(String(old.identity));
+          if (Array.isArray(parts) && parts[1] === "t3") {
+            const frontend = t3BindingSchema.safeParse({ kind: "t3", scope: parts[2], threadId: parts[3], providerInstanceId: parts[5] });
+            if (frontend.success) return { recipientFrontend: frontend.data };
+          }
+        } catch { /* Unprovable historical registrations remain ambiguous. */ }
+      }
+      return { recipientAmbiguous: true };
+    });
+  }
+
+  /** Bounded offline recovery inventory; no ownership grant or payload exposure. */
+  blockedOwnership(limit = 100, after: { source: string; rowid: number } = { source: "main", rowid: 0 }): {
+    records: { id: string; recipient: string; source: string; readAt: number | null; reason: string }[];
+    next: { source: string; rowid: number } | null;
+  } {
+    return this.acceptedOperation("direct", () => {
+      const result: { id: string; recipient: string; source: string; readAt: number | null; reason: string }[] = [];
+      limit = Math.max(1, Math.min(1000, Math.trunc(limit) || 100));
+      let scanning = false, scanned = 0;
+      for (const [db, table, source] of [[this.db, "messages", "main"], [this.db, "archived_messages", "legacy-archive"], [this.archiveDb, "messages", "archive"]] as const) {
+        if (source === after.source) scanning = true;
+        if (!scanning) continue;
+        let rowid = source === after.source ? after.rowid : 0;
+        for (const row of this.statement(db, `SELECT rowid,id,recipient,read_at FROM ${table} WHERE rowid>? ORDER BY rowid LIMIT ?`).all(rowid, limit - scanned + 1)) {
+          if (scanned >= limit) return { records: result, next: { source, rowid } };
+          rowid = Number(row.rowid); scanned++;
+          const owner = this.frontendOwnership ? this.statement(this.db, "SELECT state,identity FROM message_frontends WHERE id=? AND recipient=?").get(row.id!, row.recipient!) : undefined;
+          if (!owner || owner.state !== "hosted" && !(owner.state === "native" && owner.identity)) result.push({ id: String(row.id), recipient: String(row.recipient), source,
+            readAt: row.read_at === null ? null : Number(row.read_at), reason: "Recipient provenance is missing or ambiguous; explicit reviewed recovery required." });
+        }
+      }
+      return { records: result, next: null };
+    });
+  }
+
   private ownershipSql(table: string): string {
-    return `COALESCE((SELECT binding FROM message_frontends f WHERE f.id=${table}.id AND f.recipient=${table}.recipient),'') = ?`;
+    return `(SELECT CASE WHEN state='native' AND identity<>'' THEN '' WHEN state='hosted' THEN binding ELSE NULL END
+      FROM message_frontends f WHERE f.id=${table}.id AND f.recipient=${table}.recipient) = ?`;
   }
   private decode(row: Row): BridgeMessage {
     const message = toMessage(row);
-    const owner = this.frontendOwnership ? this.statement(this.db, "SELECT binding FROM message_frontends WHERE id=? AND recipient=?").get(row.id, row.recipient) : undefined;
-    if (owner) message.recipientFrontend = t3BindingSchema.parse(JSON.parse(String(owner.binding)));
+    const owner = this.frontendOwnership ? this.statement(this.db, "SELECT binding,state,identity FROM message_frontends WHERE id=? AND recipient=?").get(row.id, row.recipient) : undefined;
+    if (owner?.state === "hosted") message.recipientFrontend = t3BindingSchema.parse(JSON.parse(String(owner.binding)));
+    else if (owner?.state === "native" && owner.identity) message.recipientNative = String(owner.identity);
+    else message.recipientAmbiguous = true;
     return message;
   }
   rememberSendIntent(id: string, owner: string, fingerprint: string): void {
@@ -706,13 +777,13 @@ export class MessageStore {
   }
   frontendRecipients(frontend: T3Binding): string[] {
     return this.acceptedOperation("direct", () => this.frontendOwnership ? this.statement(this.db,
-      "SELECT DISTINCT m.recipient FROM messages m JOIN message_frontends f ON f.id=m.id AND f.recipient=m.recipient WHERE m.read_at IS NULL AND f.binding=?")
+      "SELECT DISTINCT m.recipient FROM messages m JOIN message_frontends f ON f.id=m.id AND f.recipient=m.recipient WHERE m.read_at IS NULL AND f.state='hosted' AND f.binding=?")
       .all(frontendKey(frontend)).map(row => String(row.recipient)) : []);
   }
 
   unread(recipient: string, limit: number, frontend?: T3Binding): BridgeMessage[] {
     return this.acceptedOperation("direct", () => {
-    if (!this.frontendOwnership) return frontend ? [] : (this.stmt.unread.all(recipient, limit) as unknown as Row[]).map(toMessage);
+    if (!this.frontendOwnership) return [];
     return (this.statement(this.db, `SELECT * FROM deliverable_messages WHERE recipient=? AND read_at IS NULL AND ${this.ownershipSql("deliverable_messages")}
       ORDER BY CASE WHEN (conversation_id LIKE '%:note' OR conversation_id LIKE '%:ack' OR conversation_id LIKE 'files-progress-%') THEN 1 ELSE 0 END, created_at,id LIMIT ?`)
       .all(recipient, frontendKey(frontend), limit) as unknown as Row[]).map(row => this.decode(row));
@@ -735,7 +806,7 @@ export class MessageStore {
   /** Query the whole inbox before a reply, independent of the hook batch limit. */
   replyConflicts(recipient: string, from: string[], conversationId: string, anchor?: BridgeMessage, frontend?: T3Binding): { id: string; from: { name: string }; conversationId: string }[] {
     return this.acceptedOperation("direct", () => {
-    if (frontend && !this.frontendOwnership) return [];
+    if (!this.frontendOwnership) return [];
     const rows = this.stmt.replyConflicts
       .all(recipient, conversationId, JSON.stringify(from), anchor?.id ?? null, anchor?.createdAt ?? 0, anchor?.id ?? "", ...(this.frontendOwnership ? [frontendKey(frontend)] : []));
     return rows.map(row => ({ id: String(row.id), from: { name: String(row.from_name) }, conversationId: String(row.conversation_id) }));
@@ -751,15 +822,20 @@ export class MessageStore {
       const rows = this.statement(this.db, "SELECT * FROM deliverable_messages WHERE recipient=? AND from_id=? AND read_at IS NULL AND conversation_id NOT LIKE ?").all(from, `job:${job}`, `${SIBLING_CONVERSATION_PREFIX}%`) as unknown as Row[];
       const copied: BridgeMessage[] = [];
       for (const row of rows) {
+        if (this.decode(row).recipientAmbiguous) continue;
         const route = this.statement(this.db, "SELECT recipient, consumed_at FROM job_delivery_routes WHERE id=?").get(row.id);
         if (route && (route.consumed_at !== null || route.recipient !== from)) continue;
         // This method is the existing authorized supervisor-transfer path, not a
         // registration claim. Give the new copy its explicitly selected owner.
-        const m = { ...this.decode(row), recipient: to, to, readAt: null, recipientFrontend: toFrontend };
+        const evidence = toFrontend ? { recipientFrontend: toFrontend } : this.recipientOwnership(to);
+        if ("recipientAmbiguous" in evidence) continue;
+        const m = { ...this.decode(row), recipient: to, to, readAt: null, recipientFrontend: undefined, recipientNative: undefined,
+          recipientAmbiguous: undefined, ...evidence };
         if (this.statement(this.db, "SELECT 1 FROM message_archive_conflicts WHERE source_table='messages' AND id=? AND recipient=?").get(m.id, to)) continue;
         if (fallback && !isQuietMessage(m)) m.conversationId = m.conversationId.replace(/:note$/, "") + (m.conversationId.endsWith(":fallback") ? "" : ":fallback");
         const existing = this.statement(this.db, "SELECT * FROM messages WHERE id=? AND recipient=?").get(m.id, to) as unknown as Row | undefined;
-        if (existing && frontendKey(this.decode(existing).recipientFrontend) !== frontendKey(toFrontend)) continue;
+        if (existing && (this.decode(existing).recipientAmbiguous || frontendKey(this.decode(existing).recipientFrontend) !== frontendKey(m.recipientFrontend) ||
+          this.decode(existing).recipientNative !== m.recipientNative)) continue;
         if (!existing) this.insert(m);
         else this.statement(this.db, "UPDATE messages SET read_at=NULL, to_target=?, conversation_id=? WHERE id=? AND recipient=?").run(to, m.conversationId, m.id, to);
         copied.push(m);
@@ -809,7 +885,7 @@ export class MessageStore {
     });
   }
 
-  markRead(recipient: string, ids: string[], at: number = Date.now(), frontend?: T3Binding): number {
+  markRead(recipient: string, ids: string[], at: number = Date.now(), frontend?: T3Binding, nativeOwners?: Record<string, string>): number {
     return this.acceptedOperation("direct", () => {
     let changed = 0;
     const route = this.statement(this.db, "UPDATE job_delivery_routes SET consumed_at=? WHERE id=? AND recipient=? AND consumed_at IS NULL");
@@ -819,9 +895,11 @@ export class MessageStore {
       this.exec(this.db, "SAVEPOINT message_ack");
       try {
         for (const id of ids.slice(offset, offset + 100)) {
+          if (!frontend && nativeOwners && (typeof nativeOwners[id] !== "string" || !this.statement(this.db,
+            "SELECT 1 FROM message_frontends WHERE id=? AND recipient=? AND state='native' AND identity=?").get(id, recipient, nativeOwners[id]))) continue;
           const owned = this.frontendOwnership;
           const updated = owned ? Number(this.statement(this.db, `UPDATE messages SET read_at=? WHERE id=? AND recipient=? AND read_at IS NULL AND ${unquarantined("messages")} AND ${this.ownershipSql("messages")}`)
-            .run(at, id, recipient, frontendKey(frontend)).changes) : frontend ? 0 : Number(this.stmt.markRead.run(at, id, recipient).changes);
+            .run(at, id, recipient, frontendKey(frontend)).changes) : 0;
           changed += updated;
           if (updated) route.run(at, id, recipient);
         }
@@ -865,8 +943,24 @@ export class MessageStore {
     return this.acceptedOperation("direct", () => {
     this.exec(this.db, "BEGIN IMMEDIATE");
     try {
-      this.stmt.claim.run(parent, address);
-      this.statement(this.db, `UPDATE messages SET read_at=? WHERE recipient=? AND read_at IS NULL AND ${unquarantined("messages")} AND id IN (SELECT id FROM deliverable_messages WHERE recipient=?)`).run(Date.now(), address, parent);
+      if (this.frontendOwnership) {
+        const registration = this.statement(this.db, "SELECT peer_id FROM recipient_registrations WHERE name=?").get(parent);
+        for (const raw of this.statement(this.db, "SELECT * FROM deliverable_messages WHERE recipient=? AND read_at IS NULL").all(address)) {
+          const m = this.decode(raw as unknown as Row);
+          if (!m.recipientNative?.startsWith("native-child:")) continue;
+          let original: unknown;
+          try { original = JSON.parse(m.recipientNative.slice("native-child:".length)); } catch { continue; }
+          if (!Array.isArray(original) || original[0] !== registration?.peer_id || original[2] !== parent) continue;
+          const evidence = this.recipientOwnership(parent);
+          if (evidence.recipientAmbiguous) continue;
+          const existing = this.statement(this.db, "SELECT * FROM messages WHERE id=? AND recipient=?").get(m.id, parent);
+          if (existing) {
+            const copy = this.decode(existing as unknown as Row);
+            if (copy.recipientAmbiguous || frontendKey(copy.recipientFrontend) !== frontendKey(evidence.recipientFrontend) || copy.recipientNative !== evidence.recipientNative) continue;
+          } else this.insert({ ...m, recipient: parent, recipientFrontend: undefined, recipientNative: undefined, ...evidence });
+          this.markRead(address, [m.id]);
+        }
+      }
       this.statement(this.db, "UPDATE native_child_routes SET active=0 WHERE address=?").run(address);
       this.exec(this.db, "COMMIT");
       this.notifyHistoryChanged();
@@ -876,41 +970,36 @@ export class MessageStore {
 
   claim(fromKey: string, toName: string, frontend?: T3Binding): number {
     return this.acceptedOperation("direct", () => {
-    if (fromKey === toName) return 0;
-    this.exec(this.db, "BEGIN IMMEDIATE");
+    if (fromKey === toName || !this.frontendOwnership) return 0;
+    this.exec(this.db, "SAVEPOINT owned_mail_claim");
     try {
       if (this.frontendOwnership) {
         const rows = this.statement(this.db, `SELECT * FROM deliverable_messages WHERE recipient=? AND read_at IS NULL AND ${this.ownershipSql("deliverable_messages")}`)
           .all(fromKey, frontendKey(frontend)) as unknown as Row[];
         let changed = 0;
         for (const row of rows) {
-          const targetOwner = this.statement(this.db, "SELECT binding FROM message_frontends WHERE id=? AND recipient=?").get(row.id, toName);
-          if (targetOwner && targetOwner.binding !== frontendKey(frontend)) continue;
+          const sourceOwner = this.statement(this.db, "SELECT identity FROM message_frontends WHERE id=? AND recipient=?").get(row.id, fromKey);
+          const targetOwner = this.statement(this.db, "SELECT binding,state,identity FROM message_frontends WHERE id=? AND recipient=?").get(row.id, toName);
+          if (targetOwner && (targetOwner.binding !== frontendKey(frontend) || targetOwner.state !== (frontend ? "hosted" : "native") || targetOwner.identity !== sourceOwner?.identity)) continue;
           const existing = this.statement(this.db, "SELECT * FROM messages WHERE id=? AND recipient=?").get(row.id, toName) as unknown as Row | undefined;
           if (existing) {
-            if (frontendKey(this.decode(existing).recipientFrontend) !== frontendKey(frontend)) continue;
+            if (this.decode(existing).recipientAmbiguous || frontendKey(this.decode(existing).recipientFrontend) !== frontendKey(frontend)) continue;
             changed += Number(this.statement(this.db, "UPDATE messages SET read_at=? WHERE id=? AND recipient=? AND read_at IS NULL").run(Date.now(), row.id, fromKey).changes);
           } else {
-            if (frontend) this.statement(this.db, "INSERT INTO message_frontends VALUES (?,?,?) ON CONFLICT(id,recipient) DO NOTHING").run(row.id, toName, frontendKey(frontend));
+            this.statement(this.db, `INSERT INTO message_frontends(id,recipient,binding,state,identity)
+              SELECT id,?,binding,state,identity FROM message_frontends WHERE id=? AND recipient=?
+              ON CONFLICT(id,recipient) DO NOTHING`).run(toName, row.id, fromKey);
             changed += Number(this.statement(this.db, "UPDATE messages SET recipient=? WHERE id=? AND recipient=?").run(toName, row.id, fromKey).changes);
           }
         }
-        this.exec(this.db, "COMMIT");
+        this.exec(this.db, "RELEASE owned_mail_claim");
         if (changed) this.notifyHistoryChanged();
         return changed;
       }
-      if (frontend) { this.exec(this.db, "COMMIT"); return 0; }
-      const moved = Number(this.stmt.claim.run(toName, fromKey).changes);
-      // A broadcast can have reached both servers before their shared session id was learned.
-      // Keep the destination copy and retire the duplicate alias without replaying it later.
-      const duplicates = Number(this.statement(this.db, `UPDATE messages SET read_at = ?
-        WHERE recipient = ? AND read_at IS NULL AND ${unquarantined("messages")} AND id IN (SELECT id FROM deliverable_messages WHERE recipient = ?)`)
-        .run(Date.now(), fromKey, toName).changes);
-      this.exec(this.db, "COMMIT");
-      if (moved) this.notifyHistoryChanged();
-      return moved + duplicates;
+      this.exec(this.db, "RELEASE owned_mail_claim");
+      return 0;
     } catch (err) {
-      this.exec(this.db, "ROLLBACK");
+      cleanupSavepoint(this.db, "owned_mail_claim", true, err);
       throw err;
     }
     });
@@ -954,7 +1043,13 @@ export class MessageStore {
     const merged = new Map<string, { recipient: string; readAt: number | null }>();
     for (const [db, table] of [[this.archiveDb, "messages"], [this.db, "archived_messages"], [this.db, "messages"]] as const) {
       const rows = this.statement(db, `SELECT recipient, read_at AS readAt FROM ${table} WHERE id = ?`).all(id) as unknown as { recipient: string; readAt: number | null }[];
-      for (const row of rows) merged.set(row.recipient, row);
+      for (const row of rows) {
+        const owner = this.frontendOwnership ? this.statement(this.db, "SELECT state,identity FROM message_frontends WHERE id=? AND recipient=?").get(id, row.recipient) : undefined;
+        const proven = owner?.state === "hosted" || owner?.state === "native" && Boolean(owner.identity);
+        // Keep raw historical timestamps intact; ambiguous marks cannot establish
+        // consumption through local or remote receipt APIs. Inventory exposes them.
+        merged.set(row.recipient, proven ? row : { ...row, readAt: null });
+      }
     }
     return [...merged.values()];
     });
