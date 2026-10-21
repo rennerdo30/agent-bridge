@@ -138,7 +138,8 @@ it("every registered model tool carries a scope schema and is covered by the hos
     }
   }
   expect(host.filter.map(t => t.split("bridge__")[1]).sort()).toEqual([...CLAUDE_SCOPED_TOOLS, "hook_event"].sort());
-  expect([...specs.keys()].sort()).toEqual([...CLAUDE_SCOPED_TOOLS.filter(t => t !== "report_progress"), "hook_event"].sort());
+  // The job-side tools exist only on a delegated job's own server (AB-428: checklist).
+  expect([...specs.keys()].sort()).toEqual([...CLAUDE_SCOPED_TOOLS.filter(t => t !== "report_progress" && t !== "checklist"), "hook_event"].sort());
 });
 
 it("all parent controls and unsupported child transports refuse authenticated children before effects", async () => {
@@ -155,6 +156,8 @@ it("all parent controls and unsupported child transports refuse authenticated ch
     send_files: { to: "target", paths: ["fixture"] }, fetch_files: { from: "target", paths: ["fixture"] },
     cancel_transfer: { id: "11111111-1111-4111-8111-111111111111" }, dashboard: {},
     send_status: { message_id: "11111111-1111-4111-8111-111111111111" },
+    // AB-428: checklist control is parent-only.
+    job_checklist: { job: "job", add: [{ text: "child item" }] }, project_checklist: { add: [{ text: "child item" }] },
   };
   for (const [name, args] of Object.entries(controls)) {
     // Parsing is intentionally separate: all supplied fixture arguments must be valid.

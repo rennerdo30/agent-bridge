@@ -1,7 +1,7 @@
 {
   "base": "8deb0286773a6b61243caaae237e16227dc2f591",
   "methods": {
-    "src/core/broker.ts:constructor": "adad444e14f7c40bf1c5ffadc7bb648e9a4ae8f3f02f92bc8514583e81bdad5e",
+    "src/core/broker.ts:constructor": "e7c1745f8b8e42bc9859fb663bfe091b629905bc20a30471711f266df7fbef7b",
     "src/core/broker.ts:listen": "bd39e0afecb5a74d76161f26d5923f2c1e41da8cc490ed1448a9260b850ce4b0",
     "src/core/broker.ts:startServices": "07bc9bdb56bea9ae2c5c3f0c89639469f7fa5ccfb0d8e5bc97fc1efbfd93fe2f",
     "src/core/broker.ts:abortStartup": "6132967fa78fd39cff064a581f4f49bb9c1c75b644fba78b291708c58733118c",
@@ -17,6 +17,12 @@
   },
   "uiSha256": "f2a5b28254d4bb467f28bdee139e3b23bd9d4bd0c7c15fee116b4ed85a6ac385",
   "updates": {
+    "AB-428": {
+      "base": "42ac9a2b8018fe9abe5adac196b4a770e54290a0",
+      "sourceCommit": "82b5730c76edc587e69b693b9325d2ac94a85fc6",
+      "changes": [{ "method": "src/core/broker.ts:constructor", "previous": "adad444e14f7c40bf1c5ffadc7bb648e9a4ae8f3f02f92bc8514583e81bdad5e", "current": "e7c1745f8b8e42bc9859fb663bfe091b629905bc20a30471711f266df7fbef7b" }],
+      "reason": "Parent source qualification after independent full-range review39517-39518: requested authenticated local checklist handler only; fresh operation-bound durable/group authority, strict private lineage and qualified project discovery. No new constructor-time stores, listeners or timers. Recomputed all thirteen methods with unchanged mobile-wiring normalization; other twelve pins, complete UI hash, previous update records, normalizer and assertions are unchanged. Exact final-commit hosted CI remains required."
+    },
     "AB-456": {
       "base": "cd62f067827d6c7313de78075d5df9e942d2a8f8",
       "sourceCommits": ["44df891c0c742073d6167c1ba682d657acb6b8e7", "a07ffe2e13b9335e7e409a6b813fb3954dd80bf5"],

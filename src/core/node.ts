@@ -945,6 +945,11 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     return retryRequest("jobAuthority (read only; no control submitted)", () => this.withClient((c) => c.request("jobAuthority", { job })));
   }
 
+  jobChecklist(args: import("./checklists.js").JobChecklistRequest): Promise<import("./checklists.js").JobChecklistResult> {
+    // Add/approve/etc are not idempotent: a lost reply must never replay the request.
+    return this.withClient(c => c.request("jobChecklist", args));
+  }
+
   controlInlineJob(job: string, control: import("../mcp/jobs.js").RunnerControl): Promise<unknown> {
     return this.withClient((c) => c.request("inlineJobControl", { job, control }));
   }

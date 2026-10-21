@@ -449,7 +449,7 @@ export const CODEX_ASK_HINT =
 export const OPENCODE_READ_ONLY_PERMISSIONS = { edit: "deny", bash: "deny" } as const;
 /** MCP tools (named <server>_<tool>) can change things too: read-only runs allow only the permitted bridge routes. */
 export const OPENCODE_READ_ONLY_TOOLS = {
-  "*_*": false, bridge_send: true, bridge_report_progress: true, bridge_peers: true, bridge_health: true, bridge_search_history: true, bridge_get_conversation: true,
+  "*_*": false, bridge_send: true, bridge_report_progress: true, bridge_checklist: true, bridge_peers: true, bridge_health: true, bridge_search_history: true, bridge_get_conversation: true,
   bridge_spawn_codex: true, bridge_spawn_claude: true, bridge_ask_codex: true, bridge_ask_claude: true,
   bridge_spawn_antigravity: true, bridge_ask_antigravity: true,
   bridge_spawn_muse: true, bridge_ask_muse: true,
@@ -627,6 +627,7 @@ export function parseClaudeJson(stdout: string): { sessionId: string | null; tex
 /** The agent-bridge plugin's "send" tool as Claude Code names it. */
 const CLAUDE_PARENT_SEND_TOOL = "mcp__plugin_agent-bridge_bridge__send";
 const CLAUDE_PARENT_PROGRESS_TOOL = "mcp__plugin_agent-bridge_bridge__report_progress";
+const CLAUDE_PARENT_CHECKLIST_TOOL = "mcp__plugin_agent-bridge_bridge__checklist";
 export const CLAUDE_READ_ONLY_DENIED_TOOLS = ["Write", "Edit", "MultiEdit", "NotebookEdit", "Bash", "PowerShell"];
 /** Whether a Claude subagent in this mode may only look (no edits, commands or MCP tools). */
 export function isClaudeReadOnly(mode: ClaudePermissionMode): boolean {
@@ -704,7 +705,7 @@ export async function delegateToClaude(
   if (req.effort) args.push("--effort", req.effort);
   if (req.sessionId) args.push("--resume", req.sessionId);
   // Headless Claude denies MCP tools it would ask about: let it answer its parent (see parent-link.ts).
-  const allowed = [...mcp.allowed, ...(req.extraEnv?.[PARENT_URL_ENV] ? [CLAUDE_PARENT_SEND_TOOL, CLAUDE_PARENT_PROGRESS_TOOL] : [])];
+  const allowed = [...mcp.allowed, ...(req.extraEnv?.[PARENT_URL_ENV] ? [CLAUDE_PARENT_SEND_TOOL, CLAUDE_PARENT_PROGRESS_TOOL, CLAUDE_PARENT_CHECKLIST_TOOL] : [])];
   if (allowed.length) args.push("--allowedTools", allowed.join(","));
   // Permission prompts (a command or MCP tool that needs approval) go to approve through a PermissionRequest
   // hook; without it headless Claude settles them on its own, unseen. Never for read-only runs: there the deny

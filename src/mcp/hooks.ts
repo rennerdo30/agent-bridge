@@ -291,11 +291,13 @@ async function subagentHook(ctx: ServerContext, input: HookInput): Promise<HookO
   if (!hasChildren) parentReads.delete(ctx);
   // Parent-link messages are consumed by the link when fetched, so they cannot stay unread here; each is capped
   // at MAX_BODY_CHARS by the link. Child-job mail is local: only what is shown in full is marked read (AB-404).
-  const parentText = msgs.length ? formatParentMessages(parent.name, msgs) : "";
+  // AB-428: the supervisor's checklist changes reach the job at its next step (not as it ends its turn).
+  const notice = input.event === "Stop" ? null : ctx.checklistNotice?.() ?? null;
+  const parentText = [notice ?? "", msgs.length ? formatParentMessages(parent.name, msgs) : ""].filter(Boolean).join("\n\n");
   const wrapChild = (text: string): HookOutput => ({ decision: "block", reason: text, hookSpecificOutput: { hookEventName: input.event, additionalContext: text } });
   const childDelivery = ctx.childInbox ? boundedDelivery(ctx, ctx.childInbox.unread(), (ms) => formatMessages(ms), wrapChild, { oncePrefix: parentText }) : { msgs: [], text: parentText };
   ctx.childInbox?.markRead(childDelivery.msgs.map((m) => m.id));
-  if (msgs.length === 0 && !childDelivery.text) {
+  if (msgs.length === 0 && !childDelivery.text && !notice) {
     return {};
   }
   ctx.log.info("delivering parent messages to the subagent", { count: msgs.length, event: input.event });

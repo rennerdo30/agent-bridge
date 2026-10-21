@@ -34,6 +34,14 @@ import { JOB_SETTING_KEYS } from "./job-settings.js";
 import { prepareWorktreeContinuation, recordWorktreeOrigin } from "../core/job-close.js";
 import { invalidateWorktreePathProofWithRetry, worktreeLease } from "../core/worktree-state.js";
 import { assertPhysicalPath } from "../core/permission-repair.js";
+import { checklistBrief, checklistReport, formatChecklist, readJobChecklist, type ChecklistItem } from "../core/checklists.js";
+
+/** AB-428: the job's checklist as stored now; a store problem never fails the turn. */
+function jobChecklist(rc: RunContext, job: string | undefined): ChecklistItem[] {
+  if (!job) return [];
+  try { return readJobChecklist(rc.home, job); }
+  catch (err) { rc.log.warn("job checklist unavailable", { job, err: (err as Error).message }); return []; }
+}
 
 /** Added to a subagent's task when it can report progress. */
 const PROGRESS_HINT =
@@ -133,6 +141,23 @@ export function worktreeArgs(target: CodingAgent, a: DelegateArgs, cfg: BridgeCo
 
 /** Run the delegate; returns its result plus a report of what it changed. */
 export async function runDelegate(
+  rc: RunContext, target: CodingAgent, a: DelegateArgs, signal: AbortSignal,
+  onProgress: ((message: string) => void) | undefined, background: boolean, job?: Job,
+): Promise<RunResult> {
+  try { return await runDelegateTurn(rc, target, a, signal, onProgress, background, job); }
+  catch (error) {
+    // Cover setup, root admission, continuation preparation and provider failures at one boundary.
+    // Keep the original error object/code and cancellation state; required items are reported, never a new failure.
+    if (error instanceof Error) {
+      const checklist = checklistReport(jobChecklist(rc, a._job ?? job?.name));
+      if (checklist) error.message += `\n\n${checklist}`;
+      error.message = displayPathText(error.message);
+    }
+    throw error;
+  }
+}
+
+async function runDelegateTurn(
   rc: RunContext, target: CodingAgent, a: DelegateArgs, signal: AbortSignal,
   onProgress: ((message: string) => void) | undefined, background: boolean, job?: Job,
 ): Promise<RunResult> {
@@ -475,6 +500,10 @@ async function runDelegateInner(
     }
   }
   // A linked worktree's git data lives in the main repository: writable, so the subagent can commit.
+  // A new session gets the checklist with how to use it; a continuation gets its current state.
+  const checklistItems = jobChecklist(rc, a._job);
+  const brief = checklistBrief(checklistItems, Boolean(link));
+  const checklistSection = brief && a.session_id ? `(agent-bridge checklist, current state:\n${formatChecklist(checklistItems)})` : brief;
   const writableRoots = access === "edit" || (a as { sandbox?: string }).sandbox === "workspace-write" ? await gitDirsOutside(workdir, dlog) : undefined;
   if (writableRoots?.length) dlog.info("extra writable folders for the subagent", { workdir, writableRoots });
   if (job) job.retitle = (title) => {
@@ -504,7 +533,7 @@ async function runDelegateInner(
         // A new session learns once that it reports back and leaves the handoff alone.
         prompt: [a.prompt, wt ? worktreeBaseReport(wt) : null, a.session_id ? null : DELEGATED_JOB_NOTE,
           `(agent-bridge reporting: ${a.notes === "milestones" ? 'Send only milestone notes, using send(message_kind="note").' : a.notes === "blockers" ? 'Send only blockers requiring attention, using send(message_kind="question").' : 'No unsolicited progress notes. Final report only.'} Use report_progress for dashboard progress. Questions requiring a supervisor decision use send(message_kind="question"); replies to a live request and final reports still reach the supervisor.)`,
-          linkRoot ? WORKTREE_LINK_HINT : null, link ? PROGRESS_HINT : null, link ? SIBLING_HINT : null, resourceSlotHint(cfg.resourceSlots, bundledCli())].filter(Boolean).join("\n\n"),
+          checklistSection, linkRoot ? WORKTREE_LINK_HINT : null, link ? PROGRESS_HINT : null, link ? SIBLING_HINT : null, resourceSlotHint(cfg.resourceSlots, bundledCli())].filter(Boolean).join("\n\n"),
         title: (typeof job?.args?.title === "string" && job.args.title) || a.title,
         cwd: workdir,
         sessionId: a.session_id ?? null,
@@ -714,6 +743,9 @@ async function runDelegateInner(
     notes.push(changedFilesNote(null, access)!);
   }
   if (wt) notes.unshift(worktreeBaseReport(wt));
+  // AB-428: the checklist leads the notes; open required items mark the result incomplete (reported, not blocked).
+  const checklist = checklistReport(jobChecklist(rc, a._job));
+  if (checklist) notes.unshift(checklist);
   return { ...res, workdir, worktree: wt ?? undefined, text: displayPathText(notes.length ? `${res.text}\n\n---\n${notes.join("\n\n")}` : res.text) };
 }
 

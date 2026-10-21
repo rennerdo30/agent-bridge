@@ -558,6 +558,11 @@ h3 .n { color: var(--faint); font-weight: 500; }
 .meter i:nth-child(1) { height: 4px; } .meter i:nth-child(2) { height: 6px; } .meter i:nth-child(3) { height: 8px; } .meter i:nth-child(4) { height: 10px; }
 .meter i.on { background: var(--accent); }
 .chip { display: inline-block; padding: 1px 7px; border-radius: 6px; background: var(--panel-2); border: 1px solid var(--line); color: var(--muted); font-size: 11.5px; white-space: nowrap; }
+.clist { margin: 4px 0 0; font-size: 12.5px; color: var(--muted); }
+.clist ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 2px; }
+.clist li { overflow-wrap: anywhere; }
+.clist .st { display: inline-block; min-width: 76px; font-weight: 600; }
+.clist .st.done { color: var(--ok); } .clist .st.blocked { color: var(--bad); } .clist .st.in_progress { color: var(--busy); } .clist .st.proposed, .clist .st.skipped { color: var(--warn); }
 .chip.old { color: var(--bad); border-color: var(--bad); }
 .muted { color: var(--muted); } .faint { color: var(--faint); }
 .small { font-size: 12.5px; }
@@ -1237,7 +1242,7 @@ form#send select#to {
     <div class="panel conv">
       <div class="conv-head">
         <div id="cAvatar"></div>
-        <div class="grow"><div class="title" id="cTitle">Conversation</div><div class="cmeta" id="cMeta"></div><div class="cnote" id="cNote"></div><div class="small muted ell" id="cSub"></div></div>
+        <div class="grow"><div class="title" id="cTitle">Conversation</div><div class="cmeta" id="cMeta"></div><div class="cnote" id="cNote"></div><div class="clist hidden" id="cList"></div><div class="small muted ell" id="cSub"></div></div>
         <div class="conv-menu">
           <button type="button" class="icon-btn menu-btn" id="convMenuBtn" aria-haspopup="menu" aria-expanded="false" aria-controls="convMenu" title="Options for this conversation">⋯</button>
           <div class="menu-pop hidden" id="convMenu" role="menu">
@@ -1453,6 +1458,8 @@ function buildModel(s) {
     g.etaAt = g.status === "running" && typeof last.etaAt === "number" ? last.etaAt : null;
     // A subagent started by another subagent (nested delegation) is listed under its parent.
     g.parentJob = (g.turns.find((t) => t.parentJob) || {}).parentJob || null;
+    // AB-428: the job's checklist (bridge state), carried on its newest run.
+    g.checklist = ([...g.turns].reverse().find((t) => t.checklist) || {}).checklist || null;
   }
   const sessions = live.map((p) => ({ name: p.name, peer: p, live: true, groups: [], children: [] }));
   const byName = new Map(sessions.map((x) => [x.name, x]));
@@ -1723,6 +1730,7 @@ async function showNative(x, key) {
   $("cMeta").innerHTML = '<span class="chip">' + esc(p.agent || "") + "</span>" + (key === CHAT_KEY ? "" : '<span class="chip own">own subagent</span>') +
     '<span class="chip">' + (pcOf(x.name) || p.host ? "view-only" : key === CHAT_KEY || (p.agent === "codex" && !jc) ? "owner input" : "message parent") + "</span>";
   $("cNote").textContent = "";
+  $("cList").innerHTML = ""; $("cList").classList.add("hidden");
   $("cSub").textContent = (key === CHAT_KEY ? "the session's own conversation" : jc ? "its own subagent of " + jc[0] : "a subagent of " + p.agent + " itself") + (p.cwd ? " · " + p.cwd : "");
   renderChatForm(x, key);
   $("cHint").classList.add("hidden");
@@ -1959,7 +1967,7 @@ function renderSession() {
   renderJobForm(g);
   if (g) void showGroup(g);
   else {
-    $("cAvatar").innerHTML = ""; $("cTitle").textContent = "No subagent selected"; $("cMeta").innerHTML = ""; $("cNote").textContent = ""; $("cSub").textContent = ""; $("cHint").classList.add("hidden");
+    $("cAvatar").innerHTML = ""; $("cTitle").textContent = "No subagent selected"; $("cMeta").innerHTML = ""; $("cNote").textContent = ""; $("cList").innerHTML = ""; $("cList").classList.add("hidden"); $("cSub").textContent = ""; $("cHint").classList.add("hidden");
     $("chat").innerHTML = '<div class="empty">Pick a subagent on the left to see its conversation.</div>'; lastChat = "";
   }
 }
@@ -2192,6 +2200,7 @@ function renderConversation(g) {
   $("cTitle").innerHTML = '<span class="ttl">' + esc(g.title || g.agent) + "</span>" + pill(g.status, g.percent, g.waitingFor) + outcomeChip(g);
   $("cMeta").innerHTML = '<span class="chip">' + esc(g.agent) + "</span>" + (g.model ? '<span class="chip">' + esc(g.model) + "</span>" : "") + (g.effort ? effortChip(g.effort) : "") + (g.permission ? permChip(g.permission) : "") + runChips(g) + pendingChips(g);
   $("cNote").textContent = g.status === "paused" ? "Paused " + (g.pausedAt ? time(g.pausedAt) : "") + " · " + g.pauseReason : g.waitingFor ? waitText(g.waitingFor) : [g.progressNote && g.percent !== null ? g.progressNote : "", g.etaAt ? etaText(g.etaAt) : ""].filter(Boolean).join(" · ");
+  renderChecklist(g);
   $("cSub").textContent = (g.owner === "earlier runs" ? "" : "started by " + g.owner + " · ") + time(first.startedAt) + " · " + (first.access || "default") + " access" + (first.workdir ? " · " + first.workdir : "");
   const hint = g.job && g.status === "paused" ? 'Resume it with <code>resume_subagent(job="' + esc(g.job) + '")</code>' : g.job && g.status !== "running"
     ? (g.status === "done" ? "Continue it with its context from " : "Recover it with its context from ") + esc(g.owner) + ': <code>message_subagent(job="' + esc(g.job) + '")</code>'
@@ -3319,9 +3328,25 @@ function outcomeChip(g) {
   return result + '<span class="chip outcome ' + cls + '" title="' + esc(tip) + '">' + label + "</span>";
 }
 /** Where a run lives: on a paired PC, or rebuilt from its job record after its log was lost. */
+/** AB-428: "checklist 3/5" with the full summary on hover. */
+function checklistChip(g) {
+  const c = g.checklist && g.checklist.summary;
+  if (!c) return "";
+  const title = c.done + " of " + c.total + " done" + (c.requiredOpen ? ", " + c.requiredOpen + " required open" : "") + (c.blocked ? ", " + c.blocked + " blocked" : "") + (c.proposed ? ", " + c.proposed + " proposed" : "");
+  return '<span class="chip checklist" title="' + esc(title) + '">checklist ' + esc(c.done + "/" + c.total) + (c.blocked ? " · " + esc(c.blocked) + " blocked" : "") + "</span>";
+}
+
+/** AB-428: the job's checklist in the job view; every text is escaped. */
+function renderChecklist(g) {
+  const el = $("cList"), items = (g.checklist && g.checklist.items) || [];
+  el.classList.toggle("hidden", !items.length);
+  el.innerHTML = items.length ? "<ul>" + items.map((i) => '<li><span class="st ' + esc(i.status) + '">' + esc(String(i.status).replace("_", " ")) + "</span> " +
+    esc(i.id) + " " + esc(i.text) + (i.required ? "" : ' <span class="muted">(optional)</span>') + (i.note ? ' <span class="muted">— ' + esc(i.note) + "</span>" : "") + "</li>").join("") + "</ul>" : "";
+}
+
 function runChips(g) {
   const last = g.turns[g.turns.length - 1] || {};
-  return (last.remote ? '<span class="chip" title="runs on the paired PC">on ' + esc(last.remote.host) + "</span>" : "") +
+  return checklistChip(g) + (last.remote ? '<span class="chip" title="runs on the paired PC">on ' + esc(last.remote.host) + "</span>" : "") +
     (g.turns.some((t) => t.recovered) ? '<span class="chip" title="Its step log was lost; the conversation comes from the CLI\\'s own transcript">recovered</span>' : "");
 }
 

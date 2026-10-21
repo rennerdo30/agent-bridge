@@ -72,8 +72,10 @@ import { isJobSendTarget, MAX_JOB_SEND_TARGETS } from "./job-messaging.js";
 import { NetworkService, type NetworkStatus } from "../network/link.js";
 import { readNetworkConfig, writeNetworkConfig, type NetworkConfig } from "../network/config.js";
 import { z } from "zod";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, isAbsolute, join } from "node:path";
+import { platform as hostPlatform } from "node:process";
 import { ProjectGroups } from "./project-groups.js";
+import { accessJobChecklist, jobChecklistRequestSchema, readChecklistAuthority } from "./checklists.js";
 import { recoverJobRecordAsync, type RecoveryRefusal } from "./job-recovery.js";
 import { findHistoryJob, selectHistoryJobs } from "./run-history.js";
 import { pageProjectJobSummaries, PROJECT_JOB_SUMMARY_PAGE_MAX } from "./project-job-summary.js";
@@ -222,6 +224,33 @@ type Handler<O extends Op> = (conn: Conn, args: RequestMap[O][0]) => RequestMap[
 /** A handoff commit retries a briefly held registry lease asynchronously, as long as a blocking writer would wait. */
 const HANDOFF_LOCK_WAIT_MS = 2_000;
 const HANDOFF_LOCK_RETRY_MS = 25;
+/** Qualification only: no resolution/probe, normalization or new grant. Stored context remains unchanged. */
+function checklistDiscoveryPath(cwd: string): boolean {
+  if (hostPlatform !== "win32") return isAbsolute(cwd);
+  if (cwd.includes("\0")) return false;
+  const uncShare = (value: string) => {
+    const match = /^([^\\/]+)[\\/]([^\\/]+)(?:[\\/]|$)/.exec(value);
+    return Boolean(match && match.slice(1).every(part => !/^[. ]+$/.test(part) && !/[<>:"|?*\u0000-\u001f]/.test(part)));
+  };
+  // Extended filesystem paths have literal backslashes; other device/NT namespaces are not project roots.
+  if (cwd.startsWith("\\\\?\\")) {
+    const path = cwd.slice(4);
+    if (path.includes("/")) return false;
+    if (/^[a-z]:\\/i.test(path) || /^Volume\{[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\}\\/i.test(path)) return true;
+    return /^UNC\\/i.test(path) && uncShare(path.slice(4));
+  }
+  // A rooted slash alone still depends on the current drive. UNC needs BOTH server and share.
+  return /^[a-z]:[\\/]/i.test(cwd) || /^[\\/]{2}/.test(cwd) && uncShare(cwd.slice(2));
+}
+
+/** Retained relative context has no original cwd witness here. Preserve current project roles,
+ * but never rediscover these paths against the broker's unrelated current directory. */
+class ChecklistProjectGroups extends ProjectGroups {
+  override root(cwd: string): string | null {
+    return checklistDiscoveryPath(cwd) ? super.root(cwd) : null;
+  }
+}
+
 export class Broker {
   private hosting: { mode: "daemon" | "embedded" | "embedded_degraded"; reason?: string } = { mode: "embedded" };
   setHostingMode(mode: "daemon" | "embedded_degraded", reason?: "windows_wmi_unavailable" | "windows_wmi_create_rejected"): void {
@@ -549,6 +578,31 @@ export class Broker {
         const peer = this.requirePeer(c), job = this.currentJobAuthority(await this.jobForControl(peer, a.job));
         if (!job || !this.groups.canControl(peer, job, this.localPeers())) return null;
         return job as unknown as import("../mcp/jobs.js").Job;
+      },
+      jobChecklist: async (c, a) => {
+        const parsed = jobChecklistRequestSchema.safeParse(a);
+        if (!parsed.success || parsed.data.note !== undefined && !(parsed.data.close || parsed.data.approve || parsed.data.reject))
+          throw new BridgeError("bad_request", "Invalid checklist request. No checklist operation applied.");
+        const caller = () => {
+          if (!c.authed || !c.registered || !this.conns.has(c) || c.retired || c.socket.destroyed || c.peer?.host)
+            throw new BridgeError("unauthorized", "Checklist access requires a current authenticated local registration.");
+          return this.requirePeer(c);
+        };
+        const { job: name, ...change } = parsed.data;
+        const recovered = await this.jobForControl(caller(), name);
+        // Re-read registration and durable job authority after the final await, and again in transaction admission.
+        // A fresh group reader also observes settings/path changes during admission, rather than a cached dispatch grant.
+        let current: Record<string, unknown> | undefined;
+        const authorize = () => {
+          const peer = caller();
+          current = this.currentChecklistAuthority(recovered);
+          if (!current || current.name !== name || current.remote || !this.jobsPath ||
+              !new ChecklistProjectGroups(dirname(this.jobsPath)).canControl(peer, current, this.localPeers()))
+            throw new BridgeError("unauthorized", "Current authority does not allow this checklist operation.");
+        };
+        authorize();
+        const items = accessJobChecklist(dirname(this.jobsPath!), name, change, caller().name, authorize);
+        return { job: { name, status: String(current!.status), agent: String(current!.agent) }, items };
       },
       jobRecipient: async (c, a) => {
         const peer = this.requirePeer(c), job = this.currentJobAuthority(await this.jobForControl(peer, a.job));
@@ -1658,6 +1712,13 @@ export class Broker {
     this.recoveredJobs.set(recovered.id, recovered as unknown as Record<string, unknown>);
     this.jobsSnapshot = null; this.jobsForDispatch = null;
     return recovered as unknown as Record<string, unknown>;
+  }
+
+  /** Checklist access needs current durable proof, not the compatibility control
+   * helper's recovered/label-only fallback. Called again inside the checklist
+   * transaction; no await or retained authority fills a missing durable field. */
+  private currentChecklistAuthority(witness: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
+    return this.jobsPath ? readChecklistAuthority(this.jobsPath, witness) : undefined;
   }
 
   /** Synchronous authorization fence after the handler's final await. Never use
