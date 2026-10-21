@@ -8,6 +8,23 @@ export const t3BindingSchema = z.object({
 });
 export type T3Binding = z.infer<typeof t3BindingSchema>;
 
+export type McpProfile = "full" | "reduced";
+/** Call only after host negotiation; environment hints alone never establish a frontend. */
+export function mcpProfileFromEnv(env: NodeJS.ProcessEnv, frontend?: T3Binding): McpProfile {
+  const selected = env.AGENT_BRIDGE_MCP_PROFILE ?? "auto";
+  if (!["auto", "full", "reduced"].includes(selected)) throw new Error("Invalid AGENT_BRIDGE_MCP_PROFILE; expected auto, reduced or full.");
+  if (selected === "reduced" && !frontend) throw new Error("Reduced MCP profile requires a validated T3 host.");
+  if (frontend) t3BindingSchema.parse(frontend);
+  return selected === "full" || !frontend ? "full" : "reduced";
+}
+
+/** Keep the unique messaging, security, lifecycle, project and remote-job surfaces. */
+const REDUCED_HIDDEN = new Set(["t3_capabilities", "t3_delegate", "t3_task_status", "t3_task_cancel", "t3_send",
+  "list_models", "usage_limits", "max_subagents", "resource_slots", "handoff_subagents", "job_checklist", "set_job_outcome"]);
+export function profileAllowsTool(profile: McpProfile, name: string): boolean {
+  return profile !== "reduced" || !REDUCED_HIDDEN.has(name);
+}
+
 /** A hosted and an ordinary session can never recover or replace one another. */
 export function sameFrontend(a: { frontend?: T3Binding }, b: { frontend?: T3Binding }): boolean {
   if (!a.frontend && !b.frontend) return true;

@@ -9,22 +9,35 @@ const id = z.string().min(1).max(512);
 export const t3RequestId = z.string().min(1).max(128).regex(/^[A-Za-z0-9_.:-]+$/);
 export const t3Mode = z.enum(["auto", "queue", "steer", "restart"]);
 const runtimeMode = z.enum(["approval-required", "auto-accept-edits", "auto", "full-access"]);
-const option = z.discriminatedUnion("type", [
+const optionValue = z.union([z.string().max(512), z.boolean()]);
+const optionSetting = z.object({ id, value: optionValue });
+const legacyOption = z.discriminatedUnion("type", [
   z.object({ id, label: id, type: z.literal("boolean"), currentValue: z.boolean().nullable().optional() }),
   z.object({ id, label: id, type: z.literal("select"), currentValue: id.nullable().optional(),
     options: z.array(z.object({ id, label: id, isDefault: z.boolean().nullable().optional() })).max(256),
     promptInjectedValues: z.array(id).max(256).nullable().optional() }),
 ]);
+// Current composer descriptors are compact. Retain their values/defaults rather than
+// translating them into a guessed legacy select/boolean representation.
+const compactOption = z.object({ id, type: z.never().optional(), label: id.nullable().optional(), values: z.array(optionValue).min(1).max(256), default: optionValue.optional() })
+  .refine(o => o.values.every(v => typeof v === typeof o.values[0]) && new Set(o.values).size === o.values.length &&
+    (o.default === undefined || o.values.includes(o.default)));
+const option = z.union([legacyOption, compactOption]);
 const capabilitiesSchema = z.object({
   parentThreadId: id, inheritedProviderInstanceId: id, inheritedModel: id.nullable(),
+  inheritedOptions: z.array(optionSetting).max(64).optional(),
   runtimeMode, interactionMode: z.enum(["default", "plan"]),
   features: z.object({ appOwnedSubagents: z.boolean(), cancellation: z.boolean(), threadManagement: z.boolean() }),
   providers: z.array(z.object({ providerInstanceId: id, driverKind: id, displayName: id.nullable(),
     canRunChildTask: z.boolean(), canRunCrossProviderChildTask: z.boolean(), constraints: z.array(z.string().max(4096)).max(64),
     runtimeModes: z.array(runtimeMode).max(4).nullable().optional(),
-    models: z.array(z.object({ id, label: id.nullable(), options: z.array(option).max(64).nullable().optional() })).max(1024),
+    omittedModels: z.number().int().nonnegative().optional(),
+    models: z.array(z.object({ id, label: id.nullable().optional(), options: z.array(option).max(64).nullable().optional() })).max(1024),
   })).max(128),
-});
+}).refine(c => new Set(c.providers.map(p => p.providerInstanceId)).size === c.providers.length &&
+  new Set(c.inheritedOptions?.map(o => o.id)).size === (c.inheritedOptions?.length ?? 0) &&
+  c.providers.every(p => new Set(p.models.map(m => m.id)).size === p.models.length && p.models.every(m =>
+    new Set(m.options?.map(o => o.id)).size === (m.options?.length ?? 0))));
 export type T3Capabilities = z.infer<typeof capabilitiesSchema>;
 const taskStatus = z.enum(["queued", "running", "waiting", "completed", "failed", "cancelled", "interrupted"]);
 const taskSchema = z.object({
@@ -32,6 +45,7 @@ const taskSchema = z.object({
   status: taskStatus, workState: z.enum(["working", "waiting_for_children", "result_available"]),
   hasPendingChildRuns: z.boolean(), hasPendingQuestion: z.boolean(), waitTimedOut: z.boolean(),
   summary: z.string().max(256_000).nullable(), providerInstanceId: id, model: id.nullable(),
+  options: z.array(optionSetting).max(64).nullable().optional(),
   resultContextTransferId: id.nullable(), latestTerminalResultContextTransferId: id.nullable(),
   latestTerminalRunId: id.nullable(), latestTerminalStatus: taskStatus.exclude(["queued", "running", "waiting"]).nullable(),
   latestTerminalSummary: z.string().max(256_000).nullable(),
@@ -49,7 +63,8 @@ export const t3DelegateInput = z.object({
   interactionMode: z.enum(["inherit", "default", "plan"]).optional(),
   // This adapter never raises permission modes. T3 also enforces the caller's native policy.
   target: z.object({ providerInstanceId: id, model: id,
-    options: z.array(z.object({ id, value: z.union([z.string().max(512), z.boolean()]) })).max(64).optional(),
+    options: z.union([z.array(optionSetting).max(64), z.record(id, optionValue).refine(o => Object.keys(o).length <= 64)
+      .transform(o => Object.entries(o).map(([id, value]) => ({ id, value }))]).optional(),
   }).optional(),
 }).strict();
 export type T3DelegateInput = z.input<typeof t3DelegateInput>;
@@ -65,12 +80,14 @@ export class T3HostError extends Error {
   constructor(readonly stage: "unavailable" | "refused" | "unknown", readonly operation: string) {
     super(stage === "unknown"
       ? `T3 ${operation} outcome unknown; retain its clientRequestId and inspect T3 before any retry. No native fallback was attempted.`
-      : `T3 ${operation} ${stage}; requires explicit AGENT_BRIDGE_HOST=t3, valid scoped ACP transport and matching parent capabilities. No native fallback was attempted.`);
+      : `T3 ${operation} ${stage}; requires valid injected scoped ACP transport and matching parent capabilities. No native fallback was attempted.`);
   }
 }
 export interface T3TransportConfig { endpoint: URL; authorization: string; scope: string }
 export function t3TransportFromEnv(env: NodeJS.ProcessEnv = process.env): T3TransportConfig | undefined {
-  if (env.AGENT_BRIDGE_HOST !== "t3") return undefined;
+  const selector = env.AGENT_BRIDGE_HOST;
+  if (selector !== undefined && selector !== "auto" && selector !== "t3") return undefined;
+  if (selector !== "t3" && env.T3_ACP_MCP_ENDPOINT === undefined && env.T3_ACP_MCP_AUTHORIZATION === undefined) return undefined;
   const fail = () => new T3HostError("unavailable", "transport");
   const endpoint = env.T3_ACP_MCP_ENDPOINT, authorization = env.T3_ACP_MCP_AUTHORIZATION;
   if (!endpoint || endpoint.length > 2048 || !authorization?.trim() || authorization.length > 8192 || /[\x00-\x20\x7f]/.test(endpoint) || /[^\x20-\x7e]/.test(authorization)) throw fail();
@@ -148,7 +165,7 @@ export class T3Host {
     this.taskThreads.set(task.taskId, task.childThreadId);
   }
 
-  private async session<T>(operation: string, fn: (call: <S extends z.ZodType>(name: T3Tool, args: Record<string, unknown>, schema: S, effect?: boolean) => Promise<z.output<S>>, caps: T3Capabilities, names: Set<string>) => Promise<T>, signal?: AbortSignal): Promise<T> {
+  private async session<T>(operation: string, fn: (call: <S extends z.ZodType>(name: T3Tool, args: Record<string, unknown>, schema: S, effect?: boolean) => Promise<z.output<S>>, caps: T3Capabilities, names: Set<string>) => Promise<T>, signal?: AbortSignal, search?: string): Promise<T> {
     if (this.stopped || signal?.aborted) throw new T3HostError("unavailable", operation);
     const controller = new AbortController(); this.active.add(controller);
     const abort = () => controller.abort();
@@ -176,9 +193,10 @@ export class T3Host {
         if (effect) submitted = true;
         return decode(schema, await request(connection!.callTool(name, args)));
       };
-      const caps = await call("orchestrator_capabilities", {}, capabilitiesSchema);
+      const caps = await call("orchestrator_capabilities", search === undefined ? {} : { search }, capabilitiesSchema);
       const listed = await call("t3_thread_list", { limit: 1, includeSubagents: true }, z.object({ currentThreadId: id, projectId: id }));
       if (caps.parentThreadId !== listed.currentThreadId) throw new Error("T3 wrong parent");
+      if (!caps.providers.some(p => p.providerInstanceId === caps.inheritedProviderInstanceId)) throw new Error("T3 inherited provider missing");
       const binding = t3BindingSchema.parse({ kind: "t3", scope: this.config.scope, threadId: caps.parentThreadId, providerInstanceId: caps.inheritedProviderInstanceId });
       if (this.bindingValue && JSON.stringify(this.bindingValue) !== JSON.stringify(binding)) throw new Error("T3 binding changed");
       this.bindingValue = binding;
@@ -193,9 +211,10 @@ export class T3Host {
     }
   }
 
-  capabilities(signal?: AbortSignal) {
+  capabilities(signal?: AbortSignal, search?: string) {
+    id.optional().parse(search);
     return this.session("capabilities", async (_call, capabilities, names) => ({ binding: this.binding, capabilities,
-      tools: T3_TOOL_NAMES.filter(name => names.has(name)), ownership: "t3" as const }), signal);
+      tools: T3_TOOL_NAMES.filter(name => names.has(name)), ownership: "t3" as const }), signal, search);
   }
   send(input: { message: string; clientRequestId: string; mode?: z.infer<typeof t3Mode>; taskId?: string }, signal?: AbortSignal) {
     const args = z.object({ message: z.string().min(1).max(64_000), clientRequestId: t3RequestId, mode: t3Mode.default("queue"), taskId: id.optional() }).strict().parse(input);
@@ -220,16 +239,40 @@ export class T3Host {
     return this.session("delegate", async (call, caps) => {
       if (!caps.features.appOwnedSubagents) throw new Error("T3 delegation unavailable");
       const selected = args.target?.providerInstanceId ?? caps.inheritedProviderInstanceId;
-      const provider = caps.providers.find(p => p.providerInstanceId === selected);
+      let provider = caps.providers.find(p => p.providerInstanceId === selected);
       if (!provider?.canRunChildTask || selected !== caps.inheritedProviderInstanceId && !provider.canRunCrossProviderChildTask) throw new Error("T3 provider unavailable");
-      const model = provider.models.find(m => m.id === (args.target?.model ?? caps.inheritedModel));
+      const modelId = args.target?.model ?? caps.inheritedModel;
+      let model = provider.models.find(m => m.id === modelId);
+      if (!model && modelId) {
+        // The default catalogue is a short list, not an authorization denylist.
+        // One bounded search discovers omitted/custom models on the same live host.
+        const searched = await call("orchestrator_capabilities", { search: modelId }, capabilitiesSchema);
+        if (searched.parentThreadId !== caps.parentThreadId || searched.inheritedProviderInstanceId !== caps.inheritedProviderInstanceId ||
+            searched.inheritedModel !== caps.inheritedModel || searched.runtimeMode !== caps.runtimeMode || searched.interactionMode !== caps.interactionMode ||
+            JSON.stringify(searched.inheritedOptions) !== JSON.stringify(caps.inheritedOptions)) throw new Error("T3 search binding changed");
+        provider = searched.providers.find(p => p.providerInstanceId === selected);
+        if (!searched.features.appOwnedSubagents || !provider?.canRunChildTask || selected !== caps.inheritedProviderInstanceId && !provider.canRunCrossProviderChildTask) throw new Error("T3 provider unavailable");
+        model = provider.models.find(m => m.id === modelId);
+      }
       if (!model) throw new Error("T3 model unavailable");
-      for (const value of args.target?.options ?? []) {
-        const spec = model.options?.find(o => o.id === value.id);
-        if (!spec || (spec.type === "boolean" ? typeof value.value !== "boolean" : typeof value.value !== "string" || !spec.options.some(o => o.id === value.value))) throw new Error("T3 option unavailable");
+      const explicit = args.target?.options;
+      const inherited = selected === caps.inheritedProviderInstanceId && model.id === caps.inheritedModel ? caps.inheritedOptions ?? [] : [];
+      const effective = new Map((explicit?.length === 0 ? [] : inherited).map(o => [o.id, o.value]));
+      if (new Set(explicit?.map(o => o.id)).size !== (explicit?.length ?? 0)) throw new Error("T3 duplicate option");
+      for (const o of explicit ?? []) effective.set(o.id, o.value);
+      for (const [optionId, value] of effective) {
+        const spec = model.options?.find(o => o.id === optionId);
+        if (!spec || ("values" in spec ? !spec.values.includes(value) : spec.type === "boolean" ? typeof value !== "boolean" : typeof value !== "string" || !spec.options.some(o => o.id === value))) throw new Error("T3 option unavailable");
       }
       const task = await call("delegate_task", { ...args, mode: "async" }, taskSchema, true);
       if (task.providerInstanceId !== selected || task.model !== model.id) throw new Error("T3 wrong delegated target");
+      // Current hosts return applied options; never call an option mismatch success.
+      // Legacy hosts without option receipts retain compatibility only when no settings were requested/inherited.
+      if (explicit !== undefined || inherited.length || task.options != null) {
+        const actual = task.options;
+        if (!actual || actual.length !== effective.size || new Set(actual.map(o => o.id)).size !== actual.length ||
+            actual.some(o => !effective.has(o.id) || effective.get(o.id) !== o.value)) throw new Error("T3 wrong delegated options");
+      }
       this.rememberTask(task);
       return { ownership: "t3" as const, clientRequestId: args.clientRequestId, task };
     }, signal);

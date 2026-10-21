@@ -75,8 +75,8 @@ function replay(override?: (name: string, args: Record<string, unknown>) => unkn
   return { host: new T3Host(transport(), connect), calls, connections, connect };
 }
 
-it("requires explicit opt-in and refuses missing, partial, unsafe or credential-bearing transport", () => {
-  expect(t3TransportFromEnv({ ...scopedEnv, AGENT_BRIDGE_HOST: undefined })).toBeUndefined();
+it("automatically detects injected transport and refuses missing, partial, unsafe or credential-bearing transport", () => {
+  expect(t3TransportFromEnv({ ...scopedEnv, AGENT_BRIDGE_HOST: undefined })).toBeDefined();
   for (const env of [ { AGENT_BRIDGE_HOST: "t3" }, { ...scopedEnv, T3_ACP_MCP_AUTHORIZATION: "" },
     ...["http://example.com/mcp", "http://localhost/mcp", "http://127.1/mcp", "http://2130706433/mcp", "ftp://127.0.0.1/mcp", "https://user:secret@example.com/mcp", "https://example.com/mcp?token=secret", "https://example.com/mcp#secret", "https://example.com/\n"].map(T3_ACP_MCP_ENDPOINT => ({ ...scopedEnv, T3_ACP_MCP_ENDPOINT })),
     { ...scopedEnv, T3_ACP_MCP_AUTHORIZATION: "Bearer fixture\r\nheader" } ]) {
@@ -149,7 +149,7 @@ it("rejects error/mismatched effect receipts and validates task ownership before
 });
 
 it("keeps T3 task handles, custom model options, descendants, questions and cancellation separate", async () => {
-  const r = replay();
+  const r = replay(name => name === "delegate_task" ? envelope({ ...task(), options: [{ id: "effort", value: "high" }] }) : undefined);
   const created = await r.host.delegate({ task: "bounded package", clientRequestId: "round-1", target: { providerInstanceId: "custom-provider", model: "custom-model", options: [{ id: "effort", value: "high" }] } });
   expect(created).toMatchObject({ ownership: "t3", task: task() });
   expect(r.calls.find(c => c.name === "delegate_task")?.args).toMatchObject({ mode: "async", isolation: "worktree", clientRequestId: "round-1" });
@@ -437,7 +437,8 @@ it("disables Claude channel consumption in host mode and respects disconnected/r
   waker.stop();
 });
 
-it("registers explicit host tools only in opt-in sessions and preserves depth/native-child gates", async () => {
+it("registers explicit host tools in full-profile sessions and preserves depth/native-child gates", async () => {
+  vi.stubEnv("AGENT_BRIDGE_MCP_PROFILE", "full");
   const env = makeEnv(), r = replay();
   await r.host.capabilities();
   const node = env.node("fixture-host", "claude");
