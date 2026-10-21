@@ -107,7 +107,7 @@ it.each(["hosted", "native", "original-online"])("keeps the pinned remote projec
   await b.register(binding("b", "original-thread"), "destination", remoteProject);
   const sender = new LiveBridgeNode({ pipePath: a.pipe, token: a.token, dbPath: a.db, agent: "codex", name: "sender", cwd: a.dir,
     frontend: binding("a", "sender-thread"), autoWake: false, canHostBroker: false, log: nullLogger });
-  cleanup.push(() => sender.stop()); await sender.start(); const invite = await pairPersistent(a, b);
+  cleanup.push(() => sender.stop()); await sender.start(); await pairPersistent(a, b);
   expect((await sender.peers()).some(p => p.host && p.projectAddress === "project:target")).toBe(true);
   const id = randomUUID(); let reached!: () => void, resume!: () => void;
   const intercepted = new Promise<void>(resolve => { reached = resolve; }), resumed = new Promise<void>(resolve => { resume = resolve; });
@@ -124,10 +124,14 @@ it.each(["hosted", "native", "original-online"])("keeps the pinned remote projec
     await intercepted;
     expect(a.store.pinnedDestinations(id)).toHaveLength(1);
     expect(a.store.byId(id)).toBeNull(); expect(b.store.byId(id)).toBeNull();
-    await a.close(); if (kind !== "original-online") await b.close(); a = await persistentHost("pc-a");
+    await a.close();
+    if (kind === "original-online") await until(() => b.network.peers().length === 0);
+    else await b.close();
+    a = await persistentHost("pc-a");
     const localProject = join(a.dir, "target"); mkdirSync(localProject);
     const local = await a.register(kind !== "native" ? binding("a", "new-local-thread") : undefined, "destination", localProject);
-    if (kind === "original-online") await pairPersistent(a, b, invite);
+    // The source's persisted pairing reconnects automatically when B stayed online.
+    if (kind === "original-online") await until(() => a.network.peers().some(p => p.frontend?.threadId === "original-thread"));
     resume();
     const result = await sent;
     if (kind === "original-online") {
