@@ -20,7 +20,7 @@ const legacyOption = z.discriminatedUnion("type", [
 // Current composer descriptors are compact. Retain their values/defaults rather than
 // translating them into a guessed legacy select/boolean representation.
 const compactOption = z.object({ id, type: z.never().optional(), label: id.nullable().optional(), values: z.array(optionValue).min(1).max(256), default: optionValue.optional() })
-  .refine(o => o.values.every(v => typeof v === typeof o.values[0]) && new Set(o.values).size === o.values.length &&
+  .refine(o => new Set(o.values).size === o.values.length &&
     (o.default === undefined || o.values.includes(o.default)));
 const option = z.union([legacyOption, compactOption]);
 const capabilitiesSchema = z.object({

@@ -35,7 +35,7 @@ const caps = (legacy = false): Record<string, unknown> => ({ parentThreadId: "pa
     canRunChildTask: true, canRunCrossProviderChildTask: true, constraints: [], omittedModels: 3,
     models: [{ id: "custom-model", ...(legacy ? { label: "Custom" } : {}), options: legacy
       ? [{ id: "effort", label: "Effort", type: "select", options: [{ id: "high", label: "High" }] }]
-      : [{ id: "effort", values: ["high", "medium"], default: "medium" }, { id: "fast", values: [true, false], default: false }] }] }] });
+      : [{ id: "effort", values: ["high", "medium"], default: "medium" }, { id: "fast", values: [true, false, "inherit"], default: false }] }] }] });
 const envelope = (data: unknown) => ({ content: [{ type: "text", text: JSON.stringify(data) }] });
 function replay(catalog = caps(), currentThreadId = "parent", override?: (name: string, args: Record<string, unknown>) => unknown) {
   const calls = vi.fn(async (name: string, _args: Record<string, unknown>) => {
