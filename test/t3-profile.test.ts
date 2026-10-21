@@ -146,7 +146,7 @@ async function registry(profile?: string, hosted = true, agent: "codex" | "claud
   vi.stubEnv("AGENT_BRIDGE_MCP_PROFILE", profile);
   const r = replay(caps(true));
   if (hosted) await r.host.capabilities();
-  const node = Object.assign(new EventEmitter(), { name: "fixture", currentSessionId: "native", wasReplaced: false, nativeChildren: vi.fn(async () => []), noteFailure: vi.fn() });
+  const node = Object.assign(new EventEmitter(), { name: "fixture", currentSessionId: "native", wasReplaced: false, unread: vi.fn(() => []), nativeChildren: vi.fn(async () => []), noteFailure: vi.fn() });
   const jobs = { canStart: vi.fn(() => true), track: vi.fn(), start: vi.fn(), find: vi.fn(), restore: vi.fn(), share: vi.fn(), cancel: vi.fn(), persist: vi.fn(), recipient: vi.fn(async () => "fixture"), waiting: vi.fn(() => []), limit: 3 };
   const entries = new Map<string, Entry>();
   const mcp = { registerTool: (name: string, spec: Entry["spec"], call: Entry["call"]) => entries.set(name, { spec, call }) };
@@ -212,7 +212,7 @@ it("retains the existing remote ask route with supervisor ownership and without 
   r.jobs.track.mockReturnValue({ job, end });
   boundary.remote.mockResolvedValue({ text: "remote result", sessionId: "remote-session" });
   const result = await r.entries.get("ask_codex")!.call({ prompt: "work", title: "Remote work", host: "paired-pc", cwd: "/remote" }, extra());
-  expect(result.isError).not.toBe(true); expect(boundary.remote).toHaveBeenCalledOnce();
+  expect(result.isError, JSON.stringify(result)).not.toBe(true); expect(boundary.remote).toHaveBeenCalledOnce();
   expect(boundary.remote.mock.calls[0]![2]).toMatchObject({ host: "paired-pc", cwd: "/remote" });
   expect(job).toMatchObject({ remote: { host: "paired-pc", name: "codex-job-12345678" } });
   expect(end).toHaveBeenCalledOnce(); expect(boundary.usage).not.toHaveBeenCalled(); expect(boundary.run).not.toHaveBeenCalled();
@@ -224,7 +224,7 @@ it("does not broaden delegated depth registration or full-profile T3 delegate de
   const result = await r.entries.get("t3_delegate")!.call({ task: "work", clientRequestId: "depth" }, extra());
   expect(result.isError).toBe(true); expect(JSON.stringify(result)).toMatch(/depth/i);
   const names: string[] = [];
-  registerTools({ registerTool: (name: string) => names.push(name) } as unknown as McpServer, { ...r.ctx, node: null, t3Host: undefined }, ["codex"]);
+  registerTools({ registerTool: (name: string) => names.push(name) } as unknown as McpServer, { ...r.ctx, node: null, t3Host: undefined, parent: { name: "parent" } as ServerContext["parent"] }, ["codex"]);
   expect(names).not.toContain("spawn_codex"); expect(names).not.toContain("ask_codex"); expect(names).toContain("report_progress");
 });
 
@@ -241,7 +241,7 @@ it("strips profile and host selectors case-insensitively at shared child boundar
   expect(Object.keys(clean).filter(k => /^(AGENT_BRIDGE_HOST|AGENT_BRIDGE_MCP_PROFILE|T3_ACP_MCP_.*)$/i.test(k))).toEqual([]);
   expect(clean).toEqual({ AGENT_BRIDGE_PARENT_TOKEN: "fixture-parent", KEEP: "yes" });
   for (const [key, value] of Object.entries({ ...injected, AGENT_BRIDGE_HOST: "t3", AGENT_BRIDGE_MCP_PROFILE: "reduced" })) vi.stubEnv(key, value);
-  for (const env of [childEnv({ AGENT_BRIDGE_MCP_PROFILE: "full" }), jobEnvironment(process.env), daemonEnvironment(process.env)]) {
+  for (const env of [childEnv({ AGENT_BRIDGE_MCP_PROFILE: "full" }), jobEnvironment(process.env), daemonEnvironment({ cli: "/fixture/cli", home: "/fixture/home", pipe: "fixture-pipe", cwd: "/fixture" })]) {
     expect(Object.keys(env).filter(k => /^(AGENT_BRIDGE_HOST|AGENT_BRIDGE_MCP_PROFILE|T3_ACP_MCP_.*)$/i.test(k))).toEqual([]);
   }
 });
