@@ -24,7 +24,7 @@ import type { Logger } from "./logger.js";
 import { launchDaemon, RelaunchBackoff, type DaemonLaunch } from "./daemon-launcher.js";
 import { BridgeError, isQuietMessage, isUnsupportedOperation, type AgentKind, type BridgeMessage, type EventMap, type PeerActivity, type PeerInfo, type RequestMap, type SendArgs, type SendResult, type SiblingPeer, type ModeSendArgs, type ModeSendResult } from "./protocol.js";
 import { completionMessageId, COMPLETION_DEDUPE_PREFIX } from "./completion.js";
-import { ReadJournal } from "./read-journal.js";
+import { ReadJournal, readJournalIdentities } from "./read-journal.js";
 import { existingMetadataDb, retainMetadataReader } from "./metadata-db.js";
 import { recordLocalResult } from "./local-result-receipts.js";
 import { compareProjectJobSummaries, summarizeProjectJob, type ProjectJobSummary, type ProjectJobSummaryPage } from "./project-job-summary.js";
@@ -43,7 +43,7 @@ import type { RemoteJobSnapshot } from "../network/remote-jobs.js";
 import type { HistorySearch, HistoryResult } from "./history.js";
 import type { TransferStarted } from "../network/transfers.js";
 import type { DecideArgs, DecisionsArgs, OwnerDecision } from "./decisions.js";
-import { sameFrontend, type T3Binding } from "./t3-identity.js";
+import { sameFrontend, t3BindingSchema, type T3Binding } from "./t3-identity.js";
 
 export interface BridgeNodeOptions {
   frontend?: T3Binding;
@@ -156,6 +156,8 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
 
   constructor(private readonly opts: BridgeNodeOptions) {
     super();
+    // Registration and journal ownership share an immutable, validated binding.
+    this.opts = { ...opts, frontend: opts.frontend ? Object.freeze(t3BindingSchema.parse(opts.frontend)) : undefined };
     this.id = opts.id ?? randomUUID();
     this.currentName = opts.name;
     this.currentCwd = opts.cwd;
@@ -164,7 +166,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     if (opts.dbPath !== ":memory:") this.recordStorePresence();
     if (opts.dbPath !== ":memory:") this.releaseMetadata = retainMetadataReader(dirname(opts.dbPath));
     this.readJournal = new ReadJournal(opts.dbPath === ":memory:" ? ":memory:" : dirname(opts.dbPath), this.log);
-    this.restoreReadState(`name:${this.currentName}`);
+    this.restoreReadState();
   }
 
   /**
@@ -563,9 +565,8 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     this.recordOwnStorePeer();
     if (!this.sessionId && hello.sessionId) {
       this.sessionId = hello.sessionId;
-      this.restoreReadState(`session:${this.sessionId}`);
     }
-    this.restoreReadState(`name:${this.currentName}`);
+    this.restoreReadState();
     this.reconnectDelay = RECONNECT_BACKOFF_MIN_MS;
     client.once("close", () => this.onClose(client));
     if (this.unflushedAcks.size > 0) {
@@ -1080,6 +1081,10 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
    * background subagent. It is handled exactly like a peer message (hooks, wait_for_message, channel).
    */
   deliverLocal(m: BridgeMessage): void {
+    if (m.recipientFrontend && !sameFrontend(this.opts, { frontend: m.recipientFrontend })) {
+      throw new BridgeError("unauthorized", "Local message belongs to another frontend.");
+    }
+    m = { ...m, ...(this.opts.frontend ? { recipientFrontend: this.opts.frontend } : {}) };
     try { if (this.opts.dbPath !== ":memory:") recordLocalResult(dirname(this.opts.dbPath), m); }
     catch (err) { this.log.warn("could not retain local result receipt", { id: m.id, err: String(err) }); }
     this.onEvent("message", m);
@@ -1089,8 +1094,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   markRead(ids: string[]): void {
     const real = ids.filter((id) => this.inbox.has(id));
     if (!real.length) return;
-    this.readJournal.append(`name:${this.currentName}`, real);
-    if (this.sessionId) this.readJournal.append(`session:${this.sessionId}`, real);
+    for (const identity of this.readIdentities()) this.readJournal.append(identity, real);
     const messages = real.map((id) => this.inbox.get(id)!);
     for (const id of real) {
       this.inbox.delete(id);
@@ -1110,8 +1114,12 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   isNotificationAwaited(m: BridgeMessage): boolean { return this.notificationMatch(m); }
   notificationWaitsChanged(): void { this.emit("notification_waits_changed"); }
 
-  private restoreReadState(identity: string): void {
-    for (const id of this.readJournal.read(identity)) this.readIds.add(id);
+  private readIdentities(): string[] {
+    return readJournalIdentities(this.currentName, this.sessionId, this.opts.frontend);
+  }
+
+  private restoreReadState(): void {
+    for (const identity of this.readIdentities()) for (const id of this.readJournal.read(identity)) this.readIds.add(id);
     const consumed = [...this.inbox.keys()].filter((id) => this.readIds.has(id));
     consumed.forEach((id) => this.inbox.delete(id));
     this.acknowledge(consumed);
@@ -1174,7 +1182,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     // The broker may hand us the name of an older server of this session that we replace.
     if (this.isConnected) this.currentName = (await this.updatePeer({ sessionId })).name;
     this.recordOwnStorePeer();
-    if (sessionId) this.restoreReadState(`session:${sessionId}`);
+    this.restoreReadState();
     this.notificationWaitsChanged();
   }
 

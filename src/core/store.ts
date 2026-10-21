@@ -696,8 +696,13 @@ export class MessageStore {
     });
   }
   pinnedDestinations(id: string): RemoteDestination[] {
-    return this.acceptedOperation("direct", () => this.frontendOwnership ? this.statement(this.db, "SELECT destination FROM send_destinations WHERE id=?")
-      .all(id).map(row => JSON.parse(String(row.destination)) as RemoteDestination) : []);
+    return this.pinnedSends(id).map(send => send.destination);
+  }
+  /** Routing must consult the original envelope before resolving any current address. */
+  pinnedSends(id: string): { message: BridgeMessage; destination: RemoteDestination }[] {
+    return this.acceptedOperation("direct", () => this.frontendOwnership ? this.statement(this.db, "SELECT message,destination FROM send_destinations WHERE id=?")
+      .all(id).map(row => ({ message: JSON.parse(String(row.message)) as BridgeMessage,
+        destination: JSON.parse(String(row.destination)) as RemoteDestination })) : []);
   }
   frontendRecipients(frontend: T3Binding): string[] {
     return this.acceptedOperation("direct", () => this.frontendOwnership ? this.statement(this.db,

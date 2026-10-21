@@ -6,6 +6,18 @@ import { retainMetadataFiles } from "./metadata-import.js";
 import { storageLease } from "./storage-lock.js";
 import { DatabaseSync } from "node:sqlite";
 import type { Logger } from "./logger.js";
+import { t3BindingSchema, type T3Binding } from "./t3-identity.js";
+
+/** Old name/session marks remain native evidence only. A hosted identity is
+ * independent of registration names and native provider session IDs. No legacy
+ * record contains enough information to infer its complete frontend owner. */
+export function readJournalIdentities(name: string, sessionId?: string | null, frontend?: T3Binding): string[] {
+ if (frontend) {
+  const binding = t3BindingSchema.parse(frontend);
+  return [`frontend:v1:${JSON.stringify([binding.kind, binding.scope, binding.threadId, binding.providerInstanceId])}`];
+ }
+ return [`name:${name}`, ...(sessionId ? [`session:${sessionId}`] : [])];
+}
 
 /** The metadata store cannot open yet: its fail-closed migration lease needs this process's
  * verified identity (ELEASEBUSY) or an older reader still uses the files (STORE_UPGRADE_DEFERRED). */

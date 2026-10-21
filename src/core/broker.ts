@@ -669,7 +669,7 @@ export class Broker {
         void this.routePendingJobMail().catch((err) => this.log.warn("pending job reroute deferred", { err: String(err) }));
         this.store.history.rememberPeer(c.peer!); this.afterRegistration(c); return result;
       },
-      send: (c, a) => this.onSend(c, { ...a, messageId: undefined }),
+      send: (c, a) => a.messageId ? this.onTrackedSend(c, { ...a, messageId: a.messageId }) : this.onSend(c, a),
       trackedSend: (c, a) => this.onTrackedSend(c, a),
       sendState: (c, a) => this.sendState(c, z.uuid().parse(a.id).toLowerCase()),
       decide: (c, a) => this.onDecide(c, a),
@@ -2455,23 +2455,32 @@ export class Broker {
     }
   }
 
+  private rememberSendRequest(sender: PeerInfo, args: RequestMap["send"][0], id: string): void {
+    if (this.store.frontendOwnership) this.store.rememberSendIntent(id, JSON.stringify([sender.name, sender.agent, sender.frontend ?? null]),
+      JSON.stringify([args.to, args.body, args.replyTo ?? null, args.conversationId ?? null, args.ifNoNewerThan ?? null]));
+  }
+
+  private assertStoredSend(sender: PeerInfo, args: RequestMap["send"][0], message: BridgeMessage): void {
+    // Recipient hints are broker-added suffixes; historical job ownership may
+    // have redirected the stored copy. Recovery never dispatches that copy again.
+    const bodyMatches = message.body === args.body || message.body.startsWith(args.body + "\n\n[agent-bridge routing hint:");
+    if (message.from.name !== sender.name || message.from.agent !== (sender.jobAgent ?? sender.agent) ||
+        !bodyMatches || (!sender.jobAgent && message.to !== args.to.trim()) ||
+        message.replyTo !== (args.replyTo?.trim() || null) ||
+        args.conversationId && message.conversationId !== args.conversationId.trim() &&
+        !(sender.jobAgent && message.conversationId === args.conversationId.trim() + ":fallback")) {
+      throw new BridgeError("bad_request", "Message id already stored with different content or sender; use a new id for a new message.");
+    }
+  }
+
   private async onTrackedSend(conn: Conn, args: RequestMap["trackedSend"][0]): Promise<RequestMap["send"][1]> {
     const id = z.uuid().parse(args.messageId).toLowerCase(), sender = this.requirePeer(conn);
     this.assertSendOwner(sender, id, Boolean(this.store.byId(id)));
-    // Retain request ownership/content even when a broker dies before the first receipt.
-    if (this.store.frontendOwnership) this.store.rememberSendIntent(id, JSON.stringify([sender.name, sender.agent, sender.frontend ?? null]),
-      JSON.stringify([args.to, args.body, args.replyTo ?? null, args.conversationId ?? null, args.ifNoNewerThan ?? null]));
     const state = this.sendState(conn, id);
     if (state.message) {
       const message = state.message;
-      // Recipient routing hints are the only broker-added body suffix. Ownership may redirect job mail.
-      const bodyMatches = message.body === args.body || message.body.startsWith(args.body + "\n\n[agent-bridge routing hint:");
-      if (!bodyMatches || (!sender.jobAgent && message.to !== args.to.trim()) ||
-          message.replyTo !== (args.replyTo?.trim() || null) ||
-          args.conversationId && message.conversationId !== args.conversationId.trim() &&
-          !(sender.jobAgent && message.conversationId === args.conversationId.trim() + ":fallback")) {
-        throw new BridgeError("bad_request", "Message id already stored with different content; use a new id for a new message.");
-      }
+      this.assertStoredSend(sender, args, message);
+      this.rememberSendRequest(sender, args, id);
       const receipts = message.recipient.includes("/") && !isNativeChildAddress(message.recipient) ? await this.messageReceipt(conn, id).catch(() => state.receipts) : state.receipts;
       return { messages: this.store.messagesById(id), deliveredTo: [], queuedFor: [], storage: { id, state: "stored", recovered: true, receipts } };
     }
@@ -2618,6 +2627,15 @@ export class Broker {
   /** Virtual sender selection is internal to this opcode, never a hello or connection mutation. */
   private async routeNativeSend(conn: Conn, args: RequestMap["send"][0], fromChild?: string, current?: () => void): Promise<RequestMap["send"][1]> {
     const peer = this.requirePeer(conn), to = String(args.to ?? "").trim();
+    const admit = (id: string) => {
+      const retained = this.store.sendIntentOwner(id) !== undefined;
+      this.assertSendOwner(peer, id, Boolean(this.store.byId(id)));
+      this.rememberSendRequest(peer, args, id);
+      if (retained && (!this.store.byId(id) || this.store.pinnedSends(id).length)) {
+        throw new BridgeError("unauthorized", "Original destination cannot become native child mail.");
+      }
+    };
+    if (args.messageId) admit(z.uuid().parse(args.messageId).toLowerCase());
     const child = this.nativeChildren.target(fromChild ?? to);
     const senderName = fromChild ?? peer.name;
     const check = () => {
@@ -2642,6 +2660,7 @@ export class Broker {
     const guard = args.ifNoNewerThan ? this.store.byId(args.ifNoNewerThan) : null;
     if (args.ifNoNewerThan && (!guard || guard.from.name !== senderName && !this.store.receipts(guard.id).some(r => r.recipient === senderName))) throw new BridgeError("bad_request", "Invalid native child reply guard.");
     const id = args.messageId ? z.uuid().parse(args.messageId).toLowerCase() : args.dedupeKey ? completionMessageId(`native:${sender.id}:${to}`, args.dedupeKey) : randomUUID();
+    if (!args.messageId) admit(id);
     const recovered = (): RequestMap["send"][1] | null => {
       const existing = this.store.byId(id);
       if (!existing) return null;
@@ -2693,6 +2712,22 @@ export class Broker {
     if (body.length > MAX_BODY_CHARS) throw new BridgeError("too_large", `message body exceeds ${MAX_BODY_CHARS} characters`);
     let to = String(args.to ?? "").trim();
     if (!to) throw new BridgeError("bad_request", "missing target");
+    const id = args.messageId ? z.uuid().parse(args.messageId).toLowerCase() : (sender.jobAgent && args.dedupeKey?.startsWith(COMPLETION_DEDUPE_PREFIX)
+      ? completionMessageId(sender.id, args.dedupeKey.slice(COMPLETION_DEDUPE_PREFIX.length)) : randomUUID());
+    const stored = this.store.byId(id);
+    const retainedRequest = this.store.sendIntentOwner(id) !== undefined;
+    this.assertSendOwner(sender, id, Boolean(stored));
+    if (stored) this.assertStoredSend(sender, args, stored);
+    this.rememberSendRequest(sender, args, id);
+    if (stored) return { messages: this.store.messagesById(id), deliveredTo: [], queuedFor: [],
+      storage: { id, state: "stored", recovered: true, receipts: this.store.receipts(id) } };
+    const retained = this.store.pinnedSends(id);
+    if (retainedRequest && !retained.length) {
+      throw new BridgeError("unknown_target", "Original destination was not retained; retry refused without rerouting.");
+    }
+    if (retained.length && (retained.length !== 1 || to === BROADCAST || retained[0]!.message.to !== to)) {
+      throw new BridgeError("unknown_target", "Original remote destination is incomplete or differs; retry refused without resolving a new recipient.");
+    }
 
     // Durable ownership wins over the old name cached in a still-running parent link.
     const own = sender.jobAgent ? this.storedJobs().find((j) => `job:${j.id}` === sender.id) : undefined;
@@ -2765,11 +2800,7 @@ export class Broker {
     }
     if (own && (to === own.rootName || to === own.owner || this.groups.members(own, this.localPeers()).some((p) => p.name === to) || mastersFor(own).includes(to))) conversationId = this.jobConversation(own, to, conversationId);
 
-    const id = args.messageId ?? (sender.jobAgent && args.dedupeKey?.startsWith(COMPLETION_DEDUPE_PREFIX)
-      ? completionMessageId(sender.id, args.dedupeKey.slice(COMPLETION_DEDUPE_PREFIX.length)) : randomUUID());
     const createdAt = this.now();
-    if (this.store.frontendOwnership && !this.store.sendIntentOwner(id)) this.store.rememberSendIntent(id, JSON.stringify([sender.name, sender.agent, sender.frontend ?? null]),
-      JSON.stringify([args.to, args.body, args.replyTo ?? null, args.conversationId ?? null, args.ifNoNewerThan ?? null]));
     const base = {
       id,
       // A job runner speaks for its job: from the subagent's agent, like a job run inside the session's server.
@@ -2783,8 +2814,14 @@ export class Broker {
       readAt: null,
       ...(jobControlAuthorized ? { jobControlAuthorized: true } : {}),
     };
-    let remoteAddress = to.includes("/") ? to : undefined;
-    if (to.startsWith("project:")) {
+    if (retained.length && retained[0]!.message.to !== to) {
+      throw new BridgeError("unauthorized", "Current ownership would redirect an original remote send; retry refused.");
+    }
+    // A retry addresses the authenticated host ID and exact original recipient,
+    // never a fresh project/group/alias choice or a reused host display name.
+    const original = retained[0]?.destination;
+    let remoteAddress = original ? `${original.hostId}/${original.name}` : to.includes("/") ? to : undefined;
+    if (!original && to.startsWith("project:")) {
       const local = this.localPeers().filter((p) => !p.jobAgent && !p.subagent).map((p) => this.projectPeer(p)).filter((p) => p.projectAddress === to);
       const remote = this.network?.projectPeers(to) ?? [];
       const groups = new Set([...local.map((p) => `local/${p.projectGroup}`), ...remote.map((p) => `${p.host}/${p.projectGroup}`)]);

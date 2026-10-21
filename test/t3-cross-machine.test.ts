@@ -1,6 +1,6 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import * as childProcess from "node:child_process";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -10,6 +10,9 @@ import { nullLogger } from "../src/core/logger.js";
 import type { BridgeNode } from "../src/core/node.js";
 import type { BridgeMessage, PeerInfo } from "../src/core/protocol.js";
 import { MessageStore } from "../src/core/store.js";
+import { ReadJournal } from "../src/core/read-journal.js";
+import { metadataDb } from "../src/core/metadata-db.js";
+import { localResultReceipt } from "../src/core/local-result-receipts.js";
 import { BridgeClient } from "../src/core/client.js";
 import { BridgeNode as LiveBridgeNode } from "../src/core/node.js";
 import { PROTOCOL_VERSION } from "../src/core/constants.js";
@@ -52,12 +55,13 @@ async function persistentHost(name: string, folder = name) {
   await admin.request("auth", { protocol: PROTOCOL_VERSION, token });
   const network = (broker as any).network as NetworkService;
   expect(network).toBeDefined();
-  const register = async (frontend?: T3Binding, name = "destination") => {
+  const register = async (frontend?: T3Binding, name = "destination", cwd = home) => {
     const client = await BridgeClient.connect(pipe, nullLogger); cleanup.push(() => client.close());
     await client.request("auth", { protocol: PROTOCOL_VERSION, token });
     const events: BridgeMessage[] = [];
     client.on("event", (event, data) => { if (event === "message") events.push(data as BridgeMessage); });
     const registration = peer(name, frontend);
+    registration.cwd = cwd;
     const hello = await client.request(frontend ? "helloT3" : "hello", { protocol: PROTOCOL_VERSION, token, peer: registration });
     registration.name = hello.name;
     return { client, events, peer: registration };
@@ -96,6 +100,153 @@ it.each(["thread", "provider", "scope", "native"])("retains unread ownership thr
   expect((await reconnected.client.request("pending", { limit: 100 })).map(m => m.id)).toContain(id);
   expect(await reconnected.client.request("ack", { ids: [id] })).toEqual({ acked: 1 });
   expect((await impostor.client.request("pending", { limit: 100 })).map(m => m.id)).not.toContain(id);
+});
+it.each(["hosted", "native", "original-online"])("keeps the pinned remote project authority when a local %s recipient appears", async kind => {
+  let a = await persistentHost("pc-a"); const b = await persistentHost("pc-b");
+  const remoteProject = join(b.dir, "target"); mkdirSync(remoteProject);
+  await b.register(binding("b", "original-thread"), "destination", remoteProject);
+  const sender = new LiveBridgeNode({ pipePath: a.pipe, token: a.token, dbPath: a.db, agent: "codex", name: "sender", cwd: a.dir,
+    frontend: binding("a", "sender-thread"), autoWake: false, canHostBroker: false, log: nullLogger });
+  cleanup.push(() => sender.stop()); await sender.start(); const invite = await pairPersistent(a, b);
+  expect((await sender.peers()).some(p => p.host && p.projectAddress === "project:target")).toBe(true);
+  const id = randomUUID(); let reached!: () => void, resume!: () => void;
+  const intercepted = new Promise<void>(resolve => { reached = resolve; }), resumed = new Promise<void>(resolve => { resume = resolve; });
+  const connected = sender.ensureConnected.bind(sender); let retrying = false;
+  vi.spyOn(sender, "ensureConnected").mockImplementation(async () => { if (retrying) await resumed; return connected(); });
+  const transport = link(a.network), write = transport.write.bind(transport);
+  vi.spyOn(transport, "write").mockImplementation((frame: any) => {
+    if (frame.type !== "send") return write(frame);
+    retrying = true; (sender as any).client.close(); reached();
+    throw new Error("fixture source crash before dispatch");
+  });
+  const sent = sender.send({ messageId: id, to: "project:target", body: "remote authority must remain remote" }).catch(error => error);
+  try {
+    await intercepted;
+    expect(a.store.pinnedDestinations(id)).toHaveLength(1);
+    expect(a.store.byId(id)).toBeNull(); expect(b.store.byId(id)).toBeNull();
+    await a.close(); if (kind !== "original-online") await b.close(); a = await persistentHost("pc-a");
+    const localProject = join(a.dir, "target"); mkdirSync(localProject);
+    const local = await a.register(kind !== "native" ? binding("a", "new-local-thread") : undefined, "destination", localProject);
+    if (kind === "original-online") await pairPersistent(a, b, invite);
+    resume();
+    const result = await sent;
+    if (kind === "original-online") {
+      expect(result).not.toBeInstanceOf(Error);
+      expect(b.store.byId(id)?.recipientFrontend).toEqual(binding("b", "original-thread"));
+    } else expect(result).toBeInstanceOf(Error);
+    expect(local.events.filter(m => m.id === id)).toEqual([]);
+    expect((await local.client.request("pending", { limit: 100 })).map(m => m.id)).not.toContain(id);
+    if (kind !== "original-online") expect(a.store.byId(id)).toBeNull();
+  } finally { resume(); await sent; }
+});
+
+function liveRecipient(host: Awaited<ReturnType<typeof persistentHost>>, frontend?: T3Binding, name = "destination") {
+  const node = new LiveBridgeNode({ pipePath: host.pipe, token: host.token, dbPath: host.db, agent: "codex", name, cwd: host.dir,
+    frontend, autoWake: false, canHostBroker: false, log: nullLogger });
+  cleanup.push(() => node.stop()); return node;
+}
+
+it.each(["project:target", "*"])("refuses restart retry with missing destination evidence for %s", async to => {
+  let host = await persistentHost("pc-a");
+  let sender = await host.register(binding("a", "sender"), "sender");
+  const args = { messageId: randomUUID(), to, body: "cannot discover a new destination on retry" };
+  await expect(sender.client.request("trackedSend", args)).rejects.toThrow(/routing failed/);
+  expect(host.store.byId(args.messageId)).toBeNull();
+  await host.close(); host = await persistentHost("pc-a");
+  sender = await host.register(binding("a", "sender"), "sender");
+  const project = join(host.dir, "target"); mkdirSync(project);
+  const replacement = await host.register(binding("a", "new-recipient"), "destination", project);
+  await expect(sender.client.request("trackedSend", args)).rejects.toThrow(/Original destination/);
+  expect(replacement.events).toEqual([]);
+  expect(host.store.byId(args.messageId)).toBeNull();
+});
+
+it("does not redispatch a stored alias through alternate send entry points", async () => {
+  const host = await persistentHost("pc-a"), sender = await host.register(binding("a", "sender"), "sender");
+  const first = await host.register(binding("a", "first"), "first");
+  const anchor = randomUUID();
+  await first.client.request("trackedSend", { messageId: anchor, to: sender.peer.name, body: "reply anchor" });
+  const args = { messageId: randomUUID(), to: "codex", body: "only the original alias destination", ifNoNewerThan: anchor };
+  await sender.client.request("trackedSend", args);
+  first.client.close(); await until(() => !(host.broker as any).localPeers().some((p: PeerInfo) => p.id === first.peer.id));
+  const later = await host.register(binding("a", "later"), "later");
+  await sender.client.request("send", args);
+  await sender.client.request("guardedSend", args);
+  expect((await later.client.request("pending", { limit: 100 })).map(m => m.id)).not.toContain(args.messageId);
+  expect(later.events.filter(m => m.id === args.messageId)).toEqual([]);
+  expect(host.store.messagesById(args.messageId).map(m => m.recipient)).toEqual(["first"]);
+  await expect(sender.client.request("send", { ...args, to: later.peer.name })).rejects.toThrow(/different/);
+  await sender.client.request("modeSend", { ...args, mode: "auto" });
+  expect(host.store.messagesById(args.messageId)).toHaveLength(1);
+});
+
+it.each(["thread", "provider", "scope", "hosted-to-native", "native-to-hosted"])("isolates broadcast read recovery across %s and retains same-binding lost ACK recovery", async changed => {
+  const host = await persistentHost("pc-b"), firstBinding = changed === "native-to-hosted" ? undefined : binding("b", "first");
+  const nextBinding = changed === "hosted-to-native" ? undefined : { ...binding("b", "first"),
+    ...(changed === "provider" ? { providerInstanceId: "other-provider" } : changed === "scope" ? { scope: "c".repeat(64) } : { threadId: "second" }) };
+  const first = liveRecipient(host, firstBinding), second = liveRecipient(host, nextBinding);
+  await first.setSessionId("shared-native-session"); await first.start();
+  await second.setSessionId("shared-native-session"); await second.start();
+  expect(first.name).not.toBe(second.name);
+  const sender = await host.register(binding("a", "sender"), "sender"), id = randomUUID();
+  await sender.client.request("trackedSend", { messageId: id, to: "*", body: "independent broadcast reads" });
+  await first.refreshPending(); await second.refreshPending();
+  expect(first.get(id)).toBeDefined(); expect(second.get(id)).toBeDefined();
+  first.markRead([id]); await until(() => host.store.receipts(id).some(r => r.recipient === first.name && r.readAt !== null));
+  await second.stop();
+  const restarted = liveRecipient(host, nextBinding);
+  await restarted.setSessionId("shared-native-session"); await restarted.start(); await restarted.refreshPending();
+  expect(restarted.get(id)?.body).toBe("independent broadcast reads");
+  expect(host.store.receipts(id).find(r => r.recipient === restarted.name)?.readAt).toBeNull();
+  const tail = randomUUID();
+  await sender.client.request("trackedSend", { messageId: tail, to: "*", body: "still unread after recovery" });
+  await restarted.refreshPending();
+  // Lose the ACK after the durable read mark, then recover through a fresh node,
+  // registration and production replay/ACK; its ephemeral peer id is different.
+  restarted.markRead([id]); await restarted.stop();
+  expect(host.store.receipts(id).find(r => r.recipient === restarted.name)?.readAt).toBeNull();
+  const recovered = liveRecipient(host, nextBinding, nextBinding ? "renamed-destination" : "destination");
+  await recovered.setSessionId(nextBinding ? "changed-native-session" : "shared-native-session"); await recovered.start(); await recovered.refreshPending();
+  await until(() => host.store.receipts(id).filter(r => r.readAt !== null).length === 2);
+  expect(recovered.get(id)).toBeUndefined();
+  expect(recovered.get(tail)?.body).toBe("still unread after recovery");
+});
+
+it("retains legacy journal bytes and native evidence without inferring hosted reads", async () => {
+  const dir = join(home, "pc-b"), legacyDir = join(dir, "read-state"); mkdirSync(legacyDir, { recursive: true });
+  const id = randomUUID(), raw = JSON.stringify({ ids: [id], at: 1234 }) + '\n["interrupted';
+  const file = createHash("sha256").update("name:destination").digest("hex") + ".jsonl";
+  writeFileSync(join(legacyDir, file), raw);
+  const host = await persistentHost("pc-b"), hosted = liveRecipient(host, binding("b", "target"));
+  await hosted.start();
+  const sender = await host.register(binding("a", "sender"), "sender");
+  await sender.client.request("trackedSend", { messageId: id, to: "*", body: "legacy mark is not hosted ownership" });
+  await hosted.refreshPending();
+  expect(hosted.get(id)?.body).toBe("legacy mark is not hosted ownership");
+  expect(host.store.receipts(id)[0]?.readAt).toBeNull();
+  expect(new ReadJournal(dir).read("name:destination")).toContain(id);
+  const retained = metadataDb(dir).prepare("SELECT cold_path FROM bridge_imports WHERE path=?").get(`read-state/${file}`);
+  expect(readFileSync(String(retained?.cold_path), "utf8")).toBe(raw);
+  await hosted.stop();
+  const native = liveRecipient(host); await native.start();
+  // Native journals retain their old recovery contract.
+  expect(native.hasSeen(id)).toBe(true);
+});
+
+it("binds locally delivered result receipts to the hosted reader and preserves old native marks", async () => {
+  const host = await persistentHost("pc-b"), id = randomUUID();
+  new ReadJournal(host.dir).append("name:destination", [id]);
+  const frontend = binding("b", "local-result-thread"), node = liveRecipient(host, frontend);
+  await node.start();
+  const result = { ...message(peer("job-name"), node.name), id,
+    from: { id: "job:fixture", name: "job-name", agent: "codex" as const }, body: "Subagent job-name done after 1s.\nresult" };
+  node.deliverLocal(result);
+  expect(node.get(id)?.body).toBe(result.body);
+  expect(localResultReceipt(host.dir, "job-name", node.name, 0, Date.now() + 1)?.status).toBe("delivered");
+  node.markRead([id]);
+  expect(localResultReceipt(host.dir, "job-name", node.name, 0, Date.now() + 1)?.status).toBe("read");
+  expect(new ReadJournal(host.dir).read("name:destination")).toContain(id);
+  expect(() => node.deliverLocal({ ...result, id: randomUUID(), recipientFrontend: binding("b", "foreign") })).toThrow(/frontend/);
 });
 
 it("keeps legacy unfenced mail native and refuses hosted stand-in claims", async () => {
