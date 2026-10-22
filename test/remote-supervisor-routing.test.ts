@@ -62,10 +62,11 @@ async function hosts(hosted = false) {
   let network = makeNetwork();
   const runnerIdentity = network.status().identity!;
   const responses: any[] = [], frames: BridgeMessage[] = [];
+  let responseReceiver: ((type: string, response: unknown) => Promise<void>) | undefined;
   let loseAck = false, disconnectBeforeReceive = false;
   const link = { remote: { ...sourceIdentity }, peers: sourceNetwork.localPeers(),
     recipientOwnershipV1: true, nativeOwnershipV1: true, mailboxProvenanceV1: true, t3ThreadRouting: true,
-    supports: () => true, refresh() {}, writeExtension: async (_type: string, response: unknown) => { responses.push(response); },
+    supports: () => true, refresh() {}, writeExtension: async (type: string, response: unknown) => { responses.push(response); await responseReceiver?.(type, response); },
     send: async (raw: BridgeMessage, destination: any) => {
       const message = messageSchema.parse(raw);
       const sender = network.localPeers().find(p => p.id === message.from.id && p.name === message.from.name);
@@ -96,7 +97,23 @@ async function hosts(hosted = false) {
       jobOwner, jobParent, cwd: home, pid: process.pid, agentPid: null, sessionId: null, startedAt: Date.now(), autoWake: false } });
     return client;
   };
+  let requester: RemoteJobs | undefined, lookup: ReturnType<typeof vi.spyOn> | undefined;
+  const requestState = (peer = supervisor) => {
+    if (!requester) {
+      requester = new RemoteJobs(sourceNetwork, sourceHome, nullLogger, async () => {});
+      cleanups.push(() => requester!.close());
+      lookup = vi.spyOn(remote as any, "handle");
+      (sourceNetwork as any).links.set(runnerIdentity.id, { remote: runnerIdentity, supports: () => true,
+        // Only the authenticated transport is replaced: production sendExtension
+        // must publish the canonical new advertisement before the request frame.
+        refresh: () => { link.peers = sourceNetwork.localPeers(); },
+        writeExtension: (type: any, payload: Record<string, unknown>) => network.receiveExtension(type, payload, sourceIdentity as any) });
+      responseReceiver = (type: any, payload: any) => Promise.resolve(sourceNetwork.receiveExtension(type, payload, runnerIdentity as any));
+    }
+    return requester.request(runnerIdentity.id, peer, { op: "state", job: "87654321" });
+  };
   return { get store() { return store; }, sourceStore, supervisor, link, frames, owner, connect, sourceIdentity,
+    requestState, lookups: () => lookup?.mock.calls.length ?? 0,
     lostAck: () => { loseAck = true; },
     disconnect: () => { disconnectBeforeReceive = true; },
     legacyRecord: () => {
@@ -114,6 +131,23 @@ async function hosts(hosted = false) {
     },
   };
 }
+
+it("reaches remote lookup for a freshly advertised native supervisor with the peer-refresh fixture identity", async () => {
+  const h = await hosts();
+  const originalSession = h.supervisor.sessionId;
+  // A freshly advertised name without native identity must fail before lookup.
+  h.supervisor.sessionId = null; h.supervisor.agentPid = null;
+  h.link.peers = [];
+  await expect(h.requestState()).rejects.toThrow("Remote supervisor return ownership is unproven");
+  expect(h.lookups()).toBe(0);
+  // Restore the exact session minted by the actual source store, not a static
+  // nativeOwner string. The production request path must refresh this binding.
+  h.supervisor.sessionId = originalSession;
+  await expect(h.requestState()).rejects.toThrow("Unknown remote job.");
+  expect(h.lookups()).toBe(1);
+  await expect(h.requestState({ ...h.supervisor, id: randomUUID() })).rejects.toThrow("not an advertised supervisor");
+  expect(h.lookups()).toBe(1);
+});
 
 it.each([false, true])("retains the real paired supervisor report across lost ACK, registry reload and runner reconnect (hosted=%s)", async hosted => {
   const h = await hosts(hosted); let runner = await h.connect();

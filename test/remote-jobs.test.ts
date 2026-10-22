@@ -14,6 +14,7 @@ import { pidAlive } from "../src/core/delegate.js";
 import { nullLogger } from "../src/core/logger.js";
 import type { PeerInfo } from "../src/core/protocol.js";
 import { BridgeNode } from "../src/core/node.js";
+import { MessageStore } from "../src/core/store.js";
 import { resolveDbPath, resolvePipePath } from "../src/core/paths.js";
 import { answerPendingApproval, listPendingApprovals } from "../src/core/relay.js";
 import { parentFromEnv } from "../src/core/parent-link.js";
@@ -31,6 +32,7 @@ import { REMOTE_JOB_RATE_LIMIT, remoteSpawnArgsSchema } from "../src/network/rem
 import { readProcessIdentities } from "../src/core/process-identity.js";
 import { fixtureProcessExists, fixtureProcessGeneration } from "./fixture-process-generation.js";
 import { jobWaitSnapshot } from "./job-wait-diagnostics.js";
+import { fixtureOwner, fixturePeer } from "./owned-mail.js";
 
 const SERVER = join(import.meta.dirname, "..", "plugins", "claude", "dist", "server.mjs");
 const TEST_TIMEOUT_MS = 90_000;
@@ -412,17 +414,27 @@ describe("remote jobs security", () => {
     vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
     config(localHome, "windows"); config(remoteHome, "mac", true);
     const peers: PeerInfo[] = [];
+    const identities = new MessageStore(resolveDbPath(localHome), nullLogger);
+    cleanup.push(() => identities.close());
     const a = new NetworkService(localHome, { ...DEFAULT_NETWORK_CONFIG, enabled: true, name: "windows", bind: LOOPBACK, port: 0, discovery: false }, { peers: () => peers, receive: () => ({ delivered: true }) }, nullLogger);
     const b = new NetworkService(remoteHome, { ...DEFAULT_NETWORK_CONFIG, enabled: true, name: "mac", bind: LOOPBACK, port: 0, discovery: false }, { peers: () => [], receive: () => ({ delivered: true }) }, nullLogger);
     const requester = new RemoteJobs(a, localHome, nullLogger, async () => {});
     const receiver = new RemoteJobs(b, remoteHome, nullLogger, async () => {});
     cleanup.push(() => a.close(), () => b.close(), () => { requester.close(); receiver.close(); });
     await a.start(); await b.start(); await a.link(b.keys.invite(), LOOPBACK, b.port);
-    const peer: PeerInfo = { id: randomUUID(), name: "supervisor", agent: "codex", cwd: repo, pid: process.pid, agentPid: null, sessionId: null, startedAt: Date.now(), autoWake: false };
-    peers.push(peer);
+    const peer = fixturePeer(identities, "supervisor", { cwd: repo });
+    const lookup = vi.spyOn(receiver as any, "handle");
+    const unproven = { ...peer, sessionId: null, agentPid: null, agentStartedAt: null };
+    peers.push(unproven);
+    await expect(requester.request("mac", unproven, { op: "state", job: "12345678" })).rejects.toThrow("Remote supervisor return ownership is unproven");
+    expect(lookup).not.toHaveBeenCalled();
+    peers[0] = peer;
+    expect(a.localPeers()[0]!.nativeOwner).toBe(fixtureOwner(identities, peer).slice("native:".length));
     // Reaching the job lookup proves the advertised-session check passed; no job was spawned.
     await expect(requester.request("mac", peer, { op: "state", job: "12345678" })).rejects.toThrow("Unknown remote job.");
+    expect(lookup).toHaveBeenCalledOnce();
     await expect(requester.request("mac", { ...peer, id: randomUUID() }, { op: "state", job: "12345678" })).rejects.toThrow("not an advertised supervisor");
+    expect(lookup).toHaveBeenCalledOnce();
   });
 
   it("is off by default and rejects arbitrary runner arguments and folder escapes", () => {
