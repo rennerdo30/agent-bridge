@@ -1,15 +1,15 @@
 {
   "base": "8deb0286773a6b61243caaae237e16227dc2f591",
   "methods": {
-    "src/core/broker.ts:constructor": "e7c1745f8b8e42bc9859fb663bfe091b629905bc20a30471711f266df7fbef7b",
+    "src/core/broker.ts:constructor": "cb47f6c17a44e8915ac2be8aaa5266e70617dcc4c48281a3593ca01028a8a6a2",
     "src/core/broker.ts:listen": "bd39e0afecb5a74d76161f26d5923f2c1e41da8cc490ed1448a9260b850ce4b0",
-    "src/core/broker.ts:startServices": "07bc9bdb56bea9ae2c5c3f0c89639469f7fa5ccfb0d8e5bc97fc1efbfd93fe2f",
+    "src/core/broker.ts:startServices": "747bad4009529a7c6c8fb150580ce5ed37d66ba5ac3b6f651a6f06ad865b18d7",
     "src/core/broker.ts:abortStartup": "6132967fa78fd39cff064a581f4f49bb9c1c75b644fba78b291708c58733118c",
     "src/core/broker.ts:close": "fb5a92326cac082ae181f38208c0af708a2b342297038d021f67a13bcd8b9b27",
-    "src/core/node.ts:constructor": "0094b2611e538459faa5577274f1a9b2437e7a3c1f6e9361cbe2c02428f0dd07",
-    "src/core/node.ts:start": "c2444cc1c41903a2489d3142952a79d2d562b37cea8bf617ae4db5a2b2e10299",
+    "src/core/node.ts:constructor": "c70bf3e865405166e195839fd1b315548b5a0a56847db0bba52eba72d0b691f5",
+    "src/core/node.ts:start": "b504e47bab8d53e8bb71ad3457594988c38cc78bed67e2b1be3e197bc1f5066a",
     "src/core/node.ts:stop": "b98b5631cf7643be62bce61fac172fc79c0da09db2c7720abf14502736b57359",
-    "src/core/node.ts:tryBecomeBroker": "54662336fe5017d38e0ea9cfd79638255e9f2860c3a7aa0cda2a8c5408dfb5a3",
+    "src/core/node.ts:tryBecomeBroker": "a945a95f23803cb80cb3ea51d5480d22eb1725854d1ce6f49a2ccf24289e8d36",
     "src/cli/dashboard.ts:constructor": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
     "src/cli/dashboard.ts:open": "6eacbb835304e2a5d3c303c54c3c674910cbf4f9a5411b3af62a7747fe2d211b",
     "src/cli/dashboard.ts:ensure": "d19ca8a9485ccc07d588997e3497bc11545e730a264e9a6f59bf1ceb0dfcda49",
@@ -20,13 +20,25 @@
     "AB-428": {
       "base": "42ac9a2b8018fe9abe5adac196b4a770e54290a0",
       "sourceCommit": "82b5730c76edc587e69b693b9325d2ac94a85fc6",
-      "changes": [{ "method": "src/core/broker.ts:constructor", "previous": "adad444e14f7c40bf1c5ffadc7bb648e9a4ae8f3f02f92bc8514583e81bdad5e", "current": "e7c1745f8b8e42bc9859fb663bfe091b629905bc20a30471711f266df7fbef7b" }],
+      "changes": [
+        {
+          "method": "src/core/broker.ts:constructor",
+          "previous": "adad444e14f7c40bf1c5ffadc7bb648e9a4ae8f3f02f92bc8514583e81bdad5e",
+          "current": "e7c1745f8b8e42bc9859fb663bfe091b629905bc20a30471711f266df7fbef7b"
+        }
+      ],
       "reason": "Parent source qualification after independent full-range review39517-39518: requested authenticated local checklist handler only; fresh operation-bound durable/group authority, strict private lineage and qualified project discovery. No new constructor-time stores, listeners or timers. Recomputed all thirteen methods with unchanged mobile-wiring normalization; other twelve pins, complete UI hash, previous update records, normalizer and assertions are unchanged. Exact final-commit hosted CI remains required."
     },
     "AB-456": {
       "base": "cd62f067827d6c7313de78075d5df9e942d2a8f8",
-      "sourceCommits": ["44df891c0c742073d6167c1ba682d657acb6b8e7", "a07ffe2e13b9335e7e409a6b813fb3954dd80bf5"],
-      "integratedSourceCommits": ["35a191ba262f3d5eccd166ade15e9b2bc9a367ca", "1eca89e9383c6204b51dc471dbe47419542b87cb"],
+      "sourceCommits": [
+        "44df891c0c742073d6167c1ba682d657acb6b8e7",
+        "a07ffe2e13b9335e7e409a6b813fb3954dd80bf5"
+      ],
+      "integratedSourceCommits": [
+        "35a191ba262f3d5eccd166ade15e9b2bc9a367ca",
+        "1eca89e9383c6204b51dc471dbe47419542b87cb"
+      ],
       "changes": [],
       "previousUiSha256": "ebdf54b1b23e68246479ded1231d0b2e014a5658cc69f4b8c0281a350dec6b18",
       "uiSha256": "f2a5b28254d4bb467f28bdee139e3b23bd9d4bd0c7c15fee116b4ed85a6ac385",
@@ -354,6 +366,57 @@
       "uiSha256": "ebdf54b1b23e68246479ded1231d0b2e014a5658cc69f4b8c0281a350dec6b18",
       "reason": "AB-401: startUi's /api/state reads the stored jobs once into `stored`, computes `waits = stateJobWaits(opts.home, stored, opts.log)` (display-only: one snapshot read of resource-slots.sqlite, no process probes, no writes, nothing created when the file is absent) and adds only `...(waits.has(name) ? { waitingFor: waits.get(name) } : {})` to each stored job's entry; the import line adds stateJobWaits. No control-flow change; no mobile route, mobile startup, mobile store or mobile admin code changes and nothing under src/mobile or apps changes, so mobile behaviour is unchanged (mobile-wiring's other 18 tests, mobile-activation, mobile-adapter and mobile-phones-dashboard pass). Broker, node.ts and dashboard method pins, the normalizer and the assertions are unchanged. Re-checked after merging main with AB-404 (PR #95) on top of AB-398 (PR #93): the merge changes no pinned method and not startUi; the method pins are AB-404's (constructor d1059198...) and only uiSha256 differs from main, by exactly this AB-401 change. The review fixes after the merge (a cached read-only slot snapshot behind stateJobWaits, job-limit labelling in JobManager, the `<job>~startup-<uuid>` startup row) do not touch startUi, so its hash is unchanged.",
       "commit": "eb040e0a"
+    },
+    "AB-458-ownership-and-local-job-succession": {
+      "sourceCommit": "e671229a45a5f9ba7803ba35a5fa4f1c20ce0439",
+      "sourceTree": "e7e158a07f250216915407e1557ccb43560f6dd1",
+      "reviewedSourceCommit": "bb6f598b582c1a82e70f87bf8eedb3944a28595a",
+      "reviewedSourceTree": "659031f59e3f53bd53703891614377265b929f2c",
+      "approvals": [
+        "AB-45842237 prior exact five-method approval",
+        "Parent exact c69 supplemental constructor/startServices approval recorded on AB-45842246"
+      ],
+      "methods": [
+        {
+          "method": "src/core/broker.ts:constructor",
+          "previous": "e7c1745f8b8e42bc9859fb663bfe091b629905bc20a30471711f266df7fbef7b",
+          "current": "cb47f6c17a44e8915ac2be8aaa5266e70617dcc4c48281a3593ca01028a8a6a2",
+          "approved42237": "755682467fc0a6cbcf49d1bb2d3ce2a593851c92520d6da0a7af5cc7dd0db801",
+          "changed": true
+        },
+        {
+          "method": "src/core/broker.ts:startServices",
+          "previous": "07bc9bdb56bea9ae2c5c3f0c89639469f7fa5ccfb0d8e5bc97fc1efbfd93fe2f",
+          "current": "747bad4009529a7c6c8fb150580ce5ed37d66ba5ac3b6f651a6f06ad865b18d7",
+          "approved42237": "c7d7a47df86ea4d665ce7d20431738fe669d07020944358b0faf93ca8be9614e",
+          "changed": true
+        },
+        {
+          "method": "src/core/node.ts:constructor",
+          "previous": "0094b2611e538459faa5577274f1a9b2437e7a3c1f6e9361cbe2c02428f0dd07",
+          "current": "c70bf3e865405166e195839fd1b315548b5a0a56847db0bba52eba72d0b691f5",
+          "approved42237": "c70bf3e865405166e195839fd1b315548b5a0a56847db0bba52eba72d0b691f5",
+          "changed": true
+        },
+        {
+          "method": "src/core/node.ts:start",
+          "previous": "c2444cc1c41903a2489d3142952a79d2d562b37cea8bf617ae4db5a2b2e10299",
+          "current": "b504e47bab8d53e8bb71ad3457594988c38cc78bed67e2b1be3e197bc1f5066a",
+          "approved42237": "b504e47bab8d53e8bb71ad3457594988c38cc78bed67e2b1be3e197bc1f5066a",
+          "changed": true
+        },
+        {
+          "method": "src/core/node.ts:tryBecomeBroker",
+          "previous": "54662336fe5017d38e0ea9cfd79638255e9f2860c3a7aa0cda2a8c5408dfb5a3",
+          "current": "a945a95f23803cb80cb3ea51d5480d22eb1725854d1ce6f49a2ccf24289e8d36",
+          "approved42237": "a945a95f23803cb80cb3ea51d5480d22eb1725854d1ce6f49a2ccf24289e8d36",
+          "changed": true
+        }
+      ],
+      "unchangedMethodCount": 8,
+      "uiSha256": "f2a5b28254d4bb467f28bdee139e3b23bd9d4bd0c7c15fee116b4ed85a6ac385",
+      "receipt": "docs/t3-cross-machine-mobile-pin-amendment.json",
+      "reason": "Registration/current durable authority/grant/source provenance/persisted copy emission/jobRoutes ACK fence and captureNotification callback only; no behavioral acceptance. Other eight method pins, UI hash, normalizer and all behavioral assertions unchanged."
     }
   },
   "revertedUpdates": {

@@ -110,7 +110,9 @@
     "test/supervisor-context.test.ts",
     "test/t3-cross-machine.test.ts",
     "test/units.test.ts",
-    "docs/t3-cross-machine-validation-receipt.json"
+    "docs/t3-cross-machine-validation-receipt.json",
+    "test/fixtures/mobile-wiring-baseline.json",
+    "docs/t3-cross-machine-mobile-pin-amendment.json"
   ],
   "receipts": [
     {
@@ -222,12 +224,13 @@
   "producerAudit": "docs/t3-cross-machine-ci-failures.md#producerconsumer-dimensional-audit",
   "design": "docs/t3-cross-machine-job-routing-design.md",
   "mobilePinReview": {
-    "baselineAmended": false,
-    "supplementalApproval": "Parent approved exact c69 normalized constructor/startServices delta in this conversation; recorded on AB-45842246. Separate amendment follows frozen-commit recomputation.",
+    "baselineAmended": true,
+    "supplementalApproval": "Parent approved exact c69 normalized constructor/startServices delta, extending prior five-method approval; recorded on AB-45842246. Frozen-commit recomputation and full source head/tree are in the amendment receipt.",
     "inventory": "docs/t3-cross-machine-mobile-pin-request.json",
     "unchangedMethods": 8,
     "unchangedUiSha256": "f2a5b28254d4bb467f28bdee139e3b23bd9d4bd0c7c15fee116b4ed85a6ac385",
-    "normalizer": "unchanged"
+    "normalizer": "unchanged",
+    "amendmentReceipt": "docs/t3-cross-machine-mobile-pin-amendment.json"
   },
   "unverified": [
     "Hosted full223/69-file CI acceptance and native lifecycle on Windows/Linux/macOS",
