@@ -14,7 +14,7 @@ import { resolveDbPath, resolvePipePath } from "../src/core/paths.js";
 import { loadOrCreateToken } from "../src/core/token.js";
 import { refreshStorePeerIdentities } from "../src/core/store-compatibility.js";
 import { nullLogger } from "../src/core/logger.js";
-import { JobRunners } from "../src/mcp/job-host.js";
+import { JobRunners, readRunnerState, writeRunnerState } from "../src/mcp/job-host.js";
 import type { RunnerControl } from "../src/mcp/jobs.js";
 import { RemoteJobs } from "../src/network/remote-jobs.js";
 import { DEFAULT_NETWORK_CONFIG } from "../src/network/config.js";
@@ -49,6 +49,25 @@ function neverQuery() {
   return { started: () => Boolean(resolve), release: async () => { resolve(new Map([[pid, `generation-${pid}`]])); await refreshStorePeerIdentities(home); } };
 }
 const host = { pid: null, peer: "detached-fixture", startedAt: Date.now() };
+
+it("refuses unsettled remote terminal snapshots and continuation before stripping pending evidence", async () => {
+  const start = vi.spyOn(JobRunners.prototype, "startAsync").mockResolvedValue(host);
+  const id = "1234abcd";
+  await handle(request(id));
+  const state = { pid: process.pid, peer: `codex-job-${id}`, status: "done" as const, updatedAt: Date.now(),
+    report: "Exact final held behind original note", reportId: "original-final-id", delivered: false,
+    pendingDeliveryRetention: [{ messageId: "11111111-1111-4111-8111-111111111111", record: "Exact original note and intent" }],
+    deliveryRetentionFailure: "attempts-exhausted" as const };
+  writeRunnerState(home, id, state);
+  const original = readFileSync(join(home, "remote-jobs.json"));
+  await expect((remote as any).handle(pair, { ...peer, supervisor: "replacement-session" }, { op: "state", job: id })).rejects.toThrow("Remote job belongs to another supervisor");
+  await expect(handle({ op: "state", job: id })).rejects.toThrow("Remote runner retention is unsettled");
+  await expect(handle(request(id, "must not replace pending evidence"))).rejects.toThrow("Remote runner retention is unsettled");
+  expect(start).toHaveBeenCalledOnce(); expect(readRunnerState(home, id)).toMatchObject(state);
+  expect(readFileSync(join(home, "remote-jobs.json"))).toEqual(original);
+  writeRunnerState(home, id, { ...state, pendingDeliveryRetention: [], deliveryRetentionFailure: undefined });
+  expect(await handle({ op: "state", job: id })).toMatchObject({ alive: false, state: { report: state.report, reportId: state.reportId, delivered: false } });
+});
 
 it("retains admitted paired-host job authority when the local job registry has no copy", async () => {
   vi.spyOn(JobRunners.prototype, "startAsync").mockResolvedValue(host);

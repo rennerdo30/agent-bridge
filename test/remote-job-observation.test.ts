@@ -79,6 +79,21 @@ it.each(["done", "failed", "cancelled"] as const)("keeps a running job across fa
   expect(f.resume).not.toHaveBeenCalled();
 });
 
+it("keeps remote retention refusal pending instead of treating the failed observation as a drained runner", async () => {
+  const f = fixture();
+  await vi.advanceTimersByTimeAsync(0);
+  const originalHost = f.job.host;
+  f.observe(async () => { throw new Error("Remote runner retention is unsettled; recover original evidence on its execution host before continuation."); });
+  await vi.advanceTimersByTimeAsync(4_000);
+  expect(f.job.status).toBe("running"); expect(f.job.host).toBe(originalHost);
+  expect(f.job.report).toBeUndefined(); expect(f.node.unread()).toEqual([]);
+  expect(f.resume).not.toHaveBeenCalled(); expect(f.operations().filter(op => op !== "state")).toEqual(["spawn"]);
+  f.observe(async () => snapshot("done"));
+  await vi.advanceTimersByTimeAsync(4_000);
+  expect(f.job).toMatchObject({ status: "done", host: null, report: "remote done report" });
+  expect(f.resume).not.toHaveBeenCalled();
+});
+
 it("keeps a running job while a poll is deferred past expiry, without overlapping requests", async () => {
   const f = fixture();
   await vi.advanceTimersByTimeAsync(0);

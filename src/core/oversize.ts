@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { closeSync, fsyncSync, mkdirSync, openSync, renameSync, statSync, unlinkSync, writeSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { mkdir, open, rename, stat } from "node:fs/promises";
 import { MAX_BODY_CHARS } from "./constants.js";
 
 /** Directory under the bridge home holding full texts that were too large to send (AB-380). */
@@ -14,6 +15,11 @@ export const MAX_REPORT_CHARS = MAX_BODY_CHARS - REPORT_HEADROOM_CHARS;
 
 function safeName(id: string): string {
   return id.replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 120) || "message";
+}
+
+/** Only private attempt files computed below, never a published evidence record. */
+function discardTemporary(tmp: string): void {
+  try { unlinkSync(tmp); } catch { /* Already gone. */ }
 }
 
 /**
@@ -36,8 +42,27 @@ export function quarantineText(home: string, id: string, text: string): string {
     renameSync(tmp, file);
   } catch (err) {
     // A failed attempt must not leave a partial copy behind: each retry uses a fresh temp name.
-    try { unlinkSync(tmp); } catch { /* Already gone. */ }
+    discardTemporary(tmp);
     throw err;
+  }
+  return file;
+}
+
+/** Awaited retention for runner queues. A failed/suspended fsync never confirms the item. */
+export async function quarantineTextAsync(home: string, id: string, text: string): Promise<string> {
+  const data = Buffer.from(text, "utf8");
+  const file = join(home, QUARANTINE_DIR, `${safeName(id)}-${createHash("sha256").update(data).digest("hex").slice(0, 16)}.txt`);
+  try { if ((await stat(file)).size === data.length) return file; } catch { /* Not written yet. */ }
+  await mkdir(dirname(file), { recursive: true });
+  const tmp = `${file}.${process.pid}.${randomUUID()}.tmp`;
+  const handle = await open(tmp, "wx", 0o600);
+  try {
+    try { await handle.writeFile(data); await handle.sync(); }
+    finally { await handle.close(); }
+    await rename(tmp, file);
+  } catch (error) {
+    discardTemporary(tmp);
+    throw error;
   }
   return file;
 }

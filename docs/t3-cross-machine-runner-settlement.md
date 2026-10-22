@@ -21,7 +21,7 @@ permanent refusal, retry exhaustion or shutdown. Its former void result did
 not distinguish those exit paths in retained diagnostics.
 
 A status note with terminal `protocol_mismatch` now stops network retries only
-after `quarantineText` fsyncs an immutable evidence record under the isolated
+after `quarantineTextAsync` fsyncs an immutable evidence record under the isolated
 home's `quarantine/<message UUID>-<content hash>.txt`. The original body, wire
 body, dedupe key, message UUID, conversation, requested/attempted address and
 declared job/supervisor context are retained. Existing source/run evidence and
@@ -30,8 +30,9 @@ proof of an authenticated registration or destination. The record explicitly
 says `authority:evidence-only-no-replay`: no reader, importer, automatic retry,
 native fallback, new name/session/host grant or mailbox consumption is added.
 Recovery of these notes requires an owner-reviewed original authority/intent;
-they are not reported delivered. A failed evidence write throws rather than
-pretending retention succeeded. General storage unavailability cannot be
+they are not reported delivered. R19 found that throwing alone was insufficient:
+the old ordinary-send queue observer swallowed a retention failure and let the
+final advance. The owned barrier below replaces that behavior. General storage unavailability cannot be
 reported as durable retention; final settlement exposes `unretained` if its
 own report never persisted.
 
@@ -42,6 +43,80 @@ existing same-protocol handover signal remains retryable; a different
 brokerProtocol still refuses. Question/answer retry policy is unchanged. No
 protocol mismatch is swallowed, no old-protocol hello/downgrade or replacement
 daemon is introduced, and original ten-job/exactly-once/120s assertions remain.
+
+## R19: failed retention remains owned
+
+The refused note's exact serialized evidence is captured once, including body,
+wire body, original dedupe key/message UUID, conversation and original/attempted
+destination. `pendingDeliveryRetention` holds that same string in the actual
+runner-state metadata row before the async quarantine write. It is evidence,
+not a transport outbox or authority to replay. The queue awaits write/fsync,
+close and publication; a suspended or failed writer cannot release later sends,
+receipt probes or final settlement. Only a confirmed evidence file and a
+confirmed state update remove the pending entry. A failure after publication
+reuses the same content-addressed file on retry, never another message identity.
+
+Retention has six attempts and100/200/400/800/1600ms backoff (3.1s total). It
+does not re-send the refused note. Cancellation interrupts the backoff but joins
+an active writer; it never abandons an unobserved write promise. Cancellation or
+exhaustion latches `RunnerRetentionUnsettled`, preserves pending evidence and the
+original final report/UUID in runner state, returns exit1 and emits the finite
+`job runner delivery unsettled` outcome. It does not emit runner-done or final-
+settled success. If every persistence path fails, this is explicitly an
+unsettled failure, not a claim that bytes reached durable storage. The existing
+owned stop deadline can also exit1 with this explicit failure; it does not
+claim that an in-flight writer completed.
+
+`inSendOrder` observes its own accepted callback promises and latches retention
+failure separately from ordinary send errors. Both awaited and callback-style
+posts use that owned promise; there is no detached derived rejection to drop.
+Drain rejects a latched failure and prevents later effects. Ordinary failures
+retain their existing recovery/idempotence policy. Session fallback and queued
+continuations stay held while pending retention/failure remains. A dead runner
+is not automatically treated as a drained queue.
+
+Initial state publication preserves pending evidence on restart. An explicitly
+admitted restart validates the original job/message identity and completes only
+the exact evidence write and confirmation. It does not register a new peer,
+start a provider, dispatch the note, select today's supervisor or regenerate a
+final. The original final stays undelivered under its original report UUID for
+the existing ownership-fenced session fallback after confirmation. Invalid
+evidence remains blocked for owner recovery; no replay importer was added.
+
+The remote snapshot parser strips unknown state fields. Consequently the
+execution host refuses a terminal snapshot or continuation while retention is
+unsettled, using the existing error reply; it never sends pending body/proof
+records to the requesting host. A failed state observation retains the last
+snapshot/unknown liveness, rather than proving death or accepting a final.
+Unsettled jobs count toward admission limits; unrelated jobs retain admission
+subject to those limits. After evidence confirmation, the original terminal
+snapshot becomes available. No new optional wire field, capability, version or
+schema migration is required. Protocol6/schema14/pairing/ownership capabilities
+remain unchanged; intermediate branch revisions remain unreleased.
+
+R19 qualified red: unchanged485b4173496e95c79e5de645a8d5b817461d55b3 production
+plus the initial regression, wrapper74204/PID68392, exit1 within60s: a forced
+synchronous quarantine failure let the final send (2 calls vs1) and produced
+an unhandled note rejection. The final regression faults the real async
+FileHandle.sync after write suspension. It proves suspension, failure/recovery,
+cancellation, six-attempt exhaustion, restart via actual initial publication,
+and interruption after file publication before state confirmation. Only the
+writer failure boundary, provider and node transport are mocked; state
+persistence, retry/order/settlement and quarantine filesystem operations are
+production code. Separate checks exercise session fallback with real mailbox
+guards and receiver-side remote admission/state handling with the native
+launcher blocked. The requesting-host check retains a failed observation.
+
+Working PID54488 exit1 exposed an ESM spy fixture issue (native namespace
+exports are nonconfigurable), corrected by wrapping the module export while
+retaining its actual filesystem implementation. It is not production evidence.
+Working PID30172 exit0/7 checks, PID44712 exit0/13 selected checks and PID39032
+exit0/14 selected checks precede the final source freeze. Working noEmit PID9912
+exit0 likewise is not labelled as an exact final-head check. Final receipts use
+`E:/AgentData/reports/ab458-pr141-<head>-owned-retention-validation.json` and
+record exact head/tree, commands, own PIDs, exits and excluded counts. No skipped
+or excluded native scenario is reported passed. R19 does not prove the earlier
+Mac/Windows takeover, refusal, quiet-hook, fairness or HTTP roots.
 
 `finalDelivery` records a strict finite outcome: stored/retained/unretained,
 cause, bounded attempt, whether report persistence succeeded, message UUID,

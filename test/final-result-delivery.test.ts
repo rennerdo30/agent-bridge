@@ -187,6 +187,36 @@ it("posts the same retained report when the runner exits without delivery", asyn
   } finally { jobs.cancelAll(); await env.cleanup(); }
 });
 
+it("holds session fallback behind durable unsettled retention, then posts only the original final once", async () => {
+  const env = makeEnv(), node = env.node("claude-pending-retention", "claude");
+  await node.start();
+  const jobs = new JobManager(node, nullLogger);
+  try {
+    const job = jobs.start("codex", null, "review", async () => new Promise(() => {}));
+    job.host = { pid: process.pid, peer: job.name, startedAt: job.startedAt };
+    const pending = [{ messageId: "11111111-1111-4111-8111-111111111111", record: "Original immutable evidence, not replay authority" }];
+    const failed: RunnerState = { pid: process.pid, peer: job.name, status: "done", updatedAt: Date.now(),
+      report, reportId: "original-final", delivered: false, pendingDeliveryRetention: pending, deliveryRetentionFailure: "attempts-exhausted" };
+    writeRunnerState(env.home, job.id, failed);
+    let state = failed;
+    jobs.runners = { state: () => state, alive: () => false, send: vi.fn(), kill: vi.fn() };
+    const check = () => (jobs as unknown as { checkHosted(job: Job, ownershipRefreshed: boolean, polledState: RunnerState): void }).checkHosted(job, true, state);
+    check(); check();
+    expect(job.host).not.toBeNull(); expect(job.status).toBe("running");
+    expect(job.progress).toContain("delivery unsettled");
+    expect(node.unread().some(message => message.body === report)).toBe(false);
+    expect(readStoredFinalResult(env.home, job.id)).toEqual({ report, reportId: "original-final", delivered: false });
+    // Confirmed evidence retention clears the barrier, never replays the note.
+    state = { ...failed, pendingDeliveryRetention: [], deliveryRetentionFailure: undefined, retainedDeliveryCount: 1 };
+    writeRunnerState(env.home, job.id, state);
+    check(); check();
+    await until(() => node.unread().some(message => message.body === report));
+    expect(node.unread().filter(message => message.body === report)).toHaveLength(1);
+    expect(job.status).toBe("done"); expect(job.report).toBe(report);
+    expect(node.unread().some(message => message.body.includes("Original immutable evidence"))).toBe(false);
+  } finally { jobs.cancelAll(); await env.cleanup(); }
+});
+
 it("clears a stored report when a new turn starts", async () => {
   const env = makeEnv();
   const node = env.node("claude-result-turns", "claude");

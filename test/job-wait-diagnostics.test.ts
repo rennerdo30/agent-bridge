@@ -16,15 +16,18 @@ it("retains exact final settlement and protocol admission families without priva
   const finalDelivery = { messageId, at, state: "retained", cause: "permanent-refusal", attempt: 1, persisted: true, code: "protocol_mismatch", reason: "protocol-refusal", protocol } as const;
   try {
     writeRunnerState(env.home, id, { pid: process.pid, peer: `codex-job-${id}`, status: "done", updatedAt: at, report: "PRIVATE_REPORT", reportId: messageId,
-      finalDelivery, retainedDeliveryCount: 1 });
+      finalDelivery, retainedDeliveryCount: 1, pendingDeliveryRetention: [{ messageId, record: "PRIVATE_NOTE_INTENT" }], deliveryRetentionFailure: "attempts-exhausted" });
     mkdirSync(join(env.home, LOG_DIR_NAME), { recursive: true });
     writeFileSync(join(env.home, LOG_DIR_NAME, LOG_FILE_NAME), `${new Date(at).toISOString()} INFO [codex-job-${id}] pid=${process.pid} job final delivery settled ${JSON.stringify(finalDelivery)}\n` +
-      `${new Date(at).toISOString()} ERROR [node] pid=${process.pid} broker refused this peer ${JSON.stringify({ code: "protocol_mismatch", message: "Broker did not attest the exact native identity PRIVATE_ERROR_TOKEN", protocolObservation: protocol })}\n`);
+      `${new Date(at).toISOString()} ERROR [node] pid=${process.pid} broker refused this peer ${JSON.stringify({ code: "protocol_mismatch", message: "Broker did not attest the exact native identity PRIVATE_ERROR_TOKEN", protocolObservation: protocol })}\n` +
+      `${new Date(at).toISOString()} ERROR [codex-job-${id}] pid=${process.pid} job runner delivery unsettled ${JSON.stringify({ reason: "attempts-exhausted", pending: 1, record: "PRIVATE_NOTE_INTENT" })}\n`);
     const snapshot = jobWaitSnapshot(env.home, [id]);
     expect(snapshot.jobs[0]?.runner).toMatchObject({ finalDelivery, retainedDeliveries: 1, delivered: false, reportPresent: true });
     expect(snapshot.events[0]).toMatchObject({ finalDelivery });
     expect(snapshot.events[1]).toMatchObject({ failure: { code: "protocol_mismatch", reason: "protocol-refusal", protocol } });
-    expect(JSON.stringify(snapshot)).not.toMatch(/PRIVATE_REPORT|PRIVATE_ERROR_TOKEN|did not attest/);
+    expect(snapshot.events[2]).toMatchObject({ retentionFailure: "attempts-exhausted", pending: 1 });
+    expect(snapshot.jobs[0]?.runner).toMatchObject({ pendingRetentions: 1, retentionFailure: "attempts-exhausted" });
+    expect(JSON.stringify(snapshot)).not.toMatch(/PRIVATE_REPORT|PRIVATE_ERROR_TOKEN|PRIVATE_NOTE_INTENT|did not attest/);
     expect(finalDeliverySettlementSchema.safeParse({ ...finalDelivery, body: "PRIVATE_REPORT" }).success).toBe(false);
   } finally { await env.cleanup(); }
 });

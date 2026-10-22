@@ -40,7 +40,7 @@ function reason(value: unknown): string {
 export function jobWaitEvents(home: string, ids: readonly string[]) {
   const known = ids.filter(id => /^[a-f0-9]{8}$/.test(id)).slice(0, 10);
   return (boundedText(join(home, LOG_DIR_NAME, LOG_FILE_NAME), 256 * 1024, true) ?? "").split("\n").flatMap(line => {
-    const match = /^(\d{4}-\d\d-\d\dT[\d:.]+Z)\s+\w+\s+\[[^\]]+\] pid=(\d+) (job process ownership established|job runner started|job runner done|job delivery evidence|job final delivery settled|client protocol refusal observation|broker refused this peer|could not deliver to the session; retrying|request rejected|inline report delivery failed; retained for replay)(?: (\{.*\}))?$/.exec(line);
+    const match = /^(\d{4}-\d\d-\d\dT[\d:.]+Z)\s+\w+\s+\[[^\]]+\] pid=(\d+) (job process ownership established|job runner started|job runner done|job runner delivery unsettled|job delivery evidence|job final delivery settled|client protocol refusal observation|broker refused this peer|could not deliver to the session; retrying|request rejected|inline report delivery failed; retained for replay)(?: (\{.*\}))?$/.exec(line);
     if (!match || match[1]!.length > 32 || !Number.isFinite(Date.parse(match[1]!))) return [];
     let fields: Record<string, any> = {};
     try { if (match[4]) fields = JSON.parse(match[4]); } catch { return []; }
@@ -52,6 +52,8 @@ export function jobWaitEvents(home: string, ids: readonly string[]) {
     const coarse = reason(fields.message ?? fields.err);
     return [{ at: match[1], event: match[3], pid: Number.isSafeInteger(pid) && pid > 0 ? pid : undefined, job,
       ...(match[3] === "job runner done" ? { status: status(fields.status), delivered: fields.delivered === true } : {}),
+      ...(match[3] === "job runner delivery unsettled" ? { retentionFailure: ["attempts-exhausted", "shutdown", "invalid-evidence"].includes(fields.reason) ? fields.reason : "other",
+        pending: Number.isSafeInteger(fields.pending) && fields.pending >= 0 ? Math.min(65_535, fields.pending) : undefined } : {}),
       ...(delivery?.success ? { delivery: delivery.data } : {}),
       ...(finalDelivery?.success ? { finalDelivery: finalDelivery.data } : {}),
       ...(["request rejected", "client protocol refusal observation", "broker refused this peer", "inline report delivery failed; retained for replay", "could not deliver to the session; retrying"].includes(match[3]!) ? {
@@ -90,6 +92,8 @@ export function jobWaitSnapshot(home: string, ids: readonly string[]) {
         ...(delivery.success ? { delivery: delivery.data } : {}),
         ...(finalDelivery.success ? { finalDelivery: finalDelivery.data } : {}),
         retainedDeliveries: typeof runner.retainedDeliveryCount === "number" && Number.isSafeInteger(runner.retainedDeliveryCount) && runner.retainedDeliveryCount >= 0 ? Math.min(65_535, runner.retainedDeliveryCount) : undefined,
+        pendingRetentions: Array.isArray(runner.pendingDeliveryRetention) ? Math.min(65_535, runner.pendingDeliveryRetention.length) : 0,
+        retentionFailure: ["attempts-exhausted", "shutdown", "invalid-evidence"].includes(runner.deliveryRetentionFailure) ? runner.deliveryRetentionFailure : undefined,
         alive: Number.isSafeInteger(runner.pid) && runner.pid > 0 && pidAlive(runner.pid), identityRecorded: typeof runner.identity === "string",
         session: Boolean(runner.sessionId), live: runner.live === true, delivered: runner.delivered === true, reportPresent: Boolean(runner.report),
         progress: ["queued: runner startup admission", "preparing run context", "queued: waiting for root admission", "queued: waiting for machine startup admission", "starting native CLI", "queued: waiting for compatible storage readers to retain run context"].includes(runner.progress ?? "") ? runner.progress : "other" } : null };

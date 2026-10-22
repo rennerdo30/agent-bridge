@@ -19,6 +19,7 @@ import { isInside, resumeArgs, type DelegateArgs } from "../mcp/delegate-run.js"
 import { JobRunners, readRunnerState } from "../mcp/job-host.js";
 import { changedJobArgs, JOB_SETTING_KEYS, parseJobSettings, type JobSettings } from "../mcp/job-settings.js";
 import type { Job, RunnerControl, RunnerState } from "../mcp/jobs.js";
+import { hasUnsettledRunnerRetention } from "../mcp/runner-delivery-retention.js";
 import type { NetworkService, RemoteDestination } from "./link.js";
 import type { NetworkPair } from "./pairing.js";
 import { MAX_REMOTE_JOBS, REMOTE_JOB_ANTIGRAVITY_OPTIONS_CAPABILITY, REMOTE_JOB_CAPABILITY, REMOTE_JOB_CANCELLED_CAPABILITY, REMOTE_JOB_FRAME, REMOTE_JOB_RATE_LIMIT, REMOTE_JOB_RATE_WINDOW_MS, REMOTE_JOB_REQUEST_TIMEOUT_MS, REMOTE_JOB_SPAWN_LIMIT, remoteJobRequestSchema, remoteJobWireSchema, remoteJobSnapshotSchema, remoteSnapshotForPeer, type RemoteJobRequest } from "./remote-job-protocol.js";
@@ -199,12 +200,13 @@ export class RemoteJobs {
         recipientKey(record.returnRoute.destination.frontend, record.returnRoute.destination.native) !== recipientKey(returnRoute.destination.frontend, returnRoute.destination.native)))
       throw new Error("Remote job belongs to the original authenticated supervisor binding.");
     if (request.op === "spawn") {
+      if (record && hasUnsettledRunnerRetention(readRunnerState(this.home, record.job.id))) throw new Error("Remote runner retention is unsettled; recover original evidence on its execution host before continuation.");
       const cfg = loadConfig(this.home, request.target, this.log, {});
       const policy = loadConfig(this.home, "other", this.log, {}).network.remoteJobs;
       if (!policy.agents.includes(request.target)) throw new Error("Remote agent is not allowed by network.remoteJobs.agents.");
       if (record && record.job.agent !== request.target) throw new Error("Cannot change a remote job's agent.");
       if (record && this.snapshot(record).alive) throw new Error("Remote job is already running.");
-      if ([...this.records.values()].filter((r) => this.snapshot(r).alive).length + this.starting.size > cfg.maxJobs) throw new Error("Remote subagent limit reached.");
+      if ([...this.records.values()].filter((r) => { const snapshot = this.snapshot(r); return snapshot.alive || hasUnsettledRunnerRetention(snapshot.state); }).length + this.starting.size > cfg.maxJobs) throw new Error("Remote subagent limit reached.");
       if (!record && this.records.size >= MAX_REMOTE_JOBS) throw new Error("Remote job registry is full.");
       if (!record && request.args.session_id) throw new Error("Remote session continuation requires a job owned by this supervisor.");
       const settings = Object.fromEntries(JOB_SETTING_KEYS.filter((key) => key in request.args).map((key) => [key, (request.args as Record<string, unknown>)[key]]));
@@ -313,7 +315,13 @@ export class RemoteJobs {
         if (outcome !== "answered") throw new Error(`Remote approval ${outcome}.`);
       }
     }
-    return this.snapshot(record!);
+    const snapshot = this.snapshot(record!);
+    // Older snapshot parsers strip unknown state fields. Do not send a terminal
+    // report which could be settled without its preceding retention barrier.
+    // Existing error responses preserve the requester's last observation and
+    // cannot be mistaken for a receipt or positive proof of runner death.
+    if (hasUnsettledRunnerRetention(snapshot.state)) throw new Error("Remote runner retention is unsettled; recover original evidence on its execution host before continuation.");
+    return snapshot;
   }
 
   private controlOrigin(pair: NetworkPair, peer: { id: string; name: string }, job: string): InternalMessageOrigin {

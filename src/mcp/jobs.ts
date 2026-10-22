@@ -37,6 +37,7 @@ import { refreshStorePeerIdentities } from "../core/store-compatibility.js";
 import { archivePendingJob, mergePendingJob, readPendingJobs, retainPendingJob, type PendingJobReceipt } from "../core/job-pending-journal.js";
 import { verifiedGoneJobOwners } from "../core/job-restoration.js";
 import { primeRunnerProcessIdentities } from "./job-host.js";
+import { hasUnsettledRunnerRetention } from "./runner-delivery-retention.js";
 
 const JOB_ID_LENGTH = 8;
 const PROMPT_PREVIEW_CHARS = 120;
@@ -189,6 +190,9 @@ export interface RunnerState {
   finalDelivery?: import("zod").infer<typeof import("./delivery-evidence.js").finalDeliverySettlementSchema>;
   /** Refused status notes are evidence-only immutable quarantine records. */
   retainedDeliveryCount?: number;
+  /** Queue barrier and original evidence. No importer may turn these records into sends. */
+  pendingDeliveryRetention?: import("./runner-delivery-retention.js").PendingRunnerRetention[];
+  deliveryRetentionFailure?: "attempts-exhausted" | "shutdown" | "invalid-evidence";
   /** Admission provenance is independent of usage classification and error type. */
   usageSubmission?: import("../core/usage.js").UsageSubmissionReceipt;
   providerUsage?: import("../core/usage.js").ProviderUsageState;
@@ -2139,6 +2143,14 @@ export class JobManager {
     const durable = this.storePath && readStoredJobSnapshot(this.storePath, job.id, job.name, this.log);
     if (durable) confirmUsageAdmission(job, durable.usageAdmittedControls ?? []);
     const observed = final ?? this.runners?.state(job);
+    if (hasUnsettledRunnerRetention(observed)) {
+      // A dead runner with an accepted, unretained predecessor is NOT drained.
+      // Keep its exact report/ID and evidence in runner storage; neither fallback
+      // posting nor a queued continuation may overtake the retention barrier.
+      job.progress = "delivery unsettled: retained runner evidence requires recovery";
+      this.schedulePersist();
+      return;
+    }
     const receipt = currentUsage(job, observed?.usageSubmission) ? observed?.usageSubmission : undefined;
     const legacyRetained = currentUsage(job, observed?.providerUsage) ? [...observed?.providerUsage?.retainedControls ?? []] : [];
     if (receipt) confirmUsageAdmission(job, receipt.admitted);
