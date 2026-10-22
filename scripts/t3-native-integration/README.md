@@ -1,11 +1,14 @@
 # AB-458 pinned hosted gate
 
-Follow-up for parent review on PR #140. The `76cf1a9a` hosted run
-`39700140843` / job `119567110900` reached actual pinned typecheck and failed
-15 error diagnostic lines from missing Crypto contexts and the Crypto mock API;
-tests/mutations were not reached. This was not a timeout. That failure and the
-earlier `430e3eec` failures remain recorded in the manifest. This revised upstream
-artifact has not run on hosted CI; no native-session acceptance is claimed.
+Follow-up for parent review on PR #140. Hosted run `39701228124` at `bd1ab339`
+passed actual pinned typecheck and the real production baseline **58/58**. The
+first four mutations produced their intended assertion failures. The fifth ran
+zero assertions (eight skipped) because its CLI selector used the JSON reporter
+name rather than Vitest's runtime name. The overall gate correctly failed.
+This revision fixes runner selection and incorporates R6 identity bounds; its
+typecheck, changed baseline and mutation rerun remain required. The 58/58 receipt
+qualifies the preceding `bd1ab339` tree only. Prior failures and receipts remain
+historical; no native-session acceptance is claimed.
 The feature remains unconnected/default-off. This package changes no Bridge runtime
 code and never starts a provider. Parent reviews the **combined** patch and watches
 the existing PR; this workflow has no push, dispatch, release, or publish trigger.
@@ -141,7 +144,29 @@ This is evidence qualification, not an assertion that the prepared tests pass.
 
 A fifth mutation restores the old in-handler terminal-publication order and runs
 the real protocol regression from `PrivateProtocolLifecycle.test.ts`, selecting
+JSON report name
 `AB458 real protocol lifecycle publishes suspended-handler termination before owned cleanup completes`.
+The CLI runtime name is
+`AB458 real protocol lifecycle > publishes suspended-handler termination before owned cleanup completes`.
+Vitest 5.0.5's JSON reporter joins ancestry/title with spaces, but runtime
+`fullTestName`/`-t` uses ` > ` separators. The runner resolves **all five** targets
+against the successful baseline's exact file, `fullName`, ancestry and title before
+any mutation. It derives an escaped, anchored `-t` pattern with pinned Node's
+`RegExp.escape` and checks unique selection. CLI pattern and JSON expected name
+are recorded separately. Post-run qualification still requires an executed target
+and its exact assertion marker; all-skipped, wrong-assertion and timeout reports fail.
+
+`selector-census.json` is a small projection of real hosted names/statuses with
+file prefixes normalized, bound to the original reports' hashes. Offline validator
+regressions use this census, including the actual all-skipped result, and regex
+metacharacter/anchoring cases. It is not a hand-built production/client fixture.
+Official Vitest 5.0.5 source at
+`7a825db43e2beca0b219d2eadaec334cb81af0c7` proves the two name encodings:
+[`utils/tasks.ts`](https://github.com/vitest-dev/vitest/blob/7a825db43e2beca0b219d2eadaec334cb81af0c7/packages/vitest/src/utils/tasks.ts),
+[`runtime/runner/suite.ts`](https://github.com/vitest-dev/vitest/blob/7a825db43e2beca0b219d2eadaec334cb81af0c7/packages/vitest/src/runtime/runner/suite.ts), and
+[`node/reporters/json.ts`](https://github.com/vitest-dev/vitest/blob/7a825db43e2beca0b219d2eadaec334cb81af0c7/packages/vitest/src/node/reporters/json.ts).
+The manifest records their source hashes separately from T3 checkout preimages.
+
 It must fail `AB458_SUSPENDED_TERMINAL_PUBLICATION`, not hang or fail collection.
 The regression holds the defect handler on an unresolved native promise, awaits
 its entry and a second handler from the parent, then releases the defect after
@@ -180,6 +205,27 @@ handler, so digest suspension creates no replay handler or concurrent ticket rac
 Cancellation before digest completion inserts no ticket, and closure is rechecked
 after suspension. Cancellation and revocation fixtures exercise these two cases;
 their real Effect execution still awaits hosted CI.
+
+R6 bounds every replay-key identity (app thread, provider instance/session, native
+thread/turn/call) to **1..512 UTF-16 code units**, matching the protocol's existing
+RPC ID length policy. Scope IDs are checked before owner copying, cache/lifetime
+creation; root IDs before binding; call and active-root IDs before argument reads,
+port callbacks, JSON serialization or cache lookup/insertion. Generation identity
+is the session closure/Map, with no external generation field that could bypass
+these checks. Opaque IDs are neither truncated nor normalized; rejection uses fixed
+sanitized messages and consumes no replay budget. Normal short native IDs retain
+their behavior. Six bounded key strings have a worst-case JSON length of 18,451
+code units, including escaping. Existing argument canonicalization remains a strict
+whitelist of at most three fields, each nonempty string <=16,384 code units; tool
+and namespace are exact whitelist values. They cannot introduce unbounded key IDs.
+
+Small mocked fixtures observe zero key serialization, Map insertion or port calls
+for invalid identity dimensions, successful admission afterwards, and one shared
+effect for identical maximum-length replay during suspension. Invalid root/scope
+IDs throw only fixed messages before retention; oversized arguments also stop before
+key/fingerprint serialization. Fixtures allocate only limit+1 strings, not large
+frames or a filled 1,024-entry cache. These four new upstream tests are prepared;
+they have not run locally or on hosted CI yet.
 
 Writer failure, response-encoding failure, handler construction throw, and handler
 defect seal admission and terminate the generation. Pending app requests fail;

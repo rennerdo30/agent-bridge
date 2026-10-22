@@ -1,0 +1,190 @@
+{
+  "origin": {
+    "bridgeHead": "bd1ab3397987a009f42364fecae8274dc6c39354",
+    "runId": "39701228124",
+    "vitest": "5.0.5",
+    "description": "Projection of real hosted assertion names/statuses; suite file prefixes normalized; not a runtime/client fixture",
+    "baselineSha256": "de19cdf2c225a77411f344979347f98f1138eb97d7101bfbc0a38f2e0d92e773",
+    "skippedMutationSha256": "e05aff516fd7e8444ed19b662758d8519107eb7f6c609961c8b686ce91f383c9"
+  },
+  "baseline": {
+    "success": true,
+    "numTotalTests": 9,
+    "numFailedTests": 0,
+    "testResults": [
+      {
+        "name": "/pinned-t3/packages/effect-codex-app-server/src/PrivateProtocolLifecycle.test.ts",
+        "assertionResults": [
+          {
+            "ancestorTitles": [
+              "AB458 real protocol lifecycle"
+            ],
+            "fullName": "AB458 real protocol lifecycle publishes suspended-handler termination before owned cleanup completes",
+            "title": "publishes suspended-handler termination before owned cleanup completes",
+            "status": "passed",
+            "failureMessages": []
+          },
+          {
+            "ancestorTitles": [
+              "AB458 real protocol lifecycle"
+            ],
+            "fullName": "AB458 real protocol lifecycle terminalizes unknown outcome writer without replay or fresh admission",
+            "title": "terminalizes unknown outcome writer without replay or fresh admission",
+            "status": "passed",
+            "failureMessages": []
+          },
+          {
+            "ancestorTitles": [
+              "AB458 real protocol lifecycle"
+            ],
+            "fullName": "AB458 real protocol lifecycle terminalizes unknown outcome defect-before without replay or fresh admission",
+            "title": "terminalizes unknown outcome defect-before without replay or fresh admission",
+            "status": "passed",
+            "failureMessages": []
+          },
+          {
+            "ancestorTitles": [
+              "AB458 real protocol lifecycle"
+            ],
+            "fullName": "AB458 real protocol lifecycle terminalizes unknown outcome defect-after without replay or fresh admission",
+            "title": "terminalizes unknown outcome defect-after without replay or fresh admission",
+            "status": "passed",
+            "failureMessages": []
+          },
+          {
+            "ancestorTitles": [
+              "AB458 real protocol lifecycle"
+            ],
+            "fullName": "AB458 real protocol lifecycle terminalizes unknown outcome throw-before without replay or fresh admission",
+            "title": "terminalizes unknown outcome throw-before without replay or fresh admission",
+            "status": "passed",
+            "failureMessages": []
+          },
+          {
+            "ancestorTitles": [
+              "AB458 real protocol lifecycle"
+            ],
+            "fullName": "AB458 real protocol lifecycle preserves non-Bridge managed typed errors and subsequent approvals",
+            "title": "preserves non-Bridge managed typed errors and subsequent approvals",
+            "status": "passed",
+            "failureMessages": []
+          },
+          {
+            "ancestorTitles": [
+              "AB458 real protocol lifecycle"
+            ],
+            "fullName": "AB458 real protocol lifecycle fails closed before handler admission on an exhausted request fingerprint budget",
+            "title": "fails closed before handler admission on an exhausted request fingerprint budget",
+            "status": "passed",
+            "failureMessages": []
+          },
+          {
+            "ancestorTitles": [
+              "AB458 real protocol lifecycle"
+            ],
+            "fullName": "AB458 real protocol lifecycle classifies shutdown cancellation separately from defects and interrupts owned handlers",
+            "title": "classifies shutdown cancellation separately from defects and interrupts owned handlers",
+            "status": "passed",
+            "failureMessages": []
+          }
+        ]
+      },
+      {
+        "name": "/pinned-t3/apps/server/src/orchestration-v2/Adapters/CodexBridgeDynamicTools.adapter.test.ts",
+        "assertionResults": [
+          {
+            "ancestorTitles": [],
+            "fullName": "AB458 production admission: actual adapter registration, 32-limit warm replay, roots, fault and close",
+            "title": "AB458 production admission: actual adapter registration, 32-limit warm replay, roots, fault and close",
+            "status": "passed",
+            "failureMessages": []
+          }
+        ]
+      }
+    ]
+  },
+  "skippedMutation": {
+    "success": true,
+    "numTotalTests": 8,
+    "numFailedTests": 0,
+    "testResults": [
+      {
+        "name": "/pinned-t3/packages/effect-codex-app-server/src/PrivateProtocolLifecycle.test.ts",
+        "assertionResults": [
+          {
+            "ancestorTitles": [
+              "AB458 real protocol lifecycle"
+            ],
+            "fullName": "AB458 real protocol lifecycle publishes suspended-handler termination before owned cleanup completes",
+            "title": "publishes suspended-handler termination before owned cleanup completes",
+            "status": "skipped",
+            "failureMessages": []
+          },
+          {
+            "ancestorTitles": [
+              "AB458 real protocol lifecycle"
+            ],
+            "fullName": "AB458 real protocol lifecycle terminalizes unknown outcome writer without replay or fresh admission",
+            "title": "terminalizes unknown outcome writer without replay or fresh admission",
+            "status": "skipped",
+            "failureMessages": []
+          },
+          {
+            "ancestorTitles": [
+              "AB458 real protocol lifecycle"
+            ],
+            "fullName": "AB458 real protocol lifecycle terminalizes unknown outcome defect-before without replay or fresh admission",
+            "title": "terminalizes unknown outcome defect-before without replay or fresh admission",
+            "status": "skipped",
+            "failureMessages": []
+          },
+          {
+            "ancestorTitles": [
+              "AB458 real protocol lifecycle"
+            ],
+            "fullName": "AB458 real protocol lifecycle terminalizes unknown outcome defect-after without replay or fresh admission",
+            "title": "terminalizes unknown outcome defect-after without replay or fresh admission",
+            "status": "skipped",
+            "failureMessages": []
+          },
+          {
+            "ancestorTitles": [
+              "AB458 real protocol lifecycle"
+            ],
+            "fullName": "AB458 real protocol lifecycle terminalizes unknown outcome throw-before without replay or fresh admission",
+            "title": "terminalizes unknown outcome throw-before without replay or fresh admission",
+            "status": "skipped",
+            "failureMessages": []
+          },
+          {
+            "ancestorTitles": [
+              "AB458 real protocol lifecycle"
+            ],
+            "fullName": "AB458 real protocol lifecycle preserves non-Bridge managed typed errors and subsequent approvals",
+            "title": "preserves non-Bridge managed typed errors and subsequent approvals",
+            "status": "skipped",
+            "failureMessages": []
+          },
+          {
+            "ancestorTitles": [
+              "AB458 real protocol lifecycle"
+            ],
+            "fullName": "AB458 real protocol lifecycle fails closed before handler admission on an exhausted request fingerprint budget",
+            "title": "fails closed before handler admission on an exhausted request fingerprint budget",
+            "status": "skipped",
+            "failureMessages": []
+          },
+          {
+            "ancestorTitles": [
+              "AB458 real protocol lifecycle"
+            ],
+            "fullName": "AB458 real protocol lifecycle classifies shutdown cancellation separately from defects and interrupts owned handlers",
+            "title": "classifies shutdown cancellation separately from defects and interrupts owned handlers",
+            "status": "skipped",
+            "failureMessages": []
+          }
+        ]
+      }
+    ]
+  }
+}

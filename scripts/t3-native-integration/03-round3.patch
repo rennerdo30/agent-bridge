@@ -209,14 +209,38 @@ index a4e5d26..51374d6 100644
      assert.equal(h.replies(100).length, 1); assert.equal(h.sends(), 32); // completed same-ID tombstone, no cached transport payload
  
 diff --git a/apps/server/src/orchestration-v2/Adapters/CodexBridgeDynamicTools.test.ts b/apps/server/src/orchestration-v2/Adapters/CodexBridgeDynamicTools.test.ts
-index 3f2df28..3609ac4 100644
+index 3f2df28..a14f8ab 100644
 --- a/apps/server/src/orchestration-v2/Adapters/CodexBridgeDynamicTools.test.ts
 +++ b/apps/server/src/orchestration-v2/Adapters/CodexBridgeDynamicTools.test.ts
-@@ -38,7 +38,11 @@ function fixture(app = "A", overrides: Partial<BridgeMessagingPort> = {}) {
+@@ -1,9 +1,9 @@
+-import { it } from "@effect/vitest";
++import { it, vi } from "@effect/vitest";
+ import assert from "node:assert/strict";
+ import type * as CodexRpc from "effect-codex-app-server/rpc";
+ import type * as CodexSchema from "effect-codex-app-server/schema";
+-import { bridgeDynamicTools, makeBridgeDynamicSession, type BridgeActiveRoot, type BridgeMessagingPort, type BridgeRootLease } from "./CodexBridgeDynamicTools.ts";
+-
++import { BRIDGE_ID_MAX_CHARS, bridgeDenied, bridgeDynamicTools, makeBridgeDynamicSession, type BridgeActiveRoot, type BridgeAppScope, type BridgeMessagingPort, type BridgeRootLease } from "./CodexBridgeDynamicTools.ts";
++// Boundary fixtures use the generated native call/response types.
+ type Call = CodexRpc.ServerRequestParamsByMethod["item/tool/call"];
+ type Reply = CodexRpc.ServerRequestResponsesByMethod["item/tool/call"];
+ const signal = () => new AbortController().signal;
+@@ -20,7 +20,7 @@ function deferred<T>() {
+   const promise = new Promise<T>((r) => { resolve = r; });
+   return { promise, resolve };
+ }
+-function fixture(app = "A", overrides: Partial<BridgeMessagingPort> = {}) {
++function fixture(app = "A", overrides: Partial<BridgeMessagingPort> = {}, scopeOverrides: Partial<BridgeAppScope> = {}) {
+   let live = true;
+   const effects: BridgeRootLease[] = [];
+   const effect: BridgeMessagingPort["pending"] = async (lease, guard, abort) => {
+@@ -37,8 +37,12 @@ function fixture(app = "A", overrides: Partial<BridgeMessagingPort> = {}) {
+     close: async () => { live = false; },
      ...overrides,
    };
-   const scope = { appThreadId: `app-${app}`, providerInstanceId: "provider", providerSessionId: `session-${app}` };
+-  const scope = { appThreadId: `app-${app}`, providerInstanceId: "provider", providerSessionId: `session-${app}` };
 -  const session = makeBridgeDynamicSession(scope, port);
++  const scope = { appThreadId: `app-${app}`, providerInstanceId: "provider", providerSessionId: `session-${app}`, ...scopeOverrides };
 +  const timers = new Map<object, () => void>();
 +  const session = makeBridgeDynamicSession(scope, port, { clock: {
 +    setTimeout: (callback) => { const handle = {}; timers.set(handle, callback); return handle; },
@@ -225,8 +249,86 @@ index 3f2df28..3609ac4 100644
    const bind = (id: string) => { assert.equal(session.reserveStart(), true); session.bindStartedRoot(id); };
    return { scope, port, session, effects, bind, revokePort: () => { live = false; } };
  }
+@@ -170,3 +174,77 @@ it("identical replay preserves settlement and cancelled new requests produce no
+   assert.equal((await f.session.dispatch(call({ callId: "other" }), active(), abort.signal)).success, false);
+   assert.equal(f.effects.length, 1);
+ });
++
++it("rejects invalid owner and root identities before retention or port callbacks", () => {
++  let portCalls = 0;
++  const f = fixture("A", { isLive: () => { portCalls++; return true; } });
++  const clock = { setTimeout: () => { throw new Error("invalid scope started timer"); }, clearTimeout: () => {} };
++  const serialize = vi.spyOn(JSON, "stringify"), insert = vi.spyOn(Map.prototype, "set");
++  try {
++    for (const field of ["appThreadId", "providerInstanceId", "providerSessionId"] as const) {
++      for (const value of ["", "x".repeat(BRIDGE_ID_MAX_CHARS + 1)])
++        assert.throws(() => makeBridgeDynamicSession({ ...f.scope, [field]: value }, f.port, { clock }),
++          { message: "Bridge messaging scope unavailable" });
++    }
++    assert.equal(portCalls, 0); assert.equal(serialize.mock.calls.length, 0); assert.equal(insert.mock.calls.length, 0);
++    assert.equal(f.session.reserveStart(), true);
++    const beforeBind = portCalls;
++    for (const value of ["", "x".repeat(BRIDGE_ID_MAX_CHARS + 1)])
++      assert.throws(() => f.session.bindStartedRoot(value), { message: "Bridge root unavailable" });
++    assert.equal(portCalls, beforeBind); assert.equal(serialize.mock.calls.length, 0); assert.equal(insert.mock.calls.length, 0);
++    f.session.bindStartedRoot("native-A");
++  } finally { serialize.mockRestore(); insert.mockRestore(); }
++});
++
++it("invalid call and active identities build no key or cache entry and consume no admission budget", async () => {
++  let portCalls = 0;
++  const f = fixture("A", { isLive: () => { portCalls++; return true; } }); f.bind("native-A");
++  const before = portCalls;
++  const serialize = vi.spyOn(JSON, "stringify"), insert = vi.spyOn(Map.prototype, "set");
++  try {
++    const denied = bridgeDenied();
++    for (const field of ["callId", "threadId", "turnId"] as const) {
++      for (const value of ["", "x".repeat(BRIDGE_ID_MAX_CHARS + 1)]) {
++        const input = call({ [field]: value });
++        Object.defineProperty(input, "arguments", { get: () => { throw new Error("invalid ID reached arguments"); } });
++        assert.deepEqual(await f.session.dispatch(input, active(), signal()), denied);
++      }
++    }
++    for (const field of ["appThreadId", "nativeThreadId", "nativeTurnId"] as const) {
++      for (const value of ["", "x".repeat(BRIDGE_ID_MAX_CHARS + 1)])
++        assert.deepEqual(await f.session.dispatch(call(), active({ [field]: value }), signal()), denied);
++    }
++    assert.equal(portCalls, before);
++    assert.equal(serialize.mock.calls.length, 0, "invalid ID must not serialize a replay key/fingerprint");
++    assert.equal(insert.mock.calls.length, 0, "invalid ID must not consume any replay-cache admission slot");
++  } finally { serialize.mockRestore(); insert.mockRestore(); }
++  assert.equal((await f.session.dispatch(call(), active(), signal())).success, true);
++  assert.equal((await f.session.dispatch(call(), active(), signal())).success, true);
++  assert.equal(f.effects.length, 1);
++});
++
++it("maximum-length scope thread turn and call identities still coalesce suspended replay", async () => {
++  const boundary = "x".repeat(BRIDGE_ID_MAX_CHARS);
++  const entered = deferred<void>(), release = deferred<Call["arguments"]>(); let effects = 0;
++  const scope = { appThreadId: boundary, providerInstanceId: boundary, providerSessionId: boundary };
++  const f = fixture("A", { pending: async () => { effects++; entered.resolve(); return release.promise; } }, scope);
++  f.bind(boundary);
++  const input = call({ threadId: boundary, turnId: boundary, callId: boundary });
++  const context = active({ appThreadId: boundary, nativeThreadId: boundary, nativeTurnId: boundary });
++  const first = f.session.dispatch(input, context, signal()); await entered.promise;
++  const replay = f.session.dispatch({ ...input }, { ...context }, signal());
++  release.resolve({ accepted: true });
++  const original = await first;
++  assert.equal(original.success, true); assert.deepEqual(await replay, original); assert.equal(effects, 1);
++});
++
++it("oversized arguments are rejected before replay-key or fingerprint serialization", async () => {
++  const f = fixture(); f.bind("native-A");
++  const serialize = vi.spyOn(JSON, "stringify");
++  try {
++    assert.deepEqual(await f.session.dispatch(call({ tool: "send", arguments: {
++      messageId: "m", recipientRef: "r", text: "x".repeat(16_385),
++    } }), active(), signal()), bridgeDenied());
++    assert.equal(serialize.mock.calls.length, 0); assert.equal(f.effects.length, 0);
++  } finally { serialize.mockRestore(); }
++});
 diff --git a/apps/server/src/orchestration-v2/Adapters/CodexBridgeDynamicTools.ts b/apps/server/src/orchestration-v2/Adapters/CodexBridgeDynamicTools.ts
-index 2ce058c..4ee1f6a 100644
+index 2ce058c..1ad9180 100644
 --- a/apps/server/src/orchestration-v2/Adapters/CodexBridgeDynamicTools.ts
 +++ b/apps/server/src/orchestration-v2/Adapters/CodexBridgeDynamicTools.ts
 @@ -1,4 +1,7 @@
@@ -237,7 +339,25 @@ index 2ce058c..4ee1f6a 100644
  import type * as CodexSchema from "effect-codex-app-server/schema";
  
  export interface BridgeAppScope {
-@@ -40,10 +43,20 @@ export interface BridgeClock {
+@@ -18,6 +21,17 @@ export interface BridgeActiveRoot {
+ }
+ type Json = CodexSchema.DynamicToolCallParams["arguments"];
+ type Guard = () => Promise<boolean>;
++// Match the private RPC ID's 512 UTF-16-code-unit bound. Native UUID/call IDs
++// fit normally; opaque IDs are not normalized, truncated, or echoed on failure.
++export const BRIDGE_ID_MAX_CHARS = 512;
++const BRIDGE_ARGUMENT_MAX_CHARS = 16_384;
++const BRIDGE_REPLAY_MAX_ENTRIES = 1_024;
++const validIdentity = (value: unknown): value is string =>
++  typeof value === "string" && value.length > 0 && value.length <= BRIDGE_ID_MAX_CHARS;
++const validAppScope = (scope: BridgeAppScope): boolean =>
++  validIdentity(scope.appThreadId) && validIdentity(scope.providerInstanceId) && validIdentity(scope.providerSessionId);
++const validActiveRoot = (active: BridgeActiveRoot): boolean =>
++  validIdentity(active.appThreadId) && validIdentity(active.nativeThreadId) && validIdentity(active.nativeTurnId);
+ // The app-owned implementation must pin its broker registration to this scope;
+ // it must never reconnect an in-flight operation to a replacement registration.
+ // Every method checks guard AND its lease at the actual broker effect boundary.
+@@ -40,10 +54,20 @@ export interface BridgeClock {
    readonly setTimeout: (callback: () => void, ms: number) => unknown;
    readonly clearTimeout: (handle: unknown) => void;
  }
@@ -262,28 +382,71 @@ index 2ce058c..4ee1f6a 100644
  
  const empty = { type: "object", properties: {}, additionalProperties: false } as const;
  const strings = (names: string[]) => ({
-@@ -71,7 +84,7 @@ function exactStrings(value: Json, keys: readonly string[]): Record<string, stri
+@@ -71,8 +95,8 @@ function exactStrings(value: Json, keys: readonly string[]): Record<string, stri
    const out: Record<string, string> = {};
    for (const key of keys) {
      if (!Object.hasOwn(value, key)) return;
 -    const text = value[key as keyof typeof value];
+-    if (typeof text !== "string" || text.length === 0 || text.length > 16_384) return;
 +    const text: unknown = Reflect.get(value, key);
-     if (typeof text !== "string" || text.length === 0 || text.length > 16_384) return;
++    if (typeof text !== "string" || text.length === 0 || text.length > BRIDGE_ARGUMENT_MAX_CHARS) return;
      out[key] = text;
    }
-@@ -80,10 +93,10 @@ function exactStrings(value: Json, keys: readonly string[]): Record<string, stri
+   return out;
+@@ -80,10 +104,13 @@ function exactStrings(value: Json, keys: readonly string[]): Record<string, stri
  
  // One instance per owned app-server stdio session; absence of the injected port
  // means no instance, no tool registration, and denied persisted tool requests.
 -export function makeBridgeDynamicSession(scope: BridgeAppScope, port: BridgeMessagingPort, options: { readonly clock?: BridgeClock } = {}) {
+-  const owner = Object.freeze({ ...scope });
 +export function makeBridgeDynamicSession(scope: BridgeAppScope, port: BridgeMessagingPort, options: { readonly clock: BridgeClock }) {
-   const owner = Object.freeze({ ...scope });
++  // Validate before copying/retaining owner IDs or creating a cache/lifetime.
++  if (!validAppScope(scope)) throw new Error("Bridge messaging scope unavailable");
++  const owner = Object.freeze({ appThreadId: scope.appThreadId,
++    providerInstanceId: scope.providerInstanceId, providerSessionId: scope.providerSessionId });
    const lifetime = new AbortController();
 -  const clock = options.clock ?? realClock;
 +  const clock = options.clock;
    let root: BridgeRootLease | undefined;
    let startReserved = false;
    let disposal: Promise<BridgeDisposal> | undefined;
+@@ -95,6 +122,8 @@ export function makeBridgeDynamicSession(scope: BridgeAppScope, port: BridgeMess
+   };
+   // No eviction or re-execution: at most 1,024 operations, each with at most
+   // 16,384 response-text characters, retained only in this session generation.
++  // Every key dimension is nonempty and <=512 code units before serialization.
++  // Generation identity is this closure/Map, never a provider-supplied key field.
+   const entries = new Map<string, Entry>();
+   const staticAdmission = (lease: BridgeRootLease, call: CodexSchema.DynamicToolCallParams, active: BridgeActiveRoot) =>
+     root === lease && !lifetime.signal.aborted && port.isLive() && !active.isChild &&
+@@ -155,6 +184,7 @@ export function makeBridgeDynamicSession(scope: BridgeAppScope, port: BridgeMess
+     // Invoke only with thread/start's response, never IDs supplied by tools,
+     // native children, thread/resume, or an untrusted transcript/HTTP request.
+     bindStartedRoot(nativeThreadId: string): void {
++      if (!validIdentity(nativeThreadId)) throw new Error("Bridge root unavailable");
+       if (!startReserved || lifetime.signal.aborted || !port.isLive() || root || !nativeThreadId) throw new Error("Bridge root cannot be rebound");
+       root = Object.freeze({ ...owner, nativeThreadId });
+     },
+@@ -183,6 +213,10 @@ export function makeBridgeDynamicSession(scope: BridgeAppScope, port: BridgeMess
+       return disposal;
+     },
+     async dispatch(call: CodexSchema.DynamicToolCallParams, active: BridgeActiveRoot | undefined, signal: AbortSignal): Promise<CodexSchema.DynamicToolCallResponse> {
++      // Reject before port callbacks, argument traversal, key/fingerprint JSON,
++      // cache lookup/insertion or a side effect. Invalid IDs consume no budget.
++      if (!validIdentity(call.threadId) || !validIdentity(call.turnId) || !validIdentity(call.callId) ||
++          (active !== undefined && !validActiveRoot(active))) return bridgeDenied();
+       const lease = root;
+       if (!lease || call.namespace !== "agent_bridge" || !call.callId ||
+           call.threadId !== lease.nativeThreadId || lifetime.signal.aborted || !port.isLive()) return bridgeDenied();
+@@ -200,7 +234,7 @@ export function makeBridgeDynamicSession(scope: BridgeAppScope, port: BridgeMess
+         if (entry.fingerprint !== fingerprint) return bridgeDenied();
+         if (active && !staticAdmission(lease, call, active)) return bridgeDenied();
+       } else {
+-        if (!active || !staticAdmission(lease, call, active) || signal.aborted || entries.size >= 1_024) return bridgeDenied();
++        if (!active || !staticAdmission(lease, call, active) || signal.aborted || entries.size >= BRIDGE_REPLAY_MAX_ENTRIES) return bridgeDenied();
+         entry = { fingerprint, active, pending: Promise.resolve(), response: undefined };
+         entries.set(key, entry); // Reserve before the first asynchronous admission.
+         entry.pending = execute(entry, lease, call, active, args);
 diff --git a/apps/server/src/provider/CodexProvider.ts b/apps/server/src/provider/CodexProvider.ts
 index 4a60f12..fb05fcf 100644
 --- a/apps/server/src/provider/CodexProvider.ts

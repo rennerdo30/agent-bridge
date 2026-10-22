@@ -165,3 +165,50 @@ The new effective upstream artifact still requires fresh independent review and
 actual successful hosted typecheck, production tests and mutations. Offline source,
 application, syntax and validator checks cannot establish those gates or native
 acceptance. No provider launch, install, runtime modification or enablement occurs.
+
+## PR #140 hosted baseline and mutation-selector correction
+
+Run `39701228124` at `bd1ab3397987a009f42364fecae8274dc6c39354` passed
+actual pinned upstream typecheck and all **58/58** real baseline tests. The first
+four production mutations failed their intended assertions with qualified reports.
+The suspended-terminal-publication mutation exited zero with all eight tests
+skipped, so the gate failed without accepting any assertion evidence.
+
+The selector confused Vitest 5.0.5's space-joined JSON `fullName` with runtime
+`fullTestName`, whose suite/test separator is ` > `. Official source pinned at
+`7a825db43e2beca0b219d2eadaec334cb81af0c7` establishes this difference. The runner
+now derives an escaped, anchored CLI pattern from each target's actual passing
+baseline ancestry/title, retaining its separate exact JSON expected name. All five
+targets must resolve uniquely in their precise files before any mutation runs.
+The receipt records both names, and assertion/timeout/collection qualification is
+unchanged. A small hashed projection of actual hosted task names/statuses covers
+the selector and all-skipped regressions offline without duplicating declarations.
+
+The selector correction is combined with the R6 identity guard below. The original
+two patch layers remain unchanged; the third and effective tree receive new hashes.
+The corrected fifth mutation still needs actual hosted execution and its intended
+assertion failure. The overall gate, fresh review and native acceptance remain open.
+
+## R6 replay-key identity bounds
+
+AB45842220 identified an unbounded retained `callId`, despite the 1,024-entry cache
+cap. The helper now requires nonempty identities of at most 512 UTF-16 code units
+for app thread, provider instance/session, native thread/turn/call and active-root
+context, before retention or replay-key serialization/cache insertion. This matches
+the protocol's existing RPC-ID length bound and accommodates normal short native
+IDs without truncation or normalization. Generation is the closure/cache identity,
+not an externally supplied key dimension. Invalid scope/root IDs throw fixed
+messages; invalid calls return the existing sanitized denial without port callbacks.
+
+All six key dimensions are bounded (worst-case escaped JSON key: 18,451 code units).
+Argument canonicalization remains separately bounded: exact tool/namespace and
+field whitelists, at most three string values of 16,384 code units each. Invalid
+identities are rejected before even reading arguments, so canonical arguments
+cannot conceal an oversized key dimension. Four small mocked regressions observe
+no JSON serialization/Map insertion/port callback for invalid IDs, no admission
+budget consumption, valid maximum-boundary coalescing during real suspension, and
+pre-serialization rejection of oversized arguments. No load/stress fixture is used.
+
+The 58/58 hosted baseline belongs to the earlier `bd1ab339` tree; these changed
+helper/tests still require the actual hosted typecheck/baseline/mutation gate and
+fresh independent review. No installed modification or production enablement occurs.

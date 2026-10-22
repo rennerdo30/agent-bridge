@@ -1,13 +1,13 @@
 {
   "schema": 1,
-  "status": "followup-prepared-hosted-rerun-required",
+  "status": "identity-and-selector-correction-awaiting-hosted-rerun",
   "upstream": {
     "repository": "https://github.com/pingdotgg/t3code.git",
     "commit": "968dd51704441138559a3fe9c348719f2b11e0c6"
   },
   "codexInspectedSourcePin": "6203846fb3ef040f62eed9b35bc6629c8e88980a",
   "parentBridgeBase": "70820a0fd090bd12f8245e9cf7e51db13a78eef0",
-  "packageInputBridgeHead": "76cf1a9ae4b6ab09d3952353ab91de008657735d",
+  "packageInputBridgeHead": "bd1ab3397987a009f42364fecae8274dc6c39354",
   "patchOrder": [
     "01-reviewed.patch",
     "02-disposal-test.patch",
@@ -239,11 +239,11 @@
     },
     {
       "path": "apps/server/src/orchestration-v2/Adapters/CodexBridgeDynamicTools.test.ts",
-      "sha256": "bbf1f22cace1cdf0b41966cd964c25b8f9bfe6474e5e31ab9a116ec2baf725f7"
+      "sha256": "e4d4965a1cf45cfc4a8258edc61ef8e079186d567c1a0890c92c2cce14ed4117"
     },
     {
       "path": "apps/server/src/orchestration-v2/Adapters/CodexBridgeDynamicTools.ts",
-      "sha256": "e36c707fab747c1ce7c7d7e640356f0fc143672cd2283a93933c2055924a8004"
+      "sha256": "b36639f0142732f7b70d096a40292931bb6b285cd23c41bc6becb8d71c17189f"
     },
     {
       "path": "apps/server/src/provider/CodexProvider.ts",
@@ -279,7 +279,7 @@
     }
   ],
   "effectiveTreeHashAlgorithm": "SHA256 of path+NUL+sha256+LF for files sorted by localeCompare(en); changed/new upstream source files only",
-  "effectiveTreeSha256": "734d49854ef0741229578f6de3bc12859bebcb03356cfe7a7183260e5206959c",
+  "effectiveTreeSha256": "4148804c9fde7472a94370627ef88117bc1b77924bae0175d2a026ede2a021a3",
   "artifacts": [
     {
       "path": "01-reviewed.patch",
@@ -291,7 +291,7 @@
     },
     {
       "path": "03-round3.patch",
-      "sha256": "008b3a4f1e3b70902365f5666eb8f8de39650605b786430bb5c968571f772f6f"
+      "sha256": "ea3645b11ce13cc8ddfd6ee1a2601e0734707d58dd121d8fc78f9a6163ccfbb7"
     },
     {
       "path": "ci.typecheck.json",
@@ -303,23 +303,27 @@
     },
     {
       "path": "gate.mjs",
-      "sha256": "bf6f33627083dd32058915ae1f65f37a2ddf58757922fd85cfbf243eb3f48d78"
+      "sha256": "079b23cda366683f61582a24cdc795467dd8f7e081b112e57e0499364fb8ffef"
     },
     {
       "path": "gate.test.mjs",
-      "sha256": "bf58f54e09f26429ba39b7dee502afb3306d4596d87785483e4baefab1ee3c9e"
+      "sha256": "1c3dcadba502165d628305fc4fbc8b9fedbfcd8e0f7ed2e1d98bb41b1dc4e08e"
     },
     {
       "path": "offline-evidence.json",
-      "sha256": "28b53347bef84061f8e9a7c9089c72ccbf9a0f6f49ae6e0e9fd022375b3edfb5"
+      "sha256": "6643ce372740efe804df2cfbecaaefdba3c23fcbce0ac6f93e5e586526a14e06"
     },
     {
       "path": "README.md",
-      "sha256": "cddcd32d89cda0badcf69f241c98002f537752d4bccf259a964638a8d7bc2423"
+      "sha256": "f339c3032de201a4697eb79dfd9235ca61ae7631a8e4bb2a59009bac7a261417"
     },
     {
       "path": "run.mjs",
-      "sha256": "7c7c3b89a4f6fc2d7ea629c6662d5f3edc922e39d3af6c3cec14c38e13d6d9e5"
+      "sha256": "71529da8ec36565a162129e4f9e571a5c3f0d87405187ea140691b7284188ec6"
+    },
+    {
+      "path": "selector-census.json",
+      "sha256": "3e79009aa9639d550d8a2537b5b577b9f42b81d0a456f24780ee95a854bf9a5f"
     },
     {
       "path": "verify.mjs",
@@ -328,21 +332,32 @@
   ],
   "workflowSha256": "c87b24ae47cd1341788f20e2efe108e78b108816b69d812c6c57e88ac21ddf07",
   "priorRevision": {
-    "head": "76cf1a9ae4b6ab09d3952353ab91de008657735d",
-    "manifestSha256": "a874e0a00006f245768102126fe10fc848e735321fdff73ee88f767fe6e51e75",
-    "round3PatchSha256": "6ba1e3b1175765ec98c5d63caac154e8257ff21f6c585deccd07cd4602e36774",
-    "effectiveTreeSha256": "854e276ffb71914f8ce1fef56b8499dcc8b76dca1d657a2586f0713c3ccae380",
-    "hostedRunId": "39700140843",
-    "hostedJobId": "119567110900",
-    "hostedStatus": "Actual pinned typecheck failed 15 diagnostic error lines (Crypto context leakage and Crypto.make mock); tests/mutations not reached; not a timeout.",
-    "upstreamTypecheckLogSha256": "bee90f425d2338db46a0b8aff981a558ef9537fc603e3fa69430464ae4fc0bfd",
+    "head": "bd1ab3397987a009f42364fecae8274dc6c39354",
+    "manifestSha256": "a08b69afc234beb9a1742c7c4cdeb5a58806b2788d49d3e6b5bf2eed4b9c50ea",
+    "round3PatchSha256": "008b3a4f1e3b70902365f5666eb8f8de39650605b786430bb5c968571f772f6f",
+    "effectiveTreeSha256": "734d49854ef0741229578f6de3bc12859bebcb03356cfe7a7183260e5206959c",
+    "offlineEvidenceSha256": "28b53347bef84061f8e9a7c9089c72ccbf9a0f6f49ae6e0e9fd022375b3edfb5",
+    "hostedRunId": "39701228124",
+    "hostedStatus": "Actual pinned typecheck exit 0 and baseline 58/58; four qualified assertion mutations; fifth selector ran zero assertions (8 skipped), exit 0. Overall gate failed.",
+    "baselineReportSha256": "de19cdf2c225a77411f344979347f98f1138eb97d7101bfbc0a38f2e0d92e773",
+    "hostedReceiptSha256": "a88435b464f83b2ba76c4fdf54887bccdeab7c3ffa6b2abf73d5ce190d15f62c",
     "priorRevision": {
-      "head": "430e3eecd9cbb2b38ee5d5f7eec895236249bc2d",
-      "manifestSha256": "5a5a128d6f00e8f2b1ec30425de918d9b8bd0a5ed1dd6065a13e253e214eb345",
-      "round3PatchSha256": "4fc67d2a06951a851a597ea83c090c486aefdd74c0b15e087fe0c8ea253d7307",
-      "effectiveTreeSha256": "64519d9fa4d284c6c0ff8f1b8c9bb6fc3f17c4939c8d934209f52f5c83ff76f4",
-      "hostedStatus": "Pinned upstream typecheck ran and failed eight errors; tests/mutations not reached. Windows Bridge typecheck also failed on upstream config imports.",
-      "upstreamTypecheckLogSha256": "da217ad8857864e7935cb73d2beb532ad5367e2ecd572e5f26172817b6ff04d0"
+      "head": "76cf1a9ae4b6ab09d3952353ab91de008657735d",
+      "manifestSha256": "a874e0a00006f245768102126fe10fc848e735321fdff73ee88f767fe6e51e75",
+      "round3PatchSha256": "6ba1e3b1175765ec98c5d63caac154e8257ff21f6c585deccd07cd4602e36774",
+      "effectiveTreeSha256": "854e276ffb71914f8ce1fef56b8499dcc8b76dca1d657a2586f0713c3ccae380",
+      "hostedRunId": "39700140843",
+      "hostedJobId": "119567110900",
+      "hostedStatus": "Actual pinned typecheck failed 15 diagnostic error lines (Crypto context leakage and Crypto.make mock); tests/mutations not reached; not a timeout.",
+      "upstreamTypecheckLogSha256": "bee90f425d2338db46a0b8aff981a558ef9537fc603e3fa69430464ae4fc0bfd",
+      "priorRevision": {
+        "head": "430e3eecd9cbb2b38ee5d5f7eec895236249bc2d",
+        "manifestSha256": "5a5a128d6f00e8f2b1ec30425de918d9b8bd0a5ed1dd6065a13e253e214eb345",
+        "round3PatchSha256": "4fc67d2a06951a851a597ea83c090c486aefdd74c0b15e087fe0c8ea253d7307",
+        "effectiveTreeSha256": "64519d9fa4d284c6c0ff8f1b8c9bb6fc3f17c4939c8d934209f52f5c83ff76f4",
+        "hostedStatus": "Pinned upstream typecheck ran and failed eight errors; tests/mutations not reached. Windows Bridge typecheck also failed on upstream config imports.",
+        "upstreamTypecheckLogSha256": "da217ad8857864e7935cb73d2beb532ad5367e2ecd572e5f26172817b6ff04d0"
+      }
     }
   },
   "materializedConfigs": [
@@ -356,5 +371,32 @@
       "path": ".ab458-ci.typecheck.json",
       "sha256": "bab00e3cc1be9b79fb6b0e32096d2b324d9d430435beee357ca41ea6cce1302b"
     }
-  ]
+  ],
+  "testNameProtocol": {
+    "repository": "https://github.com/vitest-dev/vitest",
+    "version": "5.0.5",
+    "commit": "7a825db43e2beca0b219d2eadaec334cb81af0c7",
+    "sources": [
+      {
+        "path": "packages/vitest/src/utils/tasks.ts",
+        "sha256": "754716b0cacf7bc8b7fa548194f774399082dc5fe42c1a86d041bf529a0aec20",
+        "gitBlob": "15fed5ee2c382aa323d6ba3dd86b3b97eddb718c"
+      },
+      {
+        "path": "packages/vitest/src/runtime/runner/suite.ts",
+        "sha256": "ebaa09136c6ae126118b3eb45a6d49c8f7484c8c6a6e18e254a6dee564c745f7",
+        "gitBlob": "d75e03073a542c2fb8f4a6aa0c8bc4c6d1ce5c46"
+      },
+      {
+        "path": "packages/vitest/src/runtime/runner/collect.ts",
+        "sha256": "aed244542bc0eddd39e69b35fe395bfdf04cc9b4aba7358709efcf40f2587248",
+        "gitBlob": "c1d90bc1bd01e47f99b97c106489a5228ae1b4f0"
+      },
+      {
+        "path": "packages/vitest/src/node/reporters/json.ts",
+        "sha256": "3dcafb54cdc5abc89a0cf11cd2b20e452e5a7bec27c8c8bba164d54d9060d9af",
+        "gitBlob": "08256e413a8f3b0b2a5952e7f077d27c64e091c9"
+      }
+    ]
+  }
 }

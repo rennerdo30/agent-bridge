@@ -57,6 +57,37 @@ export function validateReport(report, { expectedTest, marker, mutation = false,
 
 export const productionTest = 'AB458 production admission: actual adapter registration, 32-limit warm replay, roots, fault and close';
 export const suspendedTerminationTest = 'AB458 real protocol lifecycle publishes suspended-handler termination before owned cleanup completes';
+const productionTestFile = 'apps/server/src/orchestration-v2/Adapters/CodexBridgeDynamicTools.adapter.test.ts';
+
+// Vitest 5.0.5's JSON reporter uses space-separated fullName, while -t
+// matches fullTestName produced by createTaskName with " > " separators.
+// Resolve against the successfully executed baseline, never a handwritten
+// copy of a test declaration or an assumed reporter/runtime name equivalence.
+export function mutationSelection(baseline, mutation) {
+  const file = mutation.file ?? productionTestFile;
+  const expectedTest = mutation.test ?? productionTest;
+  const suites = baseline?.testResults?.filter((suite) =>
+    suite.name?.replaceAll(path.win32.sep, '/').endsWith('/'+file)) ?? [];
+  const tests = suites.flatMap((suite) => suite.assertionResults ?? []);
+  const targets = tests.filter((test) => test.fullName === expectedTest);
+  if (baseline.success !== true || targets.length !== 1 || targets[0].status !== 'passed') {
+    throw new Error('Mutation selector needs one executed passing baseline target in its exact file');
+  }
+  const parts = (test) => {
+    if (!Array.isArray(test.ancestorTitles) || typeof test.title !== 'string' || !test.title ||
+        test.ancestorTitles.some((title) => typeof title !== 'string' || !title)) {
+      throw new Error('Mutation selector lacks structured baseline ancestry/title');
+    }
+    const names = [...test.ancestorTitles, test.title];
+    if (names.join(' ') !== test.fullName) throw new Error('Unexpected JSON reporter name encoding');
+    return names;
+  };
+  const escape = (name) => RegExp.escape(name); // Available in pinned Node 24.
+  const testNamePattern = '^'+parts(targets[0]).map(escape).join(' > ')+'$';
+  const matching = tests.filter((test) => new RegExp(testNamePattern).test(parts(test).join(' > ')));
+  if (matching.length !== 1 || matching[0] !== targets[0]) throw new Error('Mutation selector is ambiguous');
+  return { file, expectedTest, testNamePattern };
+}
 
 export function mutations() {
   const adapter = 'apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts';

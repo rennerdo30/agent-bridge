@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { sha256, treeHash, verifyFiles, validateReport, productionTest, mutations } from './gate.mjs';
+import { sha256, treeHash, verifyFiles, validateReport, productionTest, mutations, mutationSelection } from './gate.mjs';
 
 const artifact = import.meta.dirname;
 const manifest = JSON.parse(fs.readFileSync(path.join(artifact, 'manifest.json'), 'utf8'));
@@ -85,12 +85,12 @@ async function hosted() {
     const actual = manifest.effectiveFiles.map((file) => ({ path: file.path, sha256: sha256(fs.readFileSync(path.join(checkout, file.path))) }));
     if (treeHash(actual) !== manifest.effectiveTreeSha256) throw new Error('Effective patched tree mismatch');
   };
-  async function testRun(label, mutation) {
+  async function testRun(label, mutation, selection) {
     const reportFile = path.join(evidence, label+'.json');
     const args = ['exec', 'vp', 'test', 'run', '--config', '.ab458-ci.vitest.config.ts',
       '--reporter=json', '--outputFile='+reportFile];
-    const expectedTest = mutation?.test ?? productionTest;
-    if (mutation) args.push(mutation.file ?? 'apps/server/src/orchestration-v2/Adapters/CodexBridgeDynamicTools.adapter.test.ts', '-t', expectedTest);
+    const expectedTest = selection?.expectedTest ?? productionTest;
+    if (mutation) args.push(selection.file, '-t', selection.testNamePattern);
     const result = await run(label, pnpm, args, mutation ? 60_000 : 120_000, mutation ? 1 : 0);
     if (/unhandled (error|rejection|exception)|failed to (load|collect)|cannot (find|resolve)|syntaxerror|worker exited|Bridge owned connection disposal incomplete|Codex terminal notification (failed|did not complete)/i.test(result.stdout+'\n'+result.stderr)) {
       throw new Error(`${label}: infrastructure/unhandled failure, not mutation evidence`);
@@ -105,7 +105,9 @@ async function hosted() {
           'packages/effect-codex-app-server/src/PrivateProtocolLifecycle.test.ts',
           'packages/effect-codex-app-server/src/protocol.test.ts',
         ] });
-    result.record.reportSha256 = sha256(fs.readFileSync(reportFile)); result.record.testProof = proof; save();
+    result.record.reportSha256 = sha256(fs.readFileSync(reportFile)); result.record.testProof = proof;
+    if (selection) result.record.selection = selection;
+    save();
   }
   try {
     await run('git-init', 'git', ['init', '--quiet']);
@@ -151,14 +153,20 @@ async function hosted() {
     await run('test-tool-version', pnpm, ['exec', 'vp', '--version']);
     await run('pinned-typecheck', pnpm, ['exec', 'tsc-rs', '--noEmit', '-p', '.ab458-ci.typecheck.json'], 180_000);
     await testRun('baseline');
-    for (const mutation of mutations()) {
+    const baseline = JSON.parse(fs.readFileSync(path.join(evidence, 'baseline.json'), 'utf8'));
+    // Resolve and prove all five selectors against actual baseline collection
+    // before changing any production source. A renamed/missing target is a
+    // gate failure, never an accepted all-skipped mutation.
+    const selectedMutations = mutations().map((mutation) => ({ mutation, selection: mutationSelection(baseline, mutation) }));
+    receipt.mutationSelections = selectedMutations.map(({ mutation, selection }) => ({ name: mutation.name, ...selection })); save();
+    for (const { mutation, selection } of selectedMutations) {
       checkTree();
       const target = path.join(checkout, mutation.path), original = fs.readFileSync(target);
       const changed = mutation.change(original.toString('utf8'));
       const proof = { name: mutation.name, path: mutation.path, baseTreeSha256: manifest.effectiveTreeSha256,
-        originalSha256: sha256(original), mutationSha256: sha256(changed), expectedTest: mutation.test ?? productionTest, marker: mutation.marker };
+        originalSha256: sha256(original), mutationSha256: sha256(changed), ...selection, marker: mutation.marker };
       fs.writeFileSync(path.join(evidence, mutation.name+'-source.json'), JSON.stringify(proof, null, 2)+'\n');
-      try { fs.writeFileSync(target, changed); await testRun('mutation-'+mutation.name, mutation); }
+      try { fs.writeFileSync(target, changed); await testRun('mutation-'+mutation.name, mutation, selection); }
       finally { fs.writeFileSync(target, original); checkTree(); receipt.restoredTreeSha256 = manifest.effectiveTreeSha256; save(); }
     }
     receipt.outcome = 'passed-hosted-mocked-integration';
