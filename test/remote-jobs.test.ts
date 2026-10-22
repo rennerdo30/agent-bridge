@@ -30,6 +30,7 @@ import { allowedRemoteDirectory, RemoteJobs } from "../src/network/remote-jobs.j
 import { REMOTE_JOB_RATE_LIMIT, remoteSpawnArgsSchema } from "../src/network/remote-job-protocol.js";
 import { readProcessIdentities } from "../src/core/process-identity.js";
 import { fixtureProcessExists, fixtureProcessGeneration } from "./fixture-process-generation.js";
+import { jobWaitSnapshot } from "./job-wait-diagnostics.js";
 
 const SERVER = join(import.meta.dirname, "..", "plugins", "claude", "dist", "server.mjs");
 const TEST_TIMEOUT_MS = 90_000;
@@ -41,6 +42,15 @@ let localHome: string;
 let repo: string;
 const pids = new Set<number>();
 let diagnosticResponses: { at: number; name: string; args: Record<string, unknown>; text?: string; error?: string }[];
+let diagnosticStages: { stage: string; at: number }[] = [];
+const diagnosticJobs = new Set<string>();
+const activeCalls = new Map<symbol, { name: string; at: number }>();
+const stage = (label: string) => { diagnosticStages.push({ stage: label, at: Date.now() }); diagnosticStages = diagnosticStages.slice(-64); };
+function printWaitDiagnostics() {
+  try { console.error(`Remote job wait diagnostics: ${JSON.stringify({ version: 1, stages: diagnosticStages, activeCalls: [...activeCalls.values()].slice(0, 8),
+    local: jobWaitSnapshot(localHome, [...diagnosticJobs]), remote: jobWaitSnapshot(remoteHome, [...diagnosticJobs]) }).slice(0, 65_536)}`); }
+  catch { console.error("Remote job wait diagnostics unavailable"); }
+}
 const FAKE = `#!/usr/bin/env node
 import { appendFileSync, existsSync, writeFileSync } from 'node:fs';
 let prompt=''; process.stdin.setEncoding('utf8'); process.stdin.on('data',d=>prompt+=d);
@@ -71,6 +81,7 @@ beforeEach(() => {
   for (const path of [localHome, remoteHome, repo]) mkdirSync(path, { recursive: true });
   cleanup = [];
   diagnosticResponses = [];
+  diagnosticStages = []; diagnosticJobs.clear(); activeCalls.clear();
 });
 function diagnosticSnapshot(stage: string): void {
   const files = (home: string, directory: string) => {
@@ -94,6 +105,7 @@ afterEach(async context => {
   let failed = context.task.result?.state === "fail";
   let cleanupError: unknown;
   if (failed) {
+    printWaitDiagnostics();
     try { diagnosticSnapshot("before-cleanup"); }
     catch (error) { cleanupError = error; }
   }
@@ -247,9 +259,11 @@ async function stopFixtureRunner(pid: number, identity: string): Promise<void> {
     catch (error) { if (fixtureProcessExists(pid, refusal)) throw error; }
   }
 }
-async function waitFor(test: () => boolean | Promise<boolean>, ms = 30_000): Promise<void> {
+async function waitFor(test: () => boolean | Promise<boolean>, ms = 30_000, label = "unspecified"): Promise<void> {
+  stage(`wait:${label}`);
   const deadline = Date.now() + ms;
   while (!await test()) { if (Date.now() > deadline) throw new Error("Remote test timed out"); await new Promise((r) => setTimeout(r, 50)); }
+  stage(`settled:${label}`);
 }
 /** The remote broker reads config.json concurrently: replace it whole, never truncate it in place. */
 function writeAtomic(path: string, text: string): void {
@@ -319,16 +333,18 @@ async function paired(agent = "codex"): Promise<{ local: Client; admin: BridgeCl
   // Pairing can precede the remote MCP session's registration. Wait for its real advertisement;
   // networkVerify only refreshes our outgoing peers, not the remote session's startup.
   await a.request("networkVerify", { id: status.identity!.id });
-  await waitFor(async () => (await call(local, "peers", {})).includes("mac/codex-remote"));
+  await waitFor(async () => (await call(local, "peers", {})).includes("mac/codex-remote"), 30_000, "paired-peer-advertisement");
   return { local, admin: a, inspector };
 }
 const textOf = (r: any) => r.content.map((c: any) => c.text).join("\n");
 async function call(client: Client, name: string, args: Record<string, unknown>): Promise<string> {
+  const request = Symbol(name); activeCalls.set(request, { name, at: Date.now() });
   try {
     const text = textOf(await client.callTool({ name, arguments: args }, undefined, { timeout: TEST_TIMEOUT_MS }));
     diagnosticResponses.push({ at: Date.now(), name, args, text });
     return text;
   } catch (error) { diagnosticResponses.push({ at: Date.now(), name, args, error: String(error) }); throw error; }
+  finally { activeCalls.delete(request); }
 }
 async function held(client: Client, extra: Record<string, unknown> = {}): Promise<{ name: string; id: string; release: string; marker: string }> {
   const defaultRelease = join(repo, `release-${randomUUID()}`);
@@ -342,8 +358,9 @@ async function held(client: Client, extra: Record<string, unknown> = {}): Promis
   return { name: `claude-job-${id}`, id, release, marker };
 }
 async function cancelledRemoteJob(local: Client, id: string, title: string, prompt: string): Promise<void> {
+  diagnosticJobs.add(id);
   const saved = () => readStore(join(localHome, "jobs.json")).find(job => job.id === id);
-  await waitFor(() => saved()?.status === "cancelled");
+  await waitFor(() => saved()?.status === "cancelled", 30_000, "cancel-durable-local-status");
   expect(saved()!.prompt).toBe(prompt);
   const state = readRunnerState(remoteHome, id);
   if (state) {
@@ -352,7 +369,7 @@ async function cancelledRemoteJob(local: Client, id: string, title: string, prom
     expect(state.pid).toBeGreaterThan(0);
     expect(state.report).toContain("cancelled");
     pids.add(state.pid);
-    await waitFor(() => !pidAlive(state.pid));
+    await waitFor(() => !pidAlive(state.pid), 30_000, "cancel-owned-runner-exit");
   } else {
     // Cancellation before admission launches nothing; no synthetic remote PID/state is appropriate.
     expect(saved()!.host).toBeNull();
@@ -365,13 +382,13 @@ async function cancelledRemoteJob(local: Client, id: string, title: string, prom
   await waitFor(async () => {
     const inbox = await call(local, "inbox", { mark_read: false });
     return inbox.includes(`claude-job-${id}`) && inbox.includes("cancelled");
-  });
+  }, 30_000, "cancel-original-supervisor-report");
   // The remote state file and the requester's cached job state settle independently.
   await waitFor(async () => {
     const peers = await call(local, "peers", {});
     return peers.includes(`claude-job-${id} "${title}": cancelled`) &&
       (!state || peers.includes(`Remote job claude-job-${id}: mac/claude-job-${id}`));
-  });
+  }, 30_000, "cancel-remote-status-cache");
 }
 
 describe("remote jobs security", () => {
@@ -481,25 +498,28 @@ rl.on("line", (line) => {
     const match = /codex-job-([0-9a-f]{8})/.exec(result);
     expect(match, result).not.toBeNull();
     const id = match![1]!;
+    diagnosticJobs.add(id);
     const name = `codex-job-${id}`;
-    await waitFor(async () => (await call(local, "peers", {})).includes(`${name} "Native default": done`));
+    await waitFor(async () => (await call(local, "peers", {})).includes(`${name} "Native default": done`), 30_000, "native-initial-done-cache");
     // Final status precedes report delivery and runner teardown. This settings test needs
     // a new runner, rather than a message queued to the previous runner while it closes.
     await waitFor(() => {
       const state = readRunnerState(remoteHome, id);
       return Boolean(state?.pid && !pidAlive(state.pid));
-    });
+    }, 30_000, "native-initial-runner-exit");
     await waitFor(async () => {
       await call(local, "peers", {});
       const cached = join(localHome, "remote-job-states", `${id}.json`);
       return existsSync(cached) && JSON.parse(readFileSync(cached, "utf8")).snapshot.alive === false;
-    });
+    }, 30_000, "native-initial-cache-exit");
+    stage("native-continuation-rpc");
     const continued = await call(local, "message_subagent", { job: name, message: "continue", native_subagents: 0 });
     expect(continued).toContain("continues in its own session");
     const calls = () => readFileSync(callsPath, "utf8").trim().split("\n").map((line) => JSON.parse(line));
-    await waitFor(() => calls().length === 2 && readRunnerState(remoteHome, id)?.status === "done");
+    await waitFor(() => calls().length === 2 && readRunnerState(remoteHome, id)?.status === "done", 30_000, "native-continuation-done");
     expect(calls()[0].params.config).toMatchObject({ "agents.max_threads": 2, "agents.enabled": true });
     expect(calls()[1]).toMatchObject({ method: "thread/resume", params: { threadId: "native-thread", config: { "agents.max_threads": 1, "agents.enabled": false, "features.multi_agent_v2": false } } });
+    stage("native-blocking-ask-rpc");
     const ask = await call(local, "ask_codex", { host: "mac", cwd: repo, title: "Native ask", prompt: "finish", native_subagents: 32 });
     expect(ask).toContain("native fake finished");
     expect(calls()[2].params.config["agents.max_threads"]).toBe(32);

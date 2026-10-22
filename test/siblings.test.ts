@@ -6,6 +6,7 @@ import { z } from "zod";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { nullLogger } from "../src/core/logger.js";
 import { DEFAULT_CONFIG } from "../src/core/config.js";
+import { nativeOwner } from "../src/core/recipient-ownership.js";
 import { DELEGATE_DEPTH_ENV } from "../src/core/delegate.js";
 import { DELEGATION_METADATA_VERSION, JOBS_FILE } from "../src/core/constants.js";
 import * as jsonStore from "../src/core/json-store.js";
@@ -613,23 +614,37 @@ describe("sibling job messaging", () => {
       await client.callTool({ name: "hook_event", arguments: { event: "SessionStart", session_id: `observer-${agent}` } });
       // Keep the pair in the same authenticated supervisor family. Moving only
       // A deliberately revokes its implicit sibling access to B.
-      await supervisor.handoffSubagents({ to: name, jobs: [a.job.name, b.job.name] });
+      const observer = (await supervisor.peers()).find(p => p.name === name)!;
+      expect(observer).toMatchObject({ agent, sessionId: `observer-${agent}` });
+      const handoff = await supervisor.handoffSubagents({ to: name, jobs: [a.job.name, b.job.name] });
       await a.node.updateJob({ jobParent: name });
       await b.node.updateJob({ jobParent: name });
-      // The actionable handoff is separate from the quiet observer copy. Read
-      // it and flush this transport before starting the notification assertion.
-      const handoff = await client.callTool({ name: "inbox", arguments: {} });
-      expect(JSON.stringify(handoff)).toContain("Inherited subagents");
+      const handoffId = `${handoff.id}-inherited`, store = (supervisor as any).broker.store;
+      expect(store.byId(handoffId)).toMatchObject({ recipient: name, recipientNative: nativeOwner(observer),
+        recipientMailbox: { kind: "local", namespace: store.namespace }, body: expect.stringContaining("Inherited subagents") });
+      const notificationIds = () => notifications.map(n => {
+        const params = (n as { params: { message_id?: string; meta?: { message_id: string } } }).params;
+        return agent === "claude" ? params.meta?.message_id : params.message_id;
+      });
+      // Both wires attest the same actual handoff ID. Claude pushes the body
+      // and consumes it; opencode sends only an ID and requires an inbox read.
+      await expect.poll(notificationIds).toEqual([handoffId]);
+      if (agent === "claude") expect(JSON.stringify(notifications[0])).toContain("Inherited subagents");
+      else expect(JSON.stringify(await client.callTool({ name: "inbox", arguments: { id: handoffId, mark_read: true } }))).toContain("Inherited subagents");
+      await expect.poll(() => store.receipts(handoffId).find((r: { recipient: string }) => r.recipient === name)?.readAt).toBeTypeOf("number");
+      // Durable ACK follows channel write/explicit consumption. The subsequent
+      // MCP response is a wire barrier; retain all notifications and reject any
+      // unexpected or duplicate event instead of clearing a hidden backlog.
       await client.callTool({ name: "peers", arguments: {} });
-      expect(notifications.every(n => JSON.stringify(n).includes("Inherited subagents"))).toBe(true);
-      notifications.length = 0;
+      expect(notificationIds()).toEqual([handoffId]);
+      const settledNotifications = notifications.slice();
       await a.chat.send(b.job.name, "Quiet observer copy");
       await expect.poll(async () => JSON.stringify(await client.callTool({ name: "inbox", arguments: { mark_read: false } }))).toContain("Quiet observer copy");
-      expect(notifications).toEqual([]);
+      expect(notifications).toEqual(settledNotifications);
       const hook = await client.callTool({ name: "hook_event", arguments: { event: "UserPromptSubmit", session_id: `observer-${agent}` } });
       expect(JSON.stringify(hook)).not.toContain("Quiet observer copy");
       expect(JSON.stringify(await client.callTool({ name: "inbox", arguments: { mark_read: false } }))).toContain("Quiet observer copy");
-      expect(notifications).toEqual([]);
+      expect(notifications).toEqual(settledNotifications);
     } finally {
       await client.close();
     }

@@ -24,6 +24,7 @@ import { ReadJournal } from "../src/core/read-journal.js";
 import { readJournalIdentities } from "../src/core/read-journal.js";
 import { fixturePeer, markOwned, ownedMessage } from "./owned-mail.js";
 import { ownershipFromKey } from "../src/core/recipient-ownership.js";
+import { jobWaitSnapshot } from "./job-wait-diagnostics.js";
 
 const SERVER = join(import.meta.dirname, "..", "plugins", "claude", "dist", "server.mjs");
 function linkReady(path: string): boolean {
@@ -35,11 +36,12 @@ const transports: StdioClientTransport[] = [];
 const clients: Client[] = [], ids: string[] = [], releases: string[] = [];
 /** Failure evidence: which wait a takeover case was in, and since when. */
 let phases: { name: string; at: number }[] = [];
+let failureEvidence: (() => void) | undefined;
 /** Aborted by teardown: a body still running after a test timeout must not start or wait for anything else. */
 let fixture = new AbortController();
 const phase = (name: string) => { phases.push({ name, at: Date.now() }); };
 beforeEach(() => {
-  phases = []; fixture = new AbortController();
+  phases = []; failureEvidence = undefined; fixture = new AbortController();
   env = makeEnv(); const dir = join(env.home, "bin"); mkdirSync(dir);
   const file = join(dir, "fake.mjs");
   writeFileSync(file, `#!/usr/bin/env node
@@ -97,6 +99,7 @@ afterEach(async () => {
   if (phases.length && phases.at(-1)!.name !== "done") {
     const start = phases[0]!.at;
     console.error(`Native takeover phases (ms since start): ${phases.map((p) => `${p.name}+${p.at - start}`).join(", ")}; teardown+${Date.now() - start}`);
+    failureEvidence?.();
   }
   for (const file of releases.splice(0)) { writeFileSync(file, ""); writeFileSync(file + ".approve", ""); }
   // A process is signalled only when a successful query shows the generation it recorded at startup: the PID
@@ -338,12 +341,13 @@ function finalReportDiagnostics(home: string, jobs: readonly TakeoverJob[], prim
         consumption: reads && ("rows" in reads ? { rows: reads.rows!.map(row => ({ identity: identities.find(identity => identity.hash === row.identity)?.label ?? "other-identity", readAt: row.read_at === null ? null : diagnosticTime(row.read_at) })) } : reads),
       };
     });
-    return { version: 1, mode, observedAt: Date.now(), inboxReads, finalCount: (delivered.match(/Subagent codex-job-[a-f0-9]+ \(codex\) done after/g) ?? []).length, jobs: rows };
+    return { version: 2, mode, phase: phases.at(-1)?.name, observedAt: Date.now(), inboxReads, finalCount: (delivered.match(/Subagent codex-job-[a-f0-9]+ \(codex\) done after/g) ?? []).length, jobs: rows,
+      admission: jobWaitSnapshot(home, jobs.map(job => job.id)), storage: readinessStorage(home) };
   } finally { try { db?.close(); } catch { /* Diagnostics must not mask the original failure. */ } }
 }
 
 function printFinalReportDiagnostics(home: string, jobs: readonly TakeoverJob[], primary: string, mode: string, inboxReads: number, delivered: string): void {
-  try { console.error(`Native takeover final-report diagnostics: ${JSON.stringify(finalReportDiagnostics(home, jobs, primary, mode, inboxReads, delivered)).slice(0, 16_384)}`); }
+  try { console.error(`Native takeover final-report diagnostics: ${JSON.stringify(finalReportDiagnostics(home, jobs, primary, mode, inboxReads, delivered)).slice(0, 65_536)}`); }
   catch { console.error("Native takeover final-report diagnostics unavailable"); }
 }
 function diagnosticProgress(value: unknown): string {
@@ -475,7 +479,10 @@ it.each(["closed", "unavailable", "opencode"])("ten jobs survive a %s primary an
   // requests queued behind each other and the last ones outlived the MCP client's 60 s request timeout on
   // loaded Windows runners. The runners themselves still start concurrently: each spawn returns at once.
   const jobs: { name: string; id: string; release: string; link: string }[] = [];
+  let delivered = "", inboxReads = 0;
+  failureEvidence = () => printFinalReportDiagnostics(env.home, jobs, primaryName, mode, inboxReads, delivered);
   for (let index = 0; index < 10; index++) {
+    phase(`spawn-${index}-rpc`);
     const release = join(env.home, `release-${index}`), link = `${release}.link`; releases.push(release);
     const started = await call(source, "spawn_codex", { prompt: `release=${release} link=${link} ${index === 2 ? "approve=yes" : ""} ${index === 1 ? "instruction=yes" : ""} complete item ${index}`, title: `Takeover item ${index}` });
     expect(started.error, started.text).toBeFalsy();
@@ -535,16 +542,19 @@ it.each(["closed", "unavailable", "opencode"])("ten jobs survive a %s primary an
   expect((await call(target, "peers")).text).toContain(jobs[9]!.name);
   phase("steering");
   expect((await call(target, "message_subagent", { job: jobs[1]!.name, message: "Continue under the project master", title: "Inherited project work" })).error).toBeFalsy();
+  phase("steering-native-instruction");
   await waitFor(() => existsSync(jobs[1]!.release + ".instruction") && readFileSync(jobs[1]!.release + ".instruction", "utf8").includes("Continue under the project master"),
     () => runnerGone(env.home, [jobs[1]!], true));
   expect(readFileSync(jobs[1]!.release + ".instruction", "utf8")).toContain("Continue under the project master");
   phase("notes");
-  for (const [i, child] of children.entries()) await sendThroughLink(() => child.send(`After takeover note ${i}`, undefined, "note"));
+  for (const [i, child] of children.entries()) { phase(`note-${i}-send`); await sendThroughLink(() => child.send(`After takeover note ${i}`, undefined, "note")); }
   phase("approval");
   writeFileSync(jobs[2]!.release + ".approve", "");
   await waitFor(() => listPendingApprovals(env.home).some((a) => a.job === jobs[2]!.name), () => runnerGone(env.home, [jobs[2]!], true));
   const approval = listPendingApprovals(env.home).find((a) => a.job === jobs[2]!.name)!;
+  phase("approval-decision-rpc");
   expect((await call(target, "decide", { approval_id: approval.id, decision: "allow" })).error).toBeFalsy();
+  phase("approval-native-witness");
   await waitFor(() => existsSync(jobs[2]!.release + ".approved") && readFileSync(jobs[2]!.release + ".approved", "utf8") === "true",
     () => runnerGone(env.home, [jobs[2]!], true));
   expect(readFileSync(jobs[2]!.release + ".approved", "utf8")).toBe("true");
@@ -557,8 +567,6 @@ it.each(["closed", "unavailable", "opencode"])("ten jobs survive a %s primary an
   phase("wake");
   await waitFor(() => existsSync(join(env.home, "wake-calls")));
   phase("inbox");
-  let delivered = "";
-  let inboxReads = 0;
   // Every final is stored for the project master now: read until all ten arrived (duplicates are checked below).
   while ((delivered.match(/Subagent codex-job-[a-f0-9]+ \(codex\) done after/g) ?? []).length < 10) {
     delivered += (await call(target, "inbox")).text;

@@ -2738,6 +2738,14 @@ export class JobManager {
     if (job.deliveryOwner) m = { ...m, ...ownershipFromKey(job.deliveryOwner) };
     else if (m.recipient === this.node.name && this.node.prepareLocalMessage) m = this.node.prepareLocalMessage(m);
     const creator = this.node.mailboxOwner?.(), originalOwner = recipientKey(m.recipientFrontend, m.recipientNative);
+    // This local producer reports cancellation/status of its remote proxy. It
+    // has no local native job grant: retain the authenticated supervisor's
+    // exact original copy and namespace before the first persistence/dispatch.
+    if (typeof job.args?.host === "string" && job.args.host && creator && originalOwner === creator &&
+        m.recipient === this.node.name && this.node.prepareLocalMessage) {
+      m = this.node.prepareLocalMessage(m);
+      m = { ...m, senderOwner: creator, senderMailbox: m.recipientMailbox };
+    }
     if (creator && originalOwner && this.node.prepareLocalMessage &&
         [job.deliveryOwner, ...Object.values(job.deliveryOwners ?? {})].includes(creator)) {
       const own = this.node.prepareLocalMessage({ ...m, recipient: this.node.name, recipientFrontend: undefined, recipientNative: undefined, recipientMailbox: undefined });
@@ -2752,6 +2760,9 @@ export class JobManager {
     }
     // AB-380: the original is what is stored durably (its flush sends a stub). The local path keeps no other copy,
     // so it gets a stub only once the full text is confirmed written to a file.
+    // Compare the exact JSON wire/persistence representation on replay. Optional
+    // own-inbox fields may be undefined in memory and absent after JSON storage.
+    m = JSON.parse(JSON.stringify(m)) as BridgeMessage;
     if ((job.ownershipHistory?.length || (this.storePath && !this.lineage)) && this.node.reportInlineJob) {
       job.deliveryHistory = [...(job.deliveryHistory ?? []), m];
       this.pendingReports.set(m.id, { jobId: job.id, message: m });

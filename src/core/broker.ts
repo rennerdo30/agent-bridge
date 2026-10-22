@@ -8,6 +8,7 @@ import { ReadJournal, readJournalIdentities } from "./read-journal.js";
 import { durableJobOwner, internalSender, localMailbox, nativeOwner, ownsMessage, ownershipFromKey, peerOwnership, recipientKey, sameMailbox, type MailboxProvenance, type InternalMessageOrigin } from "./recipient-ownership.js";
 import { recordStorePeer, refreshStorePeerIdentities, validStoreCapabilities } from "./store-compatibility.js";
 import { randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import { existsSync, lstatSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { readMusePrivateJson, readMusePrivateJsonAsync, writeMusePrivateJsonAsync } from "./muse-context.js";
 import { ownProcessIdentity, processIdentity, readProcessIdentities } from "./process-identity.js";
@@ -152,6 +153,8 @@ interface Conn {
   authed: boolean;
   inFlight: number;
   mailGeneration: number;
+  /** Exclusive admission across recovery/queue awaits; never a wire identity. */
+  helloAdmission?: symbol;
   /** Published only after this exact registration finished queued-mail expiry. */
   mailReady?: QueueRegistration;
   /** The listener that accepted it: only local-pipe peers share this machine's PID namespace (AB-399). */
@@ -647,35 +650,7 @@ export class Broker {
         this.emit(executor, "inline_job_control", a);
         return { sent: true };
       },
-      inlineJobReport: async (c, m) => {
-        const peer = this.requirePeer(c);
-        const registration = c.mailReady;
-        let fallback = false;
-        await this.store.retryWrite(() => {
-          if (!registration) throw new BridgeError("unauthorized", "Report registration is unavailable");
-          this.assertQueueRegistration(c, peer, registration);
-          const job = this.currentJobAuthority(this.storedJobs().find((j) => `job:${j.id}` === m.from?.id));
-          if (!job || (job.executionOwner !== peer.name && job.owner !== peer.name && job.rootName !== peer.name) || typeof job.owner !== "string" || typeof m.body !== "string") throw new BridgeError("unauthorized", "Invalid inline job delivery.");
-          if (this.jobDeliveryOwner(job, peer.name) !== recipientKey(peer.frontend, nativeOwner(peer))) throw new BridgeError("unauthorized", "Original job reporter identity is unproven or replaced; report remains pending.");
-          const recipient = this.jobRecipient(job);
-          const intended = this.freshJobDeliveryOwner(job, peer, recipient), grant = this.jobReportGrant(job, peer);
-          if (!intended) throw new BridgeError("unauthorized", "Original job recipient binding is unavailable; report remains pending without mailbox settlement.");
-          if (!grant || m.from.agent !== job.agent || m.from.name !== job.name) throw new BridgeError("unauthorized", "Proven local job report grant is unavailable");
-          fallback = recipient !== primaryFor(job);
-          // AB-380: an oversized report from an older sender is stored as a stub with the same id, never rejected.
-          const message = this.wireMessage({ ...m, jobControlAuthorized: undefined, recipientFrontend: undefined, recipientNative: undefined, recipientAmbiguous: undefined,
-            ...ownershipFromKey(intended), senderOwner: `native:${grant.principal}`, senderMailbox: localMailbox(this.store.namespace), to: recipient, recipient, conversationId: this.jobConversation(job, recipient, m.conversationId) });
-          if (this.store.insertJobDelivery(message, grant)) {
-            Object.assign(message, this.store.messagesById(message.id).find(copy => copy.recipient === recipient));
-            const target = this.connByName(recipient);
-            if (target && !target.peer?.unavailable) this.emit(target, "message", message);
-          }
-        });
-        // A report parked with a previous owner (the new primary was not live yet, e.g. mid-handoff) moves on by itself
-        // once the primary is live, instead of waiting for an unrelated session to connect.
-        if (fallback) this.scheduleJobMailReroute();
-        return { saved: true };
-      },
+      inlineJobReport: (c, m) => this.onInlineJobReport(c, m),
       auth: (c, a) => {
         this.checkAuth(a.protocol, a.token, a.canHost);
         c.authed = true;
@@ -1675,6 +1650,59 @@ export class Broker {
     }).finally(() => { this.pendingJobMailRoute = null; });
     return this.pendingJobMailRoute;
   }
+  private async onInlineJobReport(c: Conn, m: RequestMap["inlineJobReport"][0]): Promise<RequestMap["inlineJobReport"][1]> {
+    const peer = this.requirePeer(c);
+    const registration = c.mailReady;
+    let fallback = false;
+    await this.store.retryWrite(() => {
+      if (!registration) throw new BridgeError("unauthorized", "Report registration is unavailable");
+      this.assertQueueRegistration(c, peer, registration);
+      const job = this.currentJobAuthority(this.storedJobs().find((j) => `job:${j.id}` === m.from?.id));
+      if (!job || (job.executionOwner !== peer.name && job.owner !== peer.name && job.rootName !== peer.name) || typeof job.owner !== "string" || typeof m.body !== "string") throw new BridgeError("unauthorized", "Invalid inline job delivery.");
+      if (this.jobDeliveryOwner(job, peer.name) !== recipientKey(peer.frontend, nativeOwner(peer))) throw new BridgeError("unauthorized", "Original job reporter identity is unproven or replaced; report remains pending.");
+      // A locally generated cancellation/status report about a remote proxy is
+      // the supervisor's own durable mail, not a local native job principal or
+      // succession grant. It can only replay its original exact local copy.
+      if (isRecord(job.args) && typeof job.args.host === "string" && job.args.host) {
+        const creator = recipientKey(peer.frontend, nativeOwner(peer));
+        const original = Array.isArray(job.deliveryHistory) ? job.deliveryHistory.find(value => isRecord(value) && value.id === m.id) : undefined;
+        const retained = original && this.wireMessage(original as BridgeMessage);
+        if (!creator || job.owner !== peer.name || primaryFor(job) !== peer.name || peer.host || peer.jobAgent || peer.subagent ||
+            !retained || !isDeepStrictEqual(JSON.parse(JSON.stringify(retained)), JSON.parse(JSON.stringify(m))) || m.from.name !== job.name || m.from.agent !== job.agent ||
+            m.to !== peer.name || m.recipient !== peer.name || m.recipientRole || m.jobRoute || m.recipientAmbiguous ||
+            recipientKey(m.recipientFrontend, m.recipientNative) !== creator || m.senderOwner !== creator ||
+            !sameMailbox(m.senderMailbox, localMailbox(this.store.namespace)) || !sameMailbox(m.recipientMailbox, localMailbox(this.store.namespace)))
+          throw new BridgeError("unauthorized", "Original local remote-proxy report ownership is unavailable; retained without retargeting.");
+        const existing = this.store.messagesById(m.id);
+        if (existing.length) {
+          if (existing.length !== 1 || existing[0]!.jobRoute || existing[0]!.recipientRole || jobMailDraftDigest(existing[0]!) !== jobMailDraftDigest(m))
+            throw new BridgeError("unauthorized", "Remote-proxy report conflicts with its retained original copy.");
+          return;
+        }
+        this.store.insert(m);
+        if (!peer.unavailable) this.emit(c, "message", this.store.messagesById(m.id)[0]!);
+        return;
+      }
+      const recipient = this.jobRecipient(job);
+      const intended = this.freshJobDeliveryOwner(job, peer, recipient), grant = this.jobReportGrant(job, peer);
+      if (!intended) throw new BridgeError("unauthorized", "Original job recipient binding is unavailable; report remains pending without mailbox settlement.");
+      if (!grant || m.from.agent !== job.agent || m.from.name !== job.name) throw new BridgeError("unauthorized", "Proven local job report grant is unavailable");
+      fallback = recipient !== primaryFor(job);
+      // AB-380: an oversized report from an older sender is stored as a stub with the same id, never rejected.
+      const message = this.wireMessage({ ...m, jobControlAuthorized: undefined, recipientFrontend: undefined, recipientNative: undefined, recipientAmbiguous: undefined,
+        ...ownershipFromKey(intended), senderOwner: `native:${grant.principal}`, senderMailbox: localMailbox(this.store.namespace), to: recipient, recipient, conversationId: this.jobConversation(job, recipient, m.conversationId) });
+      if (this.store.insertJobDelivery(message, grant)) {
+        Object.assign(message, this.store.messagesById(message.id).find(copy => copy.recipient === recipient));
+        const target = this.connByName(recipient);
+        if (target && !target.peer?.unavailable) this.emit(target, "message", message);
+      }
+    });
+    // A report parked with a previous owner (the new primary was not live yet, e.g. mid-handoff) moves on by itself
+    // once the primary is live, instead of waiting for an unrelated session to connect.
+    if (fallback) this.scheduleJobMailReroute();
+    return { saved: true };
+  }
+
   private jobDeliveryOwner(job: Record<string, unknown>, name: string): string | null {
     const raw = isRecord(job.deliveryOwners) ? job.deliveryOwners[name] : undefined;
     const key = typeof raw === "string" ? raw : name === primaryFor(job) && typeof job.deliveryOwner === "string" ? job.deliveryOwner : undefined;
@@ -2257,11 +2285,28 @@ export class Broker {
   private async onHello(conn: Conn, args: RequestMap["hello"][0]): Promise<RequestMap["hello"][1]> {
     this.checkAuth(args.protocol, args.token, args.canHost);
     conn.authed = true;
+    if (conn.peer) throw new BridgeError("bad_request", "already registered");
+    if (conn.helloAdmission) throw new BridgeError("bad_request", "registration already in progress on this connection");
+    const admission = Symbol("hello");
+    conn.helloAdmission = admission;
+    try { return await this.registerHello(conn, args, admission); }
+    finally {
+      // A failed/cancelled attempt can release only its own reservation.
+      if (conn.helloAdmission === admission) delete conn.helloAdmission;
+    }
+  }
+
+  private assertHelloAdmission(conn: Conn, admission: symbol): void {
+    if (conn.helloAdmission !== admission || conn.peer || conn.socket.destroyed || this.closing)
+      throw new BridgeError("not_registered", "Registration admission changed or closed before durable recovery completed; no mailbox effects admitted.");
+  }
+
+  private async registerHello(conn: Conn, args: RequestMap["hello"][0], admission: symbol): Promise<RequestMap["hello"][1]> {
+    this.assertHelloAdmission(conn, admission);
     const p = args.peer;
     if (!p || !PEER_NAME_PATTERN.test(p.name ?? "") || !AGENT_KINDS.includes(p.agent)) {
       throw new BridgeError("bad_request", "invalid peer info");
     }
-    if (conn.peer) throw new BridgeError("bad_request", "already registered");
     if (!this.store.frontendOwnership) throw new BridgeError("protocol_mismatch", "Mailbox registration requires schema14 ownership and succession provenance; retained older readers must release the upgrade first. No mailbox attribution or automatic daemon replacement.");
     if (isPluginCacheCwd(String(p.cwd ?? ""))) throw new BridgeError("bad_request", "Plugin-cache processes cannot register as sessions.");
     if (p.subagent && !p.jobAgent) throw new BridgeError("bad_request", "Native subagents cannot register as top-level bridge sessions.");
@@ -2309,9 +2354,10 @@ export class Broker {
       // caller jobOwner/name fields cannot manufacture that evidence.
       if (!job && this.jobsPath && /^job:[a-zA-Z0-9_-]{1,128}$/.test(peer.id)) {
         const recovered = await recoverJobRecordAsync(dirname(this.jobsPath), peer.id.slice(4));
+        this.assertHelloAdmission(conn, admission);
         if (recovered) { job = this.currentJobAuthority(recovered as unknown as Record<string, unknown>); recoveredRegistration = Boolean(job); }
       }
-      if (conn.socket.destroyed || this.closing) throw new BridgeError("not_registered", "Runner registration closed before durable recovery completed; no mailbox effects admitted.");
+      this.assertHelloAdmission(conn, admission);
       const root = job && this.groups.jobRoot(job, []);
       const historical = job && Array.isArray(job.ownershipHistory) ? job.ownershipHistory.filter(isRecord).map(h => h.fromRoot) : [];
       const owner = job && durableJobOwner(job);
@@ -2320,6 +2366,10 @@ export class Broker {
           peer.jobOwner !== job.supervisor && !historical.includes(peer.jobOwner)) throw new BridgeError("unauthorized", "Job registration does not match the local durable job incarnation, project or supervisor.");
       if (recoveredRegistration) this.recoveredJobs.set(String(job.id), job);
     }
+    // Last pre-publication boundary: no await separates this fence from name,
+    // session, alias and conn.peer mutation. Later awaits keep the existing
+    // exact QueueRegistration fences until mailReady/publication completes.
+    this.assertHelloAdmission(conn, admission);
     this.refuseRetiredHello(conn, peer);
     if (!peer.sessionId) peer.sessionId = this.store.recoverSession(peer);
     // Recover the identity before allocating a name. Arrival order cannot swap an
