@@ -1,3 +1,4 @@
+import { types } from "node:util";
 import { z } from "zod";
 import { isSqliteBusy } from "../core/sqlite-policy.js";
 
@@ -18,11 +19,39 @@ export const deliveryEvidenceSchema = z.object({
     "job-route-changed", "destination-binding-changed", "protocol-refusal", "admission-cancelled", "other"]).optional(),
 }).strict();
 export type DeliveryEvidence = z.infer<typeof deliveryEvidenceSchema>;
+
+// Diagnostics must not invoke exception getters, proxy traps or coercion hooks.
+function dataField(value: unknown, key: string): unknown {
+  if (typeof value !== "object" || value === null || types.isProxy(value)) return undefined;
+  const descriptor = Object.getOwnPropertyDescriptor(value, key);
+  return descriptor && "value" in descriptor ? descriptor.value : undefined;
+}
+
+function errorName(error: unknown): unknown {
+  const ownName = dataField(error, "name");
+  if (ownName !== undefined || !types.isNativeError(error)) return ownName;
+  // Native Error names normally live on their prototype. Only inspect bounded
+  // data descriptors; a custom subclass/prototype cannot introduce getter calls.
+  let prototype: object | null = error as object;
+  for (let depth = 0; depth < 4 && prototype && !types.isProxy(prototype); depth++) {
+    const name = dataField(prototype, "name");
+    if (name !== undefined) return name;
+    prototype = Object.getPrototypeOf(prototype) as object | null;
+  }
+  return undefined;
+}
+
 export function deliveryFailure(error: unknown): Pick<DeliveryEvidence, "code" | "reason"> {
-  const candidate = error as { code?: unknown; message?: unknown; name?: unknown } | null;
-  const parsedCode = failureCode.safeParse(candidate?.code);
+  const rawCode = dataField(error, "code"), rawMessage = dataField(error, "message"), rawErrcode = dataField(error, "errcode");
+  const boundedCode = typeof rawCode === "string" && rawCode.length <= 64 ? rawCode : "";
+  const parsedCode = failureCode.safeParse(boundedCode);
   const code = parsedCode.success ? parsedCode.data : "other";
-  const message = typeof candidate?.message === "string" ? candidate.message.slice(0, 4096) : "";
+  const message = typeof rawMessage === "string" ? rawMessage.slice(0, 4096) : "";
+  const name = errorName(error);
+  // Only the primary busy/locked numeric codes understood by isSqliteBusy are
+  // admitted. No numeric coercion, fractions, nonfinite or extended-code guessing.
+  const errcode = typeof rawErrcode === "number" && Number.isInteger(rawErrcode) && (rawErrcode === 5 || rawErrcode === 6) ? rawErrcode : undefined;
+  const sqliteCode = parsedCode.success || /^(?:SQLITE_BUSY|SQLITE_LOCKED)(?:_[A-Z][A-Z0-9_]{0,47})?$/.test(boundedCode) ? boundedCode : "other";
   // These are exact application error families, not copied exception text.
   // Classification is diagnostic only and never permits routing or recovery.
   const reason = code === "ELEASEBUSY" || /metadata lease has (?:a )?live or unknown owner|own process identity is unavailable/i.test(message) ? "metadata-owner-unavailable" :
@@ -41,10 +70,10 @@ export function deliveryFailure(error: unknown): Pick<DeliveryEvidence, "code" |
     /already (?:stored|retained|pending) with different|accepted bytes changed/i.test(message) ? "retained-content-mismatch" :
     /Original authenticated remote host or destination binding changed|Original remote supervisor ownership is unproven|Current ownership would redirect an original remote send/.test(message) ? "destination-binding-changed" :
     code === "protocol_mismatch" ? "protocol-refusal" :
-    isSqliteBusy(error) || /database is busy/.test(message) ? "writer-busy" :
+    isSqliteBusy({ code: sqliteCode, errcode, message }) || /database is busy/.test(message) ? "writer-busy" :
     /connection closed|broker.*(?:unreachable|not reachable)|not connected/i.test(message) ? "connection-unavailable" :
     /broker request timed out|connect timeout|timed out connecting/i.test(message) ? "request-deadline" :
-    candidate?.name === "AbortError" ? "admission-cancelled" :
-    candidate?.name === "TypeError" || /Cannot (?:read properties|access .+ before initialization)/.test(message) ? "runtime-type-error" : "other";
+    name === "AbortError" ? "admission-cancelled" :
+    name === "TypeError" || /Cannot (?:read properties|access .+ before initialization)/.test(message) ? "runtime-type-error" : "other";
   return { code, reason };
 }

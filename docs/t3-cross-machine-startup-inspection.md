@@ -83,3 +83,34 @@ unchanged. The Windows takeover, earlier Mac tenth-runner and fairness causes
 remain unproven pending new hosted evidence. Fresh independent review, hosted
 OpenCode/TLS/native lifecycle/full gates remain mandatory. No install, migration
 launch, release, daemon replacement, Bridge call, delegation or further agent.
+
+## R16 diagnostic input boundary
+
+Review of659febeb found that `deliveryFailure` passed the original exception to
+`isSqliteBusy`, which could scan beyond the advertised4096-character bound or
+coerce nonstring fields. Classification now builds a fresh plain snapshot:
+only an own primitive message's first4096 characters, a validated code of at
+most64 characters, and numeric primary busy/locked codes5/6 reach that helper.
+Nonfinite/fractional, coerced and unsupported extended numeric codes provide
+no diagnostic evidence. Finite textual SQLite busy/locked suffixes remain
+recognized; arbitrary or overlong suffixes do not. Only finite output enums
+are retained, never the input text. This does not change the general SQLite
+production policy or any retry/admission decision.
+
+Own data descriptors are read without invoking getters. Proxy inputs are
+rejected before property inspection; nonstring fields never undergo coercion.
+Ordinary native Error names still work through at most four prototype data
+descriptor inspections, stopping before a proxy. Arbitrary inherited message,
+code and errcode properties are not diagnostic evidence. These are conservative
+diagnostic limits, not ownership or process-liveness authority.
+
+On659febeb plus the new focused tests, PID12192 exited1 within60s:7 failed,
+15 passed. The failures include beyond-bound SQLite markers, malformed codes,
+object coercion, getters and inherited accessor inspection. Working-patch
+PID14684 exited0 within60s with40 selected passes and16 exclusions; that run
+does not assert a later commit was tested. The exact frozen head/tree, test
+selection, own PIDs, exits and noEmit result are recorded separately in
+`E:/AgentData/reports/ab458-pr141-<head>-bounded-evidence-validation.json`.
+Original held-lease/note-final persistence assertions and all13 mobile pins,
+UI source, normalizer, protocol6/schema14 and general SQLite policy are retained.
+This correction supplies no new proof of the native takeover/fairness causes.
