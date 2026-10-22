@@ -23,5 +23,10 @@ for (const step of job.steps) {
 assert.equal(treeHash(manifest.effectiveFiles), manifest.effectiveTreeSha256);
 assert.equal(manifest.artifacts.find((file) => file.path === manifest.patchOrder[0]).sha256, manifest.historicalArtifact.sha256);
 assert.equal(manifest.patchOrder.length, 3);
+assert.equal(fs.existsSync(path.join(root, 'ci.vitest.config.ts')), false);
+const template = manifest.materializedConfigs.find((config) => config.path === '.ab458-ci.vitest.config.ts');
+assert.equal(template.source, 'ci.vitest.config.ts.template');
+assert.equal(template.sha256, '43b4ab80ef6e94cc2b4306acc4975f59602314b35ad008066cf499da7a5b6ac3');
+assert.equal(sha256(fs.readFileSync(path.join(root, template.source))), template.sha256);
 console.log(JSON.stringify({ pid: process.pid, validation: 'offline package/workflow JSON-subset YAML semantics',
   manifestSha256: sha256(fs.readFileSync(path.join(root, 'manifest.json'))), effectiveTreeSha256: manifest.effectiveTreeSha256 }));

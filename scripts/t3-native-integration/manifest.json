@@ -1,13 +1,13 @@
 {
   "schema": 1,
-  "status": "prepared-not-hosted-executed",
+  "status": "followup-prepared-hosted-rerun-required",
   "upstream": {
     "repository": "https://github.com/pingdotgg/t3code.git",
     "commit": "968dd51704441138559a3fe9c348719f2b11e0c6"
   },
   "codexInspectedSourcePin": "6203846fb3ef040f62eed9b35bc6629c8e88980a",
   "parentBridgeBase": "70820a0fd090bd12f8245e9cf7e51db13a78eef0",
-  "packageInputBridgeHead": "2ecd3dc7318da1490f2135ff8afcf0eb50f276e9",
+  "packageInputBridgeHead": "430e3eecd9cbb2b38ee5d5f7eec895236249bc2d",
   "patchOrder": [
     "01-reviewed.patch",
     "02-disposal-test.patch",
@@ -150,6 +150,11 @@
       "gitBlob": "bf67174033f4d07a1f7e479d3cb0be4e01050526"
     },
     {
+      "path": "packages/effect-codex-app-server/src/replay.ts",
+      "sha256": "30f1dc0f3d4954dd6b2609615dba604687f989fece9947f07886069e66206da6",
+      "gitBlob": "468276e36760fcb737d6cbce119b482b4d5213f5"
+    },
+    {
       "path": "packages/provider-core/src/server/McpProviderSessions.ts",
       "sha256": "196c6afa2b063fbc165024c9d7e0996b347cb91788d0e0bad6cbbb804e464f88",
       "gitBlob": "2da992cfb852d5fb7aa60607c877ca1858b83d92"
@@ -177,12 +182,16 @@
   ],
   "effectiveFiles": [
     {
+      "path": "apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.testkit.ts",
+      "sha256": "62c482988eff5a87d4673c8dd464f745e9e18ce2dd143eae2515b8ff4b88aab7"
+    },
+    {
       "path": "apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts",
-      "sha256": "5ef4e28d960a97d4ef53ed1426ecc3e6fa2519000464b8a884dd9f93f4b384fb"
+      "sha256": "28fdedb7ff0d7214e3a89539674502c9b867e21c4ece6127210c109660c74f1b"
     },
     {
       "path": "apps/server/src/orchestration-v2/Adapters/CodexBridgeDynamicTools.adapter.test.ts",
-      "sha256": "a9483ee8a53cbdf8ae7ae155d383fb938846c478def0b6bb39d75025b123c0e5"
+      "sha256": "0855734faaed3f80e066541c36829b89a4f074d382a839ab4f785ea766f82f9c"
     },
     {
       "path": "apps/server/src/orchestration-v2/Adapters/CodexBridgeDynamicTools.replay.test.ts",
@@ -190,11 +199,15 @@
     },
     {
       "path": "apps/server/src/orchestration-v2/Adapters/CodexBridgeDynamicTools.test.ts",
-      "sha256": "25136da37277a9245e867666098f8d29b74b8893329cfc1fcfee0f6a65d1e13e"
+      "sha256": "bbf1f22cace1cdf0b41966cd964c25b8f9bfe6474e5e31ab9a116ec2baf725f7"
     },
     {
       "path": "apps/server/src/orchestration-v2/Adapters/CodexBridgeDynamicTools.ts",
-      "sha256": "a8713533a7b93d49baf4703e0808460f917bc8ffbc99f99452ec92ac65434244"
+      "sha256": "e36c707fab747c1ce7c7d7e640356f0fc143672cd2283a93933c2055924a8004"
+    },
+    {
+      "path": "packages/effect-codex-app-server/src/client.ts",
+      "sha256": "f42b57719c240c2196d6db595fb68f7d032928813cf04adb2c23bbe9123ff60a"
     },
     {
       "path": "packages/effect-codex-app-server/src/errors.ts",
@@ -202,23 +215,27 @@
     },
     {
       "path": "packages/effect-codex-app-server/src/PrivateProtocolLifecycle.test.ts",
-      "sha256": "032a761a340af90f9a396cfbd30b14c98afb4fc339d04fa70f1fe73595123cd1"
+      "sha256": "efa24379a72ac370e5d08068023e1286fd7daaa15f1148c8204f0fe0d39b86ed"
     },
     {
       "path": "packages/effect-codex-app-server/src/PrivateRequestAdmission.test.ts",
-      "sha256": "ca1114f711094acfebe6fd6efe280c91012ca7e97efd14b4497ab4e63d582e72"
+      "sha256": "a5ceead8d9bd94bda9c0496d7b41105c28302cdecaf8e88e96ec454826ca4a8c"
     },
     {
       "path": "packages/effect-codex-app-server/src/PrivateRequestAdmission.ts",
-      "sha256": "7e5e5d403b6932d7970d4929cf9ba470eccfa4f452fd3abf70375f9ba82c7ea1"
+      "sha256": "d9faf36009736fb2b0018f5e38ab0ad76b12bd3a52ed35bbbeff48af0a9f4505"
     },
     {
       "path": "packages/effect-codex-app-server/src/protocol.ts",
-      "sha256": "f6c1267360c9bfdb6ec133c8bec821ea6754d09caeb8e0c30ad2475428724bcf"
+      "sha256": "076967fc7337f3cafc3db0c0b326d7b43d297e3058f08047dc53a4b24fb8a273"
+    },
+    {
+      "path": "packages/effect-codex-app-server/src/replay.ts",
+      "sha256": "3a84f6f699b665574eb7f088f1564e37489563eefb10c02d2bc4c4c6eebeacea"
     }
   ],
   "effectiveTreeHashAlgorithm": "SHA256 of path+NUL+sha256+LF for files sorted by localeCompare(en); changed/new upstream source files only",
-  "effectiveTreeSha256": "64519d9fa4d284c6c0ff8f1b8c9bb6fc3f17c4939c8d934209f52f5c83ff76f4",
+  "effectiveTreeSha256": "854e276ffb71914f8ce1fef56b8499dcc8b76dca1d657a2586f0713c3ccae380",
   "artifacts": [
     {
       "path": "01-reviewed.patch",
@@ -230,19 +247,19 @@
     },
     {
       "path": "03-round3.patch",
-      "sha256": "4fc67d2a06951a851a597ea83c090c486aefdd74c0b15e087fe0c8ea253d7307"
+      "sha256": "6ba1e3b1175765ec98c5d63caac154e8257ff21f6c585deccd07cd4602e36774"
     },
     {
       "path": "ci.typecheck.json",
       "sha256": "bab00e3cc1be9b79fb6b0e32096d2b324d9d430435beee357ca41ea6cce1302b"
     },
     {
-      "path": "ci.vitest.config.ts",
+      "path": "ci.vitest.config.ts.template",
       "sha256": "43b4ab80ef6e94cc2b4306acc4975f59602314b35ad008066cf499da7a5b6ac3"
     },
     {
       "path": "gate.mjs",
-      "sha256": "432c772298cecf0b60af4f767043327837785bffaf1e0420ad699ab345737feb"
+      "sha256": "bf6f33627083dd32058915ae1f65f37a2ddf58757922fd85cfbf243eb3f48d78"
     },
     {
       "path": "gate.test.mjs",
@@ -250,20 +267,40 @@
     },
     {
       "path": "offline-evidence.json",
-      "sha256": "890784b8adb5b2635692c402759d3f3a12ee3989667c0d7e601e11ba40794911"
+      "sha256": "bcf7806fd167da15bd2878bcdaf7ee71251082b8bdf3c943db9a04c7fc103202"
     },
     {
       "path": "README.md",
-      "sha256": "a267dc9fdedda9deb6c9193b8bdd9a07c1fa68e86dc4fa2f529b497bd58237d3"
+      "sha256": "f38a1601b5287bb2f7ecf92b200756643d767fd5e0d4f3a0d0cfff12b71bbf6f"
     },
     {
       "path": "run.mjs",
-      "sha256": "012630938e3fb125ff44644d8fa6abad9790951c4c0615e81aed30c9d0d8a981"
+      "sha256": "7c7c3b89a4f6fc2d7ea629c6662d5f3edc922e39d3af6c3cec14c38e13d6d9e5"
     },
     {
       "path": "verify.mjs",
-      "sha256": "607b09c5f17052f2e0f12d03e2f065ef1f3e4c6aa938e9fa3eb598e40848a018"
+      "sha256": "ca1082e29618c8565ea621104570f786132c15f1f459a6e3235626e65f2ce7e6"
     }
   ],
-  "workflowSha256": "c87b24ae47cd1341788f20e2efe108e78b108816b69d812c6c57e88ac21ddf07"
+  "workflowSha256": "c87b24ae47cd1341788f20e2efe108e78b108816b69d812c6c57e88ac21ddf07",
+  "priorRevision": {
+    "head": "430e3eecd9cbb2b38ee5d5f7eec895236249bc2d",
+    "manifestSha256": "5a5a128d6f00e8f2b1ec30425de918d9b8bd0a5ed1dd6065a13e253e214eb345",
+    "round3PatchSha256": "4fc67d2a06951a851a597ea83c090c486aefdd74c0b15e087fe0c8ea253d7307",
+    "effectiveTreeSha256": "64519d9fa4d284c6c0ff8f1b8c9bb6fc3f17c4939c8d934209f52f5c83ff76f4",
+    "hostedStatus": "Pinned upstream typecheck ran and failed eight errors; tests/mutations not reached. Windows Bridge typecheck also failed on upstream config imports.",
+    "upstreamTypecheckLogSha256": "da217ad8857864e7935cb73d2beb532ad5367e2ecd572e5f26172817b6ff04d0"
+  },
+  "materializedConfigs": [
+    {
+      "source": "ci.vitest.config.ts.template",
+      "path": ".ab458-ci.vitest.config.ts",
+      "sha256": "43b4ab80ef6e94cc2b4306acc4975f59602314b35ad008066cf499da7a5b6ac3"
+    },
+    {
+      "source": "ci.typecheck.json",
+      "path": ".ab458-ci.typecheck.json",
+      "sha256": "bab00e3cc1be9b79fb6b0e32096d2b324d9d430435beee357ca41ea6cce1302b"
+    }
+  ]
 }

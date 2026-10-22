@@ -56,6 +56,7 @@ export function validateReport(report, { expectedTest, marker, mutation = false,
 }
 
 export const productionTest = 'AB458 production admission: actual adapter registration, 32-limit warm replay, roots, fault and close';
+export const suspendedTerminationTest = 'AB458 real protocol lifecycle publishes suspended-handler termination before owned cleanup completes';
 
 export function mutations() {
   const adapter = 'apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts';
@@ -75,10 +76,36 @@ export function mutations() {
       once(text, '...params, dynamicTools: bridgeDynamicTools,', '...params, /* mutation: registration absent */') },
     { name: 'cap-order', path: 'packages/effect-codex-app-server/src/PrivateRequestAdmission.ts',
       marker: 'AB458_REPLAY_MUST_REMAIN_PENDING', change: (text) =>
-        once(text, '      if (existing) return', '      if (active >= maxActive) return { kind: "overloaded" };\n      if (existing) return') },
+        once(text, '    if (existing) return', '    if (active >= maxActive) return { kind: "overloaded" };\n    if (existing) return') },
     { name: 'encoded-response', path: protocol, marker: 'AB458_WIRE_RESULT', change: (text) =>
       once(text, 'const encoded = yield* encodeWireMessage(message);', `const encoded = yield* encodeWireMessage(
           message.id === 100 && "result" in message ? { id: 100, result: { success: false, contentItems: [] } } : message,
         );`) },
+    { name: 'suspended-terminal-publication', path: protocol, marker: 'AB458_SUSPENDED_TERMINAL_PUBLICATION',
+      test: suspendedTerminationTest, file: 'packages/effect-codex-app-server/src/PrivateProtocolLifecycle.test.ts', change: (text) => {
+        const start = text.indexOf('    const handleTermination = '), end = text.indexOf('    const offerOutgoing =', start);
+        if (start < 0 || end < start) throw new Error('Terminal publication mutation preimage changed');
+        // Reintroduce the reviewed 430e scope/notification order, leaving the
+        // current typed Crypto/clock/error corrections intact for collection.
+        const previous = `    const handleTermination = (classify: () => Effect.Effect<CodexError.CodexAppServerError>) =>
+      Ref.modify(terminationHandled, (handled) => {
+        if (handled) return [Effect.void, true] as const;
+        return [Effect.gen(function* () {
+          requestAdmission.close();
+          const error = yield* classify().pipe(Effect.timeoutOrElse({ duration: "2 seconds",
+            orElse: () => Effect.succeed(new CodexError.CodexAppServerInputStreamEndedError({})) }));
+          yield* Ref.set(terminationFailure, Option.some(error));
+          yield* failAllPending(error);
+          yield* Queue.end(outgoing);
+          yield* Deferred.succeed(terminationSignal, undefined);
+          yield* Scope.close(requestHandlerScope, Exit.void).pipe(
+            Effect.forkIn(protocolScope, { startImmediately: true }), Effect.asVoid);
+          if (options.onTermination) yield* options.onTermination(error);
+        }), true] as const;
+      }).pipe(Effect.flatten);
+
+`;
+        return text.slice(0, start)+previous+text.slice(end);
+      } },
   ];
 }

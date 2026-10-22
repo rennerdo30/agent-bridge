@@ -105,3 +105,31 @@ acceptance occurred. The all-managed-request lifetime budget and the still-missi
 transport-terminal-signal-to-broker-revocation interface require upstream review
 before production enablement. The tracked README records exact hosted commands,
 tool/source pins, evidence boundaries, and connector ownership requirements.
+
+## PR #140 round-four and first hosted failures
+
+Parent opened [PR #140](https://github.com/rennerdo30/agent-bridge/pull/140).
+The `430e3eec` hosted run reached the pinned upstream typecheck and failed eight
+errors before executing tests. The follow-up replaces synchronous schema decode
+inside Effect, ambient timers, unsafe JSON indexing, schema `instanceof`, unknown
+error-channel flips, native crypto import, and the collapsed admission union.
+Effect Crypto is explicit in the protocol/client/replay service requirements;
+production and replay factories capture/provide it. Admission remains serialized
+before the cap and rechecks revocation after asynchronous hashing.
+
+Round-four review also found that a suspended defect handler could interrupt
+itself while closing its own scope before publishing termination. Publication is
+now attached atomically to a protocol-owned fiber, with interruption-safe one-time
+claim, pending settlements, bounded callback and subsequent forked handler cleanup.
+A native-Promise suspension regression holds a sibling finalizer while asserting
+notification and pending failure; a fifth hosted mutation restores the old order.
+It must produce the named assertion failure rather than a timeout or setup error.
+
+The Windows Bridge typecheck failures were package isolation failures: its source
+glob included the upstream Vitest config. That file is now a non-TS data template;
+the runner materializes the exact original upstream bytes/hash. No Bridge source
+exclusions or upstream dependencies were added. A bounded local Bridge typecheck
+passed using its unchanged config, all source roots, and exact existing canonical
+dependencies through read-only junctions in an owned report mirror. No dependency
+was installed. Revised upstream typecheck, actual Effect/client/adapter tests and
+five production mutations still require the next hosted run and independent review.

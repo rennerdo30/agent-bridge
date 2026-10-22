@@ -1,5 +1,117 @@
+diff --git a/apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.testkit.ts b/apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.testkit.ts
+index ea94982..5a2d9e4 100644
+--- a/apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.testkit.ts
++++ b/apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.testkit.ts
+@@ -5,6 +5,7 @@ import { type ProviderReplayTranscript } from "@t3tools/contracts";
+ import * as CodexClient from "effect-codex-app-server/client";
+ import type * as CodexError from "effect-codex-app-server/errors";
+ import * as CodexReplay from "effect-codex-app-server/replay";
++import * as Crypto from "effect/Crypto";
+ import * as Effect from "effect/Effect";
+ import * as FileSystem from "effect/FileSystem";
+ import * as Layer from "effect/Layer";
+@@ -189,7 +190,9 @@ export function layer(input: {
+     input.driver === undefined
+       ? CodexReplay.layerReplay(input.transcript)
+       : CodexReplay.layerReplayWithDriver(input.driver);
+-  const layerReplayClientFactory = Layer.succeed(CodexAdapterV2.CodexAppServerClientFactory, {
++  const layerReplayClientFactory = Layer.effect(CodexAdapterV2.CodexAppServerClientFactory, Effect.gen(function* () {
++    const crypto = yield* Crypto.Crypto;
++    return CodexAdapterV2.CodexAppServerClientFactory.of({
+     open: (openInput) =>
+       Effect.gen(function* () {
+         const context = yield* Layer.build(layerReplay).pipe(
+@@ -206,8 +209,9 @@ export function layer(input: {
+           Effect.map((client) => withCodexReplayChildMetadata(client, input.transcript)),
+           Effect.provide(context),
+         );
+-      }),
+-  });
++      }).pipe(Effect.provideService(Crypto.Crypto, crypto)),
++    });
++  }));
+   const layerServerConfig = Layer.effect(
+     ServerConfig.ServerConfig,
+     makeReplayServerConfig(input.transcript.scenario).pipe(Effect.orDie),
+diff --git a/apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts b/apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts
+index 8917ccf..52094ae 100644
+--- a/apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts
++++ b/apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts
+@@ -1,4 +1,4 @@
+-import { bridgeDenied, bridgeDynamicTools, makeBridgeDynamicSession, type BridgeAppScope, type BridgeMessagingPort } from "./CodexBridgeDynamicTools.ts";
++import { bridgeDenied, bridgeDynamicTools, makeBridgeClock, makeBridgeDynamicSession, type BridgeAppScope, type BridgeMessagingPort } from "./CodexBridgeDynamicTools.ts";
+ import { revertCodexThread } from "../../provider/CodexThreadRevert.ts";
+ import { historyResponseItems } from "@t3tools/provider-core/server/handoffBudget";
+ import { makeProviderTextDeltaCoalescer } from "./ProviderTextDeltaCoalescer.ts";
+@@ -78,6 +78,7 @@ import * as CodexSchema from "effect-codex-app-server/schema";
+ import * as Cause from "effect/Cause";
+ import * as Context from "effect/Context";
+ import * as Crypto from "effect/Crypto";
++import * as Clock from "effect/Clock";
+ import * as DateTime from "effect/DateTime";
+ import * as Deferred from "effect/Deferred";
+ import * as Effect from "effect/Effect";
+@@ -1420,11 +1421,12 @@ const layerCodexAppServerClientFactoryCommand = (
+     readonly cwd?: string;
+     readonly env?: NodeJS.ProcessEnv;
+   },
+-): Layer.Layer<CodexAppServerClientFactory, never, ChildProcessSpawner.ChildProcessSpawner> =>
++): Layer.Layer<CodexAppServerClientFactory, never, ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto> =>
+   Layer.effect(
+     CodexAppServerClientFactory,
+     Effect.gen(function* () {
+       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
++      const crypto = yield* Crypto.Crypto;
+       return CodexAppServerClientFactory.of({
+         open: Effect.fn("CodexAdapterV2.open")(function* (input) {
+           const scope = yield* Scope.Scope;
+@@ -1445,7 +1447,9 @@ const layerCodexAppServerClientFactoryCommand = (
+                 }),
+             ),
+           );
+-          const context = yield* Layer.build(CodexClient.layerChildProcess(handle, options));
++          const context = yield* Layer.build(CodexClient.layerChildProcess(handle, options)).pipe(
++            Effect.provideService(Crypto.Crypto, crypto),
++          );
+           return yield* Effect.service(CodexClient.CodexAppServerClient).pipe(
+             Effect.provide(context),
+           );
+@@ -1531,11 +1535,12 @@ function isSensitiveCodexProtocolKey(key: string): boolean {
+ export const layerAppServerClientFactory: Layer.Layer<
+   CodexAppServerClientFactory,
+   never,
+-  ChildProcessSpawner.ChildProcessSpawner | ProviderEventLoggers.ProviderEventLoggers
++  ChildProcessSpawner.ChildProcessSpawner | ProviderEventLoggers.ProviderEventLoggers | Crypto.Crypto
+ > = Layer.effect(
+   CodexAppServerClientFactory,
+   Effect.gen(function* () {
+     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
++    const crypto = yield* Crypto.Crypto;
+     const { native: nativeEventLogger } = yield* ProviderEventLoggers.ProviderEventLoggers;
+     const agentScope = yield* AgentScope;
+ 
+@@ -1578,7 +1583,9 @@ export const layerAppServerClientFactory: Layer.Layer<
+                 logOutgoing: true,
+                 logger: protocolLogger,
+               };
+-        const context = yield* Layer.build(CodexClient.layerChildProcess(handle, clientOptions));
++        const context = yield* Layer.build(CodexClient.layerChildProcess(handle, clientOptions)).pipe(
++          Effect.provideService(Crypto.Crypto, crypto),
++        );
+         return yield* Effect.service(CodexClient.CodexAppServerClient).pipe(
+           Effect.provide(context),
+         );
+@@ -1842,7 +1849,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
+           appThreadId: input.threadId,
+           providerInstanceId: adapterOptions.instanceId,
+           providerSessionId: input.providerSessionId,
+-        }, bridgePort);
++        }, bridgePort, { clock: makeBridgeClock(yield* Clock.Clock) });
+         if (bridgeSession) {
+           yield* Effect.addFinalizer(() => Effect.promise(() => bridgeSession.close()).pipe(
+             Effect.flatMap((result) => result.status === "closed" ? Effect.void :
 diff --git a/apps/server/src/orchestration-v2/Adapters/CodexBridgeDynamicTools.adapter.test.ts b/apps/server/src/orchestration-v2/Adapters/CodexBridgeDynamicTools.adapter.test.ts
-index a4e5d26..44cf48c 100644
+index a4e5d26..51374d6 100644
 --- a/apps/server/src/orchestration-v2/Adapters/CodexBridgeDynamicTools.adapter.test.ts
 +++ b/apps/server/src/orchestration-v2/Adapters/CodexBridgeDynamicTools.adapter.test.ts
 @@ -64,10 +64,12 @@ function turnInput(threadId: ThreadId, providerThread: OrchestrationV2ProviderTh
@@ -57,6 +169,15 @@ index a4e5d26..44cf48c 100644
        case "initialize": result = { userAgent: "mock", codexHome: "/mock", platformFamily: "unix", platformOs: "linux" }; break;
        case "thread/start": result = threadReply; break;
        case "thread/resume": {
+@@ -136,7 +141,7 @@ const makeHarness = Effect.fnUntraced(function* (scope: Scope.Scope) {
+     close: async (signal) => { closed++; assert.equal(signal.aborted, false); closeEntered.resolve(); return releaseClose.promise; },
+   };
+   const adapter = yield* Adapter.makeCodexAdapterV2({
+-    instanceId: Adapter.CODEX_DEFAULT_INSTANCE_ID, settings: Schema.decodeSync(CodexSettings)({}), environment: {},
++    instanceId: Adapter.CODEX_DEFAULT_INSTANCE_ID, settings: yield* Schema.decodeEffect(CodexSettings)({}), environment: {},
+     clientFactory: { open: () => Effect.succeed(client) }, openBridgeMessaging: () => port,
+     crypto: yield* Crypto.Crypto, fileSystem: yield* FileSystem.FileSystem,
+     idAllocator: yield* IdAllocator.IdAllocatorV2,
 @@ -144,6 +149,11 @@ const makeHarness = Effect.fnUntraced(function* (scope: Scope.Scope) {
    });
    const appId = ThreadId.make("app-ab458");
@@ -120,12 +241,88 @@ index a4e5d26..44cf48c 100644
      yield* h.emit(rpc(100)); yield* h.barrier();
      assert.equal(h.replies(100).length, 1); assert.equal(h.sends(), 32); // completed same-ID tombstone, no cached transport payload
  
+diff --git a/apps/server/src/orchestration-v2/Adapters/CodexBridgeDynamicTools.test.ts b/apps/server/src/orchestration-v2/Adapters/CodexBridgeDynamicTools.test.ts
+index 3f2df28..3609ac4 100644
+--- a/apps/server/src/orchestration-v2/Adapters/CodexBridgeDynamicTools.test.ts
++++ b/apps/server/src/orchestration-v2/Adapters/CodexBridgeDynamicTools.test.ts
+@@ -38,7 +38,11 @@ function fixture(app = "A", overrides: Partial<BridgeMessagingPort> = {}) {
+     ...overrides,
+   };
+   const scope = { appThreadId: `app-${app}`, providerInstanceId: "provider", providerSessionId: `session-${app}` };
+-  const session = makeBridgeDynamicSession(scope, port);
++  const timers = new Map<object, () => void>();
++  const session = makeBridgeDynamicSession(scope, port, { clock: {
++    setTimeout: (callback) => { const handle = {}; timers.set(handle, callback); return handle; },
++    clearTimeout: (handle) => { timers.delete(handle as object); },
++  } });
+   const bind = (id: string) => { assert.equal(session.reserveStart(), true); session.bindStartedRoot(id); };
+   return { scope, port, session, effects, bind, revokePort: () => { live = false; } };
+ }
+diff --git a/apps/server/src/orchestration-v2/Adapters/CodexBridgeDynamicTools.ts b/apps/server/src/orchestration-v2/Adapters/CodexBridgeDynamicTools.ts
+index 2ce058c..4ee1f6a 100644
+--- a/apps/server/src/orchestration-v2/Adapters/CodexBridgeDynamicTools.ts
++++ b/apps/server/src/orchestration-v2/Adapters/CodexBridgeDynamicTools.ts
+@@ -1,4 +1,7 @@
+ // Proposed upstream file. No broker connection or default production wiring.
++import * as Clock from "effect/Clock";
++import * as Duration from "effect/Duration";
++import * as Effect from "effect/Effect";
+ import type * as CodexSchema from "effect-codex-app-server/schema";
+ 
+ export interface BridgeAppScope {
+@@ -40,10 +43,20 @@ export interface BridgeClock {
+   readonly setTimeout: (callback: () => void, ms: number) => unknown;
+   readonly clearTimeout: (handle: unknown) => void;
+ }
+-const realClock: BridgeClock = {
+-  setTimeout: (callback, ms) => setTimeout(callback, ms),
+-  clearTimeout: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+-};
++// Named adapter boundary between the Promise broker port and the app's Effect
++// clock. Each handle owns only its sleep fiber; clearing it aborts that fiber.
++export function makeBridgeClock(clock: Clock.Clock): BridgeClock {
++  return {
++    setTimeout: (callback, ms) => {
++      const stop = new AbortController();
++      Effect.runFork(clock.sleep(Duration.millis(ms)).pipe(
++        Effect.andThen(Effect.sync(callback)),
++      ), { signal: stop.signal });
++      return stop;
++    },
++    clearTimeout: (handle) => (handle as AbortController).abort(),
++  };
++}
+ 
+ const empty = { type: "object", properties: {}, additionalProperties: false } as const;
+ const strings = (names: string[]) => ({
+@@ -71,7 +84,7 @@ function exactStrings(value: Json, keys: readonly string[]): Record<string, stri
+   const out: Record<string, string> = {};
+   for (const key of keys) {
+     if (!Object.hasOwn(value, key)) return;
+-    const text = value[key as keyof typeof value];
++    const text: unknown = Reflect.get(value, key);
+     if (typeof text !== "string" || text.length === 0 || text.length > 16_384) return;
+     out[key] = text;
+   }
+@@ -80,10 +93,10 @@ function exactStrings(value: Json, keys: readonly string[]): Record<string, stri
+ 
+ // One instance per owned app-server stdio session; absence of the injected port
+ // means no instance, no tool registration, and denied persisted tool requests.
+-export function makeBridgeDynamicSession(scope: BridgeAppScope, port: BridgeMessagingPort, options: { readonly clock?: BridgeClock } = {}) {
++export function makeBridgeDynamicSession(scope: BridgeAppScope, port: BridgeMessagingPort, options: { readonly clock: BridgeClock }) {
+   const owner = Object.freeze({ ...scope });
+   const lifetime = new AbortController();
+-  const clock = options.clock ?? realClock;
++  const clock = options.clock;
+   let root: BridgeRootLease | undefined;
+   let startReserved = false;
+   let disposal: Promise<BridgeDisposal> | undefined;
 diff --git a/packages/effect-codex-app-server/src/PrivateProtocolLifecycle.test.ts b/packages/effect-codex-app-server/src/PrivateProtocolLifecycle.test.ts
 new file mode 100644
-index 0000000..0da6130
+index 0000000..b2826eb
 --- /dev/null
 +++ b/packages/effect-codex-app-server/src/PrivateProtocolLifecycle.test.ts
-@@ -0,0 +1,144 @@
+@@ -0,0 +1,217 @@
 +import { assert, it } from "@effect/vitest";
 +import * as NodeServices from "@effect/platform-node/NodeServices";
 +import * as Deferred from "effect/Deferred";
@@ -135,14 +332,87 @@ index 0000000..0da6130
 +import * as Sink from "effect/Sink";
 +import * as Stdio from "effect/Stdio";
 +import * as Stream from "effect/Stream";
++import * as Schema from "effect/Schema";
 +import * as CodexError from "./errors.ts";
 +import * as Protocol from "./protocol.ts";
 +import { makeInMemoryStdio } from "./_internal/stdio.ts";
 +
 +const encode = (value: unknown) => new TextEncoder().encode(`${JSON.stringify(value)}\n`);
 +const request = { id: 7, method: "item/tool/call", params: { mock: true } };
++const failureOf = <A>(effect: Effect.Effect<A, CodexError.CodexAppServerError>) => effect.pipe(
++  Effect.match({ onFailure: (error) => error, onSuccess: () => assert.fail("Expected terminal failure") }),
++);
++
++function latch() {
++  let resolve!: () => void;
++  const promise = new Promise<void>((yes) => { resolve = yes; });
++  return { promise, resolve };
++}
 +
 +it.layer(NodeServices.layer)("AB458 real protocol lifecycle", (it) => {
++  it.effect("publishes suspended-handler termination before owned cleanup completes", () =>
++    Effect.gen(function* () {
++      const pipe = yield* makeInMemoryStdio();
++      const handlerEntered = latch(), releaseDefect = latch();
++      const siblingEntered = yield* Deferred.make<void>();
++      const finalizerEntered = yield* Deferred.make<void>(), releaseFinalizer = yield* Deferred.make<void>();
++      const finalizerFinished = yield* Deferred.make<void>(), readerStopped = yield* Deferred.make<void>();
++      let notifications = 0, effects = 0, admissions = 0;
++      let notificationError: CodexError.CodexAppServerError | undefined;
++      const transport = yield* Protocol.makeCodexAppServerPatchedProtocol({
++        stdio: Stdio.make({ ...pipe.stdio,
++          stdin: pipe.stdio.stdin.pipe(Stream.ensuring(Deferred.succeed(readerStopped, undefined).pipe(Effect.asVoid))),
++        }),
++        onRequest: (incoming) => {
++          admissions++;
++          if (incoming.id === 7) {
++            // An unresolved native promise forces an actual async suspension.
++            // The parent awaits its entered signal and the other handler before
++            // resolving it; no synchronous Deferred-only or yield-poll shortcut.
++            return Effect.promise(() => { handlerEntered.resolve(); return releaseDefect.promise; }).pipe(
++              Effect.andThen(Effect.sync(() => effects++)),
++              Effect.andThen(Effect.die(new Error("mock defect after suspension and commit"))),
++            );
++          }
++          return Deferred.succeed(siblingEntered, undefined).pipe(
++            Effect.andThen(Effect.never),
++            Effect.onInterrupt(() => Deferred.succeed(finalizerEntered, undefined).pipe(
++              Effect.andThen(Deferred.await(releaseFinalizer)),
++              Effect.andThen(Deferred.succeed(finalizerFinished, undefined)), Effect.asVoid,
++            )),
++          );
++        },
++        onTermination: (error) => Effect.sync(() => { notifications++; notificationError = error; }),
++      });
++      // Release only this test's resources if an assertion or mutation fails.
++      yield* Effect.addFinalizer(() => Effect.sync(releaseDefect.resolve).pipe(
++        Effect.andThen(Deferred.succeed(releaseFinalizer, undefined)), Effect.asVoid,
++      ));
++      const pending = yield* transport.request("thread/read", {}).pipe(Effect.forkScoped);
++      yield* Queue.take(pipe.output);
++      yield* Queue.offer(pipe.input, encode(request));
++      yield* Effect.promise(() => handlerEntered.promise);
++      yield* Queue.offer(pipe.input, encode({ ...request, id: 8 }));
++      yield* Deferred.await(siblingEntered);
++      assert.equal(effects, 0);
++      releaseDefect.resolve();
++      yield* Deferred.await(finalizerEntered).pipe(Effect.timeout("2 seconds"));
++      assert.equal(notifications, 1, "AB458_SUSPENDED_TERMINAL_PUBLICATION");
++      assert.strictEqual(yield* failureOf(Fiber.join(pending)).pipe(Effect.timeout("2 seconds")), notificationError,
++        "AB458_PENDING_SETTLEMENT");
++      assert.equal(Schema.is(CodexError.CodexAppServerTransportError)(notificationError), true);
++      assert.equal(effects, 1);
++      yield* Deferred.await(readerStopped).pipe(Effect.timeout("2 seconds"));
++      yield* Queue.offer(pipe.input, encode(request));
++      yield* Queue.offer(pipe.input, encode({ ...request, id: 9 }));
++      assert.equal(admissions, 2); assert.equal(notifications, 1);
++      assert.strictEqual(yield* failureOf(transport.request("thread/read", {})), notificationError);
++      assert.equal(yield* Queue.size(pipe.output), 0);
++      yield* Deferred.succeed(releaseFinalizer, undefined);
++      yield* Deferred.await(finalizerFinished).pipe(Effect.timeout("2 seconds"));
++      assert.equal(notifications, 1);
++    }),
++  );
 +  it.effect.each(["writer", "defect-before", "defect-after", "throw-before"] as const)(
 +    "terminalizes unknown outcome %s without replay or fresh admission",
 +    (failureKind) => Effect.gen(function* () {
@@ -190,15 +460,15 @@ index 0000000..0da6130
 +      if (failureKind === "writer" || failureKind === "defect-after") yield* Deferred.await(committed);
 +      const failure = yield* Deferred.await(terminated).pipe(Effect.timeout("2 seconds"));
 +      assert.instanceOf(failure, CodexError.CodexAppServerTransportError, "AB458_TERMINAL_CAUSE");
-+      if (failure instanceof CodexError.CodexAppServerTransportError) {
++      if (Schema.is(CodexError.CodexAppServerTransportError)(failure)) {
 +        assert.equal(failure.operation, failureKind === "writer" ? "write-output-stream" : "handle-server-request");
 +      }
-+      assert.strictEqual(yield* Fiber.join(pending).pipe(Effect.flip), failure);
++      assert.strictEqual(yield* failureOf(Fiber.join(pending)), failure);
 +      yield* Deferred.await(readerStopped).pipe(Effect.timeout("2 seconds"));
 +      yield* Queue.offer(pipe.input, encode(request));
 +      yield* Queue.offer(pipe.input, encode({ ...request, id: 8 }));
-+      assert.strictEqual(yield* transport.request("thread/read", {}).pipe(Effect.flip), failure);
-+      assert.strictEqual(yield* transport.notify("initialized").pipe(Effect.flip), failure);
++      assert.strictEqual(yield* failureOf(transport.request("thread/read", {})), failure);
++      assert.strictEqual(yield* failureOf(transport.notify("initialized")), failure);
 +      assert.equal(admissions, 1, "AB458_NO_REEXECUTION");
 +      assert.equal(effects, failureKind === "writer" || failureKind === "defect-after" ? 1 : 0);
 +      assert.equal(writes, failureKind === "writer" ? 1 : 0);
@@ -244,7 +514,7 @@ index 0000000..0da6130
 +      const failure = yield* Deferred.await(terminated).pipe(Effect.timeout("2 seconds"));
 +      assert.instanceOf(failure, CodexError.CodexAppServerTransportError);
 +      assert.equal(admissions, 0);
-+      assert.strictEqual(yield* transport.notify("initialized").pipe(Effect.flip), failure);
++      assert.strictEqual(yield* failureOf(transport.notify("initialized")), failure);
 +    }),
 +  );
 +
@@ -266,10 +536,285 @@ index 0000000..0da6130
 +      const failure = yield* Deferred.await(terminated).pipe(Effect.timeout("2 seconds"));
 +      assert.instanceOf(failure, CodexError.CodexAppServerInputStreamEndedError);
 +      yield* Deferred.await(interrupted).pipe(Effect.timeout("2 seconds"));
-+      assert.strictEqual(yield* transport.notify("initialized").pipe(Effect.flip), failure);
++      assert.strictEqual(yield* failureOf(transport.notify("initialized")), failure);
 +    }),
 +  );
 +});
+diff --git a/packages/effect-codex-app-server/src/PrivateRequestAdmission.test.ts b/packages/effect-codex-app-server/src/PrivateRequestAdmission.test.ts
+index 6bcf3fb..3c2e6ea 100644
+--- a/packages/effect-codex-app-server/src/PrivateRequestAdmission.test.ts
++++ b/packages/effect-codex-app-server/src/PrivateRequestAdmission.test.ts
+@@ -1,49 +1,71 @@
+-import { it } from "@effect/vitest";
+-import assert from "node:assert/strict";
++import { assert, it } from "@effect/vitest";
++import * as NodeServices from "@effect/platform-node/NodeServices";
++import * as Crypto from "effect/Crypto";
++import * as Deferred from "effect/Deferred";
++import * as Effect from "effect/Effect";
++import * as Fiber from "effect/Fiber";
+ import { makePrivateRequestAdmission } from "./PrivateRequestAdmission.ts";
+ const request = (id: string | number, params: unknown = { threadId: "root", turnId: "turn", callId: "call", arguments: { a: "x", b: "y" } }) => ({ id, method: "item/tool/call", params });
+-it("32 active admission tickets deduplicate before overload without allocating another handler", () => {
+-  const gate = makePrivateRequestAdmission();
+-  const tickets = Array.from({ length: 32 }, (_, id) => gate.admit(request(id)));
+-  assert.equal(tickets.every((ticket) => ticket.kind === "accepted"), true);
+-  for (let i = 0; i < 64; i++) assert.equal(gate.admit(request(0)).kind, "replay");
+-  assert.deepEqual(gate.size(), { active: 32, records: 32 });
+-  assert.equal(gate.admit(request(33)).kind, "overloaded");
+-  assert.equal(gate.admit(request(33)).kind, "replay");
+-  assert.deepEqual(gate.size(), { active: 32, records: 33 });
+-});
+-it("same ID with changed method/params conflicts without releasing original admission", () => {
+-  const gate = makePrivateRequestAdmission();
+-  const original = gate.admit(request("same")); assert.equal(original.kind, "accepted");
+-  assert.equal(gate.admit({ ...request("same"), method: "other" }).kind, "conflict");
+-  assert.equal(gate.admit(request("same", { threadId: "child" })).kind, "conflict");
+-  assert.deepEqual(gate.size(), { active: 1, records: 1 });
+-  if (original.kind === "accepted") gate.finish(original.ticket);
+-  assert.equal(gate.admit(request("same")).kind, "replay");
+-  assert.deepEqual(gate.size(), { active: 0, records: 1 });
+-});
+-it("canonical key order coalesces but distinct JSON values and ID types do not alias", () => {
+-  const gate = makePrivateRequestAdmission();
+-  gate.admit(request(1, { a: "a", b: ["b", "c"] }));
+-  assert.equal(gate.admit(request(1, { b: ["b", "c"], a: "a" })).kind, "replay");
+-  assert.equal(gate.admit(request(1, { a: "a", b: ["c", "b"] })).kind, "conflict");
+-  assert.equal(gate.admit(request("1")).kind, "accepted");
+-  gate.admit({ id: 2, method: "item/tool/call" });
+-  assert.equal(gate.admit({ id: 2, method: "item/tool/call", params: null }).kind, "conflict");
+-});
+-it("timeout/cancellation settlement is tombstoned; shutdown isolates replacement generation", () => {
+-  const old = makePrivateRequestAdmission(); const entry = old.admit(request(1));
+-  if (entry.kind !== "accepted") throw new Error("expected acceptance");
+-  old.finish(entry.ticket); old.finish(entry.ticket);
+-  assert.equal(old.admit(request(1)).kind, "replay");
+-  old.close(); assert.equal(old.admit(request(1)).kind, "closed");
+-  const replacement = makePrivateRequestAdmission(); replacement.admit(request(1));
+-  old.finish(entry.ticket); assert.deepEqual(replacement.size(), { active: 1, records: 1 });
+-});
+-it("record exhaustion is explicit and never evicts a call into re-execution", () => {
+-  const gate = makePrivateRequestAdmission(1, 2);
+-  gate.admit(request(1)); gate.admit(request(2));
+-  assert.equal(gate.admit(request(3)).kind, "exhausted");
+-  assert.equal(gate.admit(request(1)).kind, "replay");
+-  assert.deepEqual(gate.size(), { active: 1, records: 2 });
++it.layer(NodeServices.layer)("private request admission", (it) => {
++  it.effect("32 active admission tickets deduplicate before overload without allocating another handler", () => Effect.gen(function* () {
++    const gate = makePrivateRequestAdmission(yield* Crypto.Crypto);
++    const tickets = yield* Effect.forEach(Array.from({ length: 32 }, (_, id) => id), (id) => gate.admit(request(id)));
++    assert.equal(tickets.every((ticket) => ticket.kind === "accepted"), true);
++    for (let i = 0; i < 64; i++) assert.equal((yield* gate.admit(request(0))).kind, "replay");
++    assert.deepEqual(gate.size(), { active: 32, records: 32 });
++    assert.equal((yield* gate.admit(request(33))).kind, "overloaded");
++    assert.equal((yield* gate.admit(request(33))).kind, "replay");
++    assert.deepEqual(gate.size(), { active: 32, records: 33 });
++  }));
++  it.effect("same ID with changed method/params conflicts without releasing original admission", () => Effect.gen(function* () {
++    const gate = makePrivateRequestAdmission(yield* Crypto.Crypto);
++    const original = yield* gate.admit(request("same")); assert.equal(original.kind, "accepted");
++    assert.equal((yield* gate.admit({ ...request("same"), method: "other" })).kind, "conflict");
++    assert.equal((yield* gate.admit(request("same", { threadId: "child" }))).kind, "conflict");
++    assert.deepEqual(gate.size(), { active: 1, records: 1 });
++    if (original.kind === "accepted") gate.finish(original.ticket);
++    assert.equal((yield* gate.admit(request("same"))).kind, "replay");
++    assert.deepEqual(gate.size(), { active: 0, records: 1 });
++  }));
++  it.effect("canonical key order coalesces but distinct JSON values and ID types do not alias", () => Effect.gen(function* () {
++    const gate = makePrivateRequestAdmission(yield* Crypto.Crypto);
++    yield* gate.admit(request(1, { a: "a", b: ["b", "c"] }));
++    assert.equal((yield* gate.admit(request(1, { b: ["b", "c"], a: "a" }))).kind, "replay");
++    assert.equal((yield* gate.admit(request(1, { a: "a", b: ["c", "b"] }))).kind, "conflict");
++    assert.equal((yield* gate.admit(request("1"))).kind, "accepted");
++    yield* gate.admit({ id: 2, method: "item/tool/call" });
++    assert.equal((yield* gate.admit({ id: 2, method: "item/tool/call", params: null })).kind, "conflict");
++  }));
++  it.effect("timeout/cancellation settlement is tombstoned; shutdown isolates replacement generation", () => Effect.gen(function* () {
++    const crypto = yield* Crypto.Crypto;
++    const old = makePrivateRequestAdmission(crypto); const entry = yield* old.admit(request(1));
++    if (entry.kind !== "accepted") return yield* Effect.die("expected acceptance");
++    old.finish(entry.ticket); old.finish(entry.ticket);
++    assert.equal((yield* old.admit(request(1))).kind, "replay");
++    old.close(); assert.equal((yield* old.admit(request(1))).kind, "closed");
++    const replacement = makePrivateRequestAdmission(crypto); yield* replacement.admit(request(1));
++    old.finish(entry.ticket); assert.deepEqual(replacement.size(), { active: 1, records: 1 });
++  }));
++  it.effect("record exhaustion is explicit and never evicts a call into re-execution", () => Effect.gen(function* () {
++    const gate = makePrivateRequestAdmission(yield* Crypto.Crypto, 1, 2);
++    yield* gate.admit(request(1)); yield* gate.admit(request(2));
++    assert.equal((yield* gate.admit(request(3))).kind, "exhausted");
++    assert.equal((yield* gate.admit(request(1))).kind, "replay");
++    assert.deepEqual(gate.size(), { active: 1, records: 2 });
++  }));
++  it.effect("missing crypto fails closed without retaining an admission", () => Effect.gen(function* () {
++    const gate = makePrivateRequestAdmission(undefined);
++    assert.equal((yield* gate.admit(request(1))).kind, "unavailable");
++    assert.deepEqual(gate.size(), { active: 0, records: 0 });
++  }));
++  it.effect("revocation during suspended platform digest cannot recreate an admission", () => Effect.gen(function* () {
++    const entered = yield* Deferred.make<void>(), release = yield* Deferred.make<Uint8Array>();
++    const crypto = Crypto.make({ randomBytes: () => Effect.succeed(new Uint8Array()), digest: () =>
++      Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(release))) });
++    const gate = makePrivateRequestAdmission(crypto);
++    const pending = yield* gate.admit(request(1)).pipe(Effect.forkScoped);
++    yield* Deferred.await(entered); gate.close(); yield* Deferred.succeed(release, new Uint8Array(32));
++    assert.equal((yield* Fiber.join(pending)).kind, "closed");
++    assert.deepEqual(gate.size(), { active: 0, records: 0 });
++  }));
+ });
+diff --git a/packages/effect-codex-app-server/src/PrivateRequestAdmission.ts b/packages/effect-codex-app-server/src/PrivateRequestAdmission.ts
+index 4b15f5a..96fb77c 100644
+--- a/packages/effect-codex-app-server/src/PrivateRequestAdmission.ts
++++ b/packages/effect-codex-app-server/src/PrivateRequestAdmission.ts
+@@ -1,70 +1,83 @@
+ // One instance per private protocol/connection generation. No payload cache.
+-import { createHash } from "node:crypto";
++import type * as Crypto from "effect/Crypto";
++import * as Effect from "effect/Effect";
++import * as Option from "effect/Option";
+ import type { CodexAppServerIncomingRequest } from "./protocol.ts";
+ 
+ export type RequestTicket = { readonly id: string; readonly fingerprint: string; state: "active" | "settled" };
+ export type RequestAdmission =
+   | { readonly kind: "accepted"; readonly ticket: RequestTicket }
+-  | { readonly kind: "replay" | "conflict" | "overloaded" | "exhausted" | "closed" };
++  | { readonly kind: "replay" }
++  | { readonly kind: "conflict" }
++  | { readonly kind: "overloaded" }
++  | { readonly kind: "exhausted" }
++  | { readonly kind: "unavailable" }
++  | { readonly kind: "closed" };
+ 
+-// Incoming JSON has already passed the wire-size cap. Hash sorted JSON members
+-// incrementally: never retain request params or private result payloads here.
+-function fingerprint(request: CodexAppServerIncomingRequest): string {
+-  const hash = createHash("sha256");
++// The decoded JSONL frame already passed the wire byte cap. Canonical bytes
++// exist only during this serialized admission; only the SHA-256 digest survives.
++function canonical(request: CodexAppServerIncomingRequest): string {
++  const parts: string[] = [];
+   const visit = (value: unknown, depth: number): void => {
+     if (depth > 128) throw new Error("RPC JSON nesting exceeds admission limit");
+     if (value === null || typeof value !== "object") {
+       const text = JSON.stringify(value);
+       if (text === undefined) throw new Error("RPC value must be JSON");
+-      hash.update(text); return;
++      parts.push(text); return;
+     }
+     if (Array.isArray(value)) {
+-      hash.update("[");
+-      value.forEach((item, index) => { if (index) hash.update(","); visit(item, depth + 1); });
+-      hash.update("]"); return;
++      parts.push("[");
++      value.forEach((item, index) => { if (index) parts.push(","); visit(item, depth + 1); });
++      parts.push("]"); return;
+     }
+-    hash.update("{");
++    parts.push("{");
+     Object.keys(value).sort().forEach((key, index) => {
+-      if (index) hash.update(",");
+-      hash.update(JSON.stringify(key)); hash.update(":");
+-      visit((value as Record<string, unknown>)[key], depth + 1);
++      if (index) parts.push(",");
++      parts.push(JSON.stringify(key), ":");
++      visit(Reflect.get(value, key), depth + 1);
+     });
+-    hash.update("}");
++    parts.push("}");
+   };
+   visit({ method: request.method, ...(Object.hasOwn(request, "params") ? { params: request.params } : {}) }, 0);
+-  return hash.digest("hex");
++  return parts.join("");
+ }
+ 
+-export function makePrivateRequestAdmission(maxActive = 32, maxRecords = 1_024) {
++export function makePrivateRequestAdmission(crypto: Crypto.Crypto | undefined, maxActive = 32, maxRecords = 1_024) {
+   const records = new Map<string, RequestTicket>();
+   let active = 0;
+   let open = true;
++  // Serialized wire admission is covered by the protocol operation's span.
++  const admit = Effect.fnUntraced(function* (request: CodexAppServerIncomingRequest): Effect.fn.Return<RequestAdmission> {
++    if (!open) return { kind: "closed" };
++    if (!crypto) return { kind: "unavailable" };
++    if (String(request.id).length > 512) return { kind: "exhausted" };
++    const id = `${typeof request.id}:${String(request.id)}`;
++    let bytes: Uint8Array;
++    try { bytes = new TextEncoder().encode(canonical(request)); } catch { return { kind: "exhausted" }; }
++    const hashed = yield* crypto.digest("SHA-256", bytes).pipe(Effect.option);
++    // Revocation may occur while platform hashing is suspended. Never reopen
++    // or insert a ticket into a closed/replacement generation after that await.
++    if (!open) return { kind: "closed" };
++    if (Option.isNone(hashed)) return { kind: "unavailable" };
++    const digest = Array.from(hashed.value, (byte) => byte.toString(16).padStart(2, "0")).join("");
++    const existing = records.get(id);
++    // Replay/conflict precedes the cap and never allocates a handler/response.
++    if (existing) return { kind: existing.fingerprint === digest ? "replay" : "conflict" };
++    if (records.size >= maxRecords) return { kind: "exhausted" };
++    const ticket: RequestTicket = { id, fingerprint: digest, state: active >= maxActive ? "settled" : "active" };
++    records.set(id, ticket);
++    if (ticket.state === "settled") return { kind: "overloaded" };
++    active++;
++    return { kind: "accepted", ticket };
++  });
+   return {
+     isOpen: () => open,
+-    admit(request: CodexAppServerIncomingRequest): RequestAdmission {
+-      if (!open) return { kind: "closed" };
+-      if (String(request.id).length > 512) return { kind: "exhausted" };
+-      const id = JSON.stringify([typeof request.id, request.id]);
+-      let digest: string;
+-      try { digest = fingerprint(request); } catch { return { kind: "exhausted" }; }
+-      const existing = records.get(id);
+-      // Resolve before the cap; duplicate/conflict never creates a fiber or
+-      // emits an RPC response which could steal the original's callback.
+-      if (existing) return { kind: existing.fingerprint === digest ? "replay" : "conflict" };
+-      if (records.size >= maxRecords) return { kind: "exhausted" };
+-      const ticket: RequestTicket = { id, fingerprint: digest, state: active >= maxActive ? "settled" : "active" };
+-      records.set(id, ticket);
+-      if (ticket.state === "settled") return { kind: "overloaded" };
+-      active++;
+-      return { kind: "accepted", ticket };
+-    },
++    admit,
+     finish(ticket: RequestTicket): void {
+       if (!open || records.get(ticket.id) !== ticket || ticket.state !== "active") return;
+-      ticket.state = "settled";
+-      active--;
++      ticket.state = "settled"; active--;
+     },
+     close(): void { open = false; records.clear(); active = 0; },
+-    // Scalar counters only; diagnostics/tests never expose payloads or results.
+     size: () => ({ active, records: records.size }),
+   };
+ }
+diff --git a/packages/effect-codex-app-server/src/client.ts b/packages/effect-codex-app-server/src/client.ts
+index e7c5f50..c70bc03 100644
+--- a/packages/effect-codex-app-server/src/client.ts
++++ b/packages/effect-codex-app-server/src/client.ts
+@@ -1,4 +1,5 @@
+ import * as Context from "effect/Context";
++import type * as Crypto from "effect/Crypto";
+ import * as Effect from "effect/Effect";
+ import * as Layer from "effect/Layer";
+ import * as Schema from "effect/Schema";
+@@ -98,7 +99,7 @@ export const make = Effect.fn("effect-codex-app-server/CodexAppServerClient.make
+   stdio: Stdio.Stdio,
+   options: CodexAppServerClientOptions = {},
+   terminationError?: Effect.Effect<CodexError.CodexAppServerError>,
+-): Effect.fn.Return<CodexAppServerClient["Service"], never, Scope.Scope> {
++): Effect.fn.Return<CodexAppServerClient["Service"], never, Scope.Scope | Crypto.Crypto> {
+   const requestHandlers = new Map<string, ServerRequestHandler>();
+   const notificationHandlers = new Map<string, Array<ServerNotificationHandler>>();
+   let unknownRequestHandler:
+@@ -264,7 +265,7 @@ export const make = Effect.fn("effect-codex-app-server/CodexAppServerClient.make
+ export const layerChildProcess = (
+   handle: ChildProcessSpawner.ChildProcessHandle,
+   options: CodexAppServerClientOptions = {},
+-): Layer.Layer<CodexAppServerClient> =>
++): Layer.Layer<CodexAppServerClient, never, Crypto.Crypto> =>
+   Layer.effect(CodexAppServerClient, makeChildProcessClient(handle, options));
+ 
+ const makeChildProcessClient = Effect.fn(
 diff --git a/packages/effect-codex-app-server/src/errors.ts b/packages/effect-codex-app-server/src/errors.ts
 index 6e7569f..fa31104 100644
 --- a/packages/effect-codex-app-server/src/errors.ts
@@ -284,24 +829,98 @@ index 6e7569f..fa31104 100644
  export type CodexAppServerTransportOperation = typeof CodexAppServerTransportOperation.Type;
  
 diff --git a/packages/effect-codex-app-server/src/protocol.ts b/packages/effect-codex-app-server/src/protocol.ts
-index 9c0c539..64f234c 100644
+index 9c0c539..f907068 100644
 --- a/packages/effect-codex-app-server/src/protocol.ts
 +++ b/packages/effect-codex-app-server/src/protocol.ts
-@@ -208,8 +208,12 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
-         }
-         return [
-           Effect.gen(function* () {
+@@ -1,5 +1,6 @@
+ import { makePrivateRequestAdmission } from "./PrivateRequestAdmission.ts";
+ import * as Cause from "effect/Cause";
++import * as Crypto from "effect/Crypto";
+ import * as Deferred from "effect/Deferred";
+ import * as Effect from "effect/Effect";
+ import * as Exit from "effect/Exit";
+@@ -159,7 +160,7 @@ const toProtocolMessage = (
+ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPatchedProtocol")(
+   function* (
+     options: CodexAppServerPatchedProtocolOptions,
+-  ): Effect.fn.Return<CodexAppServerPatchedProtocol, never, Scope.Scope> {
++  ): Effect.fn.Return<CodexAppServerPatchedProtocol, never, Scope.Scope | Crypto.Crypto> {
+     const protocolScope = yield* Scope.Scope;
+     const requestHandlerScope = yield* Scope.fork(protocolScope, "parallel");
+     const outgoing = yield* Queue.unbounded<string, Cause.Done<void>>();
+@@ -175,7 +176,8 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
+     const terminationHandled = yield* Ref.make(false);
+     const terminationFailure = yield* Ref.make(Option.none<CodexError.CodexAppServerError>());
+     const terminationSignal = yield* Deferred.make<void>();
+-    const requestAdmission = makePrivateRequestAdmission();
++    const crypto = yield* Crypto.Crypto;
++    const requestAdmission = makePrivateRequestAdmission(crypto);
+     yield* Effect.addFinalizer(() => Effect.sync(() => requestAdmission.close()));
+ 
+     const logProtocol = (event: CodexAppServerProtocolLogEvent) => {
+@@ -202,36 +204,49 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
+       );
+ 
+     const handleTermination = (classify: () => Effect.Effect<CodexError.CodexAppServerError>) =>
+-      Ref.modify(terminationHandled, (handled) => {
+-        if (handled) {
+-          return [Effect.void, true] as const;
+-        }
+-        return [
+-          Effect.gen(function* () {
 -            const error = yield* classify();
-+            // Seal synchronously, before classification or any cleanup can suspend.
-             requestAdmission.close();
-+            const error = yield* classify().pipe(Effect.timeoutOrElse({
-+              duration: "2 seconds",
-+              orElse: () => Effect.succeed(new CodexError.CodexAppServerInputStreamEndedError({})),
-+            }));
-             yield* Ref.set(terminationFailure, Option.some(error));
-             yield* failAllPending(error);
-             yield* Queue.end(outgoing);
-@@ -229,9 +233,9 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
+-            requestAdmission.close();
+-            yield* Ref.set(terminationFailure, Option.some(error));
+-            yield* failAllPending(error);
+-            yield* Queue.end(outgoing);
+-            yield* Deferred.succeed(terminationSignal, undefined);
+-            yield* Scope.close(requestHandlerScope, Exit.void).pipe(
+-              Effect.forkIn(protocolScope, { startImmediately: true }),
+-              Effect.asVoid,
++      // Claim, seal and attach publication atomically with respect to caller
++      // interruption. A suspended request handler must never publish from its
++      // own scope while closing that scope.
++      Effect.uninterruptible(Ref.modify(terminationHandled, (handled) => {
++        if (handled) return [Effect.void, true] as const;
++        requestAdmission.close();
++        const publish = Effect.uninterruptibleMask((restore) => Effect.gen(function* () {
++          const error = yield* restore(Effect.suspend(classify)).pipe(Effect.timeoutOrElse({
++            duration: "2 seconds",
++            orElse: () => Effect.succeed(new CodexError.CodexAppServerInputStreamEndedError({})),
++          }));
++          yield* Ref.set(terminationFailure, Option.some(error));
++          yield* failAllPending(error);
++          yield* Queue.end(outgoing);
++          yield* Deferred.succeed(terminationSignal, undefined);
++          // Publish before handler cleanup. The callback is bounded and never
++          // runs in the requestHandlerScope it may indirectly revoke.
++          const notifyTermination = options.onTermination;
++          if (notifyTermination) {
++            yield* restore(Effect.suspend(() => notifyTermination(error))).pipe(
++              Effect.timeoutOrElse({ duration: "2 seconds", orElse: () =>
++                Effect.logWarning("Codex terminal notification did not complete") }),
++              Effect.catchCause(() => Effect.logWarning("Codex terminal notification failed")),
+             );
+-            if (options.onTermination) {
+-              yield* options.onTermination(error);
+-            }
+-          }),
+-          true,
+-        ] as const;
+-      }).pipe(Effect.flatten);
++          }
++        })).pipe(Effect.ensuring(
++          Scope.close(requestHandlerScope, Exit.void).pipe(
++            Effect.forkIn(protocolScope, { startImmediately: true, uninterruptible: false }),
++            Effect.asVoid,
++          ),
++        ));
++        return [publish.pipe(
++          Effect.forkIn(protocolScope, { startImmediately: true, uninterruptible: false }),
++          Effect.asVoid,
++        ), true] as const;
++      }).pipe(Effect.flatten));
+ 
      const offerOutgoing =
        /* Every protocol write reaches this helper; request spans cover the operation. */
        Effect.fnUntraced(function* (message: Record<string, unknown>) {
@@ -312,7 +931,7 @@ index 9c0c539..64f234c 100644
  
          yield* logProtocol({
            direction: "outgoing",
-@@ -306,6 +310,17 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
+@@ -306,48 +321,56 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
        );
      };
  
@@ -328,13 +947,43 @@ index 9c0c539..64f234c 100644
 +      ));
 +
      const handleRequest = (request: CodexAppServerIncomingRequest) =>
-       Effect.suspend(() => {
+-      Effect.suspend(() => {
++      Effect.gen(function* () {
          const handler = options.onRequest;
-@@ -333,21 +348,17 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
+         // Passive raw-observer mode has no managed handler/cap. CodexClient
+         // always supplies onRequest; that path owns identity and settlement.
+-        if (!handler) return Queue.offer(incomingRequests, request).pipe(Effect.asVoid);
+-        const decision = requestAdmission.admit(request);
++        if (!handler) return yield* Queue.offer(incomingRequests, request).pipe(Effect.asVoid);
++        const decision = yield* requestAdmission.admit(request);
+         if (decision.kind === "replay" || decision.kind === "conflict" || decision.kind === "closed") {
+           // Never answer a conflicting replay under the legitimate original ID.
+           // Pending replay shares its one handler/response; settled replay is a
+           // tombstone on this reliable stdio generation, with no private cache.
+-          return Effect.void;
++          return;
+         }
+-        if (decision.kind === "exhausted") {
+-          return handleTermination(() => Effect.succeed(
++        if (decision.kind === "exhausted" || decision.kind === "unavailable") {
++          return yield* handleTermination(() => Effect.succeed(
+             new CodexError.CodexAppServerTransportError({
+-              operation: "read-input-stream", cause: new Error("Private RPC admission budget exhausted."),
++              operation: "read-input-stream", cause: new Error(decision.kind === "exhausted"
++                ? "Private RPC admission budget exhausted." : "Private RPC cryptography unavailable."),
+             }),
+           ));
+         }
+         if (decision.kind === "overloaded") {
+-          return respondError(request.id, CodexError.CodexAppServerRequestError.overloaded(
++          return yield* respondError(request.id, CodexError.CodexAppServerRequestError.overloaded(
+             "Too many Codex requests are already active.",
+           ));
          }
          const ticket = decision.ticket;
-         return Queue.offer(incomingRequests, request).pipe(
+-        return Queue.offer(incomingRequests, request).pipe(
 -          Effect.andThen(handler(request).pipe(
++        return yield* Queue.offer(incomingRequests, request).pipe(
 +          Effect.andThen(Effect.suspend(() => handler(request)).pipe(
              Effect.matchEffect({
                onFailure: (error) => respondError(request.id,
@@ -355,7 +1004,7 @@ index 9c0c539..64f234c 100644
              Effect.forkIn(requestHandlerScope, { startImmediately: true }),
              Effect.asVoid,
            )),
-@@ -457,10 +468,18 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
+@@ -457,10 +480,18 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
              }),
            ),
        }),
@@ -375,3 +1024,33 @@ index 9c0c539..64f234c 100644
  
      const request = Effect.fn("CodexAppServerProtocol.request")(function* (
        method: string,
+diff --git a/packages/effect-codex-app-server/src/replay.ts b/packages/effect-codex-app-server/src/replay.ts
+index 468276e..97a9e3e 100644
+--- a/packages/effect-codex-app-server/src/replay.ts
++++ b/packages/effect-codex-app-server/src/replay.ts
+@@ -9,6 +9,7 @@ import * as Sink from "effect/Sink";
+ import * as Stdio from "effect/Stdio";
+ import * as Stream from "effect/Stream";
+ 
++import type * as Crypto from "effect/Crypto";
+ import * as CodexClient from "./client.ts";
+ import * as CodexError from "./errors.ts";
+ 
+@@ -362,7 +363,7 @@ function replayTransportError(
+ 
+ export function layerReplay(
+   transcript: CodexAppServerReplayTranscript,
+-): Layer.Layer<CodexClient.CodexAppServerClient, CodexAppServerReplayError> {
++): Layer.Layer<CodexClient.CodexAppServerClient, CodexAppServerReplayError, Crypto.Crypto> {
+   return Layer.effect(CodexClient.CodexAppServerClient, makeReplayClient(transcript));
+ }
+ 
+@@ -381,7 +382,7 @@ export const makeReplayDriver = Effect.fn("effect-codex-app-server/replay.makeRe
+ 
+ export function layerReplayWithDriver(
+   driver: CodexAppServerReplayDriver,
+-): Layer.Layer<CodexClient.CodexAppServerClient, CodexAppServerReplayError> {
++): Layer.Layer<CodexClient.CodexAppServerClient, CodexAppServerReplayError, Crypto.Crypto> {
+   return Layer.effect(CodexClient.CodexAppServerClient, makeReplayClientWithState(driver));
+ }
+ 

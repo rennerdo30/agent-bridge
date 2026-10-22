@@ -89,13 +89,14 @@ async function hosted() {
     const reportFile = path.join(evidence, label+'.json');
     const args = ['exec', 'vp', 'test', 'run', '--config', '.ab458-ci.vitest.config.ts',
       '--reporter=json', '--outputFile='+reportFile];
-    if (mutation) args.push('apps/server/src/orchestration-v2/Adapters/CodexBridgeDynamicTools.adapter.test.ts', '-t', productionTest);
+    const expectedTest = mutation?.test ?? productionTest;
+    if (mutation) args.push(mutation.file ?? 'apps/server/src/orchestration-v2/Adapters/CodexBridgeDynamicTools.adapter.test.ts', '-t', expectedTest);
     const result = await run(label, pnpm, args, mutation ? 60_000 : 120_000, mutation ? 1 : 0);
-    if (/unhandled (error|rejection|exception)|failed to (load|collect)|cannot (find|resolve)|syntaxerror|worker exited|Bridge owned connection disposal incomplete/i.test(result.stdout+'\n'+result.stderr)) {
+    if (/unhandled (error|rejection|exception)|failed to (load|collect)|cannot (find|resolve)|syntaxerror|worker exited|Bridge owned connection disposal incomplete|Codex terminal notification (failed|did not complete)/i.test(result.stdout+'\n'+result.stderr)) {
       throw new Error(`${label}: infrastructure/unhandled failure, not mutation evidence`);
     }
     const proof = validateReport(JSON.parse(fs.readFileSync(reportFile, 'utf8')),
-      { expectedTest: productionTest, mutation: !!mutation, marker: mutation?.marker,
+      { expectedTest, mutation: !!mutation, marker: mutation?.marker,
         requiredFiles: mutation ? [] : [
           'apps/server/src/orchestration-v2/Adapters/CodexBridgeDynamicTools.test.ts',
           'apps/server/src/orchestration-v2/Adapters/CodexBridgeDynamicTools.replay.test.ts',
@@ -141,8 +142,11 @@ async function hosted() {
       const file = path.join(checkout, relative, 'node_modules', name, 'package.json');
       if (JSON.parse(fs.readFileSync(file, 'utf8')).version !== version) throw new Error(`Installed version mismatch: ${name}`);
     }
-    fs.copyFileSync(path.join(artifact, 'ci.vitest.config.ts'), path.join(checkout, '.ab458-ci.vitest.config.ts'));
-    fs.copyFileSync(path.join(artifact, 'ci.typecheck.json'), path.join(checkout, '.ab458-ci.typecheck.json'));
+    for (const config of manifest.materializedConfigs) {
+      fs.copyFileSync(path.join(artifact, config.source), path.join(checkout, config.path));
+      if (sha256(fs.readFileSync(path.join(checkout, config.path))) !== config.sha256) throw new Error('Materialized config hash mismatch');
+    }
+    receipt.materializedConfigs = manifest.materializedConfigs; save();
     await run('compiler-version', pnpm, ['exec', 'tsc-rs', '--version']);
     await run('test-tool-version', pnpm, ['exec', 'vp', '--version']);
     await run('pinned-typecheck', pnpm, ['exec', 'tsc-rs', '--noEmit', '-p', '.ab458-ci.typecheck.json'], 180_000);
@@ -152,7 +156,7 @@ async function hosted() {
       const target = path.join(checkout, mutation.path), original = fs.readFileSync(target);
       const changed = mutation.change(original.toString('utf8'));
       const proof = { name: mutation.name, path: mutation.path, baseTreeSha256: manifest.effectiveTreeSha256,
-        originalSha256: sha256(original), mutationSha256: sha256(changed), expectedTest: productionTest, marker: mutation.marker };
+        originalSha256: sha256(original), mutationSha256: sha256(changed), expectedTest: mutation.test ?? productionTest, marker: mutation.marker };
       fs.writeFileSync(path.join(evidence, mutation.name+'-source.json'), JSON.stringify(proof, null, 2)+'\n');
       try { fs.writeFileSync(target, changed); await testRun('mutation-'+mutation.name, mutation); }
       finally { fs.writeFileSync(target, original); checkTree(); receipt.restoredTreeSha256 = manifest.effectiveTreeSha256; save(); }

@@ -1,13 +1,12 @@
 {
-  "schema": 1,
-  "kind": "offline-only; not hosted or native acceptance",
-  "node": "26.4.0",
-  "verificationPid": 62540,
-  "sourceGitBlobCount": 21,
+  "schema": 2,
+  "kind": "Offline followup; actual revised upstream execution NOT RUN",
+  "verificationPid": 4236,
   "t3Pin": "968dd51704441138559a3fe9c348719f2b11e0c6",
   "codexInspectedSourcePin": "6203846fb3ef040f62eed9b35bc6629c8e88980a",
-  "bridgeInputHead": "2ecd3dc7318da1490f2135ff8afcf0eb50f276e9",
-  "effectiveTreeSha256": "64519d9fa4d284c6c0ff8f1b8c9bb6fc3f17c4939c8d934209f52f5c83ff76f4",
+  "bridgeInputHead": "430e3eecd9cbb2b38ee5d5f7eec895236249bc2d",
+  "sourceGitBlobCount": 22,
+  "effectiveTreeSha256": "854e276ffb71914f8ce1fef56b8499dcc8b76dca1d657a2586f0713c3ccae380",
   "patches": [
     {
       "path": "01-reviewed.patch",
@@ -19,9 +18,45 @@
     },
     {
       "path": "03-round3.patch",
-      "sha256": "4fc67d2a06951a851a597ea83c090c486aefdd74c0b15e087fe0c8ea253d7307"
+      "sha256": "6ba1e3b1175765ec98c5d63caac154e8257ff21f6c585deccd07cd4602e36774"
     }
   ],
+  "materializedConfigs": [
+    {
+      "source": "ci.vitest.config.ts.template",
+      "path": ".ab458-ci.vitest.config.ts",
+      "sha256": "43b4ab80ef6e94cc2b4306acc4975f59602314b35ad008066cf499da7a5b6ac3"
+    },
+    {
+      "source": "ci.typecheck.json",
+      "path": ".ab458-ci.typecheck.json",
+      "sha256": "bab00e3cc1be9b79fb6b0e32096d2b324d9d430435beee357ca41ea6cce1302b"
+    }
+  ],
+  "historicalHostedFailure": {
+    "head": "430e3eecd9cbb2b38ee5d5f7eec895236249bc2d",
+    "manifestSha256": "5a5a128d6f00e8f2b1ec30425de918d9b8bd0a5ed1dd6065a13e253e214eb345",
+    "round3PatchSha256": "4fc67d2a06951a851a597ea83c090c486aefdd74c0b15e087fe0c8ea253d7307",
+    "effectiveTreeSha256": "64519d9fa4d284c6c0ff8f1b8c9bb6fc3f17c4939c8d934209f52f5c83ff76f4",
+    "hostedStatus": "Pinned upstream typecheck ran and failed eight errors; tests/mutations not reached. Windows Bridge typecheck also failed on upstream config imports.",
+    "upstreamTypecheckLogSha256": "da217ad8857864e7935cb73d2beb532ad5367e2ecd572e5f26172817b6ff04d0"
+  },
+  "localBridgeTypecheck": {
+    "pid": 80732,
+    "compilerPid": 50200,
+    "timeoutMs": 30000,
+    "exit": 0,
+    "signal": null,
+    "error": null,
+    "compiler": "typescript 7.0.2 existing canonical native tsc.exe",
+    "node": "26.4.0",
+    "check": "Exact Bridge tsconfig, all source roots; read-only source/dependency junctions in own report mirror",
+    "configSha256": "f8b53ac2766644b0d76af8d9babb04cc66d2b292ed3a2a2ac98f6635819ffc95",
+    "changedCompilerOptions": false,
+    "diagnosticSuppression": false,
+    "installedDependencies": false,
+    "templateExcludedNaturally": true
+  },
   "focusedValidator": {
     "passed": 14,
     "failed": 0,
@@ -31,12 +66,12 @@
     "passed": 10,
     "failed": 4,
     "exit": 1,
-    "reason": "Expected assertion reds when infrastructure rejection is disabled; not upstream production mutation evidence"
+    "scope": "Validator only; not real production mutation evidence"
   },
   "checks": [
     {
       "label": "verify-workflow",
-      "pid": 29832,
+      "pid": 19740,
       "timeoutMs": 20000,
       "exit": 0,
       "expected": 0,
@@ -45,7 +80,7 @@
     },
     {
       "label": "verify-entry",
-      "pid": 73856,
+      "pid": 35656,
       "timeoutMs": 20000,
       "exit": 0,
       "expected": 0,
@@ -54,7 +89,7 @@
     },
     {
       "label": "gate-tests",
-      "pid": 78484,
+      "pid": 71272,
       "timeoutMs": 20000,
       "exit": 0,
       "expected": 0,
@@ -63,7 +98,7 @@
     },
     {
       "label": "local-install-refused",
-      "pid": 23088,
+      "pid": 9948,
       "timeoutMs": 20000,
       "exit": 1,
       "expected": 1,
@@ -72,7 +107,7 @@
     },
     {
       "label": "check-01-reviewed.patch",
-      "pid": 50136,
+      "pid": 59244,
       "timeoutMs": 20000,
       "exit": 0,
       "expected": 0,
@@ -81,7 +116,7 @@
     },
     {
       "label": "apply-01-reviewed.patch",
-      "pid": 68664,
+      "pid": 61552,
       "timeoutMs": 20000,
       "exit": 0,
       "expected": 0,
@@ -90,7 +125,7 @@
     },
     {
       "label": "check-02-disposal-test.patch",
-      "pid": 27848,
+      "pid": 44872,
       "timeoutMs": 20000,
       "exit": 0,
       "expected": 0,
@@ -99,7 +134,7 @@
     },
     {
       "label": "apply-02-disposal-test.patch",
-      "pid": 22764,
+      "pid": 54752,
       "timeoutMs": 20000,
       "exit": 0,
       "expected": 0,
@@ -108,7 +143,7 @@
     },
     {
       "label": "check-03-round3.patch",
-      "pid": 66696,
+      "pid": 61360,
       "timeoutMs": 20000,
       "exit": 0,
       "expected": 0,
@@ -117,7 +152,7 @@
     },
     {
       "label": "apply-03-round3.patch",
-      "pid": 27008,
+      "pid": 3052,
       "timeoutMs": 20000,
       "exit": 0,
       "expected": 0,
@@ -126,7 +161,7 @@
     },
     {
       "label": "validator-infrastructure-mutation",
-      "pid": 7932,
+      "pid": 42280,
       "timeoutMs": 20000,
       "exit": 1,
       "expected": 1,
@@ -134,14 +169,15 @@
       "error": null
     }
   ],
-  "allEffectiveSourceAndMutationSyntaxChecks": "exit 0; Node syntax only",
+  "syntax": "All thirteen effective upstream files and all five production mutation sources parse; no modules executed",
   "notRun": [
-    "Hosted workflow",
-    "Pinned upstream typecheck",
-    "Effect/CodexClient/production adapter execution",
-    "Four actual production mutations",
+    "Revised pinned upstream typecheck",
+    "Real production protocol/client/adapter tests including forced suspension",
+    "Five actual production mutation tests",
+    "Revised hosted job",
     "Native/provider/broker acceptance"
   ],
-  "localRawEvidenceDirectory": "E:/AgentData/reports/ab458-hosted-ci-20261022-t32af0942b",
-  "rawReceiptSha256": "a1f3ccea6cb7b0a1e88cff40b8f4f70e25497cd0db4bc16773687bdd3d61246d"
+  "rawReceiptSha256": "10093de8c381722d20ef0188fc147727ec118422909fbae2cddd832931c90a47",
+  "bridgeTypecheckReceiptSha256": "4df991f402125d0756e54ac27bb5ac8a92f178519670e71fa1280befda3e8a9f",
+  "rawEvidenceDirectory": "E:/AgentData/reports/ab458-terminal-publication-20261022-t32af0942b"
 }
