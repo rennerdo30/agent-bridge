@@ -1,0 +1,54 @@
+diff --git a/approved-42237/src_core_broker.ts_constructor.txt b/current/src_core_broker.ts_constructor.txt
+index e2b00603..d5a102e9 100644
+--- a/approved-42237/src_core_broker.ts_constructor.txt
++++ b/current/src_core_broker.ts_constructor.txt
+@@ -180,19 +180,24 @@ return { sent: true };
+ },
+ inlineJobReport: async (c, m) => {
+ const peer = this.requirePeer(c);
++const registration = c.mailReady;
+ let fallback = false;
+ await this.store.retryWrite(() => {
+-const job = this.storedJobs().find((j) => `job:${j.id}` === m.from?.id);
++if (!registration) throw new BridgeError("unauthorized", "Report registration is unavailable");
++this.assertQueueRegistration(c, peer, registration);
++const job = this.currentJobAuthority(this.storedJobs().find((j) => `job:${j.id}` === m.from?.id));
+ if (!job || (job.executionOwner !== peer.name && job.owner !== peer.name && job.rootName !== peer.name) || typeof job.owner !== "string" || typeof m.body !== "string") throw new BridgeError("unauthorized", "Invalid inline job delivery.");
+ if (this.jobDeliveryOwner(job, peer.name) !== recipientKey(peer.frontend, nativeOwner(peer))) throw new BridgeError("unauthorized", "Original job reporter identity is unproven or replaced; report remains pending.");
+ const recipient = this.jobRecipient(job);
+-const intended = this.jobDeliveryOwner(job, recipient);
++const intended = this.freshJobDeliveryOwner(job, peer, recipient), grant = this.jobReportGrant(job, peer);
+ if (!intended) throw new BridgeError("unauthorized", "Original job recipient binding is unavailable; report remains pending without mailbox settlement.");
++if (!grant || m.from.agent !== job.agent || m.from.name !== job.name) throw new BridgeError("unauthorized", "Proven local job report grant is unavailable");
+ fallback = recipient !== primaryFor(job);
+ // AB-380: an oversized report from an older sender is stored as a stub with the same id, never rejected.
+ const message = this.wireMessage({ ...m, jobControlAuthorized: undefined, recipientFrontend: undefined, recipientNative: undefined, recipientAmbiguous: undefined,
+-...ownershipFromKey(intended), to: recipient, recipient, conversationId: this.jobConversation(job, recipient, m.conversationId) });
+-if (this.store.insertJobDelivery(message)) {
++...ownershipFromKey(intended), senderOwner: `native:${grant.principal}`, senderMailbox: localMailbox(this.store.namespace), to: recipient, recipient, conversationId: this.jobConversation(job, recipient, m.conversationId) });
++if (this.store.insertJobDelivery(message, grant)) {
++Object.assign(message, this.store.messagesById(message.id).find(copy => copy.recipient === recipient));
+ const target = this.connByName(recipient);
+ if (target && !target.peer?.unavailable) this.emit(target, "message", message);
+ }
+@@ -274,7 +279,7 @@ ack: async (c, a) => {
+ const peer = this.requirePeer(c), registration = { id: peer.id, name: peer.name, sessionId: peer.sessionId, generation: c.mailGeneration, owner: recipientKey(peer.frontend, nativeOwner(peer)), namespace: this.store.namespace };
+ return { acked: await this.store.retryWrite(() => {
+ this.assertQueueRegistration(c, peer, registration);
+-return this.store.markRead(registration.name, (a.ids ?? []).filter(id => sameMailbox(a.mailboxProofs?.[id], localMailbox(this.store.namespace))), this.now(), peer.frontend, a.nativeOwners ?? {}, nativeOwner(peer));
++return this.store.markRead(registration.name, (a.ids ?? []).filter(id => sameMailbox(a.mailboxProofs?.[id], localMailbox(this.store.namespace))), this.now(), peer.frontend, a.nativeOwners ?? {}, nativeOwner(peer), a.jobRoutes);
+ }) };
+ },
+ pending: (c, a) => {
+diff --git a/approved-42237/src_core_broker.ts_startServices.txt b/current/src_core_broker.ts_startServices.txt
+index 6e92b934..31322eec 100644
+--- a/approved-42237/src_core_broker.ts_startServices.txt
++++ b/current/src_core_broker.ts_startServices.txt
+@@ -27,6 +27,7 @@ this.network = new NetworkService(this.networking.home, this.networking.config,
+ peers: () => this.dashboardPeers(),
+ receive: (message, destination) => this.receiveRemote(message, destination),
+ notify: (message, origin) => this.receiveNotification(message, origin),
++captureNotification: name => this.captureNotificationRecipient(name),
+ pinDestination: (message, destination) => this.store.pinDestination(message, destination),
+ pinnedDestinations: id => this.store.pinnedDestinations(id),
+ receipt: (id, sender, recipient, source) => this.remoteReceipt(id, sender, recipient, source),

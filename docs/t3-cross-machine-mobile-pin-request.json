@@ -1,0 +1,116 @@
+{
+  "sourceBase": "5e3fa8aa17d22d57cb5d24549c16381c5843edeb",
+  "testedHead": "bb6f598b582c1a82e70f87bf8eedb3944a28595a",
+  "normalizer": "unchanged methodBody and UI normalization from test/mobile-wiring.test.ts",
+  "methods": [
+    {
+      "method": "src/core/broker.ts:constructor",
+      "previous": "e7c1745f8b8e42bc9859fb663bfe091b629905bc20a30471711f266df7fbef7b",
+      "current": "cb47f6c17a44e8915ac2be8aaa5266e70617dcc4c48281a3593ca01028a8a6a2",
+      "changed": true,
+      "approved42237": "755682467fc0a6cbcf49d1bb2d3ce2a593851c92520d6da0a7af5cc7dd0db801",
+      "needsSupplementalApproval": true
+    },
+    {
+      "method": "src/core/broker.ts:listen",
+      "previous": "bd39e0afecb5a74d76161f26d5923f2c1e41da8cc490ed1448a9260b850ce4b0",
+      "current": "bd39e0afecb5a74d76161f26d5923f2c1e41da8cc490ed1448a9260b850ce4b0",
+      "changed": false,
+      "approved42237": "bd39e0afecb5a74d76161f26d5923f2c1e41da8cc490ed1448a9260b850ce4b0",
+      "needsSupplementalApproval": false
+    },
+    {
+      "method": "src/core/broker.ts:startServices",
+      "previous": "07bc9bdb56bea9ae2c5c3f0c89639469f7fa5ccfb0d8e5bc97fc1efbfd93fe2f",
+      "current": "747bad4009529a7c6c8fb150580ce5ed37d66ba5ac3b6f651a6f06ad865b18d7",
+      "changed": true,
+      "approved42237": "c7d7a47df86ea4d665ce7d20431738fe669d07020944358b0faf93ca8be9614e",
+      "needsSupplementalApproval": true
+    },
+    {
+      "method": "src/core/broker.ts:abortStartup",
+      "previous": "6132967fa78fd39cff064a581f4f49bb9c1c75b644fba78b291708c58733118c",
+      "current": "6132967fa78fd39cff064a581f4f49bb9c1c75b644fba78b291708c58733118c",
+      "changed": false,
+      "approved42237": "6132967fa78fd39cff064a581f4f49bb9c1c75b644fba78b291708c58733118c",
+      "needsSupplementalApproval": false
+    },
+    {
+      "method": "src/core/broker.ts:close",
+      "previous": "fb5a92326cac082ae181f38208c0af708a2b342297038d021f67a13bcd8b9b27",
+      "current": "fb5a92326cac082ae181f38208c0af708a2b342297038d021f67a13bcd8b9b27",
+      "changed": false,
+      "approved42237": "fb5a92326cac082ae181f38208c0af708a2b342297038d021f67a13bcd8b9b27",
+      "needsSupplementalApproval": false
+    },
+    {
+      "method": "src/core/node.ts:constructor",
+      "previous": "0094b2611e538459faa5577274f1a9b2437e7a3c1f6e9361cbe2c02428f0dd07",
+      "current": "c70bf3e865405166e195839fd1b315548b5a0a56847db0bba52eba72d0b691f5",
+      "changed": true,
+      "approved42237": "c70bf3e865405166e195839fd1b315548b5a0a56847db0bba52eba72d0b691f5",
+      "needsSupplementalApproval": false
+    },
+    {
+      "method": "src/core/node.ts:start",
+      "previous": "c2444cc1c41903a2489d3142952a79d2d562b37cea8bf617ae4db5a2b2e10299",
+      "current": "b504e47bab8d53e8bb71ad3457594988c38cc78bed67e2b1be3e197bc1f5066a",
+      "changed": true,
+      "approved42237": "b504e47bab8d53e8bb71ad3457594988c38cc78bed67e2b1be3e197bc1f5066a",
+      "needsSupplementalApproval": false
+    },
+    {
+      "method": "src/core/node.ts:stop",
+      "previous": "b98b5631cf7643be62bce61fac172fc79c0da09db2c7720abf14502736b57359",
+      "current": "b98b5631cf7643be62bce61fac172fc79c0da09db2c7720abf14502736b57359",
+      "changed": false,
+      "approved42237": "b98b5631cf7643be62bce61fac172fc79c0da09db2c7720abf14502736b57359",
+      "needsSupplementalApproval": false
+    },
+    {
+      "method": "src/core/node.ts:tryBecomeBroker",
+      "previous": "54662336fe5017d38e0ea9cfd79638255e9f2860c3a7aa0cda2a8c5408dfb5a3",
+      "current": "a945a95f23803cb80cb3ea51d5480d22eb1725854d1ce6f49a2ccf24289e8d36",
+      "changed": true,
+      "approved42237": "a945a95f23803cb80cb3ea51d5480d22eb1725854d1ce6f49a2ccf24289e8d36",
+      "needsSupplementalApproval": false
+    },
+    {
+      "method": "src/cli/dashboard.ts:constructor",
+      "previous": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "current": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "changed": false,
+      "approved42237": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "needsSupplementalApproval": false
+    },
+    {
+      "method": "src/cli/dashboard.ts:open",
+      "previous": "6eacbb835304e2a5d3c303c54c3c674910cbf4f9a5411b3af62a7747fe2d211b",
+      "current": "6eacbb835304e2a5d3c303c54c3c674910cbf4f9a5411b3af62a7747fe2d211b",
+      "changed": false,
+      "approved42237": "6eacbb835304e2a5d3c303c54c3c674910cbf4f9a5411b3af62a7747fe2d211b",
+      "needsSupplementalApproval": false
+    },
+    {
+      "method": "src/cli/dashboard.ts:ensure",
+      "previous": "d19ca8a9485ccc07d588997e3497bc11545e730a264e9a6f59bf1ceb0dfcda49",
+      "current": "d19ca8a9485ccc07d588997e3497bc11545e730a264e9a6f59bf1ceb0dfcda49",
+      "changed": false,
+      "approved42237": "d19ca8a9485ccc07d588997e3497bc11545e730a264e9a6f59bf1ceb0dfcda49",
+      "needsSupplementalApproval": false
+    },
+    {
+      "method": "src/cli/dashboard.ts:close",
+      "previous": "534d315c24ff13f59aa4082abf2fb66906e6bee9b979a6348979cbaef89ec7b4",
+      "current": "534d315c24ff13f59aa4082abf2fb66906e6bee9b979a6348979cbaef89ec7b4",
+      "changed": false,
+      "approved42237": "534d315c24ff13f59aa4082abf2fb66906e6bee9b979a6348979cbaef89ec7b4",
+      "needsSupplementalApproval": false
+    }
+  ],
+  "baselineUiSha256": "f2a5b28254d4bb467f28bdee139e3b23bd9d4bd0c7c15fee116b4ed85a6ac385",
+  "currentUiSha256": "f2a5b28254d4bb467f28bdee139e3b23bd9d4bd0c7c15fee116b4ed85a6ac385",
+  "uiSourceChanged": false,
+  "approval": "Parent approved prior five-method normalized diff on AB-45842237. Supplemental constructor/startServices delta at this source commit awaits exact parent review. Baseline remains untouched.",
+  "sourceTree": "659031f59e3f53bd53703891614377265b929f2c"
+}
