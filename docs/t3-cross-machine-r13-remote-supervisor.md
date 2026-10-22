@@ -103,3 +103,24 @@ All13 protected method hashes, UI source, normalizer and baseline are unchanged.
 There is no pin amendment request in this package. No local native/provider,
 daemon, full network fixture, build or full suite was launched. Fresh independent
 review and hosted full/lifecycle/integration gates remain mandatory.
+
+## Later e13 Ubuntu residuals and fixture corrections
+
+Ubuntu job120052367478 tested e13:4177 passed,136 skipped, four failures.
+The five earlier remote-jobs TLS flow cases passed on that Ubuntu run only;
+this is not cross-platform proof. No additional production root is inferred
+from these fixture failures.
+
+| Case | Demonstrated classification and concrete correction |
+| --- | --- |
+| Peer refresh, remote-jobs424 | R14 AB-45842561: fixture advertised a null native session without process provenance, so the new return-owner guard correctly refused before lookup. Canonical store-minted identity now reaches the unchanged unknown-job and impostor assertions. Missing identity explicitly refuses with zero lookup calls. The corresponding mocked production request/refresh/lookup regression is local; TLS acceptance is CI-only. Fix commits dc8468e9 and f6da966f; final R14 receipt qualifies1 focused case/typecheck at f6da966f and12 cases at prior dc8468e9. |
+| Muse profile reload, muse-job-contracts203 | `receiver()` generated a fresh pair UUID on every reconstruction. The persisted job correctly belongs to the original host ID/supervisor even when display name and native session strings match. Reuse the exact original public pair identity on receiver reload; keep all existing permission-profile, access, saved-session, wrong-owner and wrong-agent assertions. Add an explicitly different host with identical display/native identity and assert no launch. Locally, actual wire admission/registry/settings/reload are tested with `JobRunners.startAsync` replaced; no Muse adapter/CLI/process is invoked. Original executable-argument fixture remains CI-only. |
+| Missing-provenance backlog, t3-cross-machine1150 | The old fixture expected a pin after a first attempt was refused for missing capability. R13 correctly commits neither intent nor pin in that state. The test now first negotiates full proof, loses transport after atomic admission but before receiver storage, and retains the original complete pin across capability loss/reconnect/source restart and a colliding local recipient. A separate fresh UUID during capability loss explicitly has no intent/pin. Restore compatible original recipient and require original body/UUID, unchanged pin and exactly one remote copy through duplicate retry. The regression is retained, not reduced to a zero-pin assertion. TLS execution remains CI-only; the equivalent actual production store/reopen path uses mocked transport locally. |
+| Closed-primary ten-job takeover | Still unproven: jobs c482c40a and7d67ba63 are done/report-present but finalQueued behind note retries attempt15, code/reason other, with no final envelope or grant. Their runners remain alive in pre-cleanup diagnostics. This corroborates the earlier Windows note-stage obstruction, not its precise cause. Preserve ten jobs/exactly-once/120s; no timeout increase, native reproduction or assertion change. Mac30789e6a and Windows fairness also remain unproven. |
+
+Bounded local red PID72860 exit1 reproduced both new fixture errors against
+unchanged f6da966f production: regenerated host refused as another supervisor,
+and capability-first admission has zero pins. These are intentional ownership
+and atomic-admission semantics, not grounds to weaken production guards. Final
+frozen-head commands/PIDs/exits and actual exclusions are recorded separately in
+`E:/AgentData/reports/ab458-pr141-<head>-residual-validation.json`.

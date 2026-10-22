@@ -163,17 +163,16 @@ describe("Muse legacy exec profile persistence", () => {
 });
 
 describe("Muse legacy exec remote profile contracts", () => {
-  function receiver() {
+  function receiver(pair = { id: randomUUID(), name: "paired", fingerprint: "a".repeat(64) }) {
     let receive!: (payload: Record<string, unknown>, pair: any) => Promise<void>;
     const responses: any[] = [];
-    const pair = { id: randomUUID(), name: "paired", fingerprint: "a".repeat(64) };
     const advertised = fixtureRemotePeer(env.home, pair, { id: "supervisor", name: "sender", sessionId: "supervisor" });
     const remote = new RemoteJobs({ registerExtension: (_frame: string, _capability: string, handler: typeof receive) => { receive = handler; },
       peers: () => [advertised], peerSupports: () => true,
       sendExtension: async (_host: string, _frame: string, payload: unknown) => { responses.push(payload); } } as any,
     env.home, nullLogger, async () => {});
     remotes.push(remote);
-    return { remote, request: async (request: RemoteJobRequest, supervisor = "supervisor") => {
+    return { remote, pair, request: async (request: RemoteJobRequest, supervisor = "supervisor") => {
       await receive({ kind: "request", rid: randomUUID(), peer: { id: "supervisor", name: "sender", supervisor }, request }, pair);
       return responses.at(-1);
     } };
@@ -199,7 +198,7 @@ describe("Muse legacy exec remote profile contracts", () => {
     expect((await remote.request(spawn({ permission_profile: "initial" }))).error).toBeUndefined();
     expect(calls()[0]!.args).toEqual(expect.arrayContaining(["--permission-profile", "initial"]));
     expect((await remote.request({ op: "control", job: "abcdef12", control: { type: "settings", settings: { permission_profile: "remote-review" } } })).error).toBeUndefined();
-    remote.remote.close(); remote = receiver();
+    remote.remote.close(); remote = receiver(remote.pair);
     expect((await remote.request(spawn())).error).toBeUndefined();
     expect(calls()[1]!.args).toEqual(expect.arrayContaining(["--permission-profile", "remote-review", "--session-id", "muse-saved-session"]));
     expect((readJsonStore(join(env.home, "remote-jobs.json")) as any).jobs[0].args.permission_profile).toBe("remote-review");
@@ -208,6 +207,9 @@ describe("Muse legacy exec remote profile contracts", () => {
     expect((await remote.request(spawn({ permission_profile: "exact" }))).error).toBeUndefined();
     expect(calls()[3]!.args).toEqual(expect.arrayContaining(["--permission-profile", "exact", "--disable-write"]));
     const count = launch.mock.calls.length;
+    const foreignHost = receiver({ ...remote.pair, id: randomUUID() });
+    expect((await foreignHost.request(spawn())).error).toContain("another supervisor");
+    foreignHost.remote.close();
     expect((await remote.request(spawn(), "another-owner")).error).toContain("another supervisor");
     expect((await remote.request({ ...spawn({ permission_profile: "wrong-agent" }), job: "abcdef13", target: "codex" })).error).toContain("only to muse");
     expect((await remote.request({ ...spawn({ session_id: "unowned" }), job: "abcdef14" })).error).toContain("owned by this supervisor");

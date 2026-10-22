@@ -16,10 +16,10 @@ import { recipientKey } from "../src/core/recipient-ownership.js";
 import { MessageStore } from "../src/core/store.js";
 import { loadOrCreateToken } from "../src/core/token.js";
 import * as worktree from "../src/core/worktree.js";
-import { JobRunners } from "../src/mcp/job-host.js";
+import { JobRunners, writeRunnerState } from "../src/mcp/job-host.js";
 import { DEFAULT_NETWORK_CONFIG } from "../src/network/config.js";
 import { messageSchema, NetworkService } from "../src/network/link.js";
-import { REMOTE_JOB_FRAME } from "../src/network/remote-job-protocol.js";
+import { REMOTE_JOB_FRAME, type RemoteJobRequest } from "../src/network/remote-job-protocol.js";
 import { RemoteJobs } from "../src/network/remote-jobs.js";
 import { fixtureConnection, fixturePeer } from "./owned-mail.js";
 
@@ -50,7 +50,7 @@ async function hosts(hosted = false) {
   const sourceIdentity = sourceNetwork.status().identity!;
   mkdirSync(runnerHome, { recursive: true });
   writeFileSync(join(runnerHome, "config.json"), JSON.stringify({ version: 4,
-    network: { ...DEFAULT_NETWORK_CONFIG, remoteJobs: { enabled: true, allowRoots: [home], agents: ["codex"], allowPeers: [sourceIdentity.name] } } }));
+    network: { ...DEFAULT_NETWORK_CONFIG, remoteJobs: { enabled: true, allowRoots: [home], agents: ["codex", "muse"], allowPeers: [sourceIdentity.name] } } }));
   const token = loadOrCreateToken(runnerHome), pipe = resolvePipePath(runnerHome, {});
   let store = new MessageStore(join(runnerHome, "bridge.db"), nullLogger);
   let broker = new Broker(pipe, store, nullLogger, token, Date.now, join(runnerHome, "jobs.json")) as any;
@@ -114,6 +114,12 @@ async function hosts(hosted = false) {
   };
   return { get store() { return store; }, sourceStore, supervisor, link, frames, owner, connect, sourceIdentity,
     requestState, lookups: () => lookup?.mock.calls.length ?? 0,
+    requestRemote: async (request: RemoteJobRequest, source = sourceIdentity) => {
+      await network.receiveExtension(REMOTE_JOB_FRAME, { kind: "request", rid: randomUUID(), peer, request }, source as any);
+      return responses.at(-1);
+    },
+    finish: (id: string) => writeRunnerState(runnerHome, id, { pid: 0, peer: `muse-job-${id}`, status: "done", updatedAt: Date.now(), sessionId: "retained-muse-session", workdir: home }),
+    cwd: home,
     lostAck: () => { loseAck = true; },
     disconnect: () => { disconnectBeforeReceive = true; },
     legacyRecord: () => {
@@ -147,6 +153,45 @@ it("reaches remote lookup for a freshly advertised native supervisor with the pe
   expect(h.lookups()).toBe(1);
   await expect(h.requestState({ ...h.supervisor, id: randomUUID() })).rejects.toThrow("not an advertised supervisor");
   expect(h.lookups()).toBe(1);
+});
+
+it("reloads remote profile settings for the same authenticated paired owner", async () => {
+  const h = await hosts(), id = "abcdef12";
+  const spawn = (args: Record<string, unknown> = {}): RemoteJobRequest => ({ op: "spawn", job: id, target: "muse",
+    args: { prompt: "retained profile context", title: "profile contract", cwd: h.cwd, ...args } });
+  expect((await h.requestRemote(spawn({ permission_profile: "initial" }))).error).toBeUndefined();
+  h.finish(id);
+  expect((await h.requestRemote({ op: "control", job: id, control: { type: "settings", settings: { permission_profile: "remote-review" } } })).error).toBeUndefined();
+  await h.recover();
+  // A replacement host with the same native owner/name cannot resume this job.
+  h.link.remote.id = randomUUID();
+  const starts = vi.mocked(JobRunners.prototype.startAsync).mock.calls.length;
+  expect((await h.requestRemote(spawn(), h.link.remote)).error).toContain("another supervisor");
+  expect(vi.mocked(JobRunners.prototype.startAsync)).toHaveBeenCalledTimes(starts);
+  h.link.remote.id = h.sourceIdentity.id;
+  expect((await h.requestRemote(spawn())).error).toBeUndefined();
+  const resumed = vi.mocked(JobRunners.prototype.startAsync).mock.calls.at(-1)!;
+  expect(resumed[0].id).toBe(id);
+  expect(resumed[1].args).toMatchObject({ permission_profile: "remote-review", session_id: "retained-muse-session" });
+});
+
+it("admits a tracked remote intent only after mailbox capability proof", async () => {
+  const h = await hosts(); let runner = await h.connect(); const id = randomUUID();
+  const request = { messageId: id, to: h.owner, body: "capability backlog bytes" };
+  h.link.mailboxProvenanceV1 = false;
+  await expect(runner.request("trackedSend", request)).rejects.toThrow("mailboxProvenanceV1");
+  expect(h.store.pinnedDestinations(id)).toHaveLength(0); expect(h.store.sendIntentOwner(id)).toBeUndefined(); expect(h.frames).toHaveLength(0);
+  h.link.mailboxProvenanceV1 = true; h.disconnect();
+  await expect(runner.request("trackedSend", request)).rejects.toThrow("mock disconnect before remote storage");
+  const original = h.store.pinnedSends(id); expect(original).toHaveLength(1); expect(h.sourceStore.byId(id)).toBeNull();
+  runner.close(); await h.recover(); runner = await h.connect();
+  h.link.mailboxProvenanceV1 = false;
+  await expect(runner.request("trackedSend", request)).rejects.toThrow("mailboxProvenanceV1");
+  expect(h.store.pinnedSends(id)).toEqual(original); expect(h.frames).toHaveLength(1);
+  h.link.mailboxProvenanceV1 = true;
+  await runner.request("trackedSend", request); await runner.request("trackedSend", request);
+  expect(h.store.pinnedSends(id)).toEqual(original); expect(h.sourceStore.messagesById(id)).toHaveLength(1);
+  expect(h.sourceStore.byId(id)!.body).toBe(request.body);
 });
 
 it.each([false, true])("retains the real paired supervisor report across lost ACK, registry reload and runner reconnect (hosted=%s)", async hosted => {

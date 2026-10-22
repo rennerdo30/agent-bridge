@@ -1143,20 +1143,32 @@ it.each([false, true])("quarantines a partial mailbox restore without its origin
 it("keeps a persisted tracked remote intent fenced across missing-provenance reconnect and source restart", async () => {
   let a = await persistentHost("pc-a"), b = await persistentHost("pc-b");
   const without = (service: NetworkService) => { const hello = service.extensionHelloCapabilities.bind(service); vi.spyOn(service, "extensionHelloCapabilities").mockImplementation(() => ({ ...hello(), mailboxProvenanceV1: false })); };
-  without(b.network); await b.register(undefined, "destination", b.dir, "remote-native");
+  await b.register(undefined, "destination", b.dir, "remote-native");
   let sender = await a.register(binding("a", "sender"), "sender"); const invite = await pairPersistent(a, b), id = randomUUID();
   const request = { messageId: id, to: "pc-b/destination", body: "capability backlog must not become local mail" };
-  await expect(sender.client.request("trackedSend", request)).rejects.toThrow(/mailboxProvenanceV1/);
-  expect(a.store.pinnedDestinations(id)).toHaveLength(1); expect(b.store.byId(id)).toBeNull();
+  // Admit the exact authenticated destination while both hosts are compatible,
+  // then lose transport before the receiver stores it. Capability refusal on a
+  // first attempt must not create a partial/request-only intent.
+  const dispatch = vi.spyOn(link(a.network), "send").mockRejectedValueOnce(new Error("fixture transport lost after atomic admission"));
+  try { await expect(sender.client.request("trackedSend", request)).rejects.toThrow(/transport lost after atomic admission/); }
+  finally { dispatch.mockRestore(); }
+  const original = a.store.pinnedSends(id);
+  expect(original).toHaveLength(1); expect(a.store.sendIntentOwner(id)).toBeDefined(); expect(b.store.byId(id)).toBeNull();
   await a.close(); await b.close(); a = await persistentHost("pc-a"); b = await persistentHost("pc-b"); without(b.network);
   await b.register(undefined, "destination", b.dir, "remote-native"); sender = await a.register(binding("a", "sender"), "sender");
   const local = await a.register(undefined, "destination", a.dir, "remote-native"); await pairPersistent(a, b, invite);
   await expect(sender.client.request("trackedSend", request)).rejects.toThrow(/mailboxProvenanceV1/);
+  expect(a.store.pinnedSends(id)).toEqual(original);
   expect((await local.client.request("pending", {})).map(m => m.id)).not.toContain(id); expect(b.store.byId(id)).toBeNull();
+  const unadmitted = { ...request, messageId: randomUUID() };
+  await expect(sender.client.request("trackedSend", unadmitted)).rejects.toThrow(/mailboxProvenanceV1/);
+  expect(a.store.sendIntentOwner(unadmitted.messageId)).toBeUndefined(); expect(a.store.pinnedSends(unadmitted.messageId)).toEqual([]);
   await a.close(); await b.close(); a = await persistentHost("pc-a"); b = await persistentHost("pc-b");
   const actual = await b.register(undefined, "destination", b.dir, "remote-native"); sender = await a.register(binding("a", "sender"), "sender"); await pairPersistent(a, b, invite);
   await sender.client.request("trackedSend", request);
   expect((await actual.client.request("pending", {})).find(m => m.id === id)?.body).toBe(request.body);
+  expect(a.store.pinnedSends(id)).toEqual(original); expect(b.store.messagesById(id)).toHaveLength(1);
+  await sender.client.request("trackedSend", request); expect(b.store.messagesById(id)).toHaveLength(1);
 });
 
 it("binds remote sender receipts to the authenticated fingerprint even if a newly paired host reuses its ID and native session", async () => {
