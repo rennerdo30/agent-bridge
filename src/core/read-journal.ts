@@ -7,6 +7,7 @@ import { storageLease } from "./storage-lock.js";
 import { DatabaseSync } from "node:sqlite";
 import type { Logger } from "./logger.js";
 import { t3BindingSchema, type T3Binding } from "./t3-identity.js";
+import { verifiedNative } from "./recipient-ownership.js";
 
 /** Old name/session marks remain ambiguous evidence only. A hosted identity is
  * independent of registration names and native provider session IDs. No legacy
@@ -18,7 +19,8 @@ export function readJournalIdentities(_name: string, _sessionId?: string | null,
  }
  // Pre-v11 hosted and native readers shared these namespaces. Retain them for
  // inspection, but they cannot establish consumption by any successor.
- return nativeIdentity ? [`native-copy:v1:${nativeIdentity}`] : [];
+ const native = verifiedNative(nativeIdentity);
+ return native ? [`native-owner:v2:${native}`] : [];
 }
 
 /** The metadata store cannot open yet: its fail-closed migration lease needs this process's

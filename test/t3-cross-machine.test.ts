@@ -11,7 +11,10 @@ import { nullLogger } from "../src/core/logger.js";
 import type { BridgeNode } from "../src/core/node.js";
 import type { BridgeMessage, PeerInfo } from "../src/core/protocol.js";
 import { encodeFrame, FrameDecoder } from "../src/core/protocol.js";
-import { MessageStore } from "../src/core/store.js";
+import { MessageStore, migrateMessageSchema } from "../src/core/store.js";
+import { JobManager } from "../src/mcp/jobs.js";
+import { commitHandoff } from "../src/core/job-handoff.js";
+import { writeJsonStore } from "../src/core/json-store.js";
 import { ReadJournal } from "../src/core/read-journal.js";
 import { closeMetadataDb, metadataDb } from "../src/core/metadata-db.js";
 import { localResultReceipt } from "../src/core/local-result-receipts.js";
@@ -58,7 +61,7 @@ async function persistentHost(name: string, folder = name) {
   await admin.request("auth", { protocol: PROTOCOL_VERSION, token });
   const network = (broker as any).network as NetworkService;
   expect(network).toBeDefined();
-  const register = async (frontend?: T3Binding, name = "destination", cwd = home, sessionId = "same-native-provider-id") => {
+  const register = async (frontend?: T3Binding, name = "destination", cwd = home, sessionId: string | null = "same-native-provider-id", extra: Partial<PeerInfo> = {}) => {
     const client = await BridgeClient.connect(pipe, nullLogger); cleanup.push(() => client.close());
     await client.request("auth", { protocol: PROTOCOL_VERSION, token });
     const events: BridgeMessage[] = [];
@@ -66,12 +69,207 @@ async function persistentHost(name: string, folder = name) {
     const registration = peer(name, frontend);
     registration.cwd = cwd;
     registration.sessionId = sessionId;
+    Object.assign(registration, extra);
     const hello = await client.request(frontend ? "helloT3" : "hello", { protocol: PROTOCOL_VERSION, token, peer: registration });
     registration.name = hello.name;
     return { client, events, peer: registration };
   };
   return { broker, store, network, dir, pipe, db, token, admin, close, register };
 }
+
+it.each(["session", "provider", "process", "incarnation", "missing"])("fences native exact-name mail across %s replacement and recovers only the original identity", async change => {
+  let host = await persistentHost("pc-b");
+  const processProof = { agentPid: 111111, agentStartedAt: "fixture-process-identity" };
+  const processIdentity = change === "process" || change === "incarnation";
+  const session = processIdentity || change === "missing" ? null : "native-A";
+  const first = await host.register(undefined, "destination", host.dir, session, processIdentity ? processProof : {});
+  const sender = await host.register(binding("a", "sender"), "sender"), id = randomUUID();
+  await sender.client.request("trackedSend", { messageId: id, to: "destination", body: "native A private mail" });
+  const original = host.store.byId(id)!;
+  first.client.close(); await host.close(); host = await persistentHost("pc-b");
+  const next = await host.register(undefined, "destination", host.dir, change === "session" ? "native-B" : session,
+    change === "process" ? { ...processProof, agentPid: 222222 } : change === "incarnation" ? { ...processProof, agentStartedAt: "reused-pid-new-creation" } : change === "provider" ? { agent: "other" } : {});
+  expect((await next.client.request("pending", {})).map(m => m.id)).not.toContain(id);
+  expect(next.events.filter(m => m.id === id)).toEqual([]);
+  expect(await next.client.request("ack", { ids: [id], nativeOwners: { [id]: original.recipientNative! } })).toEqual({ acked: 0 });
+  next.client.close(); await until(() => !(host.broker as any).localPeers().length);
+  const returned = await host.register(undefined, "reconnected-A", host.dir, session, processIdentity ? processProof : {});
+  expect((await returned.client.request("pending", {})).some(m => m.id === id)).toBe(change !== "missing");
+});
+
+it("does not reuse a prior native session's cached legacy-send receipt after session update", async () => {
+  const host = await persistentHost("pc-a"), sender = await host.register(undefined, "sender", host.dir, "native-A");
+  await host.register(binding("a", "destination"));
+  const request = { to: "destination", body: "new authority uses its own operation", dedupeKey: "same-ui-request" };
+  const first = await sender.client.request("send", request);
+  await sender.client.request("updatePeer", { sessionId: "native-B" });
+  const next = await sender.client.request("send", request);
+  expect(next.messages[0]!.id).not.toBe(first.messages[0]!.id);
+  await expect(sender.client.request("sendState", { id: first.messages[0]!.id })).rejects.toThrow(/ownership|identity|sender/i);
+});
+
+it("fences retained native sender authority across same-name replacement and allows the same session reconnect", async () => {
+  let host = await persistentHost("pc-a"), sender = await host.register(undefined, "sender", host.dir, "sender-A");
+  await host.register(binding("a", "destination")); const args = { messageId: randomUUID(), to: "destination", body: "original native sender" };
+  await sender.client.request("trackedSend", args); await host.close(); host = await persistentHost("pc-a");
+  const replacement = await host.register(undefined, "sender", host.dir, "sender-B");
+  await expect(replacement.client.request("sendState", { id: args.messageId })).rejects.toThrow(/ownership|sender|identity/i);
+  await expect(replacement.client.request("trackedSend", args)).rejects.toThrow(/ownership|sender|identity/i);
+  replacement.client.close(); await until(() => !(host.broker as any).localPeers().length);
+  sender = await host.register(undefined, "sender", host.dir, "sender-A");
+  expect((await sender.client.request("sendState", { id: args.messageId })).state).toBe("stored");
+});
+
+it("refuses remote native receipts and duplicates from a same-name replacement sender and accepts the original sender reconnect", async () => {
+  const a = await persistentHost("pc-a"), b = await persistentHost("pc-b");
+  let sender = await a.register(undefined, "sender", a.dir, "sender-A");
+  const destination = await b.register(undefined, "destination", b.dir, "recipient-A");
+  await pairPersistent(a, b); const id = randomUUID(), args = { messageId: id, to: "pc-b/destination", body: "authenticated native sender" };
+  await sender.client.request("trackedSend", args);
+  const copy = (await destination.client.request("pending", {})).find(m => m.id === id)!;
+  await destination.client.request("ack", { ids: [id], nativeOwners: { [id]: copy.recipientNative! } });
+  expect((await sender.client.request("messageReceipt", { id }))[0]!.readAt).not.toBeNull();
+  sender.client.close(); await until(() => !(a.broker as any).localPeers().length);
+  const replacement = await a.register(undefined, "sender", a.dir, "sender-B"); link(a.network).refresh();
+  await until(() => b.network.peers().some(p => p.sessionId === "sender-B"));
+  await expect(link(a.network).receipt(id, replacement.peer.id, "destination")).rejects.toThrow(/original.*sender|ownership/i);
+  const incoming = { ...message(replacement.peer, "destination"), id, to: args.to, body: args.body, conversationId: id,
+    senderOwner: `native:${JSON.stringify({ kind: "session", agent: "codex", sessionId: "sender-B" })}` };
+  await expect(link(a.network).send(incoming, { peerId: destination.peer.id, native: b.network.localPeers()[0]!.nativeOwner })).rejects.toThrow(/sender ownership|different content/i);
+  expect(b.store.messagesById(id)).toHaveLength(1);
+  replacement.client.close(); await until(() => !(a.broker as any).localPeers().length);
+  sender = await a.register(undefined, "sender", a.dir, "sender-A");
+  expect((await sender.client.request("messageReceipt", { id }))[0]!.readAt).not.toBeNull();
+});
+
+const ownerQuestion = () => ({ title: "Choose the exact scope", topic: "scope", context: "Private scoped answer.", options: [
+  { id: "small", label: "Small", consequence: "Narrow work", recommended: true },
+  { id: "large", label: "Large", consequence: "More work", recommended: false }], blocking: true, blocks: "Scope decision", meanwhile: "Independent checks" });
+it.each(["native-online", "hosted-online", "native-replaced", "hosted-replaced"])("delivers owner answers to the proven original recipient (%s) without silent settlement", async scenario => {
+  let host = await persistentHost("pc-b"), frontend = scenario.startsWith("hosted") ? binding("b", "asker-A") : undefined;
+  let asker = await host.register(frontend, "asker", host.dir, "asker-A");
+  const q = (await asker.client.request("askOwner", ownerQuestion())).question;
+  if (scenario.endsWith("replaced")) {
+    asker.client.close(); await host.close(); host = await persistentHost("pc-b");
+    const replacement = await host.register(frontend ? binding("b", "asker-B") : undefined, "asker", home, "asker-B");
+    await host.admin.request("answerOwner", { id: q.id, answer: { text: "Exact owner answer" } });
+    expect((await replacement.client.request("pending", {})).filter(m => m.replyTo === q.id)).toEqual([]);
+    replacement.client.close(); await until(() => !(host.broker as any).localPeers().length);
+    asker = await host.register(frontend, "asker-reconnected", host.dir, "asker-A");
+  } else await host.admin.request("answerOwner", { id: q.id, answer: { text: "Exact owner answer" } });
+  const delivered = (await asker.client.request("pending", {})).find(m => m.replyTo === q.id);
+  expect(delivered?.body).toContain("Exact owner answer");
+  expect(delivered?.recipientAmbiguous).toBeUndefined();
+  if (frontend) expect(delivered?.recipientFrontend).toEqual(frontend); else expect(delivered?.recipientNative).toBeTruthy();
+  expect(await asker.client.request("ack", { ids: [delivered!.id], nativeOwners: { [delivered!.id]: delivered!.recipientNative! } })).toEqual({ acked: 1 });
+  const recorded = (await host.admin.request("ownerQuestions", {})).find(item => item.id === q.id)!;
+  expect(recorded.deliveries.some(d => d.messageId === delivered!.id && d.readAt !== null)).toBe(true);
+});
+
+it("does not settle an answered historical question whose original binding is unavailable", async () => {
+  const host = await persistentHost("pc-b"), asker = await host.register(binding("b", "asker-A"), "asker", host.dir);
+  const q = (await asker.client.request("askOwner", ownerQuestion())).question;
+  const service = (host.broker as any).ownerQuestions();
+  for (const a of q.askers) { delete a.owner; delete a.mainOwner; delete a.jobOwner; }
+  q.deliveryComplete = true; service.store.save(q);
+  const answered = await host.admin.request("answerOwner", { id: q.id, answer: { text: "Retain this pending answer" } });
+  const original = answered.deliveries.filter(d => !d.owner);
+  expect(original.length).toBeGreaterThan(0); expect(original.every(d => d.state === "pending" && !d.messageId)).toBe(true);
+  expect(answered.deliveryComplete).toBe(false); expect(service.store.work().some((item: any) => item.id === q.id)).toBe(true);
+});
+
+it("keeps project-main change notices with the original native sender after its name is reused", async () => {
+  const host = await persistentHost("pc-b"), main = await host.register(binding("b", "main-A"), "main-A", host.dir);
+  const sender = await host.register(undefined, "prior-sender", host.dir, "native-A");
+  await sender.client.request("trackedSend", { messageId: randomUUID(), to: "project:pc-b", body: "prior project request" });
+  const next = await host.register(binding("b", "main-B"), "main-B", host.dir);
+  sender.client.close(); await until(() => !(host.broker as any).localPeers().some((p: PeerInfo) => p.id === sender.peer.id));
+  const replacement = await host.register(undefined, "prior-sender", host.dir, "native-B");
+  await main.client.request("projectMain", { to: next.peer.name });
+  await until(() => host.store.unread(main.peer.name, 100, main.peer.frontend).some(m => m.conversationId.startsWith("project-main-")));
+  expect((await replacement.client.request("pending", {})).filter(m => m.conversationId.startsWith("project-main-"))).toEqual([]);
+  const original = await host.register(undefined, "returned-sender", host.dir, "native-A");
+  expect((await original.client.request("pending", {})).some(m => m.conversationId.startsWith("project-main-"))).toBe(true);
+});
+
+it("delivers decisions independently to exact frontends and does not settle an unproved native recipient", async () => {
+  const host = await persistentHost("pc-b"), first = await host.register(binding("b", "decision-A"), "first", host.dir),
+    second = await host.register(binding("b", "decision-B"), "second", host.dir), unknown = await host.register(undefined, "unknown", host.dir, null);
+  const result = await first.client.request("decide", { topic: "ownership scope", text: "Every intended frontend must see this", scope: { project: host.dir } });
+  for (const recipient of [first, second]) expect((await recipient.client.request("pending", {})).some(m => m.conversationId === `decision-${result.decision.id}`)).toBe(true);
+  expect((await unknown.client.request("pending", {})).filter(m => m.conversationId === `decision-${result.decision.id}`)).toEqual([]);
+  await unknown.client.request("updatePeer", { sessionId: "now-proven-native" });
+  expect((await unknown.client.request("pending", {})).some(m => m.conversationId === `decision-${result.decision.id}`)).toBe(true);
+});
+
+it("replays handoff notices against the owner captured at commit rather than a replacement name", async () => {
+  const host = await persistentHost("pc-b"), source = await host.register(binding("b", "source"), "source", host.dir),
+    target = await host.register(undefined, "target", host.dir, "target-A");
+  const jobsPath = join(host.dir, "jobs.json"), job = { id: randomUUID(), name: "fixture-job", agent: "codex", owner: source.peer.name,
+    supervisor: "fixture-root", rootSession: "fixture-root", rootName: source.peer.name, projectRoot: host.dir, status: "done", startedAt: Date.now(), args: { cwd: host.dir } };
+  writeJsonStore(jobsPath, { jobs: [job] }, null);
+  const receipt = commitHandoff(jobsPath, source.peer, target.peer, { to: target.peer.name, jobs: [job.name] });
+  target.client.close(); await until(() => !(host.broker as any).localPeers().some((p: PeerInfo) => p.id === target.peer.id));
+  const replacement = await host.register(undefined, "target", host.dir, "target-B");
+  (host.broker as any).jobsPath = jobsPath; (host.broker as any).applyHandoffs();
+  expect((await replacement.client.request("pending", {})).filter(m => m.conversationId === `handoff-${receipt.id}`)).toEqual([]);
+  const original = await host.register(undefined, "returned-target", host.dir, "target-A");
+  expect((await original.client.request("pending", {})).some(m => m.conversationId === `handoff-${receipt.id}`)).toBe(true);
+});
+
+it.each([false, true])("recovers a persisted job completion through its captured owner without launching a provider (%s)", async hosted => {
+  let host = await persistentHost("pc-b"); const frontend = hosted ? binding("b", "job-owner-A") : undefined;
+  const node = liveRecipient(host, frontend); await node.setSessionId("job-owner-A"); await node.start();
+  const jobsPath = join(host.dir, "jobs.json"); (host.broker as any).jobsPath = jobsPath;
+  const manager = new JobManager(node, nullLogger, jobsPath);
+  const job = (manager as any).newJob("codex", null, "offline producer fixture", "job", undefined, { cwd: host.dir });
+  job.status = "done"; job.report = "private completion"; job.finishedAt = Date.now();
+  (manager as any).history.set(job.id, job); (manager as any).own.add(job.id);
+  const socket = (node as any).client.socket, write = socket.write.bind(socket); let reached!: () => void;
+  const interrupted = new Promise<void>(resolve => reached = resolve);
+  vi.spyOn(socket, "write").mockImplementation(((data: any, ...args: any[]) => {
+    if (String(data).includes('"op":"inlineJobReport"')) { (node as any).client.close(); reached(); throw new Error("fixture stopped before completion dispatch"); }
+    return write(data, ...args);
+  }) as any);
+  const id = (manager as any).post(job, "Subagent fixture done after 1s.\nprivate completion");
+  await interrupted; expect(host.store.byId(id)).toBeNull(); await node.stop(); await host.close();
+  host = await persistentHost("pc-b"); (host.broker as any).jobsPath = jobsPath;
+  const replacement = await host.register(frontend ? binding("b", "job-owner-B") : undefined, "destination", host.dir, "job-owner-B");
+  await (host.broker as any).routePendingJobMail();
+  expect((await replacement.client.request("pending", {})).map(m => m.id)).not.toContain(id);
+  const original = await host.register(frontend, "returned-owner", host.dir, "job-owner-A");
+  await (host.broker as any).routePendingJobMail();
+  expect((await original.client.request("pending", {})).find(m => m.id === id)?.body).toContain("private completion");
+});
+
+it("fences native-child mail by its incarnation and retains recovery for its original parent", async () => {
+  let host = await persistentHost("pc-b"), parent = await host.register(undefined, "parent", host.dir, "parent-A", { agent: "claude" });
+  const child = await parent.client.request("nativeChild", { agentId: "worker", action: "start" });
+  const id = randomUUID(); await parent.client.request("trackedSend", { messageId: id, to: child!.address, body: "old child private mail" });
+  expect((await parent.client.request("nativeChildPending", { agentId: "worker" })).map(m => m.id)).toContain(id);
+  await host.close(); host = await persistentHost("pc-b");
+  const next = await host.register(undefined, "parent", host.dir, "parent-B", { agent: "claude" });
+  await next.client.request("nativeChild", { agentId: "worker", action: "start" });
+  expect(await next.client.request("nativeChildAck", { agentId: "worker", ids: [id] })).toEqual({ acked: 0 });
+  expect((await next.client.request("pending", {})).map(m => m.id)).not.toContain(id);
+  next.client.close(); await until(() => !(host.broker as any).localPeers().length);
+  parent = await host.register(undefined, "returned-parent", host.dir, "parent-A", { agent: "claude" });
+  expect((await parent.client.request("pending", {})).map(m => m.id)).toContain(id);
+});
+
+it("refuses a previous child's send identity after the same parent session creates another child incarnation", async () => {
+  const host = await persistentHost("pc-b"); let parent = await host.register(undefined, "parent", host.dir, "same-parent", { agent: "claude" });
+  await host.register(binding("b", "receiver"), "receiver");
+  await parent.client.request("nativeChild", { agentId: "worker", action: "start" });
+  await parent.client.request("nativeChild", { agentId: "worker", action: "grant", sendTo: ["receiver"] });
+  const args = { agentId: "worker", messageId: randomUUID(), to: "receiver", body: "original child operation" };
+  await parent.client.request("nativeChildSend", args);
+  parent.client.close(); await until(() => !(host.broker as any).localPeers().some((p: PeerInfo) => p.name === "parent"));
+  parent = await host.register(undefined, "parent", host.dir, "same-parent", { agent: "claude" });
+  await parent.client.request("nativeChild", { agentId: "worker", action: "start" });
+  await parent.client.request("nativeChild", { agentId: "worker", action: "grant", sendTo: ["receiver"] });
+  await expect(parent.client.request("nativeChildSend", args)).rejects.toThrow(/ownership|identity|sender/i);
+});
 async function pairPersistent(a: Awaited<ReturnType<typeof persistentHost>>, b: Awaited<ReturnType<typeof persistentHost>>, invite = b.network.keys.invite()) {
   await a.admin.request("networkLink", { code: invite, host: "127.0.0.1", port: b.network.port });
   return invite;
@@ -152,19 +350,32 @@ it.each(["send", "receipt"])("refuses inbound %s from a peer without recipientOw
   expect(received).not.toHaveBeenCalled(); expect(receipt).not.toHaveBeenCalled();
 });
 
-it("refuses protocol2 clients before registration, mailbox effects or daemon handover", async () => {
+it.each(["outbound-send", "outbound-receipt", "inbound-send", "inbound-receipt"])("requires nativeOwnershipV1 for %s before payload or receipt effects", async scenario => {
+  const sender = peer("sender"), destination = peer("destination"), received = vi.fn(() => ({ delivered: true }));
+  const a = service("pc-a", [sender], () => ({ delivered: true })), b = service("pc-b", [destination], received);
+  const old = scenario.startsWith("inbound") ? a : b, hello = old.extensionHelloCapabilities.bind(old);
+  vi.spyOn(old, "extensionHelloCapabilities").mockImplementation(() => ({ ...hello(), nativeOwnershipV1: false }));
+  vi.spyOn(b, "supportsReceipts", "get").mockReturnValue(true); const receipt = vi.spyOn(b, "readReceipt").mockReturnValue(1234);
+  await connect(a, b);
+  const operation = scenario.startsWith("inbound") ? scenario.endsWith("send") ? link(a).send(message(sender, "destination")) : link(a).receipt(randomUUID(), "sender", "destination") :
+    scenario.endsWith("send") ? a.send(message(sender)) : a.receipt("pc-b/destination", randomUUID(), "sender");
+  await expect(operation).rejects.toThrow(/nativeOwnershipV1/);
+  expect(received).not.toHaveBeenCalled(); expect(receipt).not.toHaveBeenCalled();
+});
+
+it.each([2, 3])("refuses protocol%s clients before registration, mailbox effects or daemon handover", async oldProtocol => {
   const host = await persistentHost("pc-b"), handover = vi.fn(); host.broker.onNewerClient(handover);
   const client = await BridgeClient.connect(host.pipe, nullLogger); cleanup.push(() => client.close());
-  await expect(client.request("auth", { protocol: 2, token: host.token, canHost: true })).rejects.toThrow(/protocol|upgrade/i);
-  await expect(client.request("hello", { protocol: 2, token: host.token, canHost: true, peer: peer("old-reader") })).rejects.toThrow();
+  await expect(client.request("auth", { protocol: oldProtocol, token: host.token, canHost: true })).rejects.toThrow(/protocol|upgrade/i);
+  await expect(client.request("hello", { protocol: oldProtocol, token: host.token, canHost: true, peer: peer("old-reader") })).rejects.toThrow();
   for (const operation of ["pending", "ack", "trackedSend"] as const) {
     await expect((client.request as any)(operation, { ids: ["absent"], messageId: "absent", to: "target", body: "must not store" })).rejects.toThrow();
   }
   expect(host.store.byId("absent")).toBeNull(); expect((host.broker as any).localPeers()).toEqual([]);
-  expect(handover).not.toHaveBeenCalled(); expect(PROTOCOL_VERSION).toBe(3);
+  expect(handover).not.toHaveBeenCalled(); expect(PROTOCOL_VERSION).toBe(4);
 });
 
-it("new clients refuse a protocol2 endpoint without granting handover or later demand-start", async () => {
+it.each([2, 3])("new clients refuse a protocol%s endpoint without granting handover or later demand-start", async oldProtocol => {
   const dir = join(home, "old-endpoint"); mkdirSync(dir); const pipe = resolvePipePath(dir, {}), operations: string[] = [], auth: any[] = [];
   const sockets = new Set<import("node:net").Socket>();
   // Protocol2's exact auth refusal is sufficient; this endpoint implements no mailbox handlers.
@@ -172,7 +383,7 @@ it("new clients refuse a protocol2 endpoint without granting handover or later d
     sockets.add(socket); socket.on("close", () => sockets.delete(socket)); const decoder = new FrameDecoder(1024 * 1024);
     socket.setEncoding("utf8"); socket.on("data", bytes => { for (const frame of decoder.push(String(bytes))) if (frame.t === "req") {
       operations.push(frame.op); auth.push(frame.args);
-      socket.write(encodeFrame({ t: "res", id: frame.id, ok: false, error: { code: "protocol_mismatch", message: "broker speaks protocol 2; coordinated upgrade required", details: { brokerProtocol: 2 } } }));
+      socket.write(encodeFrame({ t: "res", id: frame.id, ok: false, error: { code: "protocol_mismatch", message: `broker speaks protocol ${oldProtocol}; coordinated upgrade required`, details: { brokerProtocol: oldProtocol } } }));
     } });
   });
   let closed = false; const close = async () => { if (closed) return; closed = true; for (const socket of sockets) socket.destroy(); await new Promise<void>(resolve => server.close(() => resolve())); };
@@ -181,10 +392,10 @@ it("new clients refuse a protocol2 endpoint without granting handover or later d
   const node = new LiveBridgeNode({ pipePath: pipe, token: "isolated-fixture-token", dbPath: join(dir, "bridge.db"), agent: "codex", name: "new-client", cwd: dir,
     autoWake: false, daemon: { cli: "fixture-never-launch", launch }, log: nullLogger });
   cleanup.push(() => node.stop()); cleanup.push(() => closeMetadataDb(dir));
-  await expect(node.start()).rejects.toThrow(/protocol 2/);
-  expect(operations).toEqual(["auth"]); expect(auth[0].protocol).toBe(3); expect(auth[0].canHost).toBeUndefined();
+  await expect(node.start()).rejects.toThrow(`protocol ${oldProtocol}`);
+  expect(operations).toEqual(["auth"]); expect(auth[0].protocol).toBe(4); expect(auth[0].canHost).toBeUndefined();
   expect(server.listening).toBe(true); await close();
-  await expect(node.ensureConnected()).rejects.toThrow(/protocol 2/); expect(launch).not.toHaveBeenCalled();
+  await expect(node.ensureConnected()).rejects.toThrow(`protocol ${oldProtocol}`); expect(launch).not.toHaveBeenCalled();
 });
 
 it.each(["wrong-copy", "registration-change"])("fences native ACK replay across %s", async change => {
@@ -244,6 +455,44 @@ it("retains proven schema10 hosted ownership while quarantining unproven native-
   const recovered = await host.register(frontend, "recovered-hosted");
   expect((await recovered.client.request("pending", { limit: 100 })).map(m => m.id)).toContain(hostedId);
   expect(await recovered.client.request("ack", { ids: [hostedId] })).toEqual({ acked: 1 });
+});
+
+it("migrates intermediate schema11 to12 additively, rolls back interruption, preserves backups and quarantines untyped native proofs", async () => {
+  const host = await persistentHost("pc-b"), frontend = binding("b", "migration-owner");
+  const hosted = await host.register(frontend), native = await host.register(undefined, "native", host.dir, "opaque-native"), sender = await host.register(binding("a", "sender"), "sender");
+  const hostedId = randomUUID(), nativeId = randomUUID();
+  await sender.client.request("trackedSend", { messageId: hostedId, to: hosted.peer.name, body: "retain hosted columns" });
+  await sender.client.request("trackedSend", { messageId: nativeId, to: native.peer.name, body: "retain native proof bytes" });
+  await host.close(); const db = new DatabaseSync(host.db); let closed = false; cleanup.push(() => { if (!closed) db.close(); });
+  const has = (table: string, column: string) => db.prepare(`PRAGMA table_info(${table})`).all().some(row => row.name === column);
+  for (const column of ["owner", "sender"]) if (has("message_frontends", column)) db.exec(`ALTER TABLE message_frontends DROP COLUMN ${column}`);
+  if (has("recipient_registrations", "owner")) db.exec("ALTER TABLE recipient_registrations DROP COLUMN owner");
+  const proof = JSON.stringify(["native-copy", "native", "codex", JSON.stringify(["codex", 111111, "created", host.dir, "native"])]);
+  db.prepare("UPDATE message_frontends SET identity=? WHERE id=?").run(proof, nativeId);
+  db.prepare("UPDATE messages SET read_at=1234 WHERE id=?").run(nativeId); db.exec("PRAGMA user_version=11");
+  const originalRows = db.prepare("SELECT * FROM messages ORDER BY id").all(), originalOwners = db.prepare("SELECT * FROM message_frontends ORDER BY id").all();
+  const exec = db.exec.bind(db); let interrupted = false;
+  const fault = vi.spyOn(db, "exec").mockImplementation(sql => {
+    if (!interrupted && sql.includes("ALTER TABLE message_frontends ADD COLUMN owner")) {
+      interrupted = true; exec(sql.slice(0, sql.indexOf(";") + 1)); throw new Error("fixture interruption after first additive column");
+    }
+    return exec(sql);
+  });
+  expect(() => migrateMessageSchema(db, host.db, true, nullLogger)).toThrow(/fixture interruption/); fault.mockRestore();
+  expect(db.prepare("PRAGMA user_version").get()!.user_version).toBe(11); expect(has("message_frontends", "owner")).toBe(false);
+  expect(db.prepare("SELECT * FROM messages ORDER BY id").all()).toEqual(originalRows);
+  expect(db.prepare("SELECT * FROM message_frontends ORDER BY id").all()).toEqual(originalOwners);
+  expect(readdirSync(join(host.dir, ".migration-snapshots")).length).toBeGreaterThan(0);
+  migrateMessageSchema(db, host.db, true, nullLogger); migrateMessageSchema(db, host.db, true, nullLogger);
+  expect(db.prepare("PRAGMA user_version").get()!.user_version).toBe(12);
+  expect(db.prepare("SELECT * FROM messages ORDER BY id").all()).toEqual(originalRows);
+  expect(db.prepare("SELECT id,recipient,binding,state,identity FROM message_frontends ORDER BY id").all()).toEqual(originalOwners);
+  expect(db.prepare("SELECT owner FROM message_frontends WHERE id=?").get(nativeId)!.owner).toBe("");
+  db.close(); closed = true;
+  const reopened = new MessageStore(host.db, nullLogger); cleanup.push(() => reopened.close());
+  expect(reopened.unread(hosted.peer.name, 100, frontend).map(m => m.id)).toContain(hostedId);
+  expect(reopened.byId(nativeId)?.recipientAmbiguous).toBe(true); expect(reopened.receipts(nativeId)[0]!.readAt).toBeNull();
+  expect(reopened.blockedOwnership().records.some(row => row.id === nativeId && row.readAt === 1234)).toBe(true);
 });
 
 it.each([false, true])("quarantines schema9 hosted-era copies without attributing historical read marks (%s)", async read => {
@@ -607,7 +856,7 @@ it("migrates v9 additively without attributing legacy rows and retains ownership
   b = await persistentHost("pc-b");
   const current = new DatabaseSync(file, { readOnly: true });
   try {
-    expect(current.prepare("PRAGMA user_version").get()!.user_version).toBe(11);
+    expect(current.prepare("PRAGMA user_version").get()!.user_version).toBe(12);
     expect(current.prepare("SELECT * FROM messages").all()).toEqual(before);
   } finally { current.close(); }
   const hosted = await b.register(binding("b", "original-thread"));
@@ -629,9 +878,11 @@ it("migrates v9 additively without attributing legacy rows and retains ownership
   expect(b.store.byId(legacy.id)?.body).toBe(legacy.body);
 });
 
-it.each(["thread", "host", "same-binding"])("pins first dispatch across source broker loss and automatic tracked retry (%s)", async changed => {
+it.each(["thread", "host", "same-binding", "native-session", "native-process", "native-host", "native-same"])("pins first dispatch across source broker loss and automatic tracked retry (%s)", async changed => {
   let a = await persistentHost("pc-a"), b = await persistentHost("pc-b");
-  const original = binding("b", "original-thread"), first = await b.register(original);
+  const native = changed.startsWith("native-"), original = native ? undefined : binding("b", "original-thread");
+  const first = await b.register(original, "destination", b.dir, changed === "native-process" ? null : "native-A",
+    changed === "native-process" ? { agentPid: 111111, agentStartedAt: "fixture-process-identity" } : {});
   const sender = new LiveBridgeNode({ pipePath: a.pipe, token: a.token, dbPath: a.db, agent: "codex", name: "sender", cwd: a.dir,
     frontend: binding("a", "sender-thread"), autoWake: false, canHostBroker: false, log: nullLogger });
   cleanup.push(() => sender.stop()); await sender.start();
@@ -652,20 +903,23 @@ it.each(["thread", "host", "same-binding"])("pins first dispatch across source b
   expect(a.store.byId(id)).toBeNull(); expect(b.store.byId(id)).toBeNull();
   const persisted = new DatabaseSync(a.db, { readOnly: true });
   const intent = JSON.parse(String(persisted.prepare("SELECT destination FROM send_destinations WHERE id=?").get(id)?.destination));
-  expect(intent).toMatchObject({ hostId: b.network.keys.identity.id, hostFingerprint: b.network.keys.identity.fingerprint, frontend: original });
+  expect(intent).toMatchObject({ hostId: b.network.keys.identity.id, hostFingerprint: b.network.keys.identity.fingerprint, ...(original ? { frontend: original } : {}) });
   persisted.close();
   await a.close(); first.client.close(); await b.close();
-  b = await persistentHost("pc-b", changed === "host" ? "replacement-pc-b" : "pc-b");
-  const next = await b.register(changed === "thread" ? binding("b", "new-thread") : original);
+  const changedHost = changed === "host" || changed === "native-host";
+  b = await persistentHost("pc-b", changedHost ? "replacement-pc-b" : "pc-b");
+  const next = await b.register(changed === "thread" ? binding("b", "new-thread") : original, "destination", b.dir,
+    changed === "native-process" ? null : changed === "native-session" ? "native-B" : "native-A",
+    changed === "native-process" ? { agentPid: 222222, agentStartedAt: "fixture-process-identity" } : {});
   a = await persistentHost("pc-a");
-  if (changed === "host") {
+  if (changedHost) {
     const old = a.network.status().paired[0]!;
     await a.admin.request("networkUnlink", { id: old.id });
     await pairPersistent(a, b);
   } else await pairPersistent(a, b, invite);
   resume();
   const result = await sent;
-  if (changed === "same-binding") {
+  if (changed === "same-binding" || changed === "native-same") {
     expect(result).not.toBeInstanceOf(Error);
     expect((await next.client.request("pending", { limit: 100 })).map(m => m.id)).toContain(id);
   } else {
@@ -679,6 +933,7 @@ vi.mock("../src/core/process-identity.js", async original => ({
   processIdentity: () => "fixture-process-identity", isProcessIdentityAlive: () => true,
   ownProcessIdentity: async () => "fixture-process-identity", readProcessIdentity: async () => "fixture-process-identity",
   parentProcessIdentity: async () => "fixture-process-identity",
+  readProcessIdentities: async (pids: number[]) => new Map(pids.map(pid => [pid, "fixture-process-identity"])),
 }));
 vi.mock("../src/core/muse-context.js", async original => ({
   ...await original<typeof import("../src/core/muse-context.js")>(),
@@ -689,6 +944,7 @@ vi.mock("../src/core/muse-context.js", async original => ({
 let home: string;
 let cleanup: (() => void | Promise<void>)[];
 beforeEach(() => {
+  vi.spyOn(process, "kill").mockImplementation((_pid, signal) => { if (signal === 0) return true; throw new Error("process termination forbidden in fixture"); });
   mkdirSync(process.env.AGENT_BRIDGE_TEST_ROOT!, { recursive: true });
   home = mkdtempSync(join(process.env.AGENT_BRIDGE_TEST_ROOT!, "t3-cross-machine-"));
   cleanup = [];
@@ -773,7 +1029,7 @@ it("rejects an unfenced retained alias that the broker resolves to a hosted thre
   expect(store.unread(destination.name, 10)).toEqual([]);
 });
 
-it("preserves legacy native-to-native delivery without a T3 capability", async () => {
+it("delivers explicitly owned native mail with nativeOwnershipV1 independently of T3 routing capability", async () => {
   const sender = peer("native-sender"), destination = peer("destination");
   const received = vi.fn(() => ({ delivered: true }));
   const a = service("pc-a", [sender], () => ({ delivered: true })), b = service("pc-b", [destination], received);
@@ -782,6 +1038,7 @@ it("preserves legacy native-to-native delivery without a T3 capability", async (
   await connect(a, b);
   expect(await a.send(message(sender))).toMatchObject({ deliveredTo: ["pc-b/destination"] });
   expect(received).toHaveBeenCalledTimes(1);
+  expect(JSON.parse((received.mock.calls as any)[0][1].native)).toMatchObject({ kind: "session", agent: "codex", sessionId: destination.sessionId });
 });
 
 it("refuses an unfenced legacy send to a T3 session and does not downgrade T3 sends to an old host", async () => {
@@ -793,7 +1050,7 @@ it("refuses an unfenced legacy send to a T3 session and does not downgrade T3 se
   await connect(a, b);
   await expect(a.send(message(sender))).rejects.toThrow(/T3|thread/i);
   // A shipped sender can still put an ordinary frame on the wire; ingress must reject it.
-  await expect(link(a).send({ ...message(sender), recipient: "destination" })).rejects.toThrow(/binding|destination|thread/i);
+  await expect(link(a).send({ ...message(sender), senderOwner: `hosted:${JSON.stringify(sender.frontend)}`, recipient: "destination" })).rejects.toThrow(/binding|destination|thread/i);
   expect(received).not.toHaveBeenCalled();
 });
 

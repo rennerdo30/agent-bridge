@@ -15,19 +15,21 @@ import { makeEnv, until, type TestEnv } from "./helpers.js";
 import { notifyOwnerQuestion } from "../src/core/notifications.js";
 import { loadConfig } from "../src/core/config.js";
 import { migrateHistoryStore } from "../src/core/history-store.js";
+import { nativeOwner } from "../src/core/recipient-ownership.js";
 
 let env: TestEnv;
 const closers: (() => void | Promise<void>)[]=[];
 beforeEach(() => { env=makeEnv(); });
 afterEach(async () => { for (const close of closers.splice(0).reverse()) await close(); vi.restoreAllMocks(); vi.unstubAllGlobals(); await env.cleanup(); });
 export function question(topic="release"): AskOwnerArgs { return { topic,title:"Which release scope?",context:"Owner chooses scope.",options:[{id:"small",label:"Small scope",consequence:"Ships sooner",recommended:true},{id:"large",label:"Large scope",consequence:"Ships later",recommended:false}],blocking:true,blocks:"Release scope",meanwhile:"Run independent checks" }; }
-const asker={session:"codex-app",sessionId:"thread",agent:"codex" as const,main:"claude-main"};
+const nativeKey=(agent:string,sessionId:string) => `native:${JSON.stringify({kind:"session",agent,sessionId})}`;
+const asker={session:"codex-app",sessionId:"thread",agent:"codex" as const,main:"claude-main",owner:nativeKey("codex","thread"),mainOwner:nativeKey("claude","main-thread"),mainSessionId:"main-thread"};
 function store() { const s=new OwnerQuestionStore(env.home,nullLogger); closers.push(() => s.close()); return s; }
 
 describe("owner question registry",() => {
   it("merges project + issue + topic with several askers and enforces the per-session cap",() => {
     const s=store(),first=s.ask(question(),env.home,asker,100);
-    const merged=s.ask({...question(),affectedProjects:["second project"]},env.home,{...asker,session:"claude-other",sessionId:"thread-other"},101);
+    const merged=s.ask({...question(),affectedProjects:["second project"]},env.home,{...asker,session:"claude-other",sessionId:"thread-other",owner:nativeKey("codex","thread-other")},101);
     expect(merged.merged).toBe(true); expect(merged.question.id).toBe(first.question.id); expect(merged.question.askers).toHaveLength(2);
     expect(merged.question.affectedProjects).toContain("second project");
     expect(s.ask({...question(),links:[{kind:"issue",value:"AB-159"}]},env.home,asker,102).similar).toContain(first.question.id);
@@ -45,7 +47,7 @@ describe("owner question registry",() => {
     expect(readOwnerQuestions(env.home)[0]?.answer?.text).toBe(text);
   });
   it("caps a renamed session before its native session id is known",() => {
-    const s=store(),identity={...asker,sessionId:null,peerId:"original-peer"};
+    const s=store(),identity={...asker,owner:undefined,sessionId:null,peerId:"original-peer"};
     for (let i=0;i<5;i++) s.ask(question("unknown-"+i),env.home,identity);
     expect(() => s.ask(question("overflow"),env.home,{...identity,session:"renamed-main"})).toThrow("At most 5");
   });
@@ -126,7 +128,7 @@ describe("presence alerts and waking delivery",() => {
   });
   it("notifies exactly one channel, records wake/fallback/read state and indexes Q&A",async () => {
     const messages=new MessageStore(env.db,nullLogger); closers.push(() => messages.close());
-    const peers:any[]=[{name:asker.session,agent:"codex",cwd:env.home,sessionId:"thread",wakeAvailable:false}, {name:asker.main,agent:"claude",cwd:env.home,projectMain:true,wakeAvailable:true,wakeOnDirect:true}];
+    const peers:any[]=[{name:asker.session,agent:"codex",cwd:env.home,sessionId:"thread",wakeAvailable:false}, {name:asker.main,agent:"claude",cwd:env.home,sessionId:"main-thread",projectMain:true,wakeAvailable:true,wakeOnDirect:true}];
     const emit=vi.fn(),service=new OwnerQuestionService(env.home,messages,nullLogger,() => peers,emit); closers.push(() => service.close());
     const q=service.store.ask(question(),env.home,asker).question;
     service.heartbeat("tab",true); (service as any).tick();
@@ -137,7 +139,7 @@ describe("presence alerts and waking delivery",() => {
     expect(answered.deliveries.map(d => d.state)).toEqual(["wake-unavailable","wake-requested"]);
     expect(messages.decisions.list()[0]?.sourceMessageId).toBe(q.id);
     service.complete(service.store.get(q.id)!); expect(emit).toHaveBeenCalledTimes(2); expect(messages.decisions.list({history:true})).toHaveLength(1);
-    const d=answered.deliveries[1]!; messages.markRead(d.recipient,[d.messageId!],1234); expect(service.list()[0]?.deliveries[1]?.readAt).toBe(1234);
+    const d=answered.deliveries[1]!; messages.markRead(d.recipient,[d.messageId!],1234,undefined,undefined,nativeOwner(peers[1])); expect(service.list()[0]?.deliveries[1]?.readAt).toBe(1234);
     peers.push({...peers[1],name:"new-main"}); peers[1].projectMain=false;
     service.complete(service.store.get(q.id)!); expect(emit).toHaveBeenCalledTimes(2);
     expect(service.store.get(q.id)?.deliveryComplete).toBe(true);
@@ -163,24 +165,27 @@ describe("presence alerts and waking delivery",() => {
     fetch.mockResolvedValueOnce({ok:true,json:async () => ({comments:[{text:`**Owner answer recorded (${q.id}).**`}]})});
     service.complete(recovered); await until(() => service.store.get(q.id)?.mirror?.state === "saved"); expect(fetch).toHaveBeenCalledTimes(3);
   });
-  it.each([asker,{...asker,sessionId:null,peerId:"original-peer"}])("does not wake a replacement which inherited the asker name, and routes renamed sessions by identity (%j)",identity => {
+  it.each([asker,{...asker,owner:undefined,sessionId:null,peerId:"original-peer"}])("does not wake a replacement and retains an owned offline copy or explicit unknown binding (%j)",identity => {
     const messages=new MessageStore(env.db,nullLogger); closers.push(() => messages.close());
-    const peers:any[]=[{id:"replacement-peer",name:asker.session,sessionId:identity.sessionId ? "replacement" : null,cwd:env.home,agent:"codex"},{name:asker.main,cwd:env.home,agent:"claude",projectMain:true,wakeAvailable:true,wakeOnDirect:true}];
+    const peers:any[]=[{id:"replacement-peer",name:asker.session,sessionId:identity.sessionId ? "replacement" : null,cwd:env.home,agent:"codex"},{name:asker.main,cwd:env.home,sessionId:"main-thread",agent:"claude",projectMain:true,wakeAvailable:true,wakeOnDirect:true}];
     const emit=vi.fn(),service=new OwnerQuestionService(env.home,messages,nullLogger,() => peers,emit); closers.push(() => service.close());
     const q=service.store.ask(question(),env.home,identity).question;
     service.complete(service.store.answer(q.id,{text:"Keep the original scope"},OWNER_ADDRESS));
     expect(emit).toHaveBeenCalledTimes(1); expect(emit.mock.calls[0]?.[0].name).toBe(asker.main); expect(messages.unread(asker.session,50)).toEqual([]);
     peers.push({...peers[0],id:"original-peer",name:"renamed-asker",sessionId:identity.sessionId});
-    service.complete(service.store.get(q.id)!); expect(emit).toHaveBeenCalledTimes(2); expect(emit.mock.calls[1]?.[0].name).toBe("renamed-asker");
+    const after=service.complete(service.store.get(q.id)!); expect(emit).toHaveBeenCalledTimes(1);
+    if (identity.owner) expect(messages.unread(asker.session,50,undefined,nativeOwner(peers[2])).some(m => m.replyTo===q.id)).toBe(true);
+    else expect(after.deliveries.some(d => !d.owner && d.state==="pending" && !d.messageId)).toBe(true);
   });
   it("explicitly falls back to the new responsible main even when it reuses the old main's name",() => {
     const messages=new MessageStore(env.db,nullLogger); closers.push(() => messages.close());
     const replacement:any={id:"new-main",name:asker.session,sessionId:"new-thread",cwd:env.home,agent:"codex",projectMain:true,wakeAvailable:true,wakeOnDirect:true};
     const emit=vi.fn(),service=new OwnerQuestionService(env.home,messages,nullLogger,() => [replacement],emit); closers.push(() => service.close());
-    const q=service.store.ask(question(),env.home,{...asker,peerId:"old-main",main:asker.session,mainSessionId:asker.sessionId,mainPeerId:"old-main"}).question;
+    const q=service.store.ask(question(),env.home,{...asker,peerId:"old-main",main:asker.session,mainOwner:asker.owner,mainSessionId:asker.sessionId,mainPeerId:"old-main"}).question;
     const answered=service.complete(service.store.answer(q.id,{text:"Keep this scope"},OWNER_ADDRESS));
     expect(emit).toHaveBeenCalledTimes(1); expect(emit.mock.calls[0]?.[0]).toBe(replacement);
-    expect(answered.deliveries[0]).toMatchObject({state:"wake-requested",detail:expect.stringContaining("current project main as fallback")});
+    expect(answered.deliveries.find(d => d.owner===nativeKey("codex","new-thread"))).toMatchObject({state:"wake-requested",detail:expect.stringContaining("captured project-main owner as fallback")});
+    expect(answered.deliveries.find(d => d.owner===asker.owner)).toMatchObject({state:"offline",readAt:null});
   });
 });
 

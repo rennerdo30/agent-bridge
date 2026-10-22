@@ -18,6 +18,7 @@ import { isPureAcknowledgement } from "../core/job-messaging.js";
 import type { Worktree } from "../core/worktree.js";
 import { assertWritableStore, backupPath, isRecord, JSON_STORE_VERSION, mergeStoreFields, readJsonStore, retainBackups, retentionLimit, writeJsonStore } from "../core/json-store.js";
 import { changedJobArgs, JOB_SETTING_KEYS, type JobSettings } from "./job-settings.js";
+import { ownershipFromKey } from "../core/recipient-ownership.js";
 import { assertStoreUpgrade } from "../core/store-compatibility.js";
 import { archiveJobs, readArchivedJobs, readArchivedJobSnapshot } from "../core/job-archive.js";
 import { indexedJobProjectionCurrent, readIndexedJobs } from "../core/job-archive-index.js";
@@ -125,6 +126,8 @@ export interface Job {
   args?: Record<string, unknown>;
   /** Peer name of the session that started it. */
   owner?: string;
+  deliveryOwner?: string;
+  deliveryOwners?: Record<string, string>;
   /** Stable session identity used to restrict direct sibling chat, including after a server reload. */
   supervisor?: string;
   /** The subagent's own session (Codex thread, Claude session, opencode session) once known. */
@@ -411,6 +414,8 @@ export interface FollowUpResult {
  * job while maxJobs are running waits for a free slot (first come, first served) instead of being refused.
  */
 export interface JobCoordinator {
+  mailboxOwner?(): string | null;
+  prepareLocalMessage?(message: BridgeMessage): BridgeMessage;
   jobAuthority?(job: string): Promise<Job | null>;
   cwd?: string;
   controlInlineJob?(job: string, control: RunnerControl): Promise<unknown>;
@@ -643,7 +648,7 @@ export class JobManager {
         }
         if (isRecord(old) && Array.isArray(old.ownershipHistory) && old.ownershipHistory.length) {
           // Durable authority wins over a stale manager's in-memory snapshot.
-          Object.assign(j, { owner: old.owner, supervisor: old.supervisor, rootSession: old.rootSession, rootName: old.rootName,
+          Object.assign(j, { owner: old.owner, deliveryOwner: old.deliveryOwner, deliveryOwners: old.deliveryOwners, supervisor: old.supervisor, rootSession: old.rootSession, rootName: old.rootName,
             parentJob: old.parentJob, ownershipHistory: old.ownershipHistory, masters: old.masters });
           if (j.startedAt === old.startedAt) j.executionOwner = old.executionOwner as string | undefined;
           j.args = { ...j.args, ...(isRecord(old.args) ? { send_to: old.args.send_to } : {}) };
@@ -770,7 +775,7 @@ export class JobManager {
       if (job && (s.executionOwner === this.node.name || mine)) {
         const executing = (this.running.get(s.id) === job || this.foreground.get(s.id) === job) &&
           (!job.executionOwner || job.executionOwner === this.node.name) || this.pendingHosts.get(s.id) === job.controller;
-        Object.assign(job, { owner: s.owner, supervisor: legacySupervisor === undefined ? s.supervisor : legacySupervisor, parentJob: s.parentJob, rootSession: s.rootSession, rootName: s.rootName,
+        Object.assign(job, { owner: s.owner, deliveryOwner: s.deliveryOwner, deliveryOwners: s.deliveryOwners, supervisor: legacySupervisor === undefined ? s.supervisor : legacySupervisor, parentJob: s.parentJob, rootSession: s.rootSession, rootName: s.rootName,
           ownershipHistory: s.ownershipHistory, executionOwner: s.executionOwner, masters: s.masters });
         if (!executing && !job.host) {
           Object.assign(job, s, legacySupervisor === undefined ? {} : { supervisor: legacySupervisor });
@@ -1231,7 +1236,7 @@ export class JobManager {
     const existing = this.history.get(saved.id);
     if (existing && (this.running.has(saved.id) || this.foreground.has(saved.id))) {
       // Durable authority may change during a live turn; recovered snapshots cannot replace its controller/facts.
-      Object.assign(existing, { owner: saved.owner, supervisor: saved.supervisor, parentJob: saved.parentJob, rootSession: saved.rootSession,
+      Object.assign(existing, { owner: saved.owner, deliveryOwner: saved.deliveryOwner, deliveryOwners: saved.deliveryOwners, supervisor: saved.supervisor, parentJob: saved.parentJob, rootSession: saved.rootSession,
         rootName: saved.rootName, ownershipHistory: saved.ownershipHistory, masters: saved.masters });
     } else if (existing) Object.assign(existing, saved, { sessionId: saved.sessionId ?? existing.sessionId, workdir: saved.workdir ?? existing.workdir, worktree: saved.worktree ?? existing.worktree });
     else this.history.set(saved.id, { ...saved, recoveredRecord: saved as unknown as Record<string, unknown>, controller: new AbortController(), progress: null, queue: [], resume: this.restoreResume?.(saved.agent, saved.args ?? {}) });
@@ -1293,7 +1298,7 @@ export class JobManager {
     // govern a request, including grants removed while asynchronous IO yielded.
     this.recheckSharedGrant(authority);
     if (durable && durable.startedAt > current.startedAt) return undefined;
-    if (durable) Object.assign(current, cloneJson({ owner: durable.owner, masters: durable.masters, ownershipHistory: durable.ownershipHistory,
+    if (durable) Object.assign(current, cloneJson({ owner: durable.owner, deliveryOwner: durable.deliveryOwner, deliveryOwners: durable.deliveryOwners, masters: durable.masters, ownershipHistory: durable.ownershipHistory,
       parentJob: durable.parentJob, ...(durable.supervisor !== undefined ? { supervisor: durable.supervisor } : {}),
       ...(durable.rootName !== undefined ? { rootName: durable.rootName } : {}), ...(durable.rootSession !== undefined ? { rootSession: durable.rootSession } : {}) }));
     if (!this.sharedGrants.has(current.id) && !permitted) return undefined;
@@ -1367,6 +1372,8 @@ export class JobManager {
       args,
       projectRoot: canonicalProjectRoot(typeof args?.cwd === "string" ? args.cwd : this.node.cwd ?? process.cwd()) ?? undefined,
       owner: this.node.name,
+      deliveryOwner: this.node.mailboxOwner?.() ?? undefined,
+      deliveryOwners: this.node.mailboxOwner?.() ? { [this.node.name]: this.node.mailboxOwner()! } : undefined,
       // Keep the first job's identity when hooks learn the session id later, or a server reload adopts it.
       supervisor: this.supervisorIdentity(),
       metadataVersion: DELEGATION_METADATA_VERSION,
@@ -1730,7 +1737,7 @@ export class JobManager {
       Object.assign(job, saved, { sessionId: saved.sessionId ?? job.sessionId, workdir: saved.workdir ?? job.workdir, worktree: saved.worktree ?? job.worktree });
       this.adoptRecoveredRunner(job);
     } else {
-      Object.assign(job, { owner: saved.owner, supervisor: saved.supervisor, masters: saved.masters, ownershipHistory: saved.ownershipHistory,
+      Object.assign(job, { owner: saved.owner, deliveryOwner: saved.deliveryOwner, deliveryOwners: saved.deliveryOwners, supervisor: saved.supervisor, masters: saved.masters, ownershipHistory: saved.ownershipHistory,
         rootSession: saved.rootSession, rootName: saved.rootName, parentJob: saved.parentJob });
       if (saved.cancellingTurn === job.startedAt) job.cancellingTurn = job.startedAt;
     }
@@ -2711,7 +2718,7 @@ export class JobManager {
   }
 
   private post(job: Job, body: string, replyTo: string | null = null, suffix = "", id: string = randomUUID()): string {
-    const m: BridgeMessage = {
+    let m: BridgeMessage = {
       id,
       from: { id: `job:${job.id}`, name: job.name, agent: job.agent },
       to: job.owner ?? this.node.name,
@@ -2723,6 +2730,8 @@ export class JobManager {
       createdAt: Date.now(),
       readAt: null,
     };
+    if (job.deliveryOwner) m = { ...m, ...ownershipFromKey(job.deliveryOwner) };
+    else if (m.recipient === this.node.name && this.node.prepareLocalMessage) m = this.node.prepareLocalMessage(m);
     // AB-380: the original is what is stored durably (its flush sends a stub). The local path keeps no other copy,
     // so it gets a stub only once the full text is confirmed written to a file.
     if ((job.ownershipHistory?.length || (this.storePath && !this.lineage)) && this.node.reportInlineJob) {
@@ -2793,7 +2802,7 @@ function executorOffline(err: unknown): boolean {
   return (err as { code?: string } | null)?.code === "unknown_target";
 }
 
-type StoredJob = Pick<Job, "usageRunId" | "usagePendingControls" | "usagePendingHeld" | "usageAdmittedControls" | "providerUsage" | "executionPid" | "cancellingTurn" | "continuationFailure" | "waitingForStart" | "projectRoot" | "deliveryHistory" | "ownershipHistory" | "masters" | "executionOwner" | "queuedMessages" | "forwarded" | "id" | "name" | "agent" | "model" | "prompt" | "startedAt" | "status" | "pauseReason" | "pausedAt" | "pausePending" | "resumeRequested" | "sessionId" | "workdir" | "worktree" | "args" | "owner" | "supervisor" | "finishedAt" | "resultStored" | "reportId" | "host" | "remote" | "metadataVersion" | "parentJob" | "rootSession" | "rootName" | "percent" | "progressNote" | "etaAt" | "etaReportedAt">;
+type StoredJob = Pick<Job, "deliveryOwner" | "deliveryOwners" | "usageRunId" | "usagePendingControls" | "usagePendingHeld" | "usageAdmittedControls" | "providerUsage" | "executionPid" | "cancellingTurn" | "continuationFailure" | "waitingForStart" | "projectRoot" | "deliveryHistory" | "ownershipHistory" | "masters" | "executionOwner" | "queuedMessages" | "forwarded" | "id" | "name" | "agent" | "model" | "prompt" | "startedAt" | "status" | "pauseReason" | "pausedAt" | "pausePending" | "resumeRequested" | "sessionId" | "workdir" | "worktree" | "args" | "owner" | "supervisor" | "finishedAt" | "resultStored" | "reportId" | "host" | "remote" | "metadataVersion" | "parentJob" | "rootSession" | "rootName" | "percent" | "progressNote" | "etaAt" | "etaReportedAt">;
 
 /** Unknown fields survive upgrades; known next-turn settings also honor deletion. */
 function mergeJobFields(previous: Record<string, unknown>, next: Record<string, unknown>): Record<string, unknown> {
@@ -2833,6 +2842,8 @@ function toStored(j: Job): StoredJob {
     worktree: j.worktree,
     args: j.args,
     owner: j.owner,
+    deliveryOwner: j.deliveryOwner,
+    deliveryOwners: j.deliveryOwners,
     ownershipHistory: j.ownershipHistory,
     masters: j.masters,
     projectRoot: j.projectRoot,

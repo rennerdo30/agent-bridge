@@ -62,6 +62,8 @@ export interface SiblingPeer {
 export interface ProjectRoute { address: string; main: string; since: number; previous?: string }
 
 export interface PeerInfo {
+  /** Authenticated host advertisement only; local brokers derive this from typed provenance. */
+  nativeOwner?: string;
   projectRoute?: ProjectRoute;
   /** Derived local project identity; paired-PC projections never confer group authority. */
   projectRoot?: string;
@@ -122,6 +124,8 @@ export interface MessageAddress {
 }
 
 export interface BridgeMessage {
+  /** Authenticated sender ownership retained for remote duplicate/receipt fencing. */
+  senderOwner?: string;
   /** Durable hosted ownership. Absence alone proves neither native nor hosted authority. */
   recipientFrontend?: T3Binding;
   /** Internal recipient evidence from an authenticated native registration/route. */
@@ -156,6 +160,7 @@ export interface HelloArgs {
   canHost?: boolean;
 }
 export interface HelloResult {
+  nativeOwner?: string;
   frontend?: T3Binding;
   brokerPid: number;
   brokerVersion?: string;

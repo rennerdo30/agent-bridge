@@ -25,6 +25,7 @@ import { launchDaemon, RelaunchBackoff, type DaemonLaunch } from "./daemon-launc
 import { BridgeError, isQuietMessage, isUnsupportedOperation, type AgentKind, type BridgeMessage, type EventMap, type PeerActivity, type PeerInfo, type RequestMap, type SendArgs, type SendResult, type SiblingPeer, type ModeSendArgs, type ModeSendResult } from "./protocol.js";
 import { completionMessageId, COMPLETION_DEDUPE_PREFIX } from "./completion.js";
 import { ReadJournal, readJournalIdentities } from "./read-journal.js";
+import { nativeOwner, recipientKey } from "./recipient-ownership.js";
 import { existingMetadataDb, retainMetadataReader } from "./metadata-db.js";
 import { recordLocalResult } from "./local-result-receipts.js";
 import { compareProjectJobSummaries, summarizeProjectJob, type ProjectJobSummary, type ProjectJobSummaryPage } from "./project-job-summary.js";
@@ -139,6 +140,8 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   private refreshingPending: Promise<void> | null = null;
   private ackFlushScheduled = false;
   private sessionId: string | null = null;
+  private agentCreation: string | null = null;
+  private nativeIdentity: string | undefined;
   private autoWake: boolean;
   private wakeOnDirect = false;
   private wakeAvailable = false;
@@ -516,6 +519,8 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
       if (this.opts.dbPath !== ":memory:") for (const peer of await client.request("peers", {})) recordStorePeer(dirname(this.opts.dbPath), peer);
     } catch (error) { client.close(); throw error; }
     const agentStartedAt = this.opts.jobAgent ? null : await parentProcessIdentity();
+    this.agentCreation = agentStartedAt;
+    this.nativeIdentity = this.currentNativeIdentity();
     const args = this.helloArgs();
     // Older brokers publish hello capabilities directly to their observers,
     // which then rewrite each foreign PID record using their legacy shape.
@@ -560,7 +565,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     };
   }
 
-  private afterHello(client: BridgeClient, hello: { name: string; brokerPid: number; sessionId?: string | null }): void {
+  private afterHello(client: BridgeClient, hello: { name: string; brokerPid: number; sessionId?: string | null; nativeOwner?: string }): void {
     if (this.stopping) { client.close(); return; }
     // Any authenticated registration settles creation, including an ambiguous attempt: a broker is serving, so
     // after a later loss (crash, idle exit, handover) discovery may demand-start again.
@@ -571,6 +576,11 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     this.recordOwnStorePeer();
     if (!this.sessionId && hello.sessionId) {
       this.sessionId = hello.sessionId;
+    }
+    this.nativeIdentity = this.currentNativeIdentity();
+    if (!this.opts.frontend && hello.nativeOwner !== this.nativeIdentity) {
+      client.close(); this.client = null;
+      throw new BridgeError("protocol_mismatch", "Broker did not attest the exact native identity; mailbox access refused.");
     }
     this.restoreReadState();
     this.reconnectDelay = RECONNECT_BACKOFF_MIN_MS;
@@ -610,7 +620,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     } else if (ev === "message") {
       const m = data as BridgeMessage;
       if (m.recipientAmbiguous || (!m.recipientFrontend && !m.recipientNative) ||
-          !sameFrontend(this.opts, { frontend: m.recipientFrontend })) return;
+          !sameFrontend(this.opts, { frontend: m.recipientFrontend }) || !this.opts.frontend && (!this.nativeIdentity || m.recipientNative !== this.nativeIdentity)) return;
       const consumed = this.opts.frontend ? this.readIds.has(m.id) : this.readIdentities(m).some(key => this.readJournal.receipt(key, m.id).read);
       if (consumed) {
         this.readIds.add(m.id);
@@ -1094,8 +1104,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
       throw new BridgeError("unauthorized", "Local message belongs to another frontend.");
     }
     if (m.recipientAmbiguous) throw new BridgeError("unauthorized", "Local message ownership requires explicit reviewed recovery.");
-    m = { ...m, ...(this.opts.frontend ? { recipientFrontend: this.opts.frontend } :
-      { recipientNative: JSON.stringify(["local-native", this.opts.agent, this.currentName, this.sessionId ?? this.id]) }) };
+    m = this.prepareLocalMessage(m);
     try { if (this.opts.dbPath !== ":memory:") recordLocalResult(dirname(this.opts.dbPath), m); }
     catch (err) { this.log.warn("could not retain local result receipt", { id: m.id, err: String(err) }); }
     this.onEvent("message", m);
@@ -1133,7 +1142,22 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     return readJournalIdentities(this.currentName, this.sessionId, this.opts.frontend, message?.recipientNative);
   }
 
+  private currentNativeIdentity(): string | undefined {
+    return nativeOwner({ ...this.helloArgs().peer, agentStartedAt: this.agentCreation });
+  }
+
+  /** Capture a fresh own-inbox envelope before a producer persists or reports it. */
+  prepareLocalMessage(message: BridgeMessage): BridgeMessage {
+    const owner = this.currentNativeIdentity();
+    if (message.recipientFrontend && !sameFrontend(this.opts, { frontend: message.recipientFrontend }) || message.recipientNative && message.recipientNative !== owner)
+      throw new BridgeError("unauthorized", "Local envelope belongs to a different proven recipient.");
+    return { ...message, recipientFrontend: this.opts.frontend, recipientNative: this.opts.frontend ? undefined : owner,
+      recipientAmbiguous: !recipientKey(this.opts.frontend, owner) ? true : undefined };
+  }
+  mailboxOwner(): string | null { return recipientKey(this.opts.frontend, this.currentNativeIdentity()); }
+
   private restoreReadState(): void {
+    if (!this.opts.frontend) for (const [id, message] of this.inbox) if (!this.nativeIdentity || message.recipientNative !== this.nativeIdentity) this.inbox.delete(id);
     for (const identity of this.readIdentities()) for (const id of this.readJournal.read(identity)) this.readIds.add(id);
     const messages = [...this.inbox.values()].filter(m => this.opts.frontend ? this.readIds.has(m.id) :
       this.readIdentities(m).some(key => this.readJournal.receipt(key, m.id).read));
@@ -1211,6 +1235,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   async setSessionId(sessionId: string | null): Promise<void> {
     if (sessionId === this.sessionId) return;
     this.sessionId = sessionId;
+    this.nativeIdentity = this.currentNativeIdentity();
     // The broker may hand us the name of an older server of this session that we replace.
     if (this.isConnected) this.currentName = (await this.updatePeer({ sessionId })).name;
     this.recordOwnStorePeer();
@@ -1272,6 +1297,8 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   async relocate(cwd: string, name?: string): Promise<void> {
     if (cwd === this.currentCwd && (!name || name === this.currentName)) return;
     this.currentCwd = cwd;
+    this.nativeIdentity = this.currentNativeIdentity();
+    this.restoreReadState();
     if (name) this.currentName = name;
     this.log.info("peer relocated", { cwd, name: this.currentName });
     if (this.isConnected) {
