@@ -133,3 +133,35 @@ passed using its unchanged config, all source roots, and exact existing canonica
 dependencies through read-only junctions in an owned report mirror. No dependency
 was installed. Revised upstream typecheck, actual Effect/client/adapter tests and
 five production mutations still require the next hosted run and independent review.
+
+## PR #140 second hosted typecheck correction
+
+At `76cf1a9ae4b6ab09d3952353ab91de008657735d`, hosted run `39700140843`
+/ job `119567110900` reached actual pinned typecheck and failed 15 error diagnostic
+lines before tests, rather than timing out. Crypto leaked through the shared
+provider client constructor into snapshot, driver, managed-provider and reset-credit
+APIs, and through the replay testkit's factory. The Crypto mock also confused the
+Effect-valued service method with `Crypto.make`'s synchronous primitive callback.
+
+The revised artifact provides pinned `NodeCrypto.layer` locally at the existing
+T3 Node client-construction sites and the replay testkit. It supersedes the prior
+factory capture/propagation approach without changing public provider contexts.
+The portable protocol/client/replay input remains explicit. Primary source proves
+that the layer is stateless and its digest is an `Effect.try`; `Layer.provide`
+discharges the Crypto input while existing client scopes still own lifecycle.
+No platform dependency is added to the portable protocol package. Existing T3
+server platform dependencies suffice. No driver or managed-provider file changes
+are required. All inspected source paths and hashes are bound in the manifest.
+
+The mock now returns synchronous bytes. A new Deferred-controlled digest fixture
+interrupts after real suspension and asserts that no ticket/active slot survived;
+the existing revocation fixture prevents insertion into a closed generation.
+Wire admission remains serialized before the handler cap, with no extra digest or
+replay fibers. Replay/disposal/terminal-publication policies and all five required
+production mutations remain intact. Earlier patch/manifest/tree/log hashes remain
+historical receipts in the manifest's revision chain and preceding commits.
+
+The new effective upstream artifact still requires fresh independent review and
+actual successful hosted typecheck, production tests and mutations. Offline source,
+application, syntax and validator checks cannot establish those gates or native
+acceptance. No provider launch, install, runtime modification or enablement occurs.

@@ -7,7 +7,7 @@
   },
   "codexInspectedSourcePin": "6203846fb3ef040f62eed9b35bc6629c8e88980a",
   "parentBridgeBase": "70820a0fd090bd12f8245e9cf7e51db13a78eef0",
-  "packageInputBridgeHead": "430e3eecd9cbb2b38ee5d5f7eec895236249bc2d",
+  "packageInputBridgeHead": "76cf1a9ae4b6ab09d3952353ab91de008657735d",
   "patchOrder": [
     "01-reviewed.patch",
     "02-disposal-test.patch",
@@ -80,6 +80,31 @@
       "gitBlob": "963a7a5bd51e1fb7cea7d6668fc635247679a478"
     },
     {
+      "path": ".repos/effect-smol/packages/effect/src/Crypto.ts",
+      "sha256": "8dde9e50b81826d1a9c45dfd650c132050fc07377e75d3d8f72b52a51db42d97",
+      "gitBlob": "fa16326e09082ffa9706b179f7eaf8993fd09adb"
+    },
+    {
+      "path": ".repos/effect-smol/packages/effect/src/Layer.ts",
+      "sha256": "b68f31aa83bec6b100d1804c255c3783f2d5358f9a19d06e5a306bf2dec7248c",
+      "gitBlob": "aed2f10670ec7537a62e2eadea506a5d6d658a06"
+    },
+    {
+      "path": ".repos/effect-smol/packages/platform/node-shared/src/NodeCrypto.ts",
+      "sha256": "50099ecff42c41e7f934f58cf80188fb7861659ba7c22b08b3570fe257c59021",
+      "gitBlob": "15796f5eb8e97907fd9a648364f44f8e6e37dabe"
+    },
+    {
+      "path": ".repos/effect-smol/packages/platform/node/src/NodeCrypto.ts",
+      "sha256": "546d6f53191dda715dbb85c29e05696f856c802b324c109a075e68b602a6bcca",
+      "gitBlob": "7102ab481539f107abbd375ebc3eff483c9652ce"
+    },
+    {
+      "path": ".repos/effect-smol/packages/platform/node/src/NodeServices.ts",
+      "sha256": "3bcf6ecf471253fdf983458f29dd63a7252e380627aa364092e4aabf0b378c62",
+      "gitBlob": "3f6c0d34c8a12e8c917c3d71e2cda7c0f88c0d57"
+    },
+    {
       "path": "AGENTS.md",
       "sha256": "bac7846bad92afdd15f7d967f9a8a5b8d129b23437e80e6dd55b74b109aff3a2",
       "gitBlob": "9bcafc5cceb2b3b5155dd24990c74a1d23beaa3f"
@@ -103,6 +128,21 @@
       "path": "apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts",
       "sha256": "420d5b88b5bde002f08071c728682dc52f90670f5e624228b9d04b4a6f75a632",
       "gitBlob": "5c4df98d310d15437c3ca54366f807e0428b9107"
+    },
+    {
+      "path": "apps/server/src/provider/CodexProvider.ts",
+      "sha256": "db7517c03bb55506ccf3146e9741aed3b57fb3ca2da55fd01e250f28078d7ef7",
+      "gitBlob": "4a60f12891ee551a6a8436f0980eea7a88330370"
+    },
+    {
+      "path": "apps/server/src/provider/Drivers/CodexDriver.ts",
+      "sha256": "71acfc340bee27670bba3b36db1cf70b05a90829a316074c230c1a08dcfd09b0",
+      "gitBlob": "5452560d28917556d58bd19708fe69afc472b9be"
+    },
+    {
+      "path": "apps/server/src/provider/Drivers/CodexManagedProvider.ts",
+      "sha256": "62751b1e4a901aabf41e3a468b5aa0dbb04c502020d9c786ae05229868557d05",
+      "gitBlob": "ad41a94b4823360a11608317cb9ed7f9c5a15ba7"
     },
     {
       "path": "CLAUDE.md",
@@ -183,11 +223,11 @@
   "effectiveFiles": [
     {
       "path": "apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.testkit.ts",
-      "sha256": "62c482988eff5a87d4673c8dd464f745e9e18ce2dd143eae2515b8ff4b88aab7"
+      "sha256": "43d236267cdff5e13e7c9893e43e63f750aa88b721d9e581484dc2bb3582d5a3"
     },
     {
       "path": "apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts",
-      "sha256": "28fdedb7ff0d7214e3a89539674502c9b867e21c4ece6127210c109660c74f1b"
+      "sha256": "21259f0b6282e2f8751ac5e8364de23feccdc7b2c5e1f437e0ae850c5ca782fa"
     },
     {
       "path": "apps/server/src/orchestration-v2/Adapters/CodexBridgeDynamicTools.adapter.test.ts",
@@ -206,6 +246,10 @@
       "sha256": "e36c707fab747c1ce7c7d7e640356f0fc143672cd2283a93933c2055924a8004"
     },
     {
+      "path": "apps/server/src/provider/CodexProvider.ts",
+      "sha256": "70f8feed16009e16df70fa6a04a5876d71d625eb05316fa77846c19833120c98"
+    },
+    {
       "path": "packages/effect-codex-app-server/src/client.ts",
       "sha256": "f42b57719c240c2196d6db595fb68f7d032928813cf04adb2c23bbe9123ff60a"
     },
@@ -219,7 +263,7 @@
     },
     {
       "path": "packages/effect-codex-app-server/src/PrivateRequestAdmission.test.ts",
-      "sha256": "a5ceead8d9bd94bda9c0496d7b41105c28302cdecaf8e88e96ec454826ca4a8c"
+      "sha256": "bf1f8152bf5d11452ff4c62d14f4e5f1e45d4f8718d82b0def7f0651fcf1c133"
     },
     {
       "path": "packages/effect-codex-app-server/src/PrivateRequestAdmission.ts",
@@ -235,7 +279,7 @@
     }
   ],
   "effectiveTreeHashAlgorithm": "SHA256 of path+NUL+sha256+LF for files sorted by localeCompare(en); changed/new upstream source files only",
-  "effectiveTreeSha256": "854e276ffb71914f8ce1fef56b8499dcc8b76dca1d657a2586f0713c3ccae380",
+  "effectiveTreeSha256": "734d49854ef0741229578f6de3bc12859bebcb03356cfe7a7183260e5206959c",
   "artifacts": [
     {
       "path": "01-reviewed.patch",
@@ -247,7 +291,7 @@
     },
     {
       "path": "03-round3.patch",
-      "sha256": "6ba1e3b1175765ec98c5d63caac154e8257ff21f6c585deccd07cd4602e36774"
+      "sha256": "008b3a4f1e3b70902365f5666eb8f8de39650605b786430bb5c968571f772f6f"
     },
     {
       "path": "ci.typecheck.json",
@@ -267,11 +311,11 @@
     },
     {
       "path": "offline-evidence.json",
-      "sha256": "bcf7806fd167da15bd2878bcdaf7ee71251082b8bdf3c943db9a04c7fc103202"
+      "sha256": "28b53347bef84061f8e9a7c9089c72ccbf9a0f6f49ae6e0e9fd022375b3edfb5"
     },
     {
       "path": "README.md",
-      "sha256": "f38a1601b5287bb2f7ecf92b200756643d767fd5e0d4f3a0d0cfff12b71bbf6f"
+      "sha256": "cddcd32d89cda0badcf69f241c98002f537752d4bccf259a964638a8d7bc2423"
     },
     {
       "path": "run.mjs",
@@ -284,12 +328,22 @@
   ],
   "workflowSha256": "c87b24ae47cd1341788f20e2efe108e78b108816b69d812c6c57e88ac21ddf07",
   "priorRevision": {
-    "head": "430e3eecd9cbb2b38ee5d5f7eec895236249bc2d",
-    "manifestSha256": "5a5a128d6f00e8f2b1ec30425de918d9b8bd0a5ed1dd6065a13e253e214eb345",
-    "round3PatchSha256": "4fc67d2a06951a851a597ea83c090c486aefdd74c0b15e087fe0c8ea253d7307",
-    "effectiveTreeSha256": "64519d9fa4d284c6c0ff8f1b8c9bb6fc3f17c4939c8d934209f52f5c83ff76f4",
-    "hostedStatus": "Pinned upstream typecheck ran and failed eight errors; tests/mutations not reached. Windows Bridge typecheck also failed on upstream config imports.",
-    "upstreamTypecheckLogSha256": "da217ad8857864e7935cb73d2beb532ad5367e2ecd572e5f26172817b6ff04d0"
+    "head": "76cf1a9ae4b6ab09d3952353ab91de008657735d",
+    "manifestSha256": "a874e0a00006f245768102126fe10fc848e735321fdff73ee88f767fe6e51e75",
+    "round3PatchSha256": "6ba1e3b1175765ec98c5d63caac154e8257ff21f6c585deccd07cd4602e36774",
+    "effectiveTreeSha256": "854e276ffb71914f8ce1fef56b8499dcc8b76dca1d657a2586f0713c3ccae380",
+    "hostedRunId": "39700140843",
+    "hostedJobId": "119567110900",
+    "hostedStatus": "Actual pinned typecheck failed 15 diagnostic error lines (Crypto context leakage and Crypto.make mock); tests/mutations not reached; not a timeout.",
+    "upstreamTypecheckLogSha256": "bee90f425d2338db46a0b8aff981a558ef9537fc603e3fa69430464ae4fc0bfd",
+    "priorRevision": {
+      "head": "430e3eecd9cbb2b38ee5d5f7eec895236249bc2d",
+      "manifestSha256": "5a5a128d6f00e8f2b1ec30425de918d9b8bd0a5ed1dd6065a13e253e214eb345",
+      "round3PatchSha256": "4fc67d2a06951a851a597ea83c090c486aefdd74c0b15e087fe0c8ea253d7307",
+      "effectiveTreeSha256": "64519d9fa4d284c6c0ff8f1b8c9bb6fc3f17c4939c8d934209f52f5c83ff76f4",
+      "hostedStatus": "Pinned upstream typecheck ran and failed eight errors; tests/mutations not reached. Windows Bridge typecheck also failed on upstream config imports.",
+      "upstreamTypecheckLogSha256": "da217ad8857864e7935cb73d2beb532ad5367e2ecd572e5f26172817b6ff04d0"
+    }
   },
   "materializedConfigs": [
     {

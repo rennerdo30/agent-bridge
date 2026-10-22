@@ -1,12 +1,13 @@
 {
-  "schema": 2,
-  "kind": "Offline followup; actual revised upstream execution NOT RUN",
-  "verificationPid": 4236,
+  "schema": 3,
+  "kind": "Offline Crypto boundary correction; revised upstream execution NOT RUN",
+  "verificationPid": 52208,
   "t3Pin": "968dd51704441138559a3fe9c348719f2b11e0c6",
   "codexInspectedSourcePin": "6203846fb3ef040f62eed9b35bc6629c8e88980a",
-  "bridgeInputHead": "430e3eecd9cbb2b38ee5d5f7eec895236249bc2d",
-  "sourceGitBlobCount": 22,
-  "effectiveTreeSha256": "854e276ffb71914f8ce1fef56b8499dcc8b76dca1d657a2586f0713c3ccae380",
+  "bridgeInputHead": "76cf1a9ae4b6ab09d3952353ab91de008657735d",
+  "sourceGitBlobCount": 30,
+  "effectiveSourceFileCount": 14,
+  "effectiveTreeSha256": "734d49854ef0741229578f6de3bc12859bebcb03356cfe7a7183260e5206959c",
   "patches": [
     {
       "path": "01-reviewed.patch",
@@ -18,7 +19,7 @@
     },
     {
       "path": "03-round3.patch",
-      "sha256": "6ba1e3b1175765ec98c5d63caac154e8257ff21f6c585deccd07cd4602e36774"
+      "sha256": "008b3a4f1e3b70902365f5666eb8f8de39650605b786430bb5c968571f772f6f"
     }
   ],
   "materializedConfigs": [
@@ -34,16 +35,54 @@
     }
   ],
   "historicalHostedFailure": {
-    "head": "430e3eecd9cbb2b38ee5d5f7eec895236249bc2d",
-    "manifestSha256": "5a5a128d6f00e8f2b1ec30425de918d9b8bd0a5ed1dd6065a13e253e214eb345",
-    "round3PatchSha256": "4fc67d2a06951a851a597ea83c090c486aefdd74c0b15e087fe0c8ea253d7307",
-    "effectiveTreeSha256": "64519d9fa4d284c6c0ff8f1b8c9bb6fc3f17c4939c8d934209f52f5c83ff76f4",
-    "hostedStatus": "Pinned upstream typecheck ran and failed eight errors; tests/mutations not reached. Windows Bridge typecheck also failed on upstream config imports.",
-    "upstreamTypecheckLogSha256": "da217ad8857864e7935cb73d2beb532ad5367e2ecd572e5f26172817b6ff04d0"
+    "head": "76cf1a9ae4b6ab09d3952353ab91de008657735d",
+    "manifestSha256": "a874e0a00006f245768102126fe10fc848e735321fdff73ee88f767fe6e51e75",
+    "round3PatchSha256": "6ba1e3b1175765ec98c5d63caac154e8257ff21f6c585deccd07cd4602e36774",
+    "effectiveTreeSha256": "854e276ffb71914f8ce1fef56b8499dcc8b76dca1d657a2586f0713c3ccae380",
+    "hostedRunId": "39700140843",
+    "hostedJobId": "119567110900",
+    "hostedStatus": "Actual pinned typecheck failed 15 diagnostic error lines (Crypto context leakage and Crypto.make mock); tests/mutations not reached; not a timeout.",
+    "upstreamTypecheckLogSha256": "bee90f425d2338db46a0b8aff981a558ef9537fc603e3fa69430464ae4fc0bfd",
+    "priorRevision": {
+      "head": "430e3eecd9cbb2b38ee5d5f7eec895236249bc2d",
+      "manifestSha256": "5a5a128d6f00e8f2b1ec30425de918d9b8bd0a5ed1dd6065a13e253e214eb345",
+      "round3PatchSha256": "4fc67d2a06951a851a597ea83c090c486aefdd74c0b15e087fe0c8ea253d7307",
+      "effectiveTreeSha256": "64519d9fa4d284c6c0ff8f1b8c9bb6fc3f17c4939c8d934209f52f5c83ff76f4",
+      "hostedStatus": "Pinned upstream typecheck ran and failed eight errors; tests/mutations not reached. Windows Bridge typecheck also failed on upstream config imports.",
+      "upstreamTypecheckLogSha256": "da217ad8857864e7935cb73d2beb532ad5367e2ecd572e5f26172817b6ff04d0"
+    }
   },
+  "correctedEffectiveSources": [
+    "apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts",
+    "apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.testkit.ts",
+    "apps/server/src/provider/CodexProvider.ts",
+    "packages/effect-codex-app-server/src/PrivateRequestAdmission.test.ts"
+  ],
+  "unchangedPolicyAndWireSources": [
+    {
+      "path": "packages/effect-codex-app-server/src/protocol.ts",
+      "sha256": "076967fc7337f3cafc3db0c0b326d7b43d297e3058f08047dc53a4b24fb8a273"
+    },
+    {
+      "path": "packages/effect-codex-app-server/src/PrivateRequestAdmission.ts",
+      "sha256": "d9faf36009736fb2b0018f5e38ab0ad76b12bd3a52ed35bbbeff48af0a9f4505"
+    },
+    {
+      "path": "packages/effect-codex-app-server/src/PrivateProtocolLifecycle.test.ts",
+      "sha256": "efa24379a72ac370e5d08068023e1286fd7daaa15f1148c8204f0fe0d39b86ed"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/Adapters/CodexBridgeDynamicTools.ts",
+      "sha256": "e36c707fab747c1ce7c7d7e640356f0fc143672cd2283a93933c2055924a8004"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/Adapters/CodexBridgeDynamicTools.adapter.test.ts",
+      "sha256": "0855734faaed3f80e066541c36829b89a4f074d382a839ab4f785ea766f82f9c"
+    }
+  ],
   "localBridgeTypecheck": {
-    "pid": 80732,
-    "compilerPid": 50200,
+    "pid": 56668,
+    "compilerPid": 8200,
     "timeoutMs": 30000,
     "exit": 0,
     "signal": null,
@@ -71,7 +110,7 @@
   "checks": [
     {
       "label": "verify-workflow",
-      "pid": 19740,
+      "pid": 49468,
       "timeoutMs": 20000,
       "exit": 0,
       "expected": 0,
@@ -80,7 +119,7 @@
     },
     {
       "label": "verify-entry",
-      "pid": 35656,
+      "pid": 14740,
       "timeoutMs": 20000,
       "exit": 0,
       "expected": 0,
@@ -89,7 +128,7 @@
     },
     {
       "label": "gate-tests",
-      "pid": 71272,
+      "pid": 78356,
       "timeoutMs": 20000,
       "exit": 0,
       "expected": 0,
@@ -98,7 +137,7 @@
     },
     {
       "label": "local-install-refused",
-      "pid": 9948,
+      "pid": 35320,
       "timeoutMs": 20000,
       "exit": 1,
       "expected": 1,
@@ -107,7 +146,7 @@
     },
     {
       "label": "check-01-reviewed.patch",
-      "pid": 59244,
+      "pid": 80544,
       "timeoutMs": 20000,
       "exit": 0,
       "expected": 0,
@@ -116,7 +155,7 @@
     },
     {
       "label": "apply-01-reviewed.patch",
-      "pid": 61552,
+      "pid": 51932,
       "timeoutMs": 20000,
       "exit": 0,
       "expected": 0,
@@ -125,7 +164,7 @@
     },
     {
       "label": "check-02-disposal-test.patch",
-      "pid": 44872,
+      "pid": 7548,
       "timeoutMs": 20000,
       "exit": 0,
       "expected": 0,
@@ -134,7 +173,7 @@
     },
     {
       "label": "apply-02-disposal-test.patch",
-      "pid": 54752,
+      "pid": 39240,
       "timeoutMs": 20000,
       "exit": 0,
       "expected": 0,
@@ -143,7 +182,7 @@
     },
     {
       "label": "check-03-round3.patch",
-      "pid": 61360,
+      "pid": 34604,
       "timeoutMs": 20000,
       "exit": 0,
       "expected": 0,
@@ -152,7 +191,7 @@
     },
     {
       "label": "apply-03-round3.patch",
-      "pid": 3052,
+      "pid": 66176,
       "timeoutMs": 20000,
       "exit": 0,
       "expected": 0,
@@ -161,7 +200,7 @@
     },
     {
       "label": "validator-infrastructure-mutation",
-      "pid": 42280,
+      "pid": 25220,
       "timeoutMs": 20000,
       "exit": 1,
       "expected": 1,
@@ -169,15 +208,16 @@
       "error": null
     }
   ],
-  "syntax": "All thirteen effective upstream files and all five production mutation sources parse; no modules executed",
+  "syntax": "All fourteen effective upstream files and all five production mutation variants parse; no upstream modules executed",
   "notRun": [
     "Revised pinned upstream typecheck",
+    "Actual Effect suspended digest cancellation/revocation fixtures",
     "Real production protocol/client/adapter tests including forced suspension",
     "Five actual production mutation tests",
     "Revised hosted job",
     "Native/provider/broker acceptance"
   ],
-  "rawReceiptSha256": "10093de8c381722d20ef0188fc147727ec118422909fbae2cddd832931c90a47",
-  "bridgeTypecheckReceiptSha256": "4df991f402125d0756e54ac27bb5ac8a92f178519670e71fa1280befda3e8a9f",
-  "rawEvidenceDirectory": "E:/AgentData/reports/ab458-terminal-publication-20261022-t32af0942b"
+  "rawReceiptSha256": "83ed27fa02362173f8c3baaf4114a195c6b317303419fffa75672cc38f2b5c47",
+  "bridgeTypecheckReceiptSha256": "e477d11dff369d42564e27d1129b469405cb80e33f8662264d9a4bc6b85cf118",
+  "rawEvidenceDirectory": "E:/AgentData/reports/ab458-crypto-boundary-20261022-t32af0942b"
 }

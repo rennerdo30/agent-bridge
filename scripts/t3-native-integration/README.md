@@ -1,10 +1,11 @@
 # AB-458 pinned hosted gate
 
-Follow-up for parent review on PR #140. The prior `430e3eec` hosted run installed
-the lockfile dependencies and reached typecheck, which failed eight errors before
-tests. Windows Bridge gates separately failed on the upstream-only config import.
-Those failures are recorded in the manifest. This revised upstream artifact has
-not run on hosted CI; no native-session acceptance is claimed.
+Follow-up for parent review on PR #140. The `76cf1a9a` hosted run
+`39700140843` / job `119567110900` reached actual pinned typecheck and failed
+15 error diagnostic lines from missing Crypto contexts and the Crypto mock API;
+tests/mutations were not reached. This was not a timeout. That failure and the
+earlier `430e3eec` failures remain recorded in the manifest. This revised upstream
+artifact has not run on hosted CI; no native-session acceptance is claimed.
 The feature remains unconnected/default-off. This package changes no Bridge runtime
 code and never starts a provider. Parent reviews the **combined** patch and watches
 the existing PR; this workflow has no push, dispatch, release, or publish trigger.
@@ -25,10 +26,11 @@ Apply these files, in order, to the exact clean T3 commit:
    Awaits explicit scope disposal and completion of the late broker callback, with
    Effect deadlines; removes the 20-yield loop. Original shutdown assertions remain.
 3. `03-round3.patch`: current effective correction, including round-four terminal
-   publication, the eight hosted diagnostic fixes, actual encoded-wire observation,
+   publication, both hosted typecheck corrections, actual encoded-wire observation,
    exact response assertions, and focused real protocol lifecycle regressions.
    The preceding revision's patch/manifest/tree hashes remain in `priorRevision`;
-   its exact bytes remain in commit `430e3eecd9cbb2b38ee5d5f7eec895236249bc2d`.
+   exact prior bytes remain in commits `430e3eecd9cbb2b38ee5d5f7eec895236249bc2d`
+   and `76cf1a9ae4b6ab09d3952353ab91de008657735d`.
 
 `manifest.json` binds each patch/config/runner, public source preimages and lockfile,
 tool versions, and every changed/new effective upstream source file. Its effective
@@ -43,10 +45,14 @@ The effective upstream changes are the original eight files plus
 `packages/effect-codex-app-server/src/errors.ts` and
 `packages/effect-codex-app-server/src/PrivateProtocolLifecycle.test.ts`,
 `packages/effect-codex-app-server/src/client.ts`,
-`packages/effect-codex-app-server/src/replay.ts`, and
-`apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.testkit.ts`.
-The latter three propagate the explicit Effect Crypto service through client and
-replay factories; production factory closures capture and provide that service.
+`packages/effect-codex-app-server/src/replay.ts`,
+`apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.testkit.ts`, and
+`apps/server/src/provider/CodexProvider.ts` (fourteen effective files).
+The portable client/protocol/replay layers retain their explicit Crypto input.
+T3's two Node client factories, shared provider client-construction boundary and
+replay testkit supply `NodeCrypto.layer` with `Layer.provide` inside their existing
+scoped client construction. Public provider contexts and factory `open` signatures
+are unchanged; no Crypto requirement is added to driver/managed-provider APIs.
 Tests are inside the patches so there is one authoritative fixture copy.
 
 ## What executes on the hosted runner
@@ -161,6 +167,19 @@ hashing, and a suspended-digest revocation regression prevents ticket resurrecti
 Crypto failure remains fail-closed. Promise-port timers use the app's captured
 Effect Clock, preserving the 10-second operation and 2-second disposal bounds;
 no ambient JavaScript timer is called.
+
+Pinned primary APIs are also hashed in `sources`: Effect `Crypto.ts` / `Layer.ts`
+and platform node/node-shared `NodeCrypto.ts` / `NodeServices.ts`. `Crypto.make`
+requires a synchronous `randomBytes(size): Uint8Array` primitive and an Effect
+digest. The Node layer is stateless `Layer.succeed`, with digest implemented by
+`Effect.try(createHash(...))`; constructing it launches nothing and owns no foreign
+resource. `Layer.provide` removes Crypto from the construction input; `Layer.build`
+still uses the existing client scope. Portable callers/tests may supply controlled
+asynchronous digests. The wire reader awaits admission serially before forking a
+handler, so digest suspension creates no replay handler or concurrent ticket race.
+Cancellation before digest completion inserts no ticket, and closure is rechecked
+after suspension. Cancellation and revocation fixtures exercise these two cases;
+their real Effect execution still awaits hosted CI.
 
 Writer failure, response-encoding failure, handler construction throw, and handler
 defect seal admission and terminate the generation. Pending app requests fail;
