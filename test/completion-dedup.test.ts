@@ -6,6 +6,7 @@ import { nullLogger } from "../src/core/logger.js";
 import { loadOrCreateToken } from "../src/core/token.js";
 import { JobManager, jobReport, type Run, type RunnerState } from "../src/mcp/jobs.js";
 import { makeEnv, type TestEnv } from "./helpers.js";
+import { retainFixtureRunner } from "./owned-mail.js";
 
 let env: TestEnv;
 beforeEach(() => { env = makeEnv(); });
@@ -53,6 +54,7 @@ describe("completion delivery under delayed acknowledgements", () => {
 
   it("uses the same opaque UUID for a runner's broker delivery", async () => {
     const owner = env.node("owner"); await owner.start();
+    retainFixtureRunner(env.home, { id: "aabbccdd", name: "codex-job-aabbccdd", agent: "codex", owner: owner.name, supervisor: "root", cwd: env.home });
     const runner = new BridgeNode({ pipePath: env.pipe, dbPath: env.db, token: loadOrCreateToken(env.home), agent: "codex", name: "codex-job-aabbccdd", id: "job:aabbccdd", jobAgent: "codex", jobOwner: "root", jobParent: owner.name, cwd: env.home, autoWake: false, canHostBroker: false, log: nullLogger });
     await runner.start();
     const reportId = randomUUID();

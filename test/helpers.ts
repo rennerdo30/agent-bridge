@@ -3,6 +3,7 @@ import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { nullLogger } from "../src/core/logger.js";
+import { randomUUID } from "node:crypto";
 import { BridgeNode } from "../src/core/node.js";
 import { resolveDbPath, resolvePipePath } from "../src/core/paths.js";
 import { loadOrCreateToken } from "../src/core/token.js";
@@ -60,6 +61,9 @@ export function makeEnv(): TestEnv {
     db,
     node(name, agent = "claude", autoWake = false) {
       const n = new BridgeNode({ pipePath: pipe, token: loadOrCreateToken(home), dbPath: db, agent, name, cwd: home, autoWake, log: nullLogger });
+      // Each synthetic peer is a distinct session, independent of this worker's
+      // native provider/WMI availability. Reconnect tests explicitly reuse it.
+      void n.setSessionId(randomUUID());
       nodes.push(n);
       return n;
     },

@@ -1,4 +1,5 @@
 import { spawn, execFileSync, type ChildProcess } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { setTimeout as delay } from "node:timers/promises";
 import { copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
@@ -18,6 +19,7 @@ import { readProcessIdentity } from "../src/core/process-identity.js";
 import { startWindowsJobScope, type WindowsJobScope } from "../src/core/windows-job-scope.js";
 import { fixtureProcessGeneration, fixtureProcessExists } from "./fixture-process-generation.js";
 import { makeEnv, until, type TestEnv } from "./helpers.js";
+import { retainFixtureNode } from "./owned-mail.js";
 import { startUi, type UiOptions } from "../src/cli/ui.js";
 import { readDashboardInfo } from "../src/cli/dashboard.js";
 
@@ -327,6 +329,7 @@ function fixtureStartupLogger(diagnostics?: UiUnknownDiagnostics): typeof nullLo
 function node(name: string, launch?: NonNullable<ConstructorParameters<typeof BridgeNode>[0]["daemon"]>["launch"]) {
   const n = new BridgeNode({ pipePath: env.pipe, dbPath: env.db, token: loadOrCreateToken(env.home), name, agent: "codex", cwd: env.home, autoWake: false, log: fixtureStartupLogger(),
     daemon: { cli, launch } });
+  void n.setSessionId(randomUUID());
   nodes.push(n); return n;
 }
 async function port() {
@@ -507,6 +510,7 @@ describe("SIMULATED fixed log parser inputs (no process ownership authority)", (
 
 describe("standalone demand-start broker", () => {
   it.each([false, true])("actual CLI ui authorized sends use a daemon before/after crash (mobile-configured=%s)", async mobile => {
+    const recipient = node("ui-retained"); await recipient.setSessionId(randomUUID()); retainFixtureNode(env.home, recipient, "codex");
     const selected = await port();
     if (mobile) writeFileSync(join(env.home, "config.json"), JSON.stringify({ dashboard: false, mobile: { enabled: true } }));
     const child = spawn(process.execPath, [cli, "ui", "--no-open", `--port=${selected}`], { cwd: env.home, windowsHide: true, stdio: "ignore",
@@ -536,7 +540,7 @@ describe("standalone demand-start broker", () => {
     }) + "\n");
     expect(after.status).toBe(200);
     const nextPid = await remember(); expect(nextPid).not.toBe(first); expect(nextPid).not.toBe(child.pid);
-    const recipient = node("ui-retained"); await recipient.start();
+    await recipient.start();
     await until(() => recipient.unread().some(message => message.id === accepted.id));
     expect(recipient.unread().find(message => message.id === accepted.id)!.body).toBe("before-crash-0");
   });
@@ -610,6 +614,7 @@ describe("standalone demand-start broker", () => {
     } finally { renameSync(retainedToken, token); }
   });
   it("ten concurrent starts share one broker, keep accepted mail and reject wrong credentials", async () => {
+    const later = node("offline-retained"); await later.setSessionId(randomUUID()); retainFixtureNode(env.home, later, "codex");
     observeConcurrentClientCount();
     const peers = Array.from({ length: 10 }, (_, i) => node(`daemon-${i}`));
     await Promise.all(peers.map(peer => peer.start()));
@@ -638,13 +643,14 @@ describe("standalone demand-start broker", () => {
     expect(accepted.messages[0]!.body).toBe("accepted fixture bytes");
     await expect(client("wrong-fixture-token")).rejects.toMatchObject({ code: "unauthorized" });
     for (const peer of peers) await peer.stop();
-    const later = node("offline-retained"); await later.start();
+    await later.start();
     await until(() => later.unread().some(message => message.id === accepted.messages[0]!.id));
     expect((await later.health()).brokerPid).toBe(pid);
     expect(later.unread()[0]!.body).toBe("accepted fixture bytes");
     expect(existsSync(join(env.home, "state-core.db"))).toBe(false);
   });
   it("verified broker crash re-elects without losing accepted offline mail", async () => {
+    const recipient = node("after-crash"); await recipient.setSessionId(randomUUID()); retainFixtureNode(env.home, recipient, "codex");
     const a = node("crash-client"); await a.start(); const first = await remember();
     const accepted = await a.send({ to: "after-crash", body: "retained across process loss" });
     expect(await fixtureProcessGeneration(first, owned.get(first)!, "wrong crash fixture")).toBe(true);
@@ -653,7 +659,7 @@ describe("standalone demand-start broker", () => {
     await disconnected;
     await until(() => !fixtureProcessExists(first, "crash visibility unknown")); owned.delete(first);
     await until(() => a.isConnected, 8_000); const next = await remember(); expect(next).not.toBe(first);
-    const recipient = node("after-crash"); await recipient.start();
+    await recipient.start();
     await until(() => recipient.unread().some(message => message.id === accepted.messages[0]!.id));
     expect(recipient.unread()[0]!.body).toBe("retained across process loss");
   });
@@ -743,6 +749,7 @@ describe("standalone demand-start broker", () => {
     expect(launch).toHaveBeenCalledTimes(2);
   });
   it("hands over to a newer release's client: drains, releases the endpoint, keeps accepted mail", async () => {
+    const recipient = node("after-handover"); await recipient.setSessionId(randomUUID()); retainFixtureNode(env.home, recipient, "codex");
     const launch = vi.fn(launchDaemon);
     const a = node("handover-old", launch); await a.start(); const first = await remember();
     const accepted = await a.send({ to: "after-handover", body: "kept across the handover" });
@@ -760,7 +767,7 @@ describe("standalone demand-start broker", () => {
     await until(() => a.isConnected, 15_000);
     expect((await a.health()).brokerPid).toBe(next);
     expect(launch).toHaveBeenCalledOnce();
-    const recipient = node("after-handover"); await recipient.start();
+    await recipient.start();
     await until(() => recipient.unread().some(message => message.id === accepted.messages[0]!.id));
     expect(recipient.unread()[0]!.body).toBe("kept across the handover");
   });

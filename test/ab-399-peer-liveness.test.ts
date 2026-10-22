@@ -273,7 +273,7 @@ describe("AB-399 session liveness", () => {
   it("refuses a dead-CLI server before session recovery, replacement or mail claims", async () => {
     hosts.set(CLI, "ESRCH"); hosts.set(NEXT_CLI, "alive");
     const { client } = await sender();
-    const queued = await client.request("send", { to: "claude", body: "for any claude", conversationId: "ab399" });
+    const queued = await client.request("send", { to: "agent:claude", body: "for any claude", conversationId: "ab399" });
     expect(queued.deliveredTo).toEqual([]);
     // A dead-CLI server (say, reconnecting after a broker restart) must not claim mail waiting for "any claude".
     await expect(session({ id: "dead", name: "lead", agent: "claude", sessionId: "lead-session", agentPid: CLI, agentStartedAt: "dead-identity" }))

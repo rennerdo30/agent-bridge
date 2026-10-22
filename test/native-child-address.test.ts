@@ -18,6 +18,7 @@ import { ParentLink, parentFromEnv } from "../src/core/parent-link.js";
 import { SiblingLink } from "../src/mcp/siblings.js";
 import type { Job } from "../src/mcp/jobs.js";
 import { makeEnv, until, type TestEnv } from "./helpers.js";
+import { retainFixtureRunner } from "./owned-mail.js";
 
 let env: TestEnv, parent: BridgeNode, job: BridgeNode, stranger: BridgeNode, ctx: ServerContext;
 const agentId = "opus-1";
@@ -27,6 +28,7 @@ beforeEach(async () => {
   execFileSync("git", ["init", env.home], { windowsHide: true, stdio: "ignore" });
   parent = env.node("claude-main");
   await parent.setSessionId("root"); await parent.start();
+  retainFixtureRunner(env.home, { id: "sol", name: "codex-job-sol", agent: "codex", owner: parent.name, supervisor: "root", cwd: env.home });
   job = new BridgeNode({ pipePath: env.pipe, token: loadOrCreateToken(env.home), dbPath: env.db, agent: "other", jobAgent: "codex", jobOwner: "root", jobParent: parent.name, id: "job:sol", name: "codex-job-sol", cwd: env.home, autoWake: false, canHostBroker: false, log: nullLogger });
   await job.start(); stranger = env.node("unrelated", "codex"); await stranger.start();
   ctx = { agent: "claude", node: parent, home: env.home, cfg: DEFAULT_CONFIG, log: nullLogger, cwd: () => env.home, channelActive: () => false,

@@ -26,6 +26,7 @@ const ctx = (over: Partial<ServerContext> = {}): ServerContext => ({
 beforeEach(async () => {
   env = makeEnv();
   me = env.node("codex-h", "codex");
+  await me.setSessionId("s1");
   peer = env.node("claude-h", "claude");
   await me.start();
   await peer.start();

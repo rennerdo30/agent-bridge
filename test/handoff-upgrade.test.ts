@@ -161,7 +161,8 @@ it("upgrades the released 0.29.10 SQLite layout without changing any old table r
     const visible = () => {
       expect(store.byId("legacy-only-mail")?.body).toBe("Original legacy-only evidence");
       expect(store.messagesById("legacy-only-mail").map(message => message.body)).toEqual(["Original legacy-only evidence"]);
-      expect(store.receipts("legacy-only-mail")).toEqual([{ recipient: "codex-source", readAt: 42 }]);
+      expect(store.receipts("legacy-only-mail")).toEqual([{ recipient: "codex-source", readAt: null }]);
+      expect(store.byId("legacy-only-mail")).toMatchObject({ readAt: 42, recipientAmbiguous: true });
     };
     visible();
     vi.stubEnv("AGENT_BRIDGE_AUTO_BACKUP", "0");

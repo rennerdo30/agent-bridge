@@ -29,6 +29,7 @@ import { v03017HelloSchema, v03020HelloSchema } from "./fixtures/legacy-network-
 import { decodePairingCode, keyFingerprint, PairingStore } from "../src/network/pairing.js";
 import { collectTransfer, MAX_TRANSFER_BYTES, receiveTransfer, safeTransferPath } from "../src/network/files.js";
 import { until } from "./helpers.js";
+import { retainFixtureRunner } from "./owned-mail.js";
 
 const LOOPBACK = "127.0.0.1";
 const TOKEN = "network-test-token";
@@ -46,7 +47,7 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 
-const peer = (name: string, jobAgent?: "codex"): PeerInfo => ({ id: randomUUID(), name, agent: "claude", cwd: home, pid: process.pid, agentPid: null, sessionId: null, startedAt: Date.now(), autoWake: false, ...(jobAgent ? { jobAgent } : {}) });
+const peer = (name: string, jobAgent?: "codex"): PeerInfo => ({ id: randomUUID(), name, agent: "claude", cwd: home, pid: process.pid, agentPid: null, sessionId: randomUUID(), startedAt: Date.now(), autoWake: false, ...(jobAgent ? { jobAgent } : {}) });
 function service(name: string, peers: PeerInfo[] = [], received: BridgeMessage[] = [], recipientReceipts = false): NetworkService {
   const network = new NetworkService(join(home, name), { ...DEFAULT_NETWORK_CONFIG, enabled: true, name, bind: LOOPBACK, port: 0, discovery: false }, { peers: () => peers, recipientReceipts, receive: (m) => { received.push(m); return { delivered: true }; } }, nullLogger);
   cleanup.push(() => network.close());
@@ -74,7 +75,9 @@ describe("network pairing", () => {
       expect(oldReader.safeParse({ ...hello, capabilities }).success).toBe(false);
       const parsed = oldReader.parse(hello);
       expect(parsed.capabilities).toEqual(hello.capabilities);
-      expect(parsed.peers).toEqual(hello.peers);
+      expect(hello.peers.every(peer => peer.nativeOwner)).toBe(true);
+      expect(parsed.peers).toEqual(hello.peers.map(({ nativeOwner: _owner, ...legacy }) => legacy));
+      expect(parsed.peers.every(peer => !("nativeOwner" in peer))).toBe(true);
       expect(parsed).not.toHaveProperty("additionalCapabilities");
     }
     expect(networkHelloSchema.parse(hello).additionalCapabilities).toEqual([REMOTE_JOB_USAGE_CAPABILITY]);
@@ -356,18 +359,21 @@ describe("broker federation", () => {
       const dir = join(home, name);
       mkdirSync(dir, { recursive: true });
       const pipe = resolvePipePath(dir, {});
-      const broker = new Broker(pipe, new MessageStore(join(dir, "bridge.db"), nullLogger), nullLogger, TOKEN, Date.now, undefined, { home: dir, config: { ...DEFAULT_NETWORK_CONFIG, enabled: true, name, bind: LOOPBACK, port: 0, discovery: false } });
+      const broker = new Broker(pipe, new MessageStore(join(dir, "bridge.db"), nullLogger), nullLogger, TOKEN, Date.now, join(dir, "jobs.json"), { home: dir, config: { ...DEFAULT_NETWORK_CONFIG, enabled: true, name, bind: LOOPBACK, port: 0, discovery: false } });
       cleanup.push(() => broker.close());
       await broker.listen();
       const admin = await BridgeClient.connect(pipe, nullLogger);
       cleanup.push(() => admin.close());
       await admin.request("auth", { protocol: PROTOCOL_VERSION, token: TOKEN });
       const node = (peerName: string, jobAgent?: "codex") => {
-        const n = new BridgeNode({ pipePath: pipe, token: TOKEN, dbPath: join(dir, "bridge.db"), agent: "claude", name: peerName, cwd: dir, autoWake: false, log: nullLogger, canHostBroker: false, ...(jobAgent ? { jobAgent, id: `job:${randomUUID()}` } : {}) });
+        const id = randomUUID();
+        if (jobAgent) retainFixtureRunner(dir, { id, name: peerName, agent: jobAgent, owner: "fixture-supervisor", supervisor: "fixture-root", cwd: dir });
+        const n = new BridgeNode({ pipePath: pipe, token: TOKEN, dbPath: join(dir, "bridge.db"), agent: "claude", name: peerName, cwd: dir, autoWake: false, log: nullLogger, canHostBroker: false, ...(jobAgent ? { jobAgent, id: `job:${id}`, jobOwner: "fixture-root", jobParent: "fixture-supervisor" } : {}) });
+        void n.setSessionId(randomUUID());
         cleanup.push(() => n.stop());
         return n;
       };
-      return { admin, node };
+      return { admin, node, dir };
     };
     const a = await make("windows");
     const b = await make("mac");
@@ -409,14 +415,22 @@ describe("broker federation", () => {
     await expect(stranger.messageReceipt(received!.id)).rejects.toMatchObject({ code: "unauthorized" });
     await recipient.send({ to: received!.from.name, body: "agreed", replyTo: received!.id });
     expect(await sender.waitForMessage(2_000)).toMatchObject({ body: "agreed", conversationId: received!.conversationId, hop: 1 });
-    expect(await sender.send({ to: "mac/later", body: "saved offline" })).toMatchObject({ queuedFor: ["mac/later"] });
+    // A never-advertised exact remote name has no authenticated owner. Retain
+    // offline durability by accepting the concrete copy before disconnection.
+    await expect(sender.send({ to: "mac/never-seen", body: "unproven destination" })).rejects.toThrow(/ownership|unproven|advertised/i);
+    const later = b.node("later"); await later.start();
+    await expect.poll(async () => (await sender.peers()).some(peer => peer.name === "mac/later"), { timeout: 1000 }).toBe(true);
+    const offlineArgs = { to: "mac/later", body: "saved offline", dedupeKey: randomUUID() };
+    const offline = await sender.send(offlineArgs); await later.stop();
+    const retainedOffline = await sender.send(offlineArgs);
+    expect(retainedOffline.messages[0]!.id).toBe(offline.messages[0]!.id);
+    expect(retainedOffline.storage?.state).toBe("stored");
     const dedupeKey = randomUUID();
     const duplicate = await Promise.all([sender.send({ to: "mac/codex-job", body: "once", dedupeKey }), sender.send({ to: "mac/codex-job", body: "once", dedupeKey })]);
     expect(duplicate[0]?.messages[0]?.id).toBe(duplicate[1]?.messages[0]?.id);
     expect(recipient.unread().filter((m) => m.body === "once")).toHaveLength(1);
     const remoteId = (await sender.peers()).find((p) => p.name === "mac/codex-job")!.id;
     expect(await sender.send({ to: remoteId, body: "by id" })).toMatchObject({ deliveredTo: ["mac/codex-job"] });
-    const later = b.node("later");
     await later.start();
     expect(await later.waitForMessage(2_000)).toMatchObject({ body: "saved offline", from: { name: "windows/claude-app" } });
     const source = join(home, "contract");

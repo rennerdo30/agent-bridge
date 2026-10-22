@@ -6,6 +6,7 @@ import { BridgeNode } from "../src/core/node.js";
 import { nullLogger } from "../src/core/logger.js";
 import { loadOrCreateToken } from "../src/core/token.js";
 import { makeEnv, type TestEnv } from "./helpers.js";
+import { retainFixtureRunner } from "./owned-mail.js";
 
 let env: TestEnv | undefined, plugin: any, runner: BridgeNode | undefined;
 afterEach(async () => { await runner?.stop(); runner = undefined; await plugin?.dispose?.(); plugin = undefined; await env?.cleanup(); env = undefined; vi.unstubAllEnvs(); });
@@ -31,6 +32,7 @@ it("wakes an idle native opencode group fallback once with auto-wake off", async
     owner: primary.name, rootName: primary.name, supervisor: primary.id, args: { title: "Group fallback" } }] }));
   runner = new BridgeNode({ pipePath: env.pipe, dbPath: env.db, token: loadOrCreateToken(env.home), name: "codex-job-native", id: "job:native",
     agent: "other", jobAgent: "codex", jobOwner: primary.id, jobParent: primary.name, cwd: env.home, autoWake: false, log: nullLogger, canHostBroker: false });
+  retainFixtureRunner(env.home, { id: "native", name: "codex-job-native", agent: "codex", owner: primary.name, supervisor: primary.id, cwd: env.home });
   await runner.start();
   await primary.setUnavailable(true);
   await runner.send({ to: primary.name, body: "Quiet group fallback note", conversationId: "job-native:note" });

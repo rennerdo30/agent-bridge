@@ -12,6 +12,7 @@ import type { RequestMap } from "../src/core/protocol.js";
 import { PROTOCOL_VERSION } from "../src/core/constants.js";
 import { loadOrCreateToken } from "../src/core/token.js";
 import { makeEnv, until, type TestEnv } from "./helpers.js";
+import { retainFixtureNode } from "./owned-mail.js";
 
 let env: TestEnv, extra: BridgeNode[];
 beforeEach(() => { env = makeEnv(); extra = []; });
@@ -51,6 +52,7 @@ describe("real transport send admission boundaries (no production recovery chang
     expect(await sender.sendState(id)).toMatchObject({ id, state: "not_stored", message: null });
   });
   it("lost ACK after real durable storage keeps the SAME UUID and reconciles exact bytes without a new send identity", async () => {
+    const recipient = env.node("offline-boundary"); retainFixtureNode(env.home, recipient, "claude");
     const host = env.node("ack-host"); await host.start();
     const broker = Reflect.get(host, "broker"), server = Reflect.get(broker, "server") as Server;
     const acceptedSocket = once(server, "connection");
@@ -92,7 +94,7 @@ describe("real transport send admission boundaries (no production recovery chang
     const same = await sender.send({ messageId: id, to: "offline-boundary", body: "durable accepted boundary bytes" }, { quiet: true });
     expect(same.messages.map(message => message.id)).toEqual([id]);
     expect(stored()).toEqual([{ id, recipient: "offline-boundary", to_target: "offline-boundary", body: "durable accepted boundary bytes" }]);
-    const recipient = env.node("offline-boundary"); await recipient.start();
+    await recipient.start();
     await until(() => recipient.unread().some(message => message.id === id));
     expect(recipient.unread().filter(message => message.id === id)).toHaveLength(1);
   });

@@ -414,6 +414,13 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
   const targets = delegationTargets(agent);
   const home = resolveHome();
   const log = createLogger({ home, component: `mcp-${agent}` });
+  const delegated = currentDelegateDepth() > 0, internal = isInternalBridgeProcess();
+  // Refuse a shared-home older broker before config/job/read-journal imports
+  // can migrate the mailbox's component tables. Never start or replace it.
+  if (!delegated && !internal) {
+    const { guardPriorEndpoints } = await import("../core/prior-endpoints.js");
+    await guardPriorEndpoints(home, resolvePipePath(home), loadOrCreateToken(home), log);
+  }
   const cwd = process.env.CLAUDE_PROJECT_DIR || process.cwd();
   // Codex starts plugin MCP servers inside the plugin folder; the project dir arrives later via hooks/_meta.
   const launchRoot = process.env.AGENT_BRIDGE_LAUNCH_PLUGIN_ROOT;
@@ -426,8 +433,6 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
   const cfg = loadConfig(home, agent, log, process.env, cwdKnown ? projectConfigRoot(cwd) : undefined);
   const mobileAtStartup = cfg.mobile;
   const mobilePortAtStartup = cfg.dashboardPort;
-  const delegated = currentDelegateDepth() > 0;
-  const internal = isInternalBridgeProcess();
   const t3Transport = t3TransportFromEnv();
   if (t3Transport && (delegated || internal)) throw new T3HostError("refused", "inherited host context");
   const t3Host = t3Transport ? new T3Host(t3Transport) : undefined;

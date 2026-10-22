@@ -3,6 +3,7 @@ import { BridgeNode } from "../src/core/node.js";
 import { nullLogger } from "../src/core/logger.js";
 import { loadOrCreateToken } from "../src/core/token.js";
 import { makeEnv, until, type TestEnv } from "./helpers.js";
+import { retainFixtureNode } from "./owned-mail.js";
 
 let env: TestEnv;
 let runner: BridgeNode | undefined;
@@ -18,13 +19,13 @@ it("an established eligible host immediately elects after listener loss and reta
   const previous = env.node("previous");
   const replacement = env.node("replacement");
   await previous.start(); await replacement.start();
+  const later = env.node("later"); retainFixtureNode(env.home, later, "claude");
   const sent = await replacement.send({ to: "later", body: "retained across listener replacement" });
   const schedule = vi.spyOn(replacement as unknown as { scheduleReconnect(delay: number): void }, "scheduleReconnect");
   vi.spyOn(Math, "random").mockReturnValue(0.999);
   await previous.stop();
   await until(() => replacement.isBroker && replacement.isConnected);
   expect(schedule).toHaveBeenCalledWith(0);
-  const later = env.node("later");
   await later.start();
   await until(() => later.unread().length === 1);
   expect(later.unread()[0]!.id).toBe(sent.messages[0]!.id);

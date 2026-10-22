@@ -13,8 +13,8 @@ import { decodePairingCode, keyFingerprint, PairingStore, publicIdentitySchema, 
 import { receiveTransfer, transferResultSchema, transferSchema, type FileTransfer, type TransferResult } from "./files.js";
 import { FILE_STREAM_CAPABILITY, FILE_STREAM_WINDOW_CAPABILITY, TRANSFER_WINDOW_CHUNKS, TransferManager, type TransferStarted } from "./transfers.js";
 import { REMOTE_JOB_USAGE_CAPABILITY } from "./remote-job-protocol.js";
-import { nativeOwner, recipientKey, verifiedNative } from "../core/recipient-ownership.js";
-import type { MailboxProvenance } from "../core/recipient-ownership.js";
+import { internalSender, nativeOwner, recipientKey, sameMailbox, verifiedNative } from "../core/recipient-ownership.js";
+import type { MailboxProvenance, InternalMessageOrigin } from "../core/recipient-ownership.js";
 
 const MAX_METADATA_CHARS = 4_096;
 const MAX_ID_CHARS = 128;
@@ -97,6 +97,8 @@ export interface NetworkBroker {
   recipientReceipts?: boolean;
   /** null marks legacy network ingress; undefined remains internal/local notification. */
   receive(message: BridgeMessage, destination?: NetworkDestination | null): DeliveryResult;
+  notify?(message: BridgeMessage, origin: InternalMessageOrigin): DeliveryResult;
+  captureNotification?(recipient: string): { owner: string; mailbox: MailboxProvenance };
   pinDestination?(message: BridgeMessage, destination: RemoteDestination): { message: BridgeMessage; destination: RemoteDestination };
   pinnedDestinations?(id: string): RemoteDestination[];
 }
@@ -409,7 +411,8 @@ export class NetworkService {
         const peer = this.broker.peers().find((peer) => peer.name === name);
         return peer ? { id: peer.id, name: peer.name, agent: peer.jobAgent ?? peer.agent, cwd: peer.cwd } : undefined;
       },
-      notify: (message) => { this.broker.receive(message); },
+      captureNotification: (remote, id, direction, from, to) => this.captureTransferNotification(remote, id, direction, from, to),
+      notify: (message, remote, origin) => { this.notifyTransfer(message, remote, origin); },
       legacy: (remote, transfer) => this.instanceLink(remote).files(transfer),
     }, log, { maxBytes: cfg.maxTransferBytes, fetchRoots: cfg.fetchRoots });
     this.registerExtension("file-stream", FILE_STREAM_CAPABILITY, (payload, remote) => this.transfers.handle(payload, remote.id, remote.name));
@@ -775,14 +778,44 @@ export class NetworkService {
 
   fileTarget(address: string): string { return this.target(address).target; }
 
+  private captureTransferNotification(remote: string, operation: string, direction: "send" | "receive", from: FileTransfer["from"], to: string): InternalMessageOrigin {
+    const link = this.links.get(remote), identity = link?.remote;
+    if (!link || !identity || !link.recipientOwnershipV1 || !link.nativeOwnershipV1 || !link.mailboxProvenanceV1)
+      throw new Error("File notification requires paired ownership/provenance capabilities; no payload dispatched");
+    const recipient = direction === "send" ? from.name : to, intended = this.broker.captureNotification?.(recipient);
+    if (this.broker.notify && !intended) throw new Error("File notification recipient ownership is unavailable");
+    const sender = direction === "receive" ? link.peers.find(p => p.id === from.id && p.name === from.name && (p.jobAgent ?? p.agent) === from.agent) :
+      this.broker.peers().find(p => p.id === from.id && p.name === from.name && (p.jobAgent ?? p.agent) === from.agent);
+    const owner = sender ? recipientKey(sender.frontend, direction === "receive" ? sender.nativeOwner : nativeOwner(sender)) : null;
+    if (!owner) throw new Error("File notification sender ownership is unproven");
+    return { kind: "file-transfer", operation, owner, ...(intended ? { recipientOwner: intended.owner, recipientMailbox: intended.mailbox } : {}),
+      ...(direction === "receive" ? { source: { kind: "remote", hostId: identity.id, hostFingerprint: identity.fingerprint } as MailboxProvenance } : {}) };
+  }
+
+  private notifyTransfer(message: BridgeMessage, remote?: string, captured?: InternalMessageOrigin): void {
+    const link = remote ? this.links.get(remote) : undefined, identity = link?.remote;
+    const sender = link?.peers.find(peer => `${remote}/${peer.id}` === message.from.id && (peer.jobAgent ?? peer.agent) === message.from.agent);
+    if (this.broker.notify) {
+      if (!captured || captured.kind !== "file-transfer" || captured.operation !== message.conversationId.replace(/^files-progress-/, "") || !captured.recipientOwner || !captured.recipientMailbox)
+        throw new Error("File notification ownership was not captured at admission; original transfer evidence retained");
+      internalSender(captured);
+      const pair = identity ?? (remote ? this.keys.pairs().find(p => p.id === remote) : undefined);
+      if (remote && (!pair || !sameMailbox(captured.source, { kind: "remote", hostId: pair.id, hostFingerprint: pair.fingerprint }) ||
+          sender && recipientKey(sender.frontend, sender.nativeOwner) !== captured.owner)) throw new Error("File notification sender ownership/host changed");
+      this.broker.notify(message, captured);
+    }
+    else this.broker.receive(message);
+  }
+
   receiveFiles(transfer: FileTransfer, name: string, id: string): TransferResult {
     if (!this.broker.peers().some((p) => p.name === transfer.to)) throw new Error("file recipient is not online");
     const bytes = transfer.entries.reduce((sum, entry) => sum + (entry.kind === "file" ? Buffer.byteLength(entry.data, "base64") : 0), 0);
     if (this.cfg.maxTransferBytes !== undefined && bytes > this.cfg.maxTransferBytes) throw new Error("transfer exceeds size limit");
+    const remote = id.split("/")[0]!, origin = this.captureTransferNotification(remote, transfer.id, "receive", transfer.from, transfer.to);
     const result = receiveTransfer(this.home, transfer);
-    this.transfers.recordLegacy(transfer, id.split("/")[0]!, name);
+    this.transfers.recordLegacy(transfer, remote, name, origin);
     this.log.info("legacy files received", { ...result, sender: name });
-    this.broker.receive({ id: transfer.id, from: { ...transfer.from, name, id }, to: transfer.to, recipient: transfer.to, conversationId: transfer.id, replyTo: null, hop: 0, body: `Received ${result.files} files (${result.bytes} bytes) in ${result.inbox}`, createdAt: Date.now(), readAt: null });
+    this.notifyTransfer({ id: transfer.id, from: { ...transfer.from, name, id }, to: transfer.to, recipient: transfer.to, conversationId: transfer.id, replyTo: null, hop: 0, body: `Received ${result.files} files (${result.bytes} bytes) in ${result.inbox}`, createdAt: Date.now(), readAt: null }, remote, origin);
     return result;
   }
 

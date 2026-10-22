@@ -18,6 +18,7 @@ import { EndpointReservation } from "../src/core/endpoint-reservation.js";
 import { PROTOCOL_VERSION } from "../src/core/constants.js";
 import type { BridgeMessage } from "../src/core/protocol.js";
 import { makeEnv, until, type TestEnv } from "./helpers.js";
+import { fixturePeer, ownedMessage } from "./owned-mail.js";
 
 const leaseFault = vi.hoisted(() => ({ path: "", mode: "none" as "none" | "before" | "after", failure: new Error("SIMULATED lease removal failure") }));
 const acquisitionFault = vi.hoisted(() => ({ directory: "", stage: "none" as "none" | "write" | "close_before" | "close_after",
@@ -714,6 +715,7 @@ describe("actual known compatibility overlay admission (not main-only or owner c
 describe("actual MessageStore construction resources (not complete consumer/producer closure)", () => {
   it("captures the actual main before initialization and actual handles/cache/consumers without census SQL", () => {
     let main: DatabaseSync | undefined;
+    const capture = vi.spyOn(MessageStore.prototype as any, "captureStatement");
     vi.spyOn(DatabaseSync.prototype, "exec").mockImplementation(function(this: DatabaseSync, sql: string) {
       const observation = messageStoreHandleObservation(this);
       if (observation.captured && observation.main && observation.construction === "attempted" && main === undefined) {
@@ -721,10 +723,14 @@ describe("actual MessageStore construction resources (not complete consumer/prod
       }
       return nativeExec.call(this, sql);
     });
-    const store = new MessageStore(env.db, nullLogger); ownedStores.add(store); vi.restoreAllMocks();
+    const store = new MessageStore(env.db, nullLogger); ownedStores.add(store);
+    const cache = Reflect.get(store, "stmt"), frames = capture.mock.results.map(result => result.value), natives = new Set(capture.mock.calls.map(call => call[0]));
+    expect(Object.keys(cache).sort()).toEqual(["byId", "insert", "markRead", "replyConflicts"]);
+    expect(Object.values(cache)).toEqual(frames); expect(natives.size).toBe(frames.length);
+    vi.restoreAllMocks();
     const exec = vi.spyOn(DatabaseSync.prototype, "exec"), prepare = vi.spyOn(DatabaseSync.prototype, "prepare");
     expect(main).toBeDefined();
-    expect(messageStoreHandleObservation(main!)).toMatchObject({ construction: "returned", handles: 3, statements: 6, consumers: 2,
+    expect(messageStoreHandleObservation(main!)).toMatchObject({ construction: "returned", handles: 3, statements: natives.size, consumers: 2,
       close: "not_attempted", ordinaryClose: "not_attempted", retained: false, ownerBound: false, settled: false, ownershipReleased: false });
     expect(exec).not.toHaveBeenCalled(); expect(prepare).not.toHaveBeenCalled(); vi.restoreAllMocks();
     store.close(); ownedStores.delete(store);
@@ -1104,25 +1110,29 @@ describe("retained overlay DTO and actual unknown history obligations", () => {
 });
 
 describe("actual Store operation/native admission (not current cold or joint-owner grant)", () => {
-  const mail: BridgeMessage = { id: "owned-admission-mail", from: { id: "owned-author", name: "owned-author", agent: "other" },
+  const template: BridgeMessage = { id: "owned-admission-mail", from: { id: "owned-author", name: "owned-author", agent: "other" },
     recipient: "owned-recipient", to: "owned-recipient", conversationId: "owned-admission", replyTo: null, hop: 1,
     body: "Exact accepted admission bytes", createdAt: 1, readAt: null };
-  function store() { const value = new MessageStore(env.db, nullLogger); ownedStores.add(value); return value; }
+  let mail: BridgeMessage;
+  function store() {
+    const value = new MessageStore(env.db, nullLogger); ownedStores.add(value);
+    mail = ownedMessage(value, fixturePeer(value, template.recipient), template); return value;
+  }
   it("outside-context direct/cache/child writes and default abort/close refuse before native SQL under the own-store seal", () => {
     const value = store(); value.insert(mail); const sealed = value.sealLifecycleProducers();
     expect(sealed).toMatchObject({ sealed: true, pendingOperations: 0, consumersSealed: true, coldPreparation: "unverified", settled: false, ownershipReleased: false });
     const exec = vi.spyOn(DatabaseSync.prototype, "exec"), prepare = vi.spyOn(DatabaseSync.prototype, "prepare"), close = vi.spyOn(DatabaseSync.prototype, "close");
-    const all = vi.spyOn(StatementSync.prototype, "all"), cached = Reflect.get(value, "stmt").unread;
+    const all = vi.spyOn(StatementSync.prototype, "all"), cached = Reflect.get(value, "stmt").byId;
     for (const operation of [() => value.insert({ ...mail, id: "not-admitted" }), () => value.unread(mail.recipient, 10),
       () => value.markPeerSeen("not-admitted", 2), () => value.retainNativeChild("not-admitted", "owned-parent"),
       () => value.markRead(mail.recipient, [mail.id]), () => value.claim(mail.recipient, "not-admitted"),
       () => value.schedulePurgeOlderThan(2), () => value.stopWrites(), () => value.close(),
-      () => cached.all(mail.recipient, 10),
+      () => cached.all(mail.id),
       () => value.decisions.list(), () => value.history.wake()]) expect(operation).toThrow(expect.objectContaining({ code: "OWNER_QUIESCED" }));
     expect(exec).not.toHaveBeenCalled(); expect(prepare).not.toHaveBeenCalled(); expect(close).not.toHaveBeenCalled();
     expect(all).not.toHaveBeenCalled();
     vi.restoreAllMocks(); value.resumeLifecycleProducers();
-    expect(value.unread(mail.recipient, 10)).toContainEqual(expect.objectContaining({ id: mail.id, body: mail.body, readAt: null }));
+    expect(value.unread(mail.recipient, 10, undefined, mail.recipientNative)).toContainEqual(expect.objectContaining({ id: mail.id, body: mail.body, readAt: null }));
     expect(value.nativeChildRoutes()).toEqual([]);
   });
   it("an actual SQLite-busy accepted retry keeps its original promise/bytes past observer expiry and naturally finishes after lock release", async () => {
@@ -1136,7 +1146,7 @@ describe("actual Store operation/native admission (not current cold or joint-own
     lock.exec("ROLLBACK"); await pending; acceptedFixturePromises.delete(pending);
     expect(await value.observeLifecycleProducers(performance.now() + 2000)).toMatchObject({ pendingOperations: 0, consumersSealed: true,
       callbackUnknown: true, coldPreparation: "unverified", settled: false, ownershipReleased: false });
-    value.resumeLifecycleProducers(); expect(value.unread(mail.recipient, 10)).toContainEqual(expect.objectContaining({ id: mail.id, body: mail.body }));
+    value.resumeLifecycleProducers(); expect(value.unread(mail.recipient, 10, undefined, mail.recipientNative)).toContainEqual(expect.objectContaining({ id: mail.id, body: mail.body }));
   });
   it("a seal inside an accepted batch cannot abort its original transaction or drop nested accepted mail", () => {
     const value = store();

@@ -15,6 +15,7 @@ import { openJobQuestions } from "../src/core/job-questions.js";
 import { isJobQuestion } from "../src/core/protocol.js";
 import { startUi } from "../src/cli/ui.js";
 import { makeEnv, type TestEnv } from "./helpers.js";
+import { retainFixtureNode, retainFixtureRunner } from "./owned-mail.js";
 
 // AB-249: a job's question to a parent that is not connected goes to the project's current main session,
 // the send result names where it went, and open questions are listed for the dashboard.
@@ -30,10 +31,14 @@ function repo(): string {
   return path;
 }
 async function node(name: string, cwd: string, job?: { id: string; parent: string }): Promise<BridgeNode> {
+  if (job && !nodes.some(node => node.name === job.parent)) {
+    const offline = env.node(job.parent, "claude"); await offline.relocate(cwd); retainFixtureNode(env.home, offline, "claude");
+  }
+  if (job) retainFixtureRunner(env.home, { id: job.id, name, agent: "codex", owner: job.parent, supervisor: job.parent, cwd });
   const n = new BridgeNode({ pipePath: env.pipe, dbPath: env.db, token: loadOrCreateToken(env.home), name, cwd,
     agent: job ? "other" : name.startsWith("codex") ? "codex" : "claude", autoWake: false, log: nullLogger,
     ...(job ? { id: `job:${job.id}`, jobAgent: "codex" as const, jobOwner: job.parent, jobParent: job.parent, canHostBroker: false } : {}) });
-  nodes.push(n); await n.start(); return n;
+  nodes.push(n); if (!job) await n.setSessionId(`fixture-session:${name}`); await n.start(); return n;
 }
 function registry(project: string): void {
   // Publish the same indexed snapshot as a real job writer. A raw legacy file

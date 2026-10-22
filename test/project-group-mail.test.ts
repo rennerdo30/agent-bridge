@@ -9,8 +9,10 @@ import { BridgeNode } from "../src/core/node.js";
 import { nullLogger } from "../src/core/logger.js";
 import { loadOrCreateToken } from "../src/core/token.js";
 import { makeEnv, type TestEnv } from "./helpers.js";
-import { ReadJournal } from "../src/core/read-journal.js";
-import { JobManager } from "../src/mcp/jobs.js";
+import { ReadJournal, readJournalIdentities } from "../src/core/read-journal.js";
+import { JobManager, readStore } from "../src/mcp/jobs.js";
+import { fixtureJobReport, fixtureNodePeer, retainFixtureRunner } from "./owned-mail.js";
+import { MessageStore } from "../src/core/store.js";
 import { buildHookResponse } from "../src/mcp/hooks.js";
 import { DEFAULT_CONFIG, loadConfig } from "../src/core/config.js";
 import type { ServerContext } from "../src/mcp/server.js";
@@ -27,10 +29,11 @@ function repo() {
   return path;
 }
 async function node(name: string, cwd: string, job?: { id: string; owner: string; parent: string }) {
+  if (job) retainFixtureRunner(env.home, { id: job.id, name, agent: "codex", owner: job.parent, supervisor: job.owner, cwd });
   const n = new BridgeNode({ pipePath: env.pipe, dbPath: env.db, token: loadOrCreateToken(env.home), name, cwd,
     agent: job ? "other" : name.startsWith("codex") ? "codex" : "claude", autoWake: true, log: nullLogger,
     ...(job ? { id: `job:${job.id}`, jobAgent: "codex" as const, jobOwner: job.owner, jobParent: job.parent, canHostBroker: false } : {}) });
-  nodes.push(n); await n.start(); return n;
+  nodes.push(n); if (!job) await n.setSessionId(`fixture-session:${name}`); await n.start(); return n;
 }
 function registry(project: string) {
   const jobs = ["one", "two"].map((id, i) => ({ id, name: `codex-job-${id}`, agent: "codex", model: null, prompt: "task", startedAt: Date.now(), status: "running", sessionId: null, workdir: project, worktree: null,
@@ -86,7 +89,7 @@ describe("durable project job mail", () => {
     const runner = await node("codex-job-one", path, { id: "one", owner: "first", parent: source.name });
     await source.stop();
     const sent = await runner.send({ to: source.name, body: "Final pending note", conversationId: "job-one:note" });
-    writeFileSync(join(env.home, "jobs.json"), JSON.stringify({ version: 4, jobs: [{ ...records[0], status: "done", projectRoot: canonicalProjectRoot(path) }] }));
+    writeFileSync(join(env.home, "jobs.json"), JSON.stringify({ version: 4, jobs: [{ ...readStore(join(env.home, "jobs.json"))[0], status: "done", projectRoot: canonicalProjectRoot(path) }] }));
     const returned = await node("claude-master", path);
     await expect.poll(() => returned.unread().some((m) => m.id === sent.messages[0]!.id)).toBe(true);
     const jobs = new JobManager(returned, nullLogger, join(env.home, "jobs.json"));
@@ -99,10 +102,16 @@ describe("durable project job mail", () => {
   it("does not replay a recovered inline envelope consumed before its broker acknowledgement", async () => {
     const path = repo(), records = registry(path), source = await node("claude-master", path);
     const secondary = await node("codex-master", path);
-    const envelope = { id: randomUUID(), from: { id: "job:one", name: "codex-job-one", agent: "codex" }, to: source.name,
-      recipient: source.name, body: "Already consumed", conversationId: "job-one", hop: 0, replyTo: null, createdAt: Date.now(), readAt: null };
-    new ReadJournal(env.home).append(`name:${source.name}`, [envelope.id]);
-    writeFileSync(join(env.home, "jobs.json"), JSON.stringify({ version: 2, jobs: [{ ...records[0], deliveryHistory: [envelope] }, records[1]] }));
+    retainFixtureRunner(env.home, { id: "one", name: "codex-job-one", agent: "codex", owner: source.name, supervisor: "first", cwd: path });
+    const envelope = source.prepareLocalMessage({ id: randomUUID(), from: { id: "job:one", name: "codex-job-one", agent: "codex" }, to: source.name,
+      recipient: source.name, body: "Already consumed", conversationId: "job-one", hop: 0, replyTo: null, createdAt: Date.now(), readAt: null });
+    const retained = readStore(join(env.home, "jobs.json"));
+    const store = new MessageStore(env.db, nullLogger);
+    let report: ReturnType<typeof fixtureJobReport>;
+    try { const peer = fixtureNodePeer(store, source, "claude"); report = fixtureJobReport(store, retained[0] as unknown as Record<string, unknown>, peer, peer, envelope); }
+    finally { store.close(); }
+    new ReadJournal(env.home).append(readJournalIdentities(source.name, source.currentSessionId, envelope.recipientFrontend, envelope.recipientNative, envelope.recipientMailbox, { grant: envelope.id, generation: 0 })[0]!, [envelope.id]);
+    writeFileSync(join(env.home, "jobs.json"), JSON.stringify({ version: 4, jobs: [{ ...retained[0], deliveryHistory: [report.message], reportRouting: { [envelope.id]: report.draft } }, retained[1]] }));
     await source.setUnavailable(true);
     expect(secondary.unread().some((m) => m.id === envelope.id)).toBe(false);
     const runner = await node("codex-job-one", path, { id: "one", owner: "first", parent: source.name });

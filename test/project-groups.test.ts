@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { canonicalProjectRoot, projectGroupsEnabled } from "../src/core/project-identity.js";
 import { ProjectGroups } from "../src/core/project-groups.js";
 import { BridgeNode } from "../src/core/node.js";
+import { retainFixtureRunner } from "./owned-mail.js";
 import { nullLogger } from "../src/core/logger.js";
 import { loadOrCreateToken } from "../src/core/token.js";
 import { makeEnv, type TestEnv } from "./helpers.js";
@@ -30,10 +31,11 @@ function repo() {
   return path;
 }
 async function node(name: string, cwd: string, job?: { id: string; owner: string; parent: string }) {
+  if (job) retainFixtureRunner(env.home, { id: job.id, name, agent: "codex", owner: job.parent, supervisor: job.owner, cwd });
   const n = new BridgeNode({ pipePath: env.pipe, dbPath: env.db, token: loadOrCreateToken(env.home), name, cwd,
     agent: job ? "other" : name.startsWith("codex") ? "codex" : name.startsWith("antigravity") ? "antigravity" : "claude", autoWake: true, log: nullLogger,
     ...(job ? { id: `job:${job.id}`, jobAgent: "codex" as const, jobOwner: job.owner, jobParent: job.parent, canHostBroker: false } : {}) });
-  nodes.push(n); await n.start(); return n;
+  nodes.push(n); if (!job) await n.setSessionId(`fixture-session:${name}`); await n.start(); return n;
 }
 function registry(project: string) {
   const jobs = ["one", "two"].map((id, i) => ({ id, name: `codex-job-${id}`, agent: "codex", model: null, prompt: "task", startedAt: Date.now(), status: "running", sessionId: null, workdir: project, worktree: null,

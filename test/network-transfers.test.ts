@@ -24,7 +24,7 @@ let home: string;
 let services: NetworkService[];
 beforeEach(() => { home = realpathSync.native(mkdtempSync(join(tmpdir(), "ab-transfers-"))); services = []; });
 afterEach(async () => { vi.useRealTimers(); for (const service of services.reverse()) await service.close(); vi.restoreAllMocks(); rmSync(home, { recursive: true, force: true, maxRetries: 5 }); });
-const peer = (name: string): PeerInfo => ({ id: randomUUID(), name, agent: "codex", cwd: home, pid: process.pid, agentPid: null, sessionId: null, startedAt: Date.now(), autoWake: false });
+const peer = (name: string): PeerInfo => ({ id: randomUUID(), name, agent: "codex", cwd: home, pid: process.pid, agentPid: null, sessionId: randomUUID(), startedAt: Date.now(), autoWake: false });
 async function wait(check: () => boolean, timeout = TRANSFER_TEST_WAIT_MS): Promise<void> {
   const deadline = Date.now() + timeout;
   while (!check()) { if (Date.now() >= deadline) throw new Error("transfer test timed out"); await new Promise((resolve) => setTimeout(resolve, 20)); }

@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DEFAULT_CONFIG } from "../src/core/config.js";
 import { nullLogger } from "../src/core/logger.js";
+import { MessageStore } from "../src/core/store.js";
+import { fixtureNodePeer } from "./owned-mail.js";
 import { approvalHint, isAutoApproved, isHandoffToolCall, isOwnServerCall, mcpToolOf } from "../src/core/tool-allow.js";
 import { hookRequest } from "../src/cli/permission-hook.js";
 import { opencodePermissionRequest } from "../src/core/opencode-served.js";
@@ -205,6 +207,8 @@ describe("sessions and native subagents", () => {
     await until(() => other.unread().length === 1);
     expect(await me.claimMail(["claude-mm-2"])).toBe(0);
     await other.stop();
+    const evidence = new MessageStore(env.db, nullLogger);
+    try { fixtureNodePeer(evidence, me, "claude", "claude-mm-3"); } finally { evidence.close(); }
     await broker.send({ to: "claude-mm-3", body: "result sent to a stand-in" });
     expect(await me.claimMail(["claude-mm-3", "codex-x"])).toBe(1);
     await until(() => me.unread().some((m) => m.body === "result sent to a stand-in"));

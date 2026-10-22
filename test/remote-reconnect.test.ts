@@ -12,6 +12,7 @@ import { nullLogger } from "../src/core/logger.js";
 import { BridgeNode } from "../src/core/node.js";
 import type { BridgeMessage, PeerInfo } from "../src/core/protocol.js";
 import { MessageStore } from "../src/core/store.js";
+import { removePostV9FixtureOwnership } from "./owned-mail.js";
 import { en } from "../src/core/messages.js";
 import { DEFAULT_NETWORK_CONFIG } from "../src/network/config.js";
 import { DISCOVERY_TTL_MS, NETWORK_REFRESH_MS, NETWORK_TIMEOUT_MS, NETWORK_VERSION, TLS_CIPHER } from "../src/network/constants.js";
@@ -102,6 +103,7 @@ describe("remote reconnect identity and reachability (AB-104)", () => {
       to: "session", conversationId: "chat", replyTo: null, hop: 0, body: "original user data", createdAt: 1, readAt: null });
     store.close();
     const legacy = new DatabaseSync(env.db);
+    removePostV9FixtureOwnership(legacy);
     legacy.exec("DROP TABLE peer_names; DROP TABLE peer_name_owners; PRAGMA user_version=5;"); legacy.close();
     const upgraded = new MessageStore(env.db, nullLogger);
     try {
@@ -135,6 +137,7 @@ describe("remote reconnect identity and reachability (AB-104)", () => {
     store.rememberSession(registration("session-2", { agentPid: 333, sessionId: "two" }), 2);
     store.close();
     const legacy = new DatabaseSync(env.db);
+    removePostV9FixtureOwnership(legacy);
     legacy.exec("DROP TABLE peer_names; DROP TABLE peer_name_owners; PRAGMA user_version=5;"); legacy.close();
     const upgraded = new MessageStore(env.db, nullLogger);
     try {

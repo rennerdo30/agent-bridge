@@ -7,6 +7,7 @@ import { nullLogger } from "../src/core/logger.js";
 import { loadOrCreateToken } from "../src/core/token.js";
 import { AGENT_KINDS, type CodingAgent } from "../src/core/protocol.js";
 import { makeEnv, type TestEnv } from "./helpers.js";
+import { retainFixtureRunner } from "./owned-mail.js";
 
 let env: TestEnv;
 const nodes: BridgeNode[] = [];
@@ -15,9 +16,10 @@ afterEach(async () => { for (const n of nodes.splice(0)) await n.stop(); await e
 async function session(name: string, cwd = env.home) {
   if (name === "outside" && cwd === env.home) { cwd = join(env.home, "outside-project"); mkdirSync(cwd); }
   const n = new BridgeNode({ pipePath: env.pipe, dbPath: env.db, token: loadOrCreateToken(env.home), name, cwd, agent: "codex", autoWake: false, log: nullLogger });
-  nodes.push(n); await n.start(); return n;
+  nodes.push(n); await n.setSessionId(`fixture-session:${name}`); await n.start(); return n;
 }
 async function runner(agent: CodingAgent, parent: string, cwd = env.home, grants: string[] = []) {
+  retainFixtureRunner(env.home, { id: "one", name: `${agent}-job-one`, agent, owner: parent, supervisor: "root-session", cwd, grants });
   const n = new BridgeNode({ pipePath: env.pipe, dbPath: env.db, token: loadOrCreateToken(env.home), name: `${agent}-job-one`, id: "job:one", cwd,
     agent: "other", jobAgent: agent, jobParent: parent, jobOwner: "root-session", jobSendTo: grants, autoWake: false, canHostBroker: false, log: nullLogger });
   nodes.push(n); await n.start(); return n;
@@ -66,6 +68,7 @@ it("requires job control from project masters while retaining sibling delivery",
   await expect(outside.send({ to: job.name, body: "Ask available master" })).rejects.toThrow("No message was stored");
   const sibling = new BridgeNode({ pipePath: env.pipe, dbPath: env.db, token: loadOrCreateToken(env.home), name: "codex-job-two", id: "job:two", cwd,
     agent: "other", jobAgent: "codex", jobParent: master.name, jobOwner: "root-session", autoWake: false, canHostBroker: false, log: nullLogger });
+  retainFixtureRunner(env.home, { id: "two", name: "codex-job-two", agent: "codex", owner: master.name, supervisor: "root-session", cwd });
   nodes.push(sibling); await sibling.start();
   expect((await sibling.sendSibling({ to: job.name, body: "Sibling request" }, 3)).replyRestrictions).toBeUndefined();
 });

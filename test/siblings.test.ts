@@ -23,6 +23,7 @@ import { LocalCoordinator } from "../src/mcp/local-coordinator.js";
 import { SiblingLink } from "../src/mcp/siblings.js";
 import type { ServerContext } from "../src/mcp/server.js";
 import { makeEnv, until, type TestEnv } from "./helpers.js";
+import { retainFixtureJob } from "./owned-mail.js";
 
 const MAX_HOPS = 3;
 const SERVER = join(import.meta.dirname, "..", "plugins", "claude", "dist", "server.mjs");
@@ -49,6 +50,7 @@ async function sibling(id: string, agent: CodingAgent, owner = "supervisor-sessi
   const name = `${agent}-job-${id}`;
   const job: Job = { id, name, agent, model: null, prompt: "task", startedAt: Date.now(), controller: new AbortController(),
     progress: null, status: "running", sessionId: null, workdir: null, worktree: null, queue: [], args: { send_to: sendTo } };
+  retainFixtureJob(env.home, job, supervisor.name, owner);
   const node = new BridgeNode({ pipePath: env.pipe, token: loadOrCreateToken(env.home), dbPath: env.db,
     agent: "other", jobAgent: agent, jobOwner: owner, jobParent: supervisor.name, jobTitle: `Task ${id}`,
     jobSendTo: sendTo,

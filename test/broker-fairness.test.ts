@@ -37,12 +37,12 @@ it("accepts a fresh hook connection between synchronous request starts in a burs
     sender = await BridgeClient.connect(env.pipe, nullLogger);
     await sender.request("hello", { protocol: PROTOCOL_VERSION, token, peer: {
       id: "sender", name: "sender", agent: "other", cwd: env.home, pid: process.pid,
-      agentPid: null, sessionId: null, startedAt: Date.now(), autoWake: false,
+      agentPid: null, sessionId: "sender-session", startedAt: Date.now(), autoWake: false,
     } });
     receiver = await BridgeClient.connect(env.pipe, nullLogger);
     await receiver.request("hello", { protocol: PROTOCOL_VERSION, token, peer: {
       id: "receiver", name: "receiver", agent: "other", cwd: env.home, pid: process.pid,
-      agentPid: null, sessionId: null, startedAt: Date.now(), autoWake: false,
+      agentPid: null, sessionId: "receiver-session", startedAt: Date.now(), autoWake: false,
     } });
     slow = true;
     const burst = Array.from({ length: 24 }, (_, i) => sender!.request("send", { to: "receiver", body: `retained-${i}` }));

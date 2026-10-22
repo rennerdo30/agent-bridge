@@ -10,7 +10,7 @@ import { storageLease } from "./storage-lock.js";
 export const MESSAGE_BACKUPS_DIR = "message-backups";
 export const AUTO_BACKUP_ENV = "AGENT_BRIDGE_AUTO_BACKUP";
 const TABLES = {
-  "bridge.db": ["messages", "archived_messages", "job_delivery_routes", "message_frontends", "mailbox_store", "send_intents", "send_destinations", "recipient_registrations", "peer_names", "peer_name_owners", "native_child_routes", "message_archive_conflicts"],
+  "bridge.db": ["messages", "archived_messages", "job_delivery_routes", "job_mail_grants", "job_mail_succession", "job_mail_retirements", "message_frontends", "mailbox_store", "send_intents", "send_destinations", "recipient_registrations", "peer_names", "peer_name_owners", "native_child_routes", "message_archive_conflicts"],
   "archive.db": ["messages"],
   "store-compatibility.db": ["job_delivery_routes"],
 } as const;

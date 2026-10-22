@@ -96,7 +96,7 @@ function seed(version: number): void {
   writeFileSync(join(env.home, "config.json"), JSON.stringify({ version: 4, history: { ingest: false } }));
 }
 
-it("hosts the earliest released 0.29 schema using durable supplemental routing tables", () => {
+it("retains the earliest released 0.29 schema for inspection without granting supplemental mailbox authority", () => {
   copyFileSync(join(import.meta.dirname, "fixtures/sqlite-upgrade/v0.29.0/bridge.db"), env.db);
   recordStorePeer(env.home, { pid: process.pid, name: "early-retained-runner", version: "0.29.0" });
   let store = new MessageStore(env.db, nullLogger);
@@ -105,7 +105,9 @@ it("hosts the earliest released 0.29 schema using durable supplemental routing t
     store.rememberName(peer, Date.now());
     expect(store.broadcastRecipients(Date.now(), new Set()).queued).toContain("fixture-session");
     store.insert({ id: "compat-mail", recipient: "fixture-session", from: { id: "fixture-sender", name: "fixture-sender", agent: "claude" }, to: "fixture-session", conversationId: "compat-fixture", replyTo: null, hop: 0, body: "retained supplemental route", createdAt: Date.now(), readAt: null });
-    expect(store.unread("fixture-session", 10)[0]?.body).toBe("retained supplemental route");
+    expect(store.unread("fixture-session", 10)).toEqual([]);
+    expect(store.byId("compat-mail")).toMatchObject({ body: "retained supplemental route", recipientAmbiguous: true });
+    expect(store.markRead("fixture-session", ["compat-mail"])).toBe(0);
     const original = new DatabaseSync(env.db, { readOnly: true });
     try { expect(original.prepare("PRAGMA user_version").get()!.user_version).toBe(4); } finally { original.close(); }
   } finally { store.close(); }
@@ -151,7 +153,7 @@ it.each([6, 7, 8])("hosts schema %i without an upgrade, persists supplemental me
   } finally { store.close(); }
 });
 
-it("elects a broker after every session reloads while only a legacy non-hosting job runner remains", async () => {
+it("refuses mailbox startup while a retained older non-hosting reader blocks provenance migration", async () => {
   seed(8);
   const bundle = join(env.home, "legacy-runner-fixture.mjs");
   await build({ entryPoints: [join(import.meta.dirname, "../src/core/node.ts")], outfile: bundle, bundle: true, platform: "node", format: "esm", logLevel: "silent" });
@@ -179,18 +181,21 @@ it("elects a broker after every session reloads while only a legacy non-hosting 
   } finally { capabilities.close(); }
   const first = env.node("reloaded-first", "claude");
   const second = env.node("reloaded-second", "codex");
-  await Promise.all([first.start(), second.start()]);
-  expect(first.isBroker || second.isBroker).toBe(true);
-  await until(() => output.includes("connected"));
+  await expect(first.start()).rejects.toMatchObject({ code: "protocol_mismatch" }); await first.stop();
+  await expect(second.start()).rejects.toMatchObject({ code: "protocol_mismatch" });
+  expect(output).not.toContain("connected");
   await first.stop(); await second.stop();
   const replacement = env.node("reloaded-again", "claude");
-  await replacement.start();
-  expect(replacement.isBroker).toBe(true);
+  await expect(replacement.start()).rejects.toMatchObject({ code: "protocol_mismatch" });
+  expect(replacement.isBroker).toBe(false);
   expect(runner.exitCode, output).toBeNull();
   const check = new DatabaseSync(env.db, { readOnly: true });
   try {
     expect(check.prepare("PRAGMA user_version").get()!.user_version).toBe(8);
     expect(check.prepare("SELECT body FROM messages WHERE id='retained-mail'").get()!.body).toBe("keep this message");
     expect(check.prepare("SELECT body FROM owner_data").get()!.body).toBe("keep unknown data");
+    expect(check.prepare("SELECT read_at FROM messages WHERE id='retained-mail'").get()!.read_at).toBeNull();
+    expect(check.prepare("SELECT name FROM sqlite_master WHERE name='message_frontends'").get()).toBeUndefined();
   } finally { check.close(); }
+  expect(existsSync(join(env.home, ".migration-snapshots"))).toBe(false);
 }, 30_000);

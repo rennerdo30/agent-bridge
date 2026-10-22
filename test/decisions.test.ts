@@ -10,6 +10,7 @@ import { DEFAULT_CONFIG } from "../src/core/config.js";
 import { DECISION_MESSAGE_HOP, decisionApplies, formatDecisionSummary, normalizeProject } from "../src/core/decisions.js";
 import { nullLogger } from "../src/core/logger.js";
 import { MessageStore, SQLITE_STORE_VERSION } from "../src/core/store.js";
+import { fixturePeer, ownedMessage, unreadOwned } from "./owned-mail.js";
 import { buildHookResponse } from "../src/mcp/hooks.js";
 import { makeEnv, until, type TestEnv } from "./helpers.js";
 import { withDirectoryAlias } from "./directory-alias-fixture.js";
@@ -234,7 +235,7 @@ describe("shared decision broker", () => {
     const db = new DatabaseSync(env.db);
     try {
       const decision = store.decisions.record({ topic: "atomic", text: "Preserve data", scope: "all" }, AUTHOR, 1);
-      const message = { id: "notify", from: AUTHOR, to: "peer", recipient: "peer", conversationId: `decision-${decision.id}`, replyTo: null, hop: DECISION_MESSAGE_HOP, body: decision.text, createdAt: 2, readAt: null };
+      const peer = fixturePeer(store, "peer"), message = ownedMessage(store, peer, { id: "notify", from: AUTHOR, to: "peer", recipient: "peer", conversationId: `decision-${decision.id}`, replyTo: null, hop: DECISION_MESSAGE_HOP, body: decision.text, createdAt: 2, readAt: null });
       db.exec("CREATE TRIGGER fail_message BEFORE INSERT ON messages BEGIN SELECT RAISE(ABORT, 'cannot insert'); END;");
       expect(() => store.decisions.enqueue(decision, "session", message, () => store.insert(message))).toThrow("cannot insert");
       expect(db.prepare("SELECT COUNT(*) AS n FROM decision_deliveries").get()!.n).toBe(0);
@@ -242,7 +243,7 @@ describe("shared decision broker", () => {
       db.exec("DROP TRIGGER fail_message");
       expect(store.decisions.enqueue(decision, "session", message, () => store.insert(message))).toBe(true);
       expect(store.decisions.enqueue(decision, "session", message, () => store.insert(message))).toBe(false);
-      expect(store.unread("peer", 10)).toHaveLength(1);
+      expect(unreadOwned(store, peer, 10)).toEqual([message]);
     } finally { db.close(); store.close(); }
   });
 });

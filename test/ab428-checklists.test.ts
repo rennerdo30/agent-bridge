@@ -20,7 +20,7 @@ import { nullLogger } from "../src/core/logger.js";
 import { closeMetadataDb, metadataDb } from "../src/core/metadata-db.js";
 import { BridgeNode } from "../src/core/node.js";
 import { Broker } from "../src/core/broker.js";
-import type { MessageStore } from "../src/core/store.js";
+import { MessageStore } from "../src/core/store.js";
 import { loadOrCreateToken } from "../src/core/token.js";
 import { ParentLink, parentFromEnv, type ParentClient } from "../src/core/parent-link.js";
 import { CODING_AGENTS } from "../src/core/protocol.js";
@@ -36,6 +36,7 @@ import { LocalCoordinator } from "../src/mcp/local-coordinator.js";
 import { instructionsFor, registerTools, type ServerContext } from "../src/mcp/server.js";
 import { DELEGATION_TARGETS } from "../src/mcp/targets.js";
 import { makeEnv, type TestEnv } from "./helpers.js";
+import { fixtureConnection, fixturePeer } from "./owned-mail.js";
 
 const forbiddenLaunches = vi.hoisted(() => [] as string[]);
 const fixtureHost = vi.hoisted(() => ({
@@ -129,18 +130,19 @@ const job = (name = JOB): Job => ({ id: name.slice(-8), name, agent: "codex", mo
   progress: null, status: "running", sessionId: null, workdir: null, worktree: null, queue: [], args: { title: "Checklist fixture" } } as Job);
 
 let env: TestEnv, home: string, project: string, nodes: BridgeNode[];
+let authorityStores: MessageStore[];
 beforeEach(() => {
   vi.clearAllMocks();
   forbiddenLaunches.length = 0;
   // Named-pipe transport is sufficient here; TCP fallback protects a discovery file through Windows DPAPI.
   vi.spyOn(Broker.prototype as any, "startTcpFallback").mockResolvedValue(undefined);
-  env = makeEnv(); home = env.home; nodes = [];
+  env = makeEnv(); home = env.home; nodes = []; authorityStores = [];
   vi.stubEnv("AGENT_BRIDGE_HISTORY_INGEST", "0");
   vi.stubEnv("AGENT_BRIDGE_AUTO_BACKUP", "0");
   project = join(home, "repo"); mkdirSync(project, { recursive: true });
 });
 afterEach(async () => {
-  await Promise.all(nodes.map(n => n.stop().catch(() => {}))); closeMetadataDb(home); await env.cleanup();
+  await Promise.all(nodes.map(n => n.stop().catch(() => {}))); for (const store of authorityStores) store.close(); closeMetadataDb(home); await env.cleanup();
   for (const [name, launch] of Object.entries({ exec: childProcess.exec, execSync: childProcess.execSync, execFile: childProcess.execFile, execFileSync: childProcess.execFileSync, spawn: childProcess.spawn, spawnSync: childProcess.spawnSync, fork: childProcess.fork })) {
     const calls = vi.mocked(launch).mock.calls;
     expect(calls.length, `forbidden ${name}: ${forbiddenLaunches.join("\n")}`).toBe(0);
@@ -163,9 +165,9 @@ function authorityFixture() {
   const registry = join(home, "jobs.json");
   const save = (rows: unknown[] = [saved]) => writeAuthorityFixture(registry, { version: 4, jobs: rows });
   save();
-  const broker = new Broker(env.pipe, {} as MessageStore, nullLogger, "fixture-only", Date.now, registry) as any;
-  const conn = { authed: true, registered: true, retired: false, socket: { destroyed: false },
-    peer: { id: "member", name: "member", agent: "codex", cwd: project, startedAt: 1 } };
+  const store = new MessageStore(env.db, nullLogger); authorityStores.push(store);
+  const broker = new Broker(env.pipe, store, nullLogger, "fixture-only", Date.now, registry) as any;
+  const conn = fixtureConnection(store, fixturePeer(store, "member", { id: "member", cwd: project, sessionId: "member-session", startedAt: 1 }));
   broker.conns.add(conn);
   // Only context discovery is mocked; currentJobAuthority and group authorization remain production code.
   vi.spyOn(broker, "jobForControl").mockImplementation(async () => ({ ...saved }));
@@ -177,7 +179,11 @@ function authorityFixture() {
   const jobs = new JobManager(node, nullLogger, registry);
   const ctx: ServerContext = { agent: "codex", node: node as unknown as BridgeNode, jobs, home, cfg: { ...DEFAULT_CONFIG },
     log: nullLogger, cwd: () => project, channelActive: () => false };
-  return { saved, save, broker, conn, node, jobs, ctx, ...tools(ctx) };
+  const rename = (name: string) => {
+    conn.peer.name = name; store.rememberName(conn.peer, Date.now());
+    conn.mailReady.name = name;
+  };
+  return { saved, save, broker, conn, node, jobs, ctx, rename, ...tools(ctx) };
 }
 
 function nestedFixture() {
@@ -262,7 +268,7 @@ describe("AB-428 job checklists", () => {
   ];
   it("restores authority with fresh file identity despite a same-length in-place timestamp collision", async () => {
     const f = authorityFixture(), path = join(home, "jobs.json");
-    f.conn.peer.name = "owner";
+    f.rename("owner");
     writeFileSync(join(home, "config.json"), JSON.stringify({ projectGroups: false }));
     seedJobChecklist(home, JOB, [{ text: "Required" }], null, "owner");
     f.save([{ ...f.saved, startedAt: f.saved.startedAt + 1 }]);
@@ -308,8 +314,9 @@ describe("AB-428 job checklists", () => {
       const ctx: ServerContext = { agent: "codex", node: null, parent: quietParent(), childInbox: coord, jobs, home,
         cfg: { ...DEFAULT_CONFIG }, log: nullLogger, cwd: () => project, channelActive: () => false };
       const privateTools = tools(ctx);
-      const broker = new Broker(env.pipe, {} as MessageStore, nullLogger, "fixture-only", Date.now, path) as any;
-      const conn = { authed: true, registered: true, retired: false, socket: { destroyed: false }, peer: { id: "owner", name: "owner", agent: "codex", cwd: project, startedAt: 1 } };
+      const store = new MessageStore(env.db, nullLogger); authorityStores.push(store);
+      const broker = new Broker(env.pipe, store, nullLogger, "fixture-only", Date.now, path) as any;
+      const conn = fixtureConnection(store, fixturePeer(store, "owner", { id: "owner", cwd: project, sessionId: "owner-session", startedAt: 1 }));
       broker.conns.add(conn);
       const db = metadataDb(home), exec = db.exec.bind(db);
       const rows = () => db.prepare("SELECT * FROM job_checklist WHERE job=? ORDER BY seq").all(name);
@@ -368,7 +375,7 @@ describe("AB-428 job checklists", () => {
 
   it("never rediscovers relative workdir/runner cwd or raw args as checklist group authority", async () => {
     const f = authorityFixture();
-    f.conn.peer.name = "unrelated";
+    f.rename("unrelated");
     const runner = { ...f.conn, peer: { ...f.conn.peer, id: `job:${f.saved.id}`, name: JOB, agent: "other", jobAgent: "codex", cwd: "." } };
     f.broker.conns.add(runner);
     seedJobChecklist(home, JOB, [{ text: "Required" }], null, "owner");
@@ -541,7 +548,7 @@ describe("AB-428 job checklists", () => {
     const nested = role === "private" ? nestedFixture() : undefined, f = role === "private" ? undefined : authorityFixture();
     const jobs = (nested ?? f)!.jobs, path = join(home, "jobs.json"), name = nested?.job.name ?? JOB;
     const saved = nested ? JSON.parse(readFileSync(path, "utf8")).jobs.find((row: any) => row.name === name) : f!.saved;
-    if (f) { f.conn.peer.name = role === "owner" ? "owner" : "explicit-master"; seedJobChecklist(home, name, [{ text: "Required" }], null, "owner"); }
+    if (f) { f.rename(role === "owner" ? "owner" : "explicit-master"); seedJobChecklist(home, name, [{ text: "Required" }], null, "owner"); }
     changeJobChecklistAsJob(home, name, { propose: [{ text: "Pending" }] });
     const db = metadataDb(home), exec = db.exec.bind(db), rows = () => db.prepare("SELECT * FROM job_checklist WHERE job=? ORDER BY seq").all(name), before = rows();
     let phase = "", armed = false, replacement = () => {};
@@ -711,7 +718,7 @@ describe("AB-428 job checklists", () => {
   it.each(brokenAuthority.flatMap(mode => ["post-await", "transaction"].map(phase => ({ mode, phase }))))(
     "refuses every operation from cached recovered authority with $mode durable proof at $phase", async ({ mode, phase }) => {
       const f = authorityFixture(), path = join(home, "jobs.json");
-      f.conn.peer.name = "owner";
+      f.rename("owner");
       writeFileSync(join(home, "config.json"), JSON.stringify({ projectGroups: false }));
       seedJobChecklist(home, JOB, [{ text: "Keep required" }], null, "owner");
       await jobServer(quietParent()).call("checklist", { propose: [{ text: "Pending" }] });
@@ -759,7 +766,7 @@ describe("AB-428 job checklists", () => {
 
   it("allows only an exact complete durable finished archive and preserves persisted masters", async () => {
     const f = authorityFixture();
-    f.conn.peer.name = "previous-master";
+    f.rename("previous-master");
     writeFileSync(join(home, "config.json"), JSON.stringify({ projectGroups: false }));
     seedJobChecklist(home, JOB, [{ text: "Still required" }], null, "owner");
     archiveJobs(join(home, "jobs.json"), [{ ...f.saved, owner: "new-owner", supervisor: "new-session", rootName: "new-owner", rootSession: "new-session", masters: ["previous-master"] }]);
@@ -808,7 +815,7 @@ describe("AB-428 job checklists", () => {
     seedJobChecklist(home, JOB, [{ text: "Keep required" }], null, "owner");
     expect(await f.jobs.share(JOB)).toBeDefined();
     if (mode === "ownership") {
-      f.conn.peer.name = "owner";
+      f.rename("owner");
       writeFileSync(join(home, "config.json"), JSON.stringify({ projectGroups: false }));
     }
     const db = metadataDb(home), exec = db.exec.bind(db);

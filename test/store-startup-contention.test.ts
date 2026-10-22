@@ -65,7 +65,10 @@ it("yields between legacy archival chunks and keeps their original bytes", () =>
     const visible = () => {
       expect(store.byId("legacy-39")?.body).toBe("original-39");
       expect(store.messagesById("legacy-39").map(message => message.body)).toEqual(["original-39"]);
-      expect(store.receipts("legacy-39")).toEqual([{ recipient: "offline", readAt: 99 }]);
+      expect(store.receipts("legacy-39")).toEqual([{ recipient: "offline", readAt: null }]);
+      // The original timestamp remains raw archive evidence, without granting
+      // consumption to a successor lacking proven per-copy ownership.
+      const raw = store.messagesById("legacy-39")[0]!; expect(raw.readAt).toBe(99); expect(raw.recipientAmbiguous).toBe(true);
       expect(searchMessages(env.db, { query: "original-39" }).map(message => message.id)).toEqual(["legacy-39"]);
     };
     visible();
@@ -159,7 +162,8 @@ it.each(["queued", "purge"] as const)("rechecks %s eligibility after a concurren
     }
     expect(changed).toBe(true);
     expect(source.prepare("SELECT recipient,read_at,created_at,body FROM messages WHERE id='changed-between-locks'").get()).toMatchObject({ recipient: "current-owner", read_at: 99, created_at: 100, body: "original bytes" });
-    expect(store.receipts("changed-between-locks")).toEqual([{ recipient: "current-owner", readAt: 99 }]);
+    expect(store.receipts("changed-between-locks")).toEqual([{ recipient: "current-owner", readAt: null }]);
+    expect(store.byId("changed-between-locks")).toMatchObject({ readAt: 99, recipientAmbiguous: true });
     const archive = new DatabaseSync(archiveDbPath(env.db), { readOnly: true });
     try { expect(archive.prepare("SELECT id FROM messages WHERE id='changed-between-locks'").get()).toBeUndefined(); }
     finally { archive.close(); }

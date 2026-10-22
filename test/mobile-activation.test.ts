@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { Broker } from "../src/core/broker.js";
 import { BridgeNode } from "../src/core/node.js";
 import { MessageStore } from "../src/core/store.js";
+import { fixturePeer, fixtureOwner } from "./owned-mail.js";
 import { nullLogger } from "../src/core/logger.js";
 import { MobileActivation, configuredMobileDashboard } from "../src/mobile/activation.js";
 import { readPrivateMaterial, type EnabledMobileConfig } from "../src/mobile/config.js";
@@ -50,9 +51,11 @@ function fixture() {
 }
 function service(broker: Broker) { return (broker as unknown as { questions: OwnerQuestionService | null }).questions; }
 function question(f: ReturnType<typeof fixture>) {
+  const asker = fixturePeer(f.messages, "fixture-asker"), main = fixturePeer(f.messages, "fixture-main");
   return service(f.broker)!.store.ask({ title: "Synthetic activation question", topic: "fixture", context: "Synthetic only", options: [
     { id: "keep", label: "Keep", consequence: "Preserve", recommended: true }, { id: "wait", label: "Wait", consequence: "Defer", recommended: false }], blocking: true, blocks: "fixture", meanwhile: "fixture" },
-    f.home, { session: "fixture-asker", sessionId: null, main: "fixture-main", mainSessionId: null, agent: "codex" }).question;
+    f.home, { session: asker.name, sessionId: asker.sessionId, main: main.name, mainSessionId: main.sessionId, agent: "codex",
+      owner: fixtureOwner(f.messages, asker), mainOwner: fixtureOwner(f.messages, main) }).question;
 }
 async function phone(f: ReturnType<typeof fixture>, a: MobileActivation, q: ReturnType<typeof question>) {
   const prepared = (a as unknown as { prepared: PreparedMobileDesktopHost }).prepared, admin = prepared.desktopAdmin;
@@ -183,7 +186,9 @@ describe("explicit owner activation", () => {
     const f = fixture(), a = f.activation(); await a.start(); const q = question(f), p = await phone(f, a, q), svc = service(f.broker)!;
     expect(p.client.state.snapshot!.questions[0]!.version).toBe(ownerQuestionVersion(q));
     const answered = await p.client.answer(p.client.state.snapshot!.questions[0]!, { text: "Synthetic owner intent" }); expect(answered.status).toBe("answered");
-    const messages = f.messages.unread("fixture-asker", 50); expect(messages).toHaveLength(1); f.messages.markRead("fixture-asker", [messages[0]!.id], Date.now());
+    const proof = f.messages.recipientOwnership("fixture-asker").recipientNative!;
+    const messages = f.messages.unread("fixture-asker", 50, undefined, proof); expect(messages).toHaveLength(1);
+    expect(f.messages.markRead("fixture-asker", [messages[0]!.id], Date.now(), undefined, undefined, proof)).toBe(1);
     expect(svc.list()[0]!.deliveries.find(d => d.recipient === "fixture-asker")!.readAt).not.toBeNull(); await a.close(); expect(service(f.broker)).toBe(svc);
   });
 });

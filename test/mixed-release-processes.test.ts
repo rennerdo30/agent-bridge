@@ -8,7 +8,6 @@ import { DatabaseSync } from "node:sqlite";
 import { closeMetadataDb } from "../src/core/metadata-db.js";
 import { build } from "esbuild";
 import { expect, it } from "vitest";
-import { assertStoreUpgrade, liveStorePeers, refreshStorePeerIdentities } from "../src/core/store-compatibility.js";
 import { APP_VERSION } from "../src/core/constants.js";
 import { SQLITE_STORE_VERSION } from "../src/core/store.js";
 import { until } from "./helpers.js";
@@ -18,7 +17,7 @@ import { captureFixtureBroker } from "./fixture-teardown.js";
 
 const textOf = (result: any): string => result.content.map((part: any) => part.text ?? "").join("\n");
 
-it("keeps released and current MCP processes talking until the older reader exits", async () => {
+it("refuses a shared-home older release before migration, preserves accepted bytes and upgrades only after coordinated shutdown", async () => {
   const home = mkdtempSync(join(tmpdir(), "ab-real-mixed-"));
   const oldServer = join(home, "release14.mjs"), newServer = join(home, "current-server.mjs");
   // Read the released artifact from Git, never from a live plugin cache or an install command.
@@ -34,7 +33,7 @@ it("keeps released and current MCP processes talking until the older reader exit
   const env = { ...process.env } as Record<string, string>;
   // Test workers must never inherit a delegated job's live supervisor link or runtime selector.
   for (const key of Object.keys(env)) if (key.startsWith("AGENT_BRIDGE_")) delete env[key];
-  // No AGENT_BRIDGE_DAEMON: the current release upgrades over the old embedded broker with its default (daemon on).
+  // No daemon override: refusal must precede demand-start with the real default.
   Object.assign(env, { AGENT_BRIDGE_HOME: home, AGENT_BRIDGE_DELIVERY: "hooks", AGENT_BRIDGE_DASHBOARD: "off", AGENT_BRIDGE_HISTORY_INGEST: "0", AGENT_BRIDGE_LOG_CONSOLE: "info", CLAUDE_PROJECT_DIR: home, CLAUDE_CONFIG_DIR: join(home, "claude"), CODEX_HOME: join(home, "codex"), XDG_DATA_HOME: home });
   const start = async (file: string, name: string, agent: string) => {
     const client = new Client({ name: `test-${name}`, version: "1" });
@@ -43,8 +42,12 @@ it("keeps released and current MCP processes talking until the older reader exit
     transports.push(transport);
     let errors = "";
     transport.stderr?.on("data", (chunk) => errors += chunk);
+    const launch = transport.start.bind(transport);
+    transport.start = async () => {
+      await launch();
+      if (transport.pid !== null) owned.push({ name, pid: transport.pid, stderr: () => errors });
+    };
     try { await client.connect(transport); } catch (error) { throw new Error(`${name}: ${errors}`, { cause: error }); }
-    if (transport.pid !== null) owned.push({ name, pid: transport.pid, stderr: () => errors });
     return { client, transport, stderr: () => errors };
   };
   const exited = (pid: number): boolean => {
@@ -75,32 +78,38 @@ it("keeps released and current MCP processes talking until the older reader exit
     expect(old.getServerVersion()!.version).toBe("0.29.14");
     expect(oldTransport.pid).not.toBeNull(); expect(oldTransport.pid).toBeGreaterThan(0);
     expect(schema()).toBe(7);
+    const accepted = ["accepted legacy bytes one", "accepted legacy bytes two"];
+    for (const [index, body] of accepted.entries()) {
+      const result = await old.callTool({ name: "send", arguments: { to: `offline-original-${index}`, message: body } });
+      expect(result.isError).not.toBe(true);
+    }
+    const readRows = () => {
+      const db = new DatabaseSync(join(home, "bridge.db"), { readOnly: true });
+      try { return db.prepare("SELECT * FROM messages ORDER BY created_at,id").all(); } finally { db.close(); }
+    };
+    const originalRows = readRows(); expect(originalRows.map(row => row.body).sort()).toEqual([...accepted].sort());
+    const protectedDir = join(home, ".migration-snapshots");
+    const snapshots = () => existsSync(protectedDir) ? readdirSync(protectedDir).sort() : [];
+    const originals = snapshots();
+    await expect(start(newServer, "refused-current", "claude")).rejects.toThrow(/owner.coordinated shutdown/);
+    expect(exited(oldTransport.pid!)).toBe(false);
+    expect(textOf(await old.callTool({ name: "peers", arguments: {} }))).toContain("old-release14");
+    expect(schema()).toBe(7); expect(readRows()).toEqual(originalRows); expect(snapshots()).toEqual(originals);
+    const currentPids = owned.filter(child => child.name === "refused-current").map(child => child.pid);
+    expect(currentPids).toHaveLength(1);
+    for (const pid of currentPids) expect(daemonLog().split("\n").filter(line => line.includes(`pid=${pid} `)).join("\n")).not.toMatch(/broker listening|became broker|daemon creation/);
+    await until(() => currentPids.every(exited), 3_000);
+    // No broker handover, daemon replacement or old-protocol hello was requested.
+    const oldPid = oldTransport.pid!;
+    await old.close(); await until(() => exited(oldPid), 3_000);
     const { client: current, transport: currentTransport, stderr: currentLog } = await start(newServer, "current-release", "claude");
     expect(current.getServerVersion()!.version).toBe(APP_VERSION);
     expect(currentTransport.pid).not.toBeNull(); expect(currentTransport.pid).toBeGreaterThan(0);
-    expect(currentTransport.pid).not.toBe(oldTransport.pid);
+    expect(currentTransport.pid).not.toBe(oldPid);
     const peers = textOf(await current.callTool({ name: "peers", arguments: {} }));
-    expect(peers).toContain("old-release14");
-    expect(peers).toContain("v0.29.14");
-    expect(peers).toContain("retained code");
-    expect(schema()).toBe(7);
-    // The test worker has its own cache, independent of both real MCP children.
-    // Prove the exact still-live old child before requiring its named diagnostic;
-    // an unknown/failed OS identity query must never satisfy this assertion.
-    await refreshStorePeerIdentities(home);
-    expect(liveStorePeers(home).find(peer => peer.pid === oldTransport.pid)).toMatchObject({
-      pid: oldTransport.pid, name: "old-release14", version: "0.29.14", explicit: false, json: 4, sqlite: 7,
-    });
-    expect(() => assertStoreUpgrade(home, "sqlite", 7, SQLITE_STORE_VERSION)).toThrow("old-release14 (v0.29.14");
-    await current.callTool({ name: "send", arguments: { to: "old-release14", message: "new-to-old protocol2" } });
-    expect(textOf(await old.callTool({ name: "inbox", arguments: {} }))).toContain("new-to-old protocol2");
-    await old.callTool({ name: "send", arguments: { to: "current-release", message: "old-to-new protocol2" } });
-    expect(textOf(await current.callTool({ name: "inbox", arguments: {} }))).toContain("old-to-new protocol2");
-    expect(schema()).toBe(7);
-    const oldPid = oldTransport.pid!, currentPid = currentTransport.pid!;
-    await old.close();
-    await until(() => exited(oldPid), 3_000);
-    expect(textOf(await current.callTool({ name: "peers", arguments: {} }))).toContain("current-release");
+    expect(peers).toContain("current-release"); expect(peers).not.toContain("old-release14");
+    expect(textOf(await current.callTool({ name: "inbox", arguments: {} }))).not.toContain("accepted legacy bytes");
+    const currentPid = currentTransport.pid!;
     // Witness the actual current-process listener before inspecting its schema:
     // an early disk probe may precede the completed election after old.close().
     const health = await current.callTool({ name: "health", arguments: {} });
@@ -112,29 +121,15 @@ it("keeps released and current MCP processes talking until the older reader exit
     const electionLog = daemonLog().split("\n").filter(line => line.includes(`pid=${daemonPid} `));
     const listener = electionLog.findIndex(line => line.includes("broker listening"));
     const admittedSchema = schema();
-    const protectedDir = join(home, ".migration-snapshots");
     // Only bridge.db schema snapshots count here; the AB-208 metadata tables take their own snapshot.
     const storeSnapshots = () => existsSync(protectedDir) ? readdirSync(protectedDir).filter(name => name.startsWith("bridge.db.backup-")) : [];
-    if (admittedSchema === 7) {
-      // Election raced with a retained reader, so this listener keeps schema7
-      // until a later clean election, without a bulk in-place upgrade.
-      const compatible = electionLog.findIndex(line => line.includes("hosting broker on compatible existing schema"));
-      expect(compatible).toBeGreaterThanOrEqual(0); expect(compatible).toBeLessThan(listener);
-      expect(electionLog[compatible]).toContain('"version":7');
-      expect(electionLog[compatible]).toContain(`"target":${SQLITE_STORE_VERSION}`);
-      expect(storeSnapshots()).toEqual([]);
-    } else {
-      // The old reader exited before construction: a backup-first upgrade on
-      // this fresh election is equally valid, and must precede the listener.
-      expect(admittedSchema).toBe(SQLITE_STORE_VERSION);
-      const backedUp = electionLog.findIndex(line => line.includes("backed up store before migration"));
-      expect(backedUp).toBeGreaterThanOrEqual(0); expect(backedUp).toBeLessThan(listener);
-      expect(electionLog[backedUp]).toContain('"version":7');
-      expect(storeSnapshots()).toHaveLength(1);
-    }
+    expect(admittedSchema).toBe(SQLITE_STORE_VERSION);
+    const backedUp = electionLog.findIndex(line => line.includes("backed up store before migration"));
+    expect(backedUp).toBeGreaterThanOrEqual(0); expect(backedUp).toBeLessThan(listener);
+    expect(electionLog[backedUp]).toContain('"version":7'); expect(storeSnapshots()).toHaveLength(1);
     const db = new DatabaseSync(join(home, "bridge.db"), { readOnly: true });
     try {
-      expect(db.prepare("SELECT body FROM messages ORDER BY created_at").all().map((row) => row.body)).toEqual(["new-to-old protocol2", "old-to-new protocol2"]);
+      expect(db.prepare("SELECT * FROM messages ORDER BY created_at,id").all()).toEqual(originalRows);
       expect(db.prepare("PRAGMA integrity_check").get()!.integrity_check).toBe("ok");
     } finally { db.close(); }
     await current.close();
@@ -153,16 +148,16 @@ it("keeps released and current MCP processes talking until the older reader exit
     expect(electedHealth.brokerPid).not.toBe(electedTransport.pid); await rememberDaemon(electedHealth.brokerPid);
     const upgraded = new DatabaseSync(join(home, "bridge.db"), { readOnly: true });
     try {
-      expect(upgraded.prepare("SELECT body FROM messages ORDER BY created_at").all().map((row) => row.body)).toEqual(["new-to-old protocol2", "old-to-new protocol2"]);
+      expect(upgraded.prepare("SELECT * FROM messages ORDER BY created_at,id").all()).toEqual(originalRows);
       expect(upgraded.prepare("PRAGMA integrity_check").get()!.integrity_check).toBe("ok");
     } finally { upgraded.close(); }
-    const snapshots = storeSnapshots();
-    expect(snapshots).toHaveLength(1);
-    const before = new DatabaseSync(join(home, ".migration-snapshots", snapshots[0]!), { readOnly: true });
+    const backups = storeSnapshots();
+    expect(backups).toHaveLength(1);
+    const before = new DatabaseSync(join(home, ".migration-snapshots", backups[0]!), { readOnly: true });
     try {
       expect(before.prepare("PRAGMA user_version").get()!.user_version).toBe(7);
       expect(before.prepare("SELECT count(*) AS n FROM messages").get()!.n).toBe(2);
-      expect(before.prepare("SELECT body FROM messages ORDER BY created_at").all().map((row) => row.body)).toEqual(["new-to-old protocol2", "old-to-new protocol2"]);
+      expect(before.prepare("SELECT * FROM messages ORDER BY created_at,id").all()).toEqual(originalRows);
       expect(before.prepare("PRAGMA integrity_check").get()!.integrity_check).toBe("ok");
     } finally { before.close(); }
   } catch (error) {

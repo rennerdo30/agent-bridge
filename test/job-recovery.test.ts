@@ -127,12 +127,12 @@ it("discovers and controls a connected orphan runner retained only in a backup",
   const owner = env.node("supervisor"); await owner.start();
   const name = "codex-job-retained";
   const record = { id: "retained", name, agent: "codex", owner: owner.name, rootName: owner.name, supervisor: "root",
-    status: "running", host: { pid: process.pid, peer: name, startedAt: 1 }, startedAt: 1, prompt: "task" };
+    status: "running", projectRoot: env.home, workdir: env.home, host: { pid: process.pid, peer: name, startedAt: 1 }, startedAt: 1, prompt: "task" };
   writeFileSync(join(env.home, "jobs.json.backup-1"), JSON.stringify({ jobs: [record] }));
   indexFixtureFile(join(env.home, "jobs.json.backup-1"));
   mkdirSync(join(env.home, "jobs"));
   writeFileSync(join(env.home, "jobs", "retained.json"), JSON.stringify({ pid: process.pid, peer: name, status: "running", updatedAt: Date.now() - 120_000, live: true }));
-  const runner = new BridgeNode({ pipePath: env.pipe, dbPath: env.db, token: loadOrCreateToken(env.home), agent: "other", jobAgent: "codex", id: "job:retained", name, cwd: env.home, autoWake: false, canHostBroker: false, log: nullLogger });
+  const runner = new BridgeNode({ pipePath: env.pipe, dbPath: env.db, token: loadOrCreateToken(env.home), agent: "other", jobAgent: "codex", jobOwner: "root", jobParent: owner.name, id: "job:retained", name, cwd: env.home, autoWake: false, canHostBroker: false, log: nullLogger });
   try {
     await runner.start();
     expect((await owner.projectJobs()).map((job) => job.name)).toContain(name);

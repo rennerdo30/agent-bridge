@@ -6,6 +6,7 @@ import { defaultPeerName, loadConfig } from "../src/core/config.js";
 import { parseClaudeJson, parseCodexJsonl } from "../src/core/delegate.js";
 import { nullLogger } from "../src/core/logger.js";
 import { maxSocketPathBytes, resolvePipePath } from "../src/core/paths.js";
+import { PROTOCOL_VERSION } from "../src/core/constants.js";
 import { cmdlineEnablesChannel, cmdlineIsPrintMode } from "../src/core/procinfo.js";
 import type { BridgeMessage } from "../src/core/protocol.js";
 import { formatMessage, formatPeer } from "../src/mcp/format.js";
@@ -154,10 +155,10 @@ describe("paths", () => {
       expect(resolvePipePath(home, {}, platform, 502)).not.toBe(pipe);
     }
     // A home whose socket exactly fits keeps it, so existing installs never move their endpoint.
-    const fits = `/${"h".repeat(103 - "/bridge-p2.sock".length - 1)}`;
-    expect(resolvePipePath(fits, {}, "darwin", 501)).toBe(`${fits}/bridge-p2.sock`);
+    const suffix = `/bridge-p${PROTOCOL_VERSION}.sock`, fits = `/${"h".repeat(103 - suffix.length - 1)}`;
+    expect(resolvePipePath(fits, {}, "darwin", 501)).toBe(`${fits}${suffix}`);
     expect(resolvePipePath(`${fits}h`, {}, "darwin", 501)).toMatch(/^\/tmp\/agent-bridge-501\//);
-    expect(resolvePipePath(`${fits}h`, {}, "linux", 501)).toBe(`${fits}h/bridge-p2.sock`);
+    expect(resolvePipePath(`${fits}h`, {}, "linux", 501)).toBe(`${fits}h${suffix}`);
   });
 });
 

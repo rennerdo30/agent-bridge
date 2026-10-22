@@ -11,6 +11,7 @@ import { isRecord, readJsonStore, writeJsonStore } from "../core/json-store.js";
 import type { Logger } from "../core/logger.js";
 import type { BridgeNode } from "../core/node.js";
 import type { PeerInfo } from "../core/protocol.js";
+import { recipientKey, type InternalMessageOrigin } from "../core/recipient-ownership.js";
 import { answerPendingApproval, listPendingApprovals, publishApproval, type PendingApproval } from "../core/relay.js";
 import { startRunFeedReady, type RunFeed, type RunFeedOptions } from "../core/runfeed.js";
 import { createWorktree, git, gitDirsOutside, type Worktree } from "../core/worktree.js";
@@ -66,7 +67,7 @@ export class RemoteJobs {
   private closed = false;
 
   constructor(private readonly network: NetworkService, private readonly home: string, private readonly log: Logger,
-    private readonly control: (record: { owner: string; name: string; id: string }, control: RunnerControl) => Promise<void>,
+    private readonly control: (record: { owner: string; name: string; id: string }, control: RunnerControl, origin: InternalMessageOrigin) => Promise<void>,
   ) {
     const cli = bundledCli();
     this.runners = cli ? new JobRunners({} as BridgeNode, home, cli, log) : null;
@@ -237,7 +238,7 @@ export class RemoteJobs {
         admission.committed = true;
         if (admission.cancelRequested) {
           this.persist();
-          await this.control({ owner: staged.owner, name: job.name, id: job.id }, { type: "cancel" });
+          await this.control({ owner: staged.owner, name: job.name, id: job.id }, { type: "cancel" }, this.controlOrigin(pair, peer, job.id));
         }
       } catch (err) {
         // Admission is ephemeral until the first successful persist. Restore
@@ -266,7 +267,7 @@ export class RemoteJobs {
           if (typeof settings === "string") throw new Error(settings);
           parsedSettings = settings;
         }
-        await this.control({ owner: record.owner, name: record.job.name, id: record.job.id }, request.control as RunnerControl);
+        await this.control({ owner: record.owner, name: record.job.name, id: record.job.id }, request.control as RunnerControl, this.controlOrigin(pair, peer, record.job.id));
         if (parsedSettings) {
           record.args = { ...changedJobArgs({ ...record.args }, parsedSettings), prompt: record.args.prompt, title: record.args.title };
           record.job.args = changedJobArgs(record.job.args, parsedSettings);
@@ -281,6 +282,13 @@ export class RemoteJobs {
       }
     }
     return this.snapshot(record!);
+  }
+
+  private controlOrigin(pair: NetworkPair, peer: { id: string; name: string }, job: string): InternalMessageOrigin {
+    const advertised = this.network.peers().find(p => p.id === `${pair.id}/${peer.id}` && p.name === `${pair.name}/${peer.name}`);
+    const owner = advertised && recipientKey(advertised.frontend, advertised.nativeOwner);
+    if (!owner) throw new Error("Remote control sender ownership is unproven");
+    return { kind: "remote-job-control", operation: job, owner, source: { kind: "remote", hostId: pair.id, hostFingerprint: pair.fingerprint } };
   }
 
   private snapshot(record: RemoteRecord): RemoteJobSnapshot {

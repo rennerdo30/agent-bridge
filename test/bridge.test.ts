@@ -2,6 +2,8 @@ import { mkdirSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { setTimeout as realDelay } from "node:timers/promises";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { retainFixtureRunner } from "./owned-mail.js";
+import { fixtureNodePeer, fixturePeer, fixtureRoleMessage, ownedMessage, retainFixtureNode } from "./owned-mail.js";
 import { closeMetadataDb } from "../src/core/metadata-db.js";
 import { maxSocketPathBytes, resolveDbPath, resolvePipePath } from "../src/core/paths.js";
 import { BridgeClient } from "../src/core/client.js";
@@ -80,11 +82,11 @@ describe("broker election", () => {
     await codex.start();
 
     // Queue a message for an offline peer, then kill the broker.
+    const later = env.node("later", "other"); retainFixtureNode(env.home, later, "other");
     await codex.send({ to: "later", body: "hello later" });
     await broker.stop();
     await until(() => codex.isConnected && codex.isBroker, 8_000);
 
-    const later = env.node("later", "other");
     await later.start();
     await until(() => later.unread().length === 1);
     expect(later.unread()[0]!.body).toBe("hello later");
@@ -135,14 +137,15 @@ describe("queued mail age limit", () => {
   it("a session claiming a name gets recent queued mail, not a day-old backlog meant for an earlier session", async () => {
     const now = Date.now();
     const stale = now - QUEUED_MAIL_MAX_AGE_MS - 60_000;
+    const codex = env.node("codex-app", "codex");
     const store = new MessageStore(env.db, nullLogger);
-    store.insert(queued("old-by-name", "codex-app", stale));
-    store.insert(queued("old-by-kind", "agent:codex", stale));
-    store.insert(queued("fresh-by-name", "codex-app", now - 60_000));
-    store.insert(queued("fresh-by-kind", "agent:codex", now - 60_000));
+    const owner = fixtureNodePeer(store, codex, "codex"), sender = fixturePeer(store, "old-sender");
+    store.insert(ownedMessage(store, owner, queued("old-by-name", "codex-app", stale)));
+    store.insert(fixtureRoleMessage(store, sender, "codex", queued("old-by-kind", "agent:codex", stale)));
+    store.insert(ownedMessage(store, owner, queued("fresh-by-name", "codex-app", now - 60_000)));
+    store.insert(fixtureRoleMessage(store, sender, "codex", queued("fresh-by-kind", "agent:codex", now - 60_000)));
     store.close();
 
-    const codex = env.node("codex-app", "codex");
     await codex.start();
     await until(() => codex.unread().length === 2);
     await new Promise((r) => setTimeout(r, 100));
@@ -212,7 +215,7 @@ describe("messaging", () => {
   it("queues for an agent kind when none is online and hands it to the first one that joins", async () => {
     const claude = env.node("claude-q", "claude");
     await claude.start();
-    const res = await claude.send({ to: "codex", body: "whenever you are up" });
+    const res = await claude.send({ to: "agent:codex", body: "whenever you are up" });
     expect(res.queuedFor).toEqual(["agent:codex"]);
 
     const codex = env.node("codex-q", "codex");
@@ -224,14 +227,15 @@ describe("messaging", () => {
   it("does not redeliver read messages after reconnect", async () => {
     const a = env.node("a", "claude");
     await a.start();
+    const b = env.node("b", "codex"); retainFixtureNode(env.home, b, "codex");
     await a.send({ to: "b", body: "one" });
-    const b = env.node("b", "codex");
     await b.start();
     await until(() => b.unread().length === 1);
     b.markRead(b.unread().map((m) => m.id));
     await b.stop();
 
     const b2 = env.node("b", "codex");
+    await b2.setSessionId(b.currentSessionId!);
     await b2.start();
     await new Promise((r) => setTimeout(r, 200));
     expect(b2.unread()).toHaveLength(0);
@@ -260,8 +264,10 @@ describe("messaging", () => {
   it("relocate renames the peer and hands over mail waiting under the new name", async () => {
     const a = env.node("claude-z", "claude");
     await a.start();
-    await a.send({ to: "codex-realproject", body: "waiting for you" });
     const b = env.node("codex-plugin-dir", "codex");
+    const evidence = new MessageStore(env.db, nullLogger);
+    try { fixtureNodePeer(evidence, b, "codex", "codex-realproject"); } finally { evidence.close(); }
+    await a.send({ to: "codex-realproject", body: "waiting for you" });
     await b.start();
     await b.relocate("/work/realproject", "codex-realproject");
     expect(b.name).toBe("codex-realproject");
@@ -318,14 +324,15 @@ describe("job runner peers", () => {
     const claude = env.node("claude-j", "claude");
     await claude.start();
     // Mail for "any codex" waits for a real Codex session.
-    await claude.send({ to: "codex", body: "for a codex session" });
-    const runner = new BridgeNode({ pipePath: env.pipe, token: loadOrCreateToken(env.home), dbPath: env.db, agent: "other", jobAgent: "codex", id: "job:1a2b3c4d", name: "codex-job-1a2b3c4d", cwd: env.home, autoWake: false, log: nullLogger });
+    await claude.send({ to: "agent:codex", body: "for a codex session" });
+    retainFixtureRunner(env.home, { id: "1a2b3c4d", name: "codex-job-1a2b3c4d", agent: "codex", owner: claude.name, supervisor: claude.currentSessionId!, cwd: env.home });
+    const runner = new BridgeNode({ pipePath: env.pipe, token: loadOrCreateToken(env.home), dbPath: env.db, agent: "other", jobAgent: "codex", jobOwner: claude.currentSessionId!, jobParent: claude.name, id: "job:1a2b3c4d", name: "codex-job-1a2b3c4d", cwd: env.home, autoWake: false, log: nullLogger });
     const got: BridgeMessage[] = [];
     runner.on("message", (m) => got.push(m));
     await runner.start();
     try {
       expect((await claude.peers()).map((p) => p.name)).toEqual(["claude-j"]);
-      await expect(claude.send({ to: "codex", body: "anyone?" })).resolves.toMatchObject({ deliveredTo: [], queuedFor: ["agent:codex"] });
+      await expect(claude.send({ to: "agent:codex", body: "anyone?" })).resolves.toMatchObject({ deliveredTo: [], queuedFor: ["agent:codex"] });
       await claude.send({ to: "codex-job-1a2b3c4d", body: "{}", conversationId: "jobctl-1a2b3c4d" });
       await until(() => got.length === 1);
       expect(got[0]!.body).toBe("{}");

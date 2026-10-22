@@ -215,6 +215,11 @@ describe("hook_event with Codex-expanded manifest arguments", () => {
       expect(node.currentSessionId).not.toBe(ROOT_THREAD);
       expect(JSON.stringify(await fire("SessionStart", rootEvent("SessionStart"), ROOT_THREAD))).toContain("You are connected to agent-bridge");
       expect(node.currentSessionId).toBe(ROOT_THREAD);
+      // The earlier copy belongs to the original explicit fixture session;
+      // learning a different main thread must not silently retarget it.
+      expect(node.unread()).toEqual([]);
+      await observer.send({ to: node.name, body: "mail for the main thread" });
+      await until(() => node.unread().length === 1);
       expect(JSON.stringify(await fire("PostToolUse", rootEvent("PostToolUse"), ROOT_THREAD))).toContain("mail for the main thread");
       expect(await fire("Stop", rootEvent("Stop"), ROOT_THREAD)).toEqual({});
     } finally { await client.close(); await server.close(); }

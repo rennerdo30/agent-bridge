@@ -66,6 +66,7 @@ it("keeps one durable identity across broker restart and archival", async () => 
   await sender.send(args);
   await recipient.stop(); await sender.stop();
   const restarted = env.node("sender"), receiver = env.node("recipient");
+  await restarted.setSessionId(sender.currentSessionId); await receiver.setSessionId(recipient.currentSessionId);
   await restarted.start(); await receiver.start();
   expect(restarted.name).toBe("sender");
   expect((await restarted.send(args)).storage).toMatchObject({ id, state: "stored", recovered: true });
@@ -82,8 +83,9 @@ it("rejects changed content or another sender's durable identity", async () => {
   const args = { to: other.name, body: "Original", messageId: randomUUID() };
   await sender.send(args);
   await expect(sender.send({ ...args, body: "Changed" })).rejects.toThrow("different content");
-  await expect(other.sendState(args.messageId)).rejects.toThrow("original sender");
-  await expect(other.send(args)).rejects.toThrow("original sender");
+  await expect(other.sendState(args.messageId)).rejects.toMatchObject({ code: "unauthorized" });
+  await expect(other.send(args)).rejects.toMatchObject({ code: "unauthorized" });
+  expect((await sender.sendState(args.messageId)).message?.body).toBe("Original");
   expect((await sender.sendState(randomUUID())).state).toBe("not_stored");
 });
 

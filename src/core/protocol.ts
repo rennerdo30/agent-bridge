@@ -124,6 +124,10 @@ export interface MessageAddress {
 }
 
 export interface BridgeMessage {
+  /** Broker-minted local job delivery generation; never a routing grant from callers. */
+  jobRoute?: import("./job-mail-routing.js").JobRouteProof;
+  /** Explicit local role authority, replaced by a concrete owner on the first claim. */
+  recipientRole?: import("./role-queue.js").RoleQueue;
   /** Mailbox direction and authority are independent of colliding provider/frontend IDs. */
   recipientMailbox?: import("./recipient-ownership.js").MailboxProvenance;
   /** Authenticated source host or the original local store namespace. */
@@ -248,6 +252,7 @@ export interface SendResult {
 }
 
 export interface AckArgs {
+  jobRoutes?: Record<string, import("./job-mail-routing.js").JobRouteProof>;
   mailboxProofs?: Record<string, import("./recipient-ownership.js").MailboxProvenance>;
   ids: string[];
   /** Original per-copy native ownership; never reconstructed from a later registration. */
@@ -299,7 +304,8 @@ export interface RequestMap {
   health: [Record<string, never>, import("./health.js").BrokerHealth];
   /** Older brokers must refuse this opcode rather than discard the durable identity. */
   trackedSend: [SendArgs & { messageId: string }, SendResult];
-  sendState: [{ id: string }, { id: string; state: "stored" | "pending" | "not_stored"; checkedAt: number; message: BridgeMessage | null; receipts: MessageReceipt[] }];
+  sendState: [{ id: string }, { id: string; state: "stored" | "pending" | "not_stored"; checkedAt: number; message: BridgeMessage | null; receipts: MessageReceipt[];
+    blockedRecipients?: { recipient: string; reason: "recipient_ownership_unproven" }[] }];
   /** Separate opcode so an older broker refuses rather than silently ignoring the guard. */
   guardedSend: [SendArgs, SendResult];
   askOwner: [import("./owner-questions.js").AskOwnerArgs, { question: import("./owner-questions.js").OwnerQuestion; merged: boolean; similar: string[] }];

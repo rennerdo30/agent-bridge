@@ -9,6 +9,7 @@ import { loadConfig } from "../src/core/config.js";
 import { nullLogger } from "../src/core/logger.js";
 import { CLAUDE_SESSION } from "./transcript-fixtures.js";
 import { env, fixture } from "./conversation-test-fixture.js";
+import { fixturePeer, markOwned, ownedMessage } from "./owned-mail.js";
 
 it("does not re-resolve and rewrite a conversation whose folder is no project on every tick", () => {
   const f = fixture(true);
@@ -41,9 +42,10 @@ it("refuses mismatched retained raw bytes during resumable import replay", () =>
 });
 it("retains mutable envelope versions and deduplicates the same replayed state", () => {
   const f = fixture(true);
-  f.s.insert({ id: "mutable", recipient: "owner", to: "owner", from: { id: "sender", name: "sender", agent: "codex" }, body: "retained envelope", conversationId: "mutable", replyTo: null, hop: 0, createdAt: 1, readAt: null });
+  const owner = fixturePeer(f.s, "owner");
+  f.s.insert(ownedMessage(f.s, owner, { id: "mutable", recipient: "owner", to: "owner", from: { id: "sender", name: "sender", agent: "codex" }, body: "retained envelope", conversationId: "mutable", replyTo: null, hop: 0, createdAt: 1, readAt: null }));
   f.tick();
-  f.s.markRead("owner", ["mutable"], 20);
+  expect(markOwned(f.s, owner, ["mutable"], 20)).toBe(1);
   f.index.reset(); f.tick();
   const records = () => f.db.prepare("SELECT raw FROM conversation_records WHERE source='messages:mutable:owner'").all().map(row => JSON.parse(Buffer.from(row.raw as Uint8Array).toString()));
   expect(records().map(row => row.read_at)).toEqual(expect.arrayContaining([null, 20]));

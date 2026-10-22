@@ -10,6 +10,23 @@ export const mailboxSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("remote"), hostId: z.uuid(), hostFingerprint: z.string().regex(/^[a-f0-9]{64}$/) }).strict(),
 ]);
 export type MailboxProvenance = z.infer<typeof mailboxSchema>;
+/** Only trusted in-process producers construct this context; it is never a wire field. */
+export interface InternalMessageOrigin {
+  kind: "file-transfer" | "remote-job-control";
+  operation: string;
+  source?: MailboxProvenance;
+  owner?: string;
+  recipientOwner?: string;
+  recipientMailbox?: MailboxProvenance;
+}
+export function internalSender(origin: InternalMessageOrigin): string {
+  if (origin.source) mailboxSchema.parse(origin.source);
+  if (origin.recipientMailbox) mailboxSchema.parse(origin.recipientMailbox);
+  if (!["file-transfer", "remote-job-control"].includes(origin.kind) || !/^[a-zA-Z0-9_-]{1,128}$/.test(origin.operation) ||
+      origin.owner && ownershipFromKey(origin.owner).recipientAmbiguous || origin.recipientOwner && ownershipFromKey(origin.recipientOwner).recipientAmbiguous || origin.source?.kind === "remote" && !origin.owner)
+    throw new Error("Internal producer ownership is unproven");
+  return `internal:${JSON.stringify({ kind: origin.kind, operation: origin.operation, owner: origin.owner })}`;
+}
 export function localMailbox(namespace: string): MailboxProvenance { return mailboxSchema.parse({ kind: "local", namespace }); }
 export function sameMailbox(left: unknown, right: unknown): boolean {
   const a = mailboxSchema.safeParse(left), b = mailboxSchema.safeParse(right);

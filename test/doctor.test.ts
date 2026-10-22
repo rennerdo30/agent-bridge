@@ -9,6 +9,7 @@ import { archiveHome, doctor, fixDoctor } from "../src/core/doctor.js";
 import { nullLogger } from "../src/core/logger.js";
 import { searchMessages } from "../src/core/message-history.js";
 import { MessageStore, SQLITE_STORE_VERSION } from "../src/core/store.js";
+import { fixturePeer, markOwned, ownedMessage, retainFixtureRunner, unreadOwned } from "./owned-mail.js";
 import { migrateSqlite } from "../src/core/sqlite-migrations.js";
 import { ARCHIVE_STORE_VERSION, openArchive } from "../src/core/sqlite-maintenance.js";
 import { maintenanceLock, storageLease } from "../src/core/storage-lock.js";
@@ -221,9 +222,9 @@ describe("versioned migrations and backup recovery", () => {
 
 describe("lossless, readable archives", () => {
   it("moves expired messages out of primary and keeps replies and literal search readable", () => {
-    const s = store(); s.insert(message("old")); s.insert({ ...message("reply", 2), body: "literal %_\\", replyTo: "old" });
-    s.insert(message("new", 100));
-    s.markRead("claude-main", ["old"], 10);
+    const s = store(), recipient = fixturePeer(s, "claude-main"); s.insert(ownedMessage(s, recipient, message("old"))); s.insert(ownedMessage(s, recipient, { ...message("reply", 2), body: "literal %_\\", replyTo: "old" }));
+    s.insert(ownedMessage(s, recipient, message("new", 100)));
+    expect(markOwned(s, recipient, ["old"], 10)).toBe(1);
     expect(s.purgeOlderThan(3)).toBe(2);
     expect(s.byId("old")?.body).toBe("preserve old");
     expect(s.byId("reply")?.replyTo).toBe("old");
@@ -236,11 +237,11 @@ describe("lossless, readable archives", () => {
     expect(store().byId("old")).not.toBeNull();
   });
   it("keeps originals when the archive insert or primary removal fails", () => {
-    const s = store(); s.insert(message("old"));
+    const s = store(), recipient = fixturePeer(s, "claude-main"); s.insert(ownedMessage(s, recipient, message("old")));
     const db = new DatabaseSync(join(home, "bridge.db"));
     db.exec("CREATE TRIGGER fail_delete BEFORE DELETE ON messages BEGIN SELECT RAISE(ABORT,'do not remove'); END;");
     expect(() => s.purgeOlderThan(2)).toThrow("do not remove");
-    expect(s.unread("claude-main", 10)).toHaveLength(1);
+    expect(unreadOwned(s, recipient)).toHaveLength(1);
     expect(searchMessages(join(home, "bridge.db"))).toHaveLength(1);
     db.exec("DROP TRIGGER fail_delete"); db.close();
     expect(s.purgeOlderThan(2)).toBe(1);
@@ -302,7 +303,9 @@ describe("lossless, readable archives", () => {
     const owner = new BridgeNode({ ...opts, agent: "claude", name: "claude-main" });
     const job = new BridgeNode({ ...opts, agent: "other", name: "codex-job-live", id: "job:live", jobAgent: "codex", jobOwner: "supervisor1", jobParent: "claude-main", canHostBroker: false });
     try {
-      await owner.start(); await job.start();
+      await owner.setSessionId("supervisor1"); await owner.start();
+      retainFixtureRunner(home, { id: "live", name: "codex-job-live", agent: "codex", owner: owner.name, supervisor: "supervisor1", cwd: home });
+      await job.start();
       expect(await job.siblings()).toEqual(expect.arrayContaining([expect.objectContaining({ name: "codex-job-old", status: "done" })]));
     } finally { await job.stop(); await owner.stop(); }
   });

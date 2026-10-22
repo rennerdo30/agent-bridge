@@ -1,9 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { createServer } from "node:net";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import * as childProcess from "node:child_process";
+import * as processIdentities from "../src/core/process-identity.js";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { Broker } from "../src/core/broker.js";
 import { DEFAULT_CONFIG } from "../src/core/config.js";
@@ -14,7 +15,7 @@ import { encodeFrame, FrameDecoder } from "../src/core/protocol.js";
 import { MessageStore, migrateMessageSchema } from "../src/core/store.js";
 import { JobManager } from "../src/mcp/jobs.js";
 import { commitHandoff } from "../src/core/job-handoff.js";
-import { writeJsonStore } from "../src/core/json-store.js";
+import { readJsonStore, writeJsonStore } from "../src/core/json-store.js";
 import { ReadJournal } from "../src/core/read-journal.js";
 import { closeMetadataDb, metadataDb } from "../src/core/metadata-db.js";
 import { localResultReceipt } from "../src/core/local-result-receipts.js";
@@ -34,6 +35,7 @@ import { NetworkService, type NetworkDestination } from "../src/network/link.js"
 import { DEFAULT_NETWORK_CONFIG } from "../src/network/config.js";
 import { T3Waker } from "../src/mcp/t3-wake.js";
 import { until } from "./helpers.js";
+import { fixtureAck } from "./owned-mail.js";
 
 // No CLI/provider/daemon subprocess may escape this fixture. Windows ACL queries are
 // mocked as well; TLS pairing and wire framing still run on isolated loopback sockets.
@@ -65,6 +67,9 @@ async function persistentHost(name: string, folder = name) {
   let closed = false;
   const close = async () => { if (!closed) { closed = true; await broker.close(); } };
   cleanup.push(close); await broker.listen();
+  // This fixture drives archive/history transitions explicitly. Give it sole
+  // writer scheduling instead of racing unrelated background maintenance.
+  store.quiesceLifecycleMaintenance();
   const admin = await BridgeClient.connect(pipe, nullLogger); cleanup.push(() => admin.close());
   await admin.request("auth", { protocol: PROTOCOL_VERSION, token });
   const network = (broker as any).network as NetworkService;
@@ -83,6 +88,25 @@ async function persistentHost(name: string, folder = name) {
     return { client, events, peer: registration };
   };
   return { broker, store, network, dir, pipe, db, token, admin, close, register };
+}
+
+/** Explicit isolated selected-table restore, including the captured namespace. */
+function restoreMessageBackup(backup: string, folder: string): MessageStore {
+  const dir = join(home, folder); mkdirSync(dir);
+  const store = new MessageStore(join(dir, "bridge.db"), nullLogger); cleanup.push(() => store.close());
+  for (const [snapshot, destination] of [["bridge.messages.db", "bridge.db"], ["archive.messages.db", "archive.db"]]) {
+    const source = join(backup, snapshot!); if (!existsSync(source)) continue;
+    const db = new DatabaseSync(join(dir, destination!));
+    try {
+      db.prepare("ATTACH DATABASE ? AS selected_snapshot").run(source);
+      for (const row of db.prepare("SELECT name FROM selected_snapshot.sqlite_master WHERE type='table'").all()) {
+        const name = String(row.name); if (!/^[a-z_]+$/.test(name)) throw new Error("unexpected snapshot table");
+        if (name === "mailbox_store") db.exec("DELETE FROM main.mailbox_store");
+        db.exec(`INSERT OR IGNORE INTO main.${name} SELECT * FROM selected_snapshot.${name}`);
+      }
+    } finally { db.close(); }
+  }
+  return store;
 }
 
 it.each(["session", "provider", "process", "incarnation", "missing"])("fences native exact-name mail across %s replacement and recovers only the original identity", async change => {
@@ -291,6 +315,460 @@ async function pairPersistent(a: Awaited<ReturnType<typeof persistentHost>>, b: 
   return invite;
 }
 
+it("attests a detached infrastructure sender by its own process incarnation when its former parent is unknown", async () => {
+  const host = await persistentHost("pc-a"), recipient = await host.register(binding("a", "ui-destination"));
+  vi.spyOn(processIdentities, "parentProcessIdentity").mockResolvedValue(null);
+  const node = new LiveBridgeNode({ pipePath: host.pipe, dbPath: host.db, token: host.token, agent: "other", name: "infrastructure",
+    cwd: host.dir, autoWake: false, canHostBroker: false, log: nullLogger }); cleanup.push(() => node.stop());
+  await node.start();
+  const sent = await node.send({ to: recipient.peer.name, body: "detached UI accepted bytes" });
+  expect((await recipient.client.request("pending", {})).find(m => m.id === sent.messages[0]!.id)?.body).toBe("detached UI accepted bytes");
+  expect(sent.messages[0]!.senderOwner).toContain(`"pid":${process.pid}`);
+  expect(sent.messages[0]!.senderOwner).toContain('"startedAt":"fixture-process-identity"');
+});
+
+it("recovers a completed transfer reoffer without duplicate mail and rejects replacement bindings", async () => {
+  const a = await persistentHost("pc-a"), b = await persistentHost("pc-b");
+  const sender = await a.register(binding("a", "file-sender"), "sender", a.dir), recipient = await b.register(binding("b", "file-recipient"), "destination", b.dir);
+  await pairPersistent(a, b); const file = join(a.dir, "payload.txt"); writeFileSync(file, "retained file bytes");
+  const replies: Record<string, any>[] = [], send = b.network.sendExtension.bind(b.network); let lost = false;
+  vi.spyOn(b.network, "sendExtension").mockImplementation(async (remote, type, payload) => {
+    replies.push(payload);
+    if (type === "file-stream" && payload.kind === "response" && (payload.data as any)?.status === "completed" && !lost) { lost = true; return; }
+    return send(remote, type, payload);
+  });
+  const started = await sender.client.request("sendFiles", { to: "pc-b/destination", paths: [file] });
+  await until(() => lost && !!b.store.byId(started.id));
+  const offer = { kind: "request", op: "offer", rid: randomUUID(), id: started.id, from: { id: sender.peer.id, name: sender.peer.name, agent: sender.peer.agent }, to: recipient.peer.name,
+    entries: [{ kind: "file", path: "payload.txt", size: Buffer.byteLength("retained file bytes") }] };
+  await a.network.sendExtension("pc-b", "file-stream", offer);
+  await until(() => replies.some(reply => reply.rid === offer.rid));
+  expect(replies.find(reply => reply.rid === offer.rid)).toMatchObject({ data: { status: "completed" } });
+  expect(replies.find(reply => reply.rid === offer.rid)?.error).toBeUndefined();
+  expect(b.store.messagesById(started.id)).toHaveLength(1);
+  expect(recipient.events.filter(message => message.id === started.id)).toHaveLength(1);
+  expect(readFileSync(join(b.dir, "inbox", started.id, "payload.txt"), "utf8")).toBe("retained file bytes");
+  sender.client.close(); await until(() => !(a.broker as any).localPeers().some((p: PeerInfo) => p.id === sender.peer.id));
+  const nextSender = await a.register(binding("a", "replacement-file-sender"), "sender", a.dir);
+  await until(() => b.network.peers().some(p => p.frontend?.threadId === "replacement-file-sender"));
+  const wrongSender = { ...offer, rid: randomUUID(), from: { id: nextSender.peer.id, name: nextSender.peer.name, agent: nextSender.peer.agent } };
+  await a.network.sendExtension("pc-b", "file-stream", wrongSender);
+  await until(() => replies.some(reply => reply.rid === wrongSender.rid));
+  expect(replies.find(reply => reply.rid === wrongSender.rid)?.error).toMatch(/ownership|binding/i);
+  nextSender.client.close(); await until(() => !(a.broker as any).localPeers().some((p: PeerInfo) => p.id === nextSender.peer.id));
+  const returnedSender = await a.register(binding("a", "file-sender"), "sender", a.dir);
+  await until(() => b.network.peers().some(p => p.frontend?.threadId === "file-sender"));
+  offer.from = { id: returnedSender.peer.id, name: returnedSender.peer.name, agent: returnedSender.peer.agent };
+  const reconnect = { ...offer, rid: randomUUID() }; await a.network.sendExtension("pc-b", "file-stream", reconnect);
+  await until(() => replies.some(reply => reply.rid === reconnect.rid));
+  expect(replies.find(reply => reply.rid === reconnect.rid)).toMatchObject({ data: { status: "completed" } });
+  expect(b.store.messagesById(started.id)).toHaveLength(1); expect(recipient.events.filter(m => m.id === started.id)).toHaveLength(1);
+  recipient.client.close(); await until(() => !(b.broker as any).localPeers().some((p: PeerInfo) => p.name === recipient.peer.name));
+  const replacement = await b.register(binding("b", "replacement"), "destination", b.dir);
+  const retry = { ...offer, rid: randomUUID() }; await a.network.sendExtension("pc-b", "file-stream", retry);
+  await until(() => replies.some(reply => reply.rid === retry.rid));
+  expect(replies.find(reply => reply.rid === retry.rid)?.error).toMatch(/ownership|binding|destination/i);
+  expect((await replacement.client.request("pending", {})).map(message => message.id)).not.toContain(started.id);
+});
+
+it("pins transfer notification ownership before file publication across recipient replacement", async () => {
+  const a = await persistentHost("pc-a"), b = await persistentHost("pc-b");
+  const sender = await a.register(binding("a", "transfer-owner"), "sender", a.dir), recipient = await b.register(binding("b", "original-transfer-owner"), "destination", b.dir);
+  await pairPersistent(a, b); const file = join(a.dir, "private-file.txt"); writeFileSync(file, "original transfer bytes");
+  let release!: () => void, entered = false; const gate = new Promise<void>(resolve => release = resolve), send = a.network.sendExtension.bind(a.network);
+  vi.spyOn(a.network, "sendExtension").mockImplementation(async (remote, type, payload) => {
+    if (type === "file-stream" && payload.op === "finish") { entered = true; await gate; }
+    return send(remote, type, payload);
+  });
+  cleanup.push(release); const started = await sender.client.request("sendFiles", { to: "pc-b/destination", paths: [file] });
+  await until(() => entered); recipient.client.close();
+  await until(() => !(b.broker as any).localPeers().some((p: PeerInfo) => p.id === recipient.peer.id));
+  const replacement = await b.register(binding("b", "replacement-transfer-owner"), "destination", b.dir);
+  release(); await until(() => a.network.transfers.list().some(t => t.id === started.id && ["completed", "failed"].includes(t.status)));
+  expect((await replacement.client.request("pending", {})).map(m => m.id)).not.toContain(started.id);
+  expect(replacement.events.some(m => m.id === started.id)).toBe(false);
+  expect(readFileSync(join(b.dir, "inbox", started.id, "private-file.txt"), "utf8")).toBe("original transfer bytes");
+});
+
+it("queues authenticated remote control before first runner registration under its exact durable job principal", async () => {
+  const a = await persistentHost("pc-a"), sender = await a.register(binding("a", "controller"), "controller", a.dir, "control-session");
+  let b = await persistentHost("pc-b");
+  const job = { ...durableJob(b, "remote-controlled", `${a.network.keys.identity.id}/control-session`), id: "a1b2c3d4", owner: "pc-a/controller" };
+  await b.close();
+  writeJsonStore(join(b.dir, "remote-jobs.json"), { jobs: [{ pair: a.network.keys.identity.id, peer: "control-session", owner: job.owner, job, args: job.args }] }, null);
+  writeFileSync(join(b.dir, "config.json"), JSON.stringify({ network: { ...DEFAULT_CONFIG.network, enabled: true, name: "pc-b", bind: "127.0.0.1", port: 0, discovery: false,
+    remoteJobs: { ...DEFAULT_CONFIG.network.remoteJobs, enabled: true, allowPeers: ["pc-a"], allowRoots: [b.dir] } } }));
+  b = await persistentHost("pc-b"); await pairPersistent(a, b);
+  const control = { type: "message" as const, body: "before first runner registration", cid: randomUUID() };
+  await sender.client.request("remoteJob", { host: "pc-b", request: { op: "control", job: job.id, control } });
+  const queued = b.store.messagesById(control.cid);
+  expect(queued).toHaveLength(1);
+  expect(queued[0]?.recipientNative).toBe(JSON.stringify({ kind: "job", agent: "codex", id: `job:${job.id}` }));
+  const replacement = await b.register(undefined, job.name, b.dir, "native-impostor");
+  expect((await replacement.client.request("pending", {})).map(m => m.id)).not.toContain(control.cid);
+  await expect(registerJob(b, job, "wrong-session")).rejects.toThrow(/supervisor|registration/);
+  await expect(registerJob(b, { ...job, id: "deadbeef" })).rejects.toThrow(/incarnation|registration/);
+  replacement.client.close(); await until(() => !(b.broker as any).localPeers().some((p: PeerInfo) => p.name === job.name));
+  const runner = await registerJob(b, job), copy = (await runner.client.request("pending", {})).find(m => m.id === control.cid)!;
+  expect(copy.body).toBe(JSON.stringify(control));
+  expect(await runner.client.request("ack", { ids: [copy.id], mailboxProofs: proof(copy), nativeOwners: { [copy.id]: copy.recipientNative! } })).toEqual({ acked: 1 });
+  await sender.client.request("remoteJob", { host: "pc-b", request: { op: "control", job: job.id, control } });
+  expect(b.store.messagesById(control.cid)).toHaveLength(1);
+  expect((await runner.client.request("pending", {})).map(m => m.id)).not.toContain(control.cid);
+  await sender.client.request("updatePeer", { sessionId: "wrong-controller-session" });
+  await expect(sender.client.request("remoteJob", { host: "pc-b", request: { op: "control", job: job.id, control: { ...control, cid: randomUUID() } } })).rejects.toThrow(/supervisor/);
+});
+
+it("claims only explicit local project role mail once, pins the concrete owner, and preserves ambiguous exact mail", async () => {
+  const a = await persistentHost("pc-a"), b = await persistentHost("pc-b"), sender = await a.register(binding("a", "role-sender"), "sender", a.dir);
+  const args = { messageId: randomUUID(), to: "agent:codex", body: "explicit project role bytes" };
+  await sender.client.request("trackedSend", args);
+  const role = a.store.byId(args.messageId)!; expect(role.recipientRole).toMatchObject({ kind: "agent-role", namespace: a.store.namespace, agent: "codex", project: a.dir });
+  expect(() => b.store.insert({ ...role })).toThrow(/namespace/);
+  const exact = randomUUID(); await sender.client.request("trackedSend", { messageId: exact, to: "never-seen", body: "exact mail remains quarantined" });
+  const wrongKind = await a.register(undefined, "wrong-kind", a.dir, "wrong-kind", { agent: "claude" });
+  const foreign = join(home, "foreign-role-project"); mkdirSync(foreign);
+  const wrongProject = await a.register(undefined, "wrong-project", foreign, "wrong-project");
+  await expect(a.register(undefined, "child", a.dir, "child", { subagent: true })).rejects.toThrow(/subagents.*register/);
+  for (const peer of [wrongKind, wrongProject]) expect((await peer.client.request("pending", {})).map(m => m.id)).not.toContain(args.messageId);
+  await wrongKind.client.request("nativeChild", { agentId: "role-child", action: "start" });
+  await expect(wrongKind.client.request("nativeChildSend", { agentId: "role-child", messageId: randomUUID(), to: "agent:codex", body: "child cannot grant roles" })).rejects.toThrow(/child|grant|target|permitted|authorized/i);
+  const correct = await a.register(undefined, "never-seen", a.dir, "role-owner-A");
+  const copy = (await correct.client.request("pending", {})).find(m => m.id === args.messageId)!;
+  expect(copy.body).toBe(args.body); expect(copy.recipientRole).toBeUndefined();
+  expect(copy.recipientNative).toContain('"sessionId":"role-owner-A"');
+  expect((await correct.client.request("pending", {})).map(m => m.id)).not.toContain(exact);
+  await sender.client.request("trackedSend", args); expect(a.store.messagesById(args.messageId)).toHaveLength(1);
+  expect(await correct.client.request("ack", { ids: [copy.id], mailboxProofs: proof(copy), nativeOwners: { [copy.id]: copy.recipientNative! } })).toEqual({ acked: 1 });
+  correct.client.close(); await until(() => !(a.broker as any).localPeers().some((p: PeerInfo) => p.id === correct.peer.id));
+  const replacement = await a.register(undefined, "never-seen", a.dir, "role-owner-B");
+  expect((await replacement.client.request("pending", {})).map(m => m.id)).not.toContain(args.messageId);
+  expect(await replacement.client.request("ack", { ids: [copy.id], mailboxProofs: proof(copy), nativeOwners: { [copy.id]: copy.recipientNative! } })).toEqual({ acked: 0 });
+  expect(a.store.byId(exact)?.recipientAmbiguous).toBe(true);
+});
+
+it("keeps first tracked intent pending under an owned writer lock and commits original bytes once", async () => {
+  const host = await persistentHost("pc-a"), sender = await host.register(binding("a", "lock-sender"), "sender", host.dir),
+    recipient = await host.register(binding("a", "lock-recipient"), "destination", host.dir);
+  const lock = new DatabaseSync(host.db), args = { messageId: randomUUID(), to: recipient.peer.name, body: "accepted first intent bytes" };
+  let pending: Promise<unknown> | undefined;
+  let entered!: () => void; const admitted = new Promise<void>(resolve => entered = resolve), remember = host.store.rememberSendIntent.bind(host.store);
+  vi.spyOn(host.store, "rememberSendIntent").mockImplementation((...args) => { entered(); return remember(...args); });
+  try {
+    lock.exec("BEGIN IMMEDIATE"); pending = sender.client.request("trackedSend", args); void pending.catch(() => {});
+    await admitted;
+    expect((await sender.client.request("sendState", { id: args.messageId })).state).toBe("pending");
+    lock.exec("COMMIT"); await pending;
+    await sender.client.request("trackedSend", args);
+    expect(host.store.messagesById(args.messageId)).toHaveLength(1);
+    expect((await recipient.client.request("pending", {})).find(m => m.id === args.messageId)?.body).toBe(args.body);
+  } finally { if (lock.isTransaction) lock.exec("ROLLBACK"); lock.close(); await pending?.catch(() => {}); }
+});
+
+it("keeps the explicitly owned project main through a same-connection session update and rename", async () => {
+  const host = await persistentHost("rename-project"), other = await host.register(undefined, "other", host.dir, "other-session"), main = await host.register(undefined, "main", host.dir, "main-session");
+  await other.client.request("projectMain", { to: main.peer.name });
+  await main.client.request("updatePeer", { name: "renamed", sessionId: "resumed-main-session" });
+  await host.register(undefined, "main", host.dir, "different-session");
+  const sent = await other.client.request("trackedSend", { messageId: randomUUID(), to: "project:rename-project", body: "project role follows the owning connection" });
+  expect(sent.projectRoute?.main).toBe("renamed");
+  expect((await main.client.request("pending", {})).some(m => m.body === "project role follows the owning connection")).toBe(true);
+});
+
+it("fences owner dashboard sends by the actual reply listener registration without borrowing its control authority", async () => {
+  const host = await persistentHost("dashboard-project"), supervisor = await host.register(undefined, "main", host.dir, "main-session");
+  const listener = await host.register(undefined, "dashboard", host.dir, "dashboard-session", { agent: "other" });
+  const job = durableJob(host, "controlled-job"); recordJobs(host, [job]);
+  const args = { senderId: listener.peer.id, to: supervisor.peer.name, messageId: randomUUID(), conversationId: "jobctl-dashboard",
+    body: JSON.stringify({ type: "message", requestId: randomUUID(), job: job.id, text: "owner command" }) };
+  const sent = await host.admin.request("dashboardJobSend", args);
+  expect(sent.messages).toHaveLength(1); expect(sent.messages[0]?.jobControlAuthorized).toBe(true);
+  expect((await supervisor.client.request("pending", {})).find(m => m.id === args.messageId)?.body).toBe(args.body);
+  await expect(listener.client.request("dashboardJobSend", { ...args, messageId: randomUUID() })).rejects.toThrow(/owner dashboard/i);
+  // An ordinary listener's send must still use ordinary job-master authorization.
+  await expect(listener.client.request("trackedSend", { ...args, messageId: randomUUID() })).rejects.toThrow(/owner dashboard|controlling job master/i);
+  listener.client.close(); await until(() => !(host.broker as any).localPeers().some((p: PeerInfo) => p.id === listener.peer.id));
+  const replacement = await host.register(undefined, "dashboard", host.dir, "replacement-dashboard", { agent: "other" });
+  await expect(host.admin.request("dashboardJobSend", args)).rejects.toThrow(/listener/i);
+  await expect(host.admin.request("dashboardJobSend", { ...args, senderId: replacement.peer.id })).rejects.toThrow(/ownership|sender|identity/i);
+  expect(host.store.messagesById(args.messageId)).toHaveLength(1);
+});
+
+it.each([false, true])("serializes exact job report ACK against authorized local succession without consuming retired copies (ACK first %s)", async ackFirst => {
+  const host = await persistentHost("succession-project"), owner = await host.register(undefined, "main", host.dir, "original-owner"), fallback = await host.register(undefined, "fallback", host.dir, "fallback-owner");
+  const job = durableJob(host, "codex-succession", "original-owner"), originalEvidence = host.store.recipientOwnership("main", owner.peer);
+  const originalOwner = `native:${originalEvidence.recipientNative}`;
+  Object.assign(job, { deliveryOwner: originalOwner, deliveryOwners: { main: originalOwner } }); recordJobs(host, [job]);
+  const runner = await registerJob(host, job), id = randomUUID();
+  const sent = await runner.client.request("trackedSend", { messageId: id, to: "main", body: "accepted job report UUID and bytes", conversationId: `job-${job.id}` });
+  const first = sent.messages[0]!; expect(first.jobRoute).toEqual({ grant: id, generation: 0 });
+  if (ackFirst) expect(await owner.client.request("ack", fixtureAck([first]))).toEqual({ acked: 1 });
+  await fallback.client.request("projectMain", { to: "fallback" }); await owner.client.request("updatePeer", { unavailable: true });
+  await host.broker.routePendingJobMail(); await host.broker.routePendingJobMail();
+  const copies = host.store.messagesById(id), original = copies.find(copy => copy.recipient === "main")!;
+  expect(original.body).toBe(first.body); expect(original.recipientNative).toBe(first.recipientNative); expect(original.recipientMailbox).toEqual(first.recipientMailbox);
+  if (ackFirst) {
+    expect(copies).toHaveLength(1); expect((await fallback.client.request("pending", {})).map(m => m.id)).not.toContain(id);
+  } else {
+    expect(original.readAt).toBeNull();
+    const selected = (await fallback.client.request("pending", {})).find(m => m.id === id)!;
+    expect(selected).toBeDefined(); expect(selected.body).toBe(first.body); expect(selected.jobRoute).toEqual({ grant: id, generation: 1 });
+    expect(await owner.client.request("ack", fixtureAck([first]))).toEqual({ acked: 0 });
+    expect(await fallback.client.request("ack", { ...fixtureAck([selected]), jobRoutes: { [id]: first.jobRoute! } })).toEqual({ acked: 0 });
+    expect(await fallback.client.request("ack", fixtureAck([selected]))).toEqual({ acked: 1 });
+    expect(await fallback.client.request("ack", fixtureAck([selected]))).toEqual({ acked: 0 });
+    expect(host.store.receipts(id).find(r => r.recipient === "main")?.readAt).toBeNull();
+    expect(host.store.receipts(id).find(r => r.recipient === "fallback")?.readAt).not.toBeNull();
+  }
+  await owner.client.request("updatePeer", { unavailable: false }); await host.broker.routePendingJobMail();
+  expect((await owner.client.request("pending", {})).map(m => m.id)).not.toContain(id);
+  const db = new DatabaseSync(host.db, { readOnly: true });
+  try {
+    expect(db.prepare("SELECT body FROM messages WHERE id=? AND recipient='main'").get(id)?.body).toBe(first.body);
+    expect(db.prepare("SELECT COUNT(*) n FROM job_mail_succession WHERE id=?").get(id)?.n).toBe(ackFirst ? 1 : 2);
+    expect(db.prepare("SELECT COUNT(*) n FROM job_mail_retirements WHERE id=?").get(id)?.n).toBe(ackFirst ? 0 : 1);
+  } finally { db.close(); }
+});
+
+it.each(["project", "replacement", "revoked", "incarnation"] as const)("refuses job report succession across %s authority changes at write admission", async change => {
+  const host = await persistentHost("grant-project"), owner = await host.register(undefined, "main", host.dir, "original-owner");
+  const otherProject = join(home, "unrelated-project"); mkdirSync(otherProject);
+  const candidate = await host.register(undefined, change === "replacement" ? "main" : "fallback", change === "project" ? otherProject : host.dir, "candidate-owner");
+  const job = durableJob(host, "codex-guarded", "original-owner"), ownerKey = `native:${host.store.recipientOwnership("main", owner.peer).recipientNative}`;
+  Object.assign(job, { deliveryOwner: ownerKey, deliveryOwners: { main: ownerKey } }); recordJobs(host, [job]);
+  const runner = await registerJob(host, job), id = randomUUID();
+  await runner.client.request("trackedSend", { messageId: id, to: "main", body: "retained original report", conversationId: `job-${job.id}` });
+  const route = host.broker.routePendingJobMail.bind(host.broker), automatic = vi.spyOn(host.broker, "routePendingJobMail").mockResolvedValue();
+  if (change === "replacement") {
+    candidate.client.close(); await until(() => !(host.broker as any).localPeers().some((p: PeerInfo) => p.id === candidate.peer.id));
+    owner.client.close(); await until(() => !(host.broker as any).localPeers().some((p: PeerInfo) => p.id === owner.peer.id));
+    const wrong = await host.register(undefined, "main", host.dir, "replacement-owner");
+    await route(); expect((await wrong.client.request("pending", {})).map(m => m.id)).not.toContain(id);
+  } else {
+    await owner.client.request("updatePeer", { unavailable: true });
+    const retry = host.store.retryWrite.bind(host.store); let release!: () => void, blocked = false;
+    const gate = new Promise<void>(resolve => release = resolve); cleanup.push(release);
+    const delayed = vi.spyOn(host.store, "retryWrite").mockImplementation(async operation => {
+      if (!blocked) { blocked = true; await gate; }
+      return retry(operation);
+    });
+    const pending = route(); await until(() => blocked);
+    if (change === "revoked") projectSharing(host.dir, false);
+    if (change === "incarnation") { job.startedAt++; recordJobs(host, [job]); }
+    release(); await pending; delayed.mockRestore();
+    expect((await candidate.client.request("pending", {})).map(m => m.id)).not.toContain(id);
+  }
+  automatic.mockRestore();
+  const copy = host.store.messagesById(id); expect(copy).toHaveLength(1); expect(copy[0]!.recipientNative).toBe(ownerKey.slice(7)); expect(copy[0]!.readAt).toBeNull();
+});
+
+it.each([false, true])("recovers only a current producer's durable report evidence after source loss before first mailbox acceptance (original consumed %s)", async consumed => {
+  const host = await persistentHost("draft-project"), path = join(host.dir, "jobs.json"); (host.broker as any).jobsPath = path;
+  const source = new LiveBridgeNode({ pipePath: host.pipe, dbPath: host.db, token: host.token, agent: "codex", name: "main", cwd: host.dir, autoWake: false, canHostBroker: false, log: nullLogger });
+  cleanup.push(() => source.stop()); await source.setSessionId("producer-owner"); await source.start();
+  const route = host.broker.routePendingJobMail.bind(host.broker), automatic = vi.spyOn(host.broker, "routePendingJobMail").mockResolvedValue();
+  vi.spyOn(source, "reportInlineJob").mockRejectedValue(new Error("fixture source lost before broker acceptance"));
+  const manager = new JobManager(source, nullLogger, path), tracked = manager.track("codex", null, "durable offline report"), id = randomUUID();
+  cleanup.push(() => { manager.setDormant(true); manager.cancelAll(); });
+  (manager as any).post(tracked.job, "original accepted report bytes", null, "", id); manager.persist();
+  await until(() => !!JSON.parse(readFileSync(path, "utf8")).jobs.find((j: any) => j.id === tracked.job.id)?.reportRouting?.[id]);
+  if (consumed) {
+    const retained = JSON.parse(readFileSync(path, "utf8")).jobs.find((j: any) => j.id === tracked.job.id).deliveryHistory.find((m: BridgeMessage) => m.id === id);
+    source.deliverLocal({ ...retained, jobRoute: { grant: id, generation: 0 } }); source.markRead([id]);
+  }
+  manager.setDormant(true); await source.stop();
+  const fallback = await host.register(undefined, "fallback", host.dir, "fallback-owner");
+  automatic.mockRestore(); await route();
+  const copy = (await fallback.client.request("pending", {})).find(m => m.id === id)!;
+  if (consumed) {
+    expect(copy).toBeUndefined(); expect(host.store.messagesById(id)).toHaveLength(1);
+    expect(host.store.byId(id)?.recipient).toBe("main"); expect(host.store.receipts(id)[0]?.readAt).toBeTypeOf("number");
+    return;
+  }
+  expect(copy).toBeDefined(); expect(copy.body).toBe("original accepted report bytes"); expect(copy.jobRoute).toEqual({ grant: id, generation: 0 });
+  const original = JSON.parse(readFileSync(path, "utf8")).jobs.find((j: any) => j.id === tracked.job.id);
+  expect(original.deliveryHistory.find((m: BridgeMessage) => m.id === id)).toMatchObject({ recipient: "main", body: copy.body });
+  expect(original.reportRouting[id].grant.creator).toContain('"sessionId":"producer-owner"');
+  expect(await fallback.client.request("ack", fixtureAck([copy]))).toEqual({ acked: 1 });
+});
+
+it("does not mint a job routing grant from caller flags or a job-prefixed conversation", async () => {
+  const host = await persistentHost("spoof-project"), owner = await host.register(undefined, "main", host.dir, "owner"), sender = await host.register(undefined, "sender", host.dir, "sender");
+  const id = randomUUID();
+  await (sender.client.request as any)("trackedSend", { messageId: id, to: "main", body: "ordinary exact-owner mail", conversationId: "job-spoof",
+    jobRoute: { grant: id, generation: 0 }, reportRouting: { [id]: { owner: "sender" } } });
+  await owner.client.request("updatePeer", { unavailable: true }); await host.broker.routePendingJobMail();
+  expect(host.store.jobRoutingGrant(id)).toBeNull(); expect(host.store.messagesById(id)).toHaveLength(1);
+  expect((await sender.client.request("pending", {})).map(m => m.id)).not.toContain(id);
+});
+
+it("excludes authenticated remote job mail and foreign store namespaces from local supervisor grants", async () => {
+  const a = await persistentHost("grant-source"), b = await persistentHost("grant-destination"), owner = await a.register(undefined, "main", a.dir, "same-owner"), recipient = await b.register(undefined, "main", b.dir, "same-owner");
+  const job = durableJob(a, "remote-report", "same-owner"), originalOwner = `native:${a.store.recipientOwnership("main", owner.peer).recipientNative}`;
+  Object.assign(job, { deliveryOwner: originalOwner, deliveryOwners: { main: originalOwner } }); recordJobs(a, [job]);
+  const runner = await registerJob(a, job); await pairPersistent(a, b);
+  const remoteId = randomUUID();
+  await (runner.client.request as any)("trackedSend", { messageId: remoteId, to: "grant-destination/main", body: "remote copies stay immutable", conversationId: `job-${job.id}`, jobRoute: { grant: remoteId, generation: 0 } });
+  const remote = (await recipient.client.request("pending", {})).find(m => m.id === remoteId)!;
+  expect(remote.jobRoute).toBeUndefined(); expect(a.store.jobRoutingGrant(remoteId)).toBeNull(); expect(b.store.jobRoutingGrant(remoteId)).toBeNull();
+  const localId = randomUUID();
+  const local = (await runner.client.request("trackedSend", { messageId: localId, to: "main", body: "local grant never leaves its namespace", conversationId: `job-${job.id}` })).messages[0]!;
+  const grant = a.store.jobRoutingGrant(localId)!;
+  expect(() => b.store.insertJobDelivery(local, grant.grant)).toThrow(/local-origin|different local store/);
+  expect(b.store.byId(localId)).toBeNull();
+  expect(await recipient.client.request("ack", fixtureAck([remote]))).toEqual({ acked: 1 });
+});
+
+it("restarts a same-binding job recipient without applying its retired generation's lost-ACK journal to a later route", async () => {
+  const host = await persistentHost("journal-succession"), owner = await host.register(undefined, "main", host.dir, "original-owner");
+  const makeFallback = () => new LiveBridgeNode({ pipePath: host.pipe, dbPath: host.db, token: host.token, agent: "codex", name: "fallback", cwd: host.dir,
+    autoWake: false, canHostBroker: false, log: nullLogger });
+  const first = makeFallback(); cleanup.push(() => first.stop()); await first.setSessionId("fallback-owner"); await first.start();
+  const job = durableJob(host, "journal-job", "original-owner"), originalOwner = `native:${host.store.recipientOwnership("main", owner.peer).recipientNative}`;
+  Object.assign(job, { deliveryOwner: originalOwner, deliveryOwners: { main: originalOwner } }); recordJobs(host, [job]);
+  const runner = await registerJob(host, job), id = randomUUID();
+  await runner.client.request("trackedSend", { messageId: id, to: "main", body: "same report, distinct consumption generations", conversationId: `job-${job.id}` });
+  await owner.client.request("updatePeer", { unavailable: true }); await host.broker.routePendingJobMail(); await first.refreshPending();
+  expect(first.get(id)?.jobRoute?.generation).toBe(1);
+  // Context was handed out before the reader disconnected. Its completion/read
+  // callback may arrive after succession, while there is no transport for ACK.
+  await first.stop();
+  expect(host.store.receipts(id).every(receipt => receipt.readAt === null)).toBe(true);
+  await owner.client.request("updatePeer", { unavailable: false }); await host.broker.routePendingJobMail();
+  expect((await owner.client.request("pending", {})).find(m => m.id === id)?.jobRoute?.generation).toBe(2);
+  first.markRead([id]);
+  await owner.client.request("updatePeer", { unavailable: true });
+  const restarted = makeFallback(); cleanup.push(() => restarted.stop()); await restarted.setSessionId("fallback-owner"); await restarted.start();
+  await host.broker.routePendingJobMail(); await restarted.refreshPending();
+  expect(restarted.get(id)?.jobRoute).toEqual({ grant: id, generation: 3 });
+  expect(host.store.receipts(id).every(receipt => receipt.readAt === null)).toBe(true);
+  restarted.markRead([id]); await restarted.refreshPending();
+  await until(() => host.store.receipts(id).find(receipt => receipt.recipient === "fallback")?.readAt !== null);
+  expect(host.store.receipts(id).find(receipt => receipt.recipient === "main")?.readAt).toBeNull();
+});
+
+it("preserves schema13 proof and consumed route evidence through interrupted, repeated schema14 admission", async () => {
+  const host = await persistentHost("schema13-source"), recipient = await host.register(binding("b", "migration-owner"), "main"), sender = await host.register(binding("a", "sender"), "sender");
+  const id = randomUUID(); await sender.client.request("trackedSend", { messageId: id, to: "main", body: "schema13 original bytes" });
+  const namespace = host.store.namespace; await host.close();
+  const db = new DatabaseSync(host.db); cleanup.push(() => { try { db.close(); } catch { /* Already closed after admission. */ } });
+  db.exec("DROP TABLE job_mail_grants; DROP TABLE job_mail_succession; DROP TABLE job_mail_retirements; PRAGMA user_version=13");
+  db.prepare("INSERT INTO job_delivery_routes VALUES (?,?,?,?)").run(id, recipient.peer.name, 1234, namespace);
+  const tables = ["messages", "message_frontends", "job_delivery_routes", "mailbox_store"], before = tables.map(table => db.prepare(`SELECT * FROM ${table}`).all());
+  const exec = db.exec.bind(db); let interrupted = false;
+  const fault = vi.spyOn(db, "exec").mockImplementation(sql => {
+    if (!interrupted && sql.includes("CREATE TABLE job_mail_grants")) {
+      interrupted = true; exec(sql.slice(0, sql.indexOf(";", sql.indexOf("CREATE TABLE job_mail_grants")) + 1));
+      throw new Error("fixture interruption between new routing ledgers");
+    }
+    return exec(sql);
+  });
+  expect(() => migrateMessageSchema(db, host.db, true, nullLogger)).toThrow(/fixture interruption/); fault.mockRestore();
+  expect(db.prepare("PRAGMA user_version").get()!.user_version).toBe(13);
+  expect(db.prepare("SELECT 1 FROM sqlite_master WHERE name='job_mail_grants'").get()).toBeUndefined();
+  expect(tables.map(table => db.prepare(`SELECT * FROM ${table}`).all())).toEqual(before);
+  migrateMessageSchema(db, host.db, true, nullLogger); migrateMessageSchema(db, host.db, true, nullLogger);
+  expect(db.prepare("PRAGMA user_version").get()!.user_version).toBe(14);
+  expect(tables.map(table => db.prepare(`SELECT * FROM ${table}`).all())).toEqual(before);
+  for (const table of ["job_mail_grants", "job_mail_succession", "job_mail_retirements"]) expect(db.prepare(`SELECT COUNT(*) n FROM ${table}`).get()!.n).toBe(0);
+  db.close();
+  const restored = new MessageStore(host.db, nullLogger); cleanup.push(() => restored.close());
+  expect(restored.byId(id)?.body).toBe("schema13 original bytes"); expect(restored.jobRoutingGrant(id)).toBeNull();
+});
+
+it("backs up and restores nonempty grant, succession and retirement evidence at one boundary while the live route advances", async () => {
+  const host = await persistentHost("grant-backup"), owner = await host.register(undefined, "main", host.dir, "original-owner"), fallback = await host.register(undefined, "fallback", host.dir, "fallback-owner");
+  const job = durableJob(host, "backup-job", "original-owner"), originalOwner = `native:${host.store.recipientOwnership("main", owner.peer).recipientNative}`;
+  Object.assign(job, { deliveryOwner: originalOwner, deliveryOwners: { main: originalOwner } }); recordJobs(host, [job]);
+  const runner = await registerJob(host, job), id = randomUUID();
+  const first = (await runner.client.request("trackedSend", { messageId: id, to: "main", body: "backup original accepted bytes", conversationId: `job-${job.id}` })).messages[0]!;
+  await owner.client.request("updatePeer", { unavailable: true }); await host.broker.routePendingJobMail();
+  const selected = (await fallback.client.request("pending", {})).find(m => m.id === id)!; expect(selected.jobRoute?.generation).toBe(1);
+  let interleaved = false;
+  const backup = await messageBackupIfDue(host.dir, { checkpoint: async () => {
+    if (interleaved || !existsSync(join(host.dir, "message-backups"))) return;
+    const pending = readdirSync(join(host.dir, "message-backups")).find(name => name.startsWith(".pending-")); if (!pending) return;
+    const file = join(host.dir, "message-backups", pending, "bridge.messages.db"); if (!existsSync(file)) return;
+    const check = new DatabaseSync(file, { readOnly: true });
+    const copying = check.prepare("SELECT 1 FROM sqlite_master WHERE name='job_mail_grants'").get(); check.close();
+    if (!copying) return;
+    interleaved = true; await owner.client.request("updatePeer", { unavailable: false }); await host.broker.routePendingJobMail();
+  } });
+  expect(interleaved).toBe(true); expect((await owner.client.request("pending", {})).find(m => m.id === id)?.jobRoute?.generation).toBe(2);
+  const restored = restoreMessageBackup(backup.path!, "restored-job-grant");
+  const db = new DatabaseSync(restored.file, { readOnly: true });
+  try {
+    expect(db.prepare("SELECT COUNT(*) n FROM job_mail_grants").get()!.n).toBe(1);
+    expect(db.prepare("SELECT COUNT(*) n FROM job_mail_succession").get()!.n).toBe(2);
+    expect(db.prepare("SELECT COUNT(*) n FROM job_mail_retirements").get()!.n).toBe(1);
+    expect(JSON.parse(String(db.prepare("SELECT original_envelope FROM job_mail_grants").get()!.original_envelope))).toMatchObject({ id, recipient: "main", body: first.body, recipientNative: first.recipientNative });
+  } finally { db.close(); }
+  expect(restored.namespace).toBe(host.store.namespace);
+  expect(restored.unread("main", 100, undefined, first.recipientNative)).toEqual([]);
+  const active = restored.unread("fallback", 100, undefined, selected.recipientNative).find(m => m.id === id)!;
+  expect(active.body).toBe(first.body); expect(active.jobRoute).toEqual(selected.jobRoute);
+  expect(restored.markRead("main", [id], Date.now(), undefined, { [id]: first.recipientNative! }, first.recipientNative, { [id]: first.jobRoute! })).toBe(0);
+  expect(restored.markRead("fallback", [id], Date.now(), undefined, { [id]: active.recipientNative! }, active.recipientNative, { [id]: active.jobRoute! })).toBe(1);
+});
+
+it("does not touch a closed mailbox from deferred replay readiness", async () => {
+  const host = await persistentHost("closing-replay"), registered = await host.register(undefined, "reader"), conn = (host.broker as any).connByName("reader");
+  expect((host.broker as any).queueReady(conn, conn.peer)).toBe(true);
+  await host.close();
+  expect(() => (host.broker as any).queueReady(conn, registered.peer)).not.toThrow();
+  expect((host.broker as any).queueReady(conn, registered.peer)).toBe(false);
+});
+
+it("recovers an unacknowledged supervisor succession after broker restart and exact tracked retry without creating another generation", async () => {
+  let host = await persistentHost("succession-restart");
+  const owner = await host.register(undefined, "main", host.dir, "original-owner"), fallback = await host.register(undefined, "fallback", host.dir, "fallback-owner");
+  const job = durableJob(host, "restart-job", "original-owner"), originalOwner = `native:${host.store.recipientOwnership("main", owner.peer).recipientNative}`;
+  Object.assign(job, { deliveryOwner: originalOwner, deliveryOwners: { main: originalOwner } }); recordJobs(host, [job]);
+  const runner = await registerJob(host, job), args = { messageId: randomUUID(), to: "main", body: "original tracked UUID across restart", conversationId: `job-${job.id}` };
+  await runner.client.request("trackedSend", args); await owner.client.request("updatePeer", { unavailable: true }); await host.broker.routePendingJobMail();
+  const selected = (await fallback.client.request("pending", {})).find(m => m.id === args.messageId)!;
+  expect(selected.jobRoute?.generation).toBe(1); await host.close(); host = await persistentHost("succession-restart");
+  (host.broker as any).jobsPath = join(host.dir, "jobs.json");
+  const replacement = await host.register(undefined, "main", host.dir, "replacement-owner"), returned = await host.register(undefined, "fallback", host.dir, "fallback-owner");
+  const reconnectedRunner = await registerJob(host, job);
+  await reconnectedRunner.client.request("trackedSend", args); await host.broker.routePendingJobMail();
+  expect((await replacement.client.request("pending", {})).map(m => m.id)).not.toContain(args.messageId);
+  const recovered = (await returned.client.request("pending", {})).find(m => m.id === args.messageId)!;
+  expect(recovered.jobRoute).toEqual(selected.jobRoute); expect(recovered.body).toBe(args.body);
+  const db = new DatabaseSync(host.db, { readOnly: true });
+  try { expect(db.prepare("SELECT COUNT(*) n FROM job_mail_succession WHERE id=?").get(args.messageId)!.n).toBe(2); } finally { db.close(); }
+  expect(await returned.client.request("ack", fixtureAck([recovered]))).toEqual({ acked: 1 });
+  expect(host.store.receipts(args.messageId).find(receipt => receipt.recipient === "main")?.readAt).toBeNull();
+});
+
+it("fences a fresh proven job question to its authorized project fallback without reassigning older private copies", async () => {
+  const host = await persistentHost("job-project"), owner = await host.register(undefined, "main", host.dir, "original-owner"), fallback = await host.register(undefined, "fallback", host.dir, "fallback-owner");
+  const job = durableJob(host, "codex-job-fallback", "original-owner"), evidence = host.store.recipientOwnership(owner.peer.name, owner.peer);
+  Object.assign(job, { deliveryOwner: `native:${evidence.recipientNative}`, deliveryOwners: { main: `native:${evidence.recipientNative}` } }); recordJobs(host, [job]);
+  const runner = await registerJob(host, job), oldId = randomUUID(), nextId = randomUUID();
+  await fallback.client.request("trackedSend", { messageId: oldId, to: "main", body: "original private copy", conversationId: `job-${job.id}` });
+  await fallback.client.request("projectMain", { to: "fallback" }); owner.client.close();
+  await until(() => !(host.broker as any).localPeers().some((p: PeerInfo) => p.name === "main"));
+  const args = { messageId: nextId, to: "main", body: "fresh authorized fallback question", conversationId: `job-${job.id}:question` };
+  const sent = await runner.client.request("trackedSend", args);
+  expect(sent.deliveredTo).toEqual(["fallback"]);
+  const copy = host.store.byId(nextId)!; expect(copy.recipientNative).toContain('"sessionId":"fallback-owner"');
+  expect((await fallback.client.request("pending", {})).map(m => m.id)).not.toContain(oldId);
+  fallback.client.close(); await until(() => !(host.broker as any).localPeers().some((p: PeerInfo) => p.name === "fallback"));
+  const replacement = await host.register(undefined, "fallback", host.dir, "replacement-fallback");
+  await runner.client.request("trackedSend", args);
+  expect(host.store.messagesById(nextId)).toHaveLength(1);
+  expect((await replacement.client.request("pending", {})).map(m => m.id)).not.toContain(nextId);
+  expect(await replacement.client.request("ack", { ids: [nextId], mailboxProofs: proof(copy), nativeOwners: { [nextId]: copy.recipientNative! } })).toEqual({ acked: 0 });
+  const original = await host.register(undefined, "returned-owner", host.dir, "original-owner");
+  expect((await original.client.request("pending", {})).map(m => m.id)).toContain(oldId);
+  // Existing authorized supervisor-return routing creates a separate exact
+  // copy for the original principal. It cannot rewrite the fallback ledger.
+  const copies = host.store.messagesById(nextId);
+  expect(copies.find(m => m.recipient === "fallback")?.recipientNative).toBe(copy.recipientNative);
+  expect(copies.find(m => m.recipient === original.peer.name)?.recipientNative).toContain('"sessionId":"original-owner"');
+});
+
 it.each([false, true])("isolates outbound remote copies from colliding local owners and ACKs (%s)", async hosted => {
   const a = await persistentHost("pc-a"), b = await persistentHost("pc-b");
   const frontend = hosted ? binding("b", "deliberately-reused-app-thread") : undefined;
@@ -328,11 +806,12 @@ it.each([false, true])("isolates outbound remote copies from colliding local own
 });
 
 function durableJob(host: Awaited<ReturnType<typeof persistentHost>>, name: string, supervisor = "main-session") {
-  return { id: randomUUID(), name, agent: "codex", owner: "main", rootName: "main", supervisor, rootSession: supervisor,
+  return { id: randomUUID() as string, startedAt: Date.now(), name, agent: "codex", owner: "main", rootName: "main", supervisor, rootSession: supervisor,
     projectRoot: host.dir, workdir: host.dir, status: "running", createdAt: Date.now(), host: { pid: null, peer: name, startedAt: Date.now() }, args: { title: "fixture recorded job", cwd: host.dir } };
 }
 function recordJobs(host: Awaited<ReturnType<typeof persistentHost>>, jobs: ReturnType<typeof durableJob>[]) {
-  const file = join(host.dir, "jobs.json"); writeJsonStore(file, { jobs }, null); (host.broker as any).jobsPath = file;
+  const file = join(host.dir, "jobs.json"), previous = readJsonStore(file);
+  writeJsonStore(file, { ...(previous as Record<string, unknown> | null), jobs }, previous); (host.broker as any).jobsPath = file;
 }
 function projectSharing(root: string, enabled: boolean) {
   mkdirSync(join(root, ".agent-bridge"), { recursive: true });
@@ -657,6 +1136,7 @@ it("quarantines a new unknown destination while preserving proven offline native
   const sender = await host.register(binding("a", "sender"), "sender"), known = randomUUID(), unknown = randomUUID();
   await sender.client.request("trackedSend", { messageId: known, to: "known-native", body: "verified native offline mail" });
   await sender.client.request("trackedSend", { messageId: unknown, to: "unknown", body: "no recipient evidence" });
+  expect(await sender.client.request("sendState", { id: unknown })).toMatchObject({ state: "stored", blockedRecipients: [{ recipient: "unknown", reason: "recipient_ownership_unproven" }] });
   const successor = await host.register(undefined, "unknown", home, "unknown-native-session"),
     original = await host.register(undefined, "known-native", home, "known-native-session");
   expect((await successor.client.request("pending", { limit: 100 })).map(m => m.id)).not.toContain(unknown);
@@ -715,7 +1195,7 @@ it.each(["outbound-send", "outbound-receipt", "inbound-send", "inbound-receipt"]
   expect(received).not.toHaveBeenCalled(); expect(receipt).not.toHaveBeenCalled();
 });
 
-it.each([2, 3, 4])("refuses protocol%s clients before registration, mailbox effects or daemon handover", async oldProtocol => {
+it.each([2, 3, 4, 5])("refuses protocol%s clients before registration, mailbox effects or daemon handover", async oldProtocol => {
   const host = await persistentHost("pc-b"), handover = vi.fn(); host.broker.onNewerClient(handover);
   const client = await BridgeClient.connect(host.pipe, nullLogger); cleanup.push(() => client.close());
   await expect(client.request("auth", { protocol: oldProtocol, token: host.token, canHost: true })).rejects.toThrow(/protocol|upgrade/i);
@@ -724,10 +1204,10 @@ it.each([2, 3, 4])("refuses protocol%s clients before registration, mailbox effe
     await expect((client.request as any)(operation, { ids: ["absent"], messageId: "absent", to: "target", body: "must not store" })).rejects.toThrow();
   }
   expect(host.store.byId("absent")).toBeNull(); expect((host.broker as any).localPeers()).toEqual([]);
-  expect(handover).not.toHaveBeenCalled(); expect(PROTOCOL_VERSION).toBe(5);
+  expect(handover).not.toHaveBeenCalled(); expect(PROTOCOL_VERSION).toBe(6);
 });
 
-it.each([2, 3, 4])("new clients refuse a protocol%s endpoint without granting handover or later demand-start", async oldProtocol => {
+it.each([2, 3, 4, 5])("new clients refuse a protocol%s endpoint without granting handover or later demand-start", async oldProtocol => {
   const dir = join(home, "old-endpoint"); mkdirSync(dir); const pipe = resolvePipePath(dir, {}), operations: string[] = [], auth: any[] = [];
   const sockets = new Set<import("node:net").Socket>();
   // Protocol2's exact auth refusal is sufficient; this endpoint implements no mailbox handlers.
@@ -753,9 +1233,104 @@ it.each([2, 3, 4])("new clients refuse a protocol%s endpoint without granting ha
   cleanup.push(() => node.stop()); cleanup.push(() => closeMetadataDb(dir));
   await node.setSessionId("new-client-session");
   await expect(node.start()).rejects.toThrow(`protocol ${oldProtocol}`);
-  expect(operations).toEqual(["auth"]); expect(auth[0].protocol).toBe(5); expect(auth[0].canHost).toBeUndefined();
+  expect(operations).toEqual(["auth"]); expect(auth[0].protocol).toBe(6); expect(auth[0].canHost).toBeUndefined();
   expect(server.listening).toBe(true); await close();
   await expect(node.ensureConnected()).rejects.toThrow(`protocol ${oldProtocol}`); expect(launch).not.toHaveBeenCalled();
+});
+
+it.each([2, 3, 4, 5])("blocks a live prior protocol%s endpoint before shared mailbox migration or daemon launch", async oldProtocol => {
+  const dir = join(home, `prior-${oldProtocol}`); mkdirSync(dir, { mode: 0o700 });
+  const dbPath = join(dir, "bridge.db"), seed = new MessageStore(dbPath, nullLogger);
+  const retained = message(peer("historical-sender"), "unknown"); seed.insert(retained); seed.close(); closeMetadataDb(dir);
+  const db = new DatabaseSync(dbPath); db.exec("PRAGMA journal_mode=DELETE; PRAGMA user_version=12"); db.close();
+  const before = readFileSync(dbPath), snapshots = () => existsSync(join(dir, ".migration-snapshots")) ? readdirSync(join(dir, ".migration-snapshots")).sort() : [];
+  const backups = snapshots(), pipe = resolvePipePath(dir, {}).replace(new RegExp(`-p${PROTOCOL_VERSION}(?=\\.sock$|$)`), `-p${oldProtocol}`), operations: any[] = [];
+  const sockets = new Set<import("node:net").Socket>();
+  const server = createServer(socket => {
+    sockets.add(socket); socket.once("close", () => sockets.delete(socket)); socket.setEncoding("utf8");
+    const decoder = new FrameDecoder(64 * 1024);
+    socket.on("data", bytes => { for (const frame of decoder.push(String(bytes))) if (frame.t === "req") {
+      operations.push({ op: frame.op, args: frame.args });
+      socket.end(encodeFrame({ t: "res", id: frame.id, ok: false, error: { code: "protocol_mismatch", message: `broker speaks protocol ${oldProtocol}`, details: { brokerProtocol: oldProtocol } } }));
+    } });
+  });
+  cleanup.push(async () => { for (const socket of sockets) socket.destroy(); await new Promise<void>(resolve => server.close(() => resolve())); });
+  await new Promise<void>(resolve => server.listen(pipe, resolve));
+  const launch = vi.fn(async () => { throw new Error("daemon launch forbidden"); });
+  const node = new LiveBridgeNode({ pipePath: resolvePipePath(dir, {}), dbPath, token: "isolated-fixture-token", agent: "codex", name: "new-client", cwd: dir,
+    autoWake: false, daemon: { cli: "never-launch", launch }, log: nullLogger });
+  cleanup.push(() => node.stop()); cleanup.push(() => closeMetadataDb(dir)); await node.setSessionId("current-session");
+  await expect(node.start()).rejects.toThrow(/owner.coordinated shutdown/i);
+  expect(launch).not.toHaveBeenCalled(); expect(server.listening).toBe(true);
+  // Named-pipe ownership cannot be established with POSIX stat; an active
+  // unknown pipe must be refused without disclosing the authentication token.
+  if (process.platform !== "win32") expect(operations).toEqual([{ op: "auth", args: { protocol: PROTOCOL_VERSION, token: "isolated-fixture-token" } }]);
+  expect(readFileSync(dbPath).equals(before)).toBe(true); expect(snapshots()).toEqual(backups);
+});
+
+it("refuses migration before backups when an old reader has opened the mailbox but has not bound an endpoint", async () => {
+  const dir = join(home, "lease-before-endpoint"); mkdirSync(dir, { mode: 0o700 });
+  const file = join(dir, "bridge.db"), seed = new MessageStore(file, nullLogger), mail = message(peer("historical"), "unknown");
+  seed.insert(mail); seed.close(); closeMetadataDb(dir);
+  const old = new DatabaseSync(file); removeFixtureProvenance(old); old.exec("PRAGMA user_version=12; PRAGMA journal_mode=DELETE"); old.close();
+  const users = join(dir, ".storage-users"); mkdirSync(users, { recursive: true });
+  const lease = join(users, `${process.pid}-legacy-before-bind`); writeFileSync(lease, "", { flag: "wx", mode: 0o600 });
+  const before = readFileSync(file), snapshots = () => existsSync(join(dir, ".migration-snapshots")) ? readdirSync(join(dir, ".migration-snapshots")).sort() : [];
+  const backups = snapshots();
+  expect(() => new MessageStore(file, nullLogger)).toThrow(/owner.coordinated shutdown/i);
+  expect(readFileSync(file).equals(before)).toBe(true); expect(snapshots()).toEqual(backups); expect(readFileSync(lease).length).toBe(0);
+  rmSync(lease); // This isolated fixture's own simulated legacy lease only.
+  const migrated = new MessageStore(file, nullLogger); cleanup.push(() => migrated.close());
+  expect(migrated.byId(mail.id)?.body).toBe(mail.body);
+  expect(migrated.unread("unknown", 10)).toEqual([]);
+});
+
+it.each([["v0.27.0", 2], ["v0.28.2", 3]] as const)("requires explicit isolated offline admission for pre-lease %s schema%s", async (release, version) => {
+  const dir = join(home, "pre-lease"); mkdirSync(dir, { mode: 0o700 });
+  const file = join(dir, "bridge.db"); copyFileSync(join(import.meta.dirname, "fixtures/sqlite-upgrade", release, "bridge.db"), file);
+  const original = readFileSync(file), launch = vi.fn(async () => { throw new Error("daemon launch forbidden"); });
+  const node = new LiveBridgeNode({ pipePath: resolvePipePath(dir, {}), dbPath: file, token: "isolated-fixture-token", agent: "codex", name: "new-client", cwd: dir,
+    autoWake: false, daemon: { cli: "never-launch", launch }, log: nullLogger }); cleanup.push(() => node.stop()); cleanup.push(() => closeMetadataDb(dir));
+  await expect(node.start()).rejects.toThrow(/explicit offline migration/); expect(launch).not.toHaveBeenCalled();
+  expect(() => new MessageStore(file, nullLogger)).toThrow(/explicit offline migration/);
+  expect(readFileSync(file).equals(original)).toBe(true); expect(existsSync(join(dir, ".migration-snapshots"))).toBe(false);
+  const db = new DatabaseSync(file);
+  try {
+    expect(db.prepare("PRAGMA user_version").get()!.user_version).toBe(version);
+    const rows = db.prepare("SELECT * FROM messages").all();
+    expect(() => migrateMessageSchema(db, file, true, nullLogger)).toThrow(/explicit offline migration/);
+    expect(() => migrateMessageSchema(db, file, true, nullLogger, { kind: "offline-isolated", home })).toThrow(/explicit offline migration/);
+    migrateMessageSchema(db, file, true, nullLogger, { kind: "offline-isolated", home: dir });
+    expect(db.prepare("SELECT * FROM messages").all()).toEqual(rows);
+    expect(db.prepare("PRAGMA user_version").get()!.user_version).toBe(14);
+    expect(db.prepare("PRAGMA integrity_check").get()!.integrity_check).toBe("ok");
+  } finally { db.close(); }
+});
+
+it("rechecks admission when a current store is restored to a lease-aware older schema before writable open", () => {
+  const dir = join(home, "restore-race"), other = join(home, "restore-source"); mkdirSync(dir); mkdirSync(other);
+  const file = join(dir, "bridge.db"), replacement = join(other, "bridge.db");
+  for (const path of [file, replacement]) {
+    const store = new MessageStore(path, nullLogger); store.insert({ ...message(peer("historical"), "unknown"), id: "accepted-restore-bytes" }); store.close();
+  }
+  const older = new DatabaseSync(replacement); removeFixtureProvenance(older); older.exec("PRAGMA user_version=12; PRAGMA journal_mode=DELETE"); older.close();
+  const expected = readFileSync(replacement), retained = join(dir, "original-v13.db"), close = DatabaseSync.prototype.close;
+  let restored = false, reader: DatabaseSync | undefined;
+  const lease = join(dir, ".storage-users", `${process.pid}-legacy-restore-reader`);
+  const fault = vi.spyOn(DatabaseSync.prototype, "close").mockImplementation(function(this: DatabaseSync) {
+    close.call(this);
+    if (!restored) {
+      restored = true; renameSync(file, retained); renameSync(replacement, file);
+      writeFileSync(lease, "", { flag: "wx", mode: 0o600 }); reader = new DatabaseSync(file);
+      expect(reader.prepare("SELECT body FROM messages WHERE id='accepted-restore-bytes'").get()!.body).toBe("remote mail");
+    }
+  });
+  let opened: MessageStore | undefined;
+  try {
+    expect(() => { opened = new MessageStore(file, nullLogger); }).toThrow(/exclusion|owner.coordinated shutdown/i);
+    expect(restored).toBe(true); expect(readFileSync(file).equals(expected)).toBe(true);
+    expect(existsSync(join(dir, ".migration-snapshots"))).toBe(false); expect(existsSync(retained)).toBe(true);
+  } finally { fault.mockRestore(); opened?.close(); reader?.close(); if (existsSync(lease)) rmSync(lease); }
 });
 
 it.each(["wrong-copy", "registration-change"])("fences native ACK replay across %s", async change => {
@@ -851,7 +1426,7 @@ it("migrates intermediate schema11 through13 additively, rolls back interruption
   expect(db.prepare("SELECT * FROM message_frontends ORDER BY id").all()).toEqual(originalOwners);
   expect(readdirSync(join(host.dir, ".migration-snapshots")).length).toBeGreaterThan(0);
   migrateMessageSchema(db, host.db, true, nullLogger); migrateMessageSchema(db, host.db, true, nullLogger);
-  expect(db.prepare("PRAGMA user_version").get()!.user_version).toBe(13);
+  expect(db.prepare("PRAGMA user_version").get()!.user_version).toBe(14);
   expect(db.prepare("SELECT * FROM messages ORDER BY id").all()).toEqual(originalRows);
   expect(db.prepare("SELECT id,recipient,binding,state,identity FROM message_frontends ORDER BY id").all()).toEqual(originalOwners);
   expect(db.prepare("SELECT owner FROM message_frontends WHERE id=?").get(nativeId)!.owner).toBe("");
@@ -1230,7 +1805,7 @@ it("migrates v9 additively without attributing legacy rows and retains ownership
   b = await persistentHost("pc-b");
   const current = new DatabaseSync(file, { readOnly: true });
   try {
-    expect(current.prepare("PRAGMA user_version").get()!.user_version).toBe(13);
+    expect(current.prepare("PRAGMA user_version").get()!.user_version).toBe(14);
     expect(current.prepare("SELECT * FROM messages").all()).toEqual(before);
   } finally { current.close(); }
   const hosted = await b.register(binding("b", "original-thread"));
@@ -1318,6 +1893,8 @@ vi.mock("../src/core/muse-context.js", async original => ({
 let home: string;
 let cleanup: (() => void | Promise<void>)[];
 beforeEach(() => {
+  vi.stubEnv("AGENT_BRIDGE_HISTORY_INGEST", "0");
+  vi.stubEnv("AGENT_BRIDGE_AUTO_BACKUP", "0");
   vi.spyOn(process, "kill").mockImplementation((_pid, signal) => { if (signal === 0) return true; throw new Error("process termination forbidden in fixture"); });
   mkdirSync(process.env.AGENT_BRIDGE_TEST_ROOT!, { recursive: true });
   home = mkdtempSync(join(process.env.AGENT_BRIDGE_TEST_ROOT!, "t3-cross-machine-"));
@@ -1332,7 +1909,7 @@ afterEach(async () => {
   expect(childProcess.fork).not.toHaveBeenCalled();
   expect(childProcess.spawnSync).not.toHaveBeenCalled();
   expect(childProcess.execSync).not.toHaveBeenCalled();
-  vi.clearAllMocks(); vi.restoreAllMocks();
+  vi.clearAllMocks(); vi.restoreAllMocks(); vi.unstubAllEnvs();
 });
 
 const binding = (host: "a" | "b", threadId: string): T3Binding => ({
@@ -1346,6 +1923,7 @@ function proof(message: BridgeMessage): NonNullable<import("../src/core/protocol
   return message.recipientMailbox ? { [message.id]: message.recipientMailbox } : {};
 }
 function removeFixtureProvenance(db: DatabaseSync) {
+  db.exec("DROP TABLE IF EXISTS job_mail_grants; DROP TABLE IF EXISTS job_mail_succession; DROP TABLE IF EXISTS job_mail_retirements");
   db.exec("DROP INDEX IF EXISTS idx_message_mailbox_owner; DROP TABLE IF EXISTS mailbox_store");
   for (const [table, columns] of [["message_frontends", ["mailbox", "source"]], ["send_intents", ["namespace"]], ["send_destinations", ["namespace"]], ["job_delivery_routes", ["namespace"]]] as const)
     for (const column of columns) if (db.prepare(`PRAGMA table_info(${table})`).all().some(row => row.name === column)) db.exec(`ALTER TABLE ${table} DROP COLUMN ${column}`);

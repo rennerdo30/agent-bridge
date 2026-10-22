@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { z } from "zod";
 import { BridgeNode } from "../src/core/node.js";
+import { retainFixtureRunner } from "./owned-mail.js";
 import { BridgeClient } from "../src/core/client.js";
 import { PROTOCOL_VERSION } from "../src/core/constants.js";
 import { nullLogger } from "../src/core/logger.js";
@@ -44,6 +45,7 @@ async function runner(id: string, agent: "codex" | "opencode", supervisor: strin
     agent: "other", jobAgent: agent, jobOwner: "supervisor-session", jobParent: supervisor, id: `job:${id}`,
     cwd: env.home, autoWake: false, canHostBroker: false, log: nullLogger });
   cleanups.push(() => node.stop());
+  retainFixtureRunner(env.home, { id, name: job.name, agent, owner: supervisor, supervisor: "supervisor-session", cwd: env.home });
   await node.start();
   // Exercise replay arriving before the resumed task has its live parent link.
   if (replayId) await until(() => node.hasSeen(replayId));

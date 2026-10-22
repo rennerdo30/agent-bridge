@@ -144,7 +144,7 @@ describe("durable notification waits", () => {
 
   it("can cancel and archive a subscription without consuming unread mail", async () => {
     const client = await clientFor(); await call(client, { from: "mac/peer" });
-    const id = store.pending(node)[0]!.id; const message = mail(); node.deliverLocal(message);
+    const id = store.pending(node)[0]!.id; const message = node.prepareLocalMessage(mail()); node.deliverLocal(message);
     expect(textOf(await call(client, { resume_id: id, mode: "cancel" }))).toContain("cancelled and archived");
     expect(store.pending(node)).toEqual([]); expect(node.unread()).toEqual([message]);
     expect(shouldWakeClaudeMessage(node, cfg, message)).toBe(false);

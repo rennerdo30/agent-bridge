@@ -11,6 +11,8 @@ import { archiveJobs } from "../src/core/job-archive.js";
 import { readJobVersions } from "../src/core/job-archive-index.js";
 import { nullLogger } from "../src/core/logger.js";
 import { MessageStore } from "../src/core/store.js";
+import { fixtureJobReport, fixtureNodePeer, markOwned, unreadOwned } from "./owned-mail.js";
+import { nativeOwner } from "../src/core/recipient-ownership.js";
 import { RootConcurrency } from "../src/core/root-concurrency.js";
 import { ResourceSlots } from "../src/core/resource-slots.js";
 import { publishApproval, listPendingApprovals, newApprovalId, answerPendingApproval } from "../src/core/relay.js";
@@ -30,6 +32,7 @@ let ui: Awaited<ReturnType<typeof startUi>> | undefined;
 const path = () => join(env.home, JOBS_FILE);
 const record = (id: string, more: Record<string, unknown> = {}) => ({ id, name: `codex-job-${id}`, agent: "codex", model: null, prompt: "Task", startedAt: 100,
   status: "done", owner: "claude-source", supervisor: "source-root", rootSession: "source-root", rootName: "claude-source",
+  deliveryOwner: source.mailboxOwner()!, deliveryOwners: { [source.name]: source.mailboxOwner()!, [target.name]: target.mailboxOwner()! },
   sessionId: `thread-${id}`, workdir: env.home, worktree: null, args: { title: `Task ${id}`, send_to: ["claude-source", "other-session"] }, ...more });
 const save = (jobs: unknown[]) => writeFileSync(path(), JSON.stringify({ version: 2, preserved: "extension", jobs }));
 const manager = (node: BridgeNode) => {
@@ -96,7 +99,11 @@ describe("local subagent ownership handoff", () => {
     source.on("message", (m) => { if (m.from.id === "job:a") deliveries.push(m.id); });
     const later = await runner.send({ to: source.name, body: "Later report", conversationId: "job-a" });
     expect(later.deliveredTo).toEqual([target.name]);
-    expect(await runner.messageReceipt(first.id)).toEqual(expect.arrayContaining([{ recipient: source.name, readAt: expect.any(Number) }, { recipient: target.name, readAt: null }]));
+    // Retirement is not consumption by the former supervisor.
+    expect(await runner.messageReceipt(first.id)).toEqual(expect.arrayContaining([{ recipient: source.name, readAt: null }, { recipient: target.name, readAt: null }]));
+    const retained = new DatabaseSync(env.db, { readOnly: true });
+    try { expect(retained.prepare("SELECT recipient,generation,successor_generation FROM job_mail_retirements WHERE id=?").all(first.id)).toEqual([{ recipient: source.name, generation: 0, successor_generation: 1 }]); }
+    finally { retained.close(); }
     expect((await source.send({ to: runner.name, body: '{"type":"attach"}', conversationId: "jobctl-a" })).deliveredTo).toEqual([runner.name]);
     expect((await target.send({ to: runner.name, body: '{"type":"attach"}', conversationId: "jobctl-a" })).deliveredTo).toEqual([runner.name]);
     await runner.send({ to: source.name, body: "Status note", conversationId: "job-a:note" });
@@ -110,7 +117,7 @@ describe("local subagent ownership handoff", () => {
     expect(fallback.deliveredTo).toEqual([source.name]);
     await until(() => source.unread().some((m) => m.body === "Fallback report"));
     source.markRead(source.unread().map((m) => m.id));
-    const returned = env.node("codex-target", "codex"); await returned.start();
+    const returned = env.node("codex-target", "codex"); await returned.setSessionId(target.currentSessionId!); await returned.start();
     const resumed = await runner.send({ to: source.name, body: "Primary returned", conversationId: "job-a" });
     expect(resumed.deliveredTo).toEqual([returned.name]);
     expect(readStore(path())[0]!.owner).toBe(returned.name);
@@ -127,15 +134,17 @@ describe("local subagent ownership handoff", () => {
   it("returns unread mail to former-master history without replaying a consumed envelope", () => {
     const store = new MessageStore(":memory:", nullLogger);
     try {
-      store.insert({ id: "roundtrip", from: { id: "job:a", name: "codex-job-a", agent: "codex" }, to: source.name, recipient: source.name, body: "Pending evidence", conversationId: "job-a", replyTo: null, hop: 0, createdAt: 1, readAt: null });
-      expect(store.handoffMail(source.name, target.name, "a", 2).map((m) => m.id)).toEqual(["roundtrip"]);
-      expect(store.unread(source.name, 10)).toHaveLength(0);
-      expect(store.handoffMail(target.name, source.name, "a", 3).map((m) => m.id)).toEqual(["roundtrip"]);
-      expect(store.unread(target.name, 10)).toHaveLength(0);
-      expect(store.unread(source.name, 10)).toMatchObject([{ id: "roundtrip", readAt: null }]);
-      store.markRead(source.name, ["roundtrip"], 4);
-      expect(store.handoffMail(source.name, target.name, "a", 5)).toEqual([]);
-      expect(store.unread(target.name, 10)).toEqual([]);
+      const a = fixtureNodePeer(store, source, "claude"), b = fixtureNodePeer(store, target, "codex");
+      const report = fixtureJobReport(store, record("a"), a, a, { id: "roundtrip", from: { id: "job:a", name: "codex-job-a", agent: "codex" }, to: source.name, recipient: source.name, body: "Pending evidence", conversationId: "job-a", replyTo: null, hop: 0, createdAt: 1, readAt: null });
+      store.insertJobDelivery(report.message, report.grant);
+      expect(store.handoffMail(source.name, target.name, "a", 2, false, b.frontend, nativeOwner(b), () => report.successor(b)).map((m) => m.id)).toEqual(["roundtrip"]);
+      expect(unreadOwned(store, a, 10)).toHaveLength(0);
+      expect(store.handoffMail(target.name, source.name, "a", 3, false, a.frontend, nativeOwner(a), () => report.successor(a)).map((m) => m.id)).toEqual(["roundtrip"]);
+      expect(unreadOwned(store, b, 10)).toHaveLength(0);
+      expect(unreadOwned(store, a, 10)).toMatchObject([{ id: "roundtrip", readAt: null }]);
+      expect(markOwned(store, a, ["roundtrip"], 4)).toBe(1);
+      expect(store.handoffMail(source.name, target.name, "a", 5, false, b.frontend, nativeOwner(b), () => report.successor(b))).toEqual([]);
+      expect(unreadOwned(store, b, 10)).toEqual([]);
     } finally { store.close(); }
   });
 

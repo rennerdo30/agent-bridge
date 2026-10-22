@@ -3,6 +3,8 @@ import { closeSync, existsSync, fsyncSync, linkSync, lstatSync, mkdirSync, openS
 import { dirname, join } from "node:path";
 import { processStartMs } from "./process-identity.js";
 import { ownerGone as bootOwnerGone } from "./boot-time.js";
+import { PROTOCOL_VERSION } from "./constants.js";
+import { SQLITE_STORE_VERSION } from "./store-version.js";
 
 const LOCK_FILE = ".maintenance-lock";
 const USERS_DIR = ".storage-users";
@@ -12,7 +14,7 @@ const NESTED_STORE_DIRS = new Set(["local-result-receipts"]);
 const START_SLACK_MS = 2_000;
 
 /** Owner identity written into the maintenance lock and every storage lease. */
-interface LockOwner { pid: number; nonce: string; createdAt: number }
+interface LockOwner { pid: number; nonce: string; createdAt: number; mailboxProtocol?: number; mailboxSchema?: number }
 
 type LeaseFileIdentity = { dev: bigint; ino: bigint };
 type LeaseCapture = {
@@ -25,6 +27,7 @@ type LeaseCapture = {
 };
 const leaseCaptures = new WeakMap<() => void, LeaseCapture>();
 const retainedLeaseCaptures = new Set<LeaseCapture>();
+const maintenanceWitnesses = new WeakMap<() => void, { path: string; nonce: string }>();
 
 function leaseFileIdentity(path: string): LeaseFileIdentity | null {
   try {
@@ -59,7 +62,7 @@ export function storageLeaseObservation(release: () => void) {
 }
 
 function writeOwner(path: string, capture?: LeaseCapture): LockOwner {
-  const owner: LockOwner = { pid: process.pid, nonce: randomUUID(), createdAt: Date.now() };
+  const owner: LockOwner = { pid: process.pid, nonce: randomUUID(), createdAt: Date.now(), mailboxProtocol: PROTOCOL_VERSION, mailboxSchema: SQLITE_STORE_VERSION };
   if (capture) capture.owner = owner;
   const fd = openSync(path, "wx", 0o600);
   if (capture) capture.descriptor = fd;
@@ -119,9 +122,13 @@ function maintenanceBusy(path: string): Error {
 }
 
 /** Writers register before opening data. The second check closes the restore/open race. */
-export function storageLease(home: string): () => void {
+export function storageLease(home: string, maintenance?: () => void): () => void {
   const lock = join(home, LOCK_FILE);
-  if (existsSync(lock) && !recoverStaleLock(lock) && existsSync(lock)) throw maintenanceBusy(lock);
+  const ownsMaintenance = () => {
+    const witness = maintenance && maintenanceWitnesses.get(maintenance);
+    return !!witness && witness.path === lock && readOwner(lock)?.nonce === witness.nonce;
+  };
+  if (existsSync(lock) && !ownsMaintenance() && !recoverStaleLock(lock) && existsSync(lock)) throw maintenanceBusy(lock);
   const dir = join(home, USERS_DIR);
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   const path = join(dir, `${process.pid}-${randomUUID()}`);
@@ -145,7 +152,7 @@ export function storageLease(home: string): () => void {
   };
   const release = () => remove(true);
   leaseCaptures.set(release, capture);
-  if (existsSync(lock)) {
+  if (existsSync(lock) && !ownsMaintenance()) {
     remove(false);
     throw maintenanceBusy(lock);
   }
@@ -156,6 +163,21 @@ export function storeHome(path: string): string {
   const dir = dirname(path);
   if (NESTED_STORE_DIRS.has(dirname(dir).split(/[\\/]/).at(-1) ?? "")) return dirname(dirname(dir));
   return SCOPED_STORE_DIRS.has(dir.split(/[\\/]/).at(-1) ?? "") ? dirname(dir) : dir;
+}
+
+/** Read-only census, including readers which opened SQLite before binding a
+ * transport. An absent compatibility declaration never proves a safe reader.
+ * Declarations concern this local executable's storage contract, not mail ownership. */
+export function assertCompatibleMailboxReaders(home: string): void {
+  const dir = join(home, USERS_DIR);
+  for (const file of existsSync(dir) ? readdirSync(dir) : []) {
+    const path = join(dir, file), pid = Number(file.split("-")[0]);
+    const owner = readOwner(path);
+    if (owner?.pid === pid && owner.mailboxProtocol === PROTOCOL_VERSION && owner.mailboxSchema === SQLITE_STORE_VERSION) continue;
+    const createdAt = owner?.createdAt ?? statSync(path).mtimeMs;
+    if (Number.isSafeInteger(pid) && pid > 0 && ownerGone(pid, createdAt)) continue;
+    throw Object.assign(new Error(`Mailbox reader compatibility is unproven (lease ${path}); owner-coordinated shutdown is required before sharing this data home.`), { code: "STORE_READER_ACTIVE" });
+  }
 }
 
 /** Never expires a live process's lease by age. A lease is stale only when its process is gone or its PID
@@ -170,6 +192,7 @@ export function maintenanceLock(home: string): () => void {
     owner = writeOwner(path);
   }
   const release = () => { if (readOwner(path)?.nonce === owner.nonce) rmSync(path, { force: true }); };
+  maintenanceWitnesses.set(release, { path, nonce: owner.nonce });
   try {
     const dir = join(home, USERS_DIR);
     for (const file of existsSync(dir) ? readdirSync(dir) : []) {

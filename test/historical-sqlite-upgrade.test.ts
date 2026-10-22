@@ -18,8 +18,8 @@ const captures = (JSON.parse(readFileSync(join(fixtures, "manifest.json"), "utf8
 const digest = (data: string | Uint8Array) => createHash("sha256").update(data).digest("hex");
 const quote = (name: string) => `"${name.replaceAll('"', '""')}"`;
 const encode = (row: unknown) => JSON.stringify(row, (_key, value) => value instanceof Uint8Array ? { blob: Buffer.from(value).toString("base64") } : typeof value === "bigint" ? { integer: String(value) } : value);
-function table(db: DatabaseSync, name: string): Table {
-  const rows = db.prepare(`SELECT * FROM ${quote(name)}`).all().map(encode).sort();
+function table(db: DatabaseSync, name: string, columns?: string[]): Table {
+  const rows = db.prepare(`SELECT ${columns ? columns.map(quote).join(",") : "*"} FROM ${quote(name)}`).all().map(encode).sort();
   return { name, count: rows.length, sha256: digest(JSON.stringify(rows)) };
 }
 function paths(folder: string): string[] {
@@ -44,12 +44,16 @@ it.each(captures)("preserves every captured table through the $tag schema upgrad
   const db = new DatabaseSync(env.db);
   try {
     expect(Number(db.prepare("PRAGMA user_version").get()!.user_version)).toBe(original.version);
+    const originalColumns = new Map(original.tables.map(before => [before.name, db.prepare(`PRAGMA table_xinfo(${quote(before.name)})`).all().filter(row => row.hidden === 0).map(row => String(row.name))]));
+    const preserved = (before: Table) => table(db, before.name, originalColumns.get(before.name));
     for (const before of original.tables) expect(table(db, before.name)).toEqual(before);
-    migrateMessageSchema(db, env.db, true, nullLogger);
+    migrateMessageSchema(db, env.db, true, nullLogger, { kind: "offline-isolated", home: env.home });
     expect(Number(db.prepare("PRAGMA user_version").get()!.user_version)).toBe(SQLITE_STORE_VERSION);
-    for (const before of original.tables) expect(table(db, before.name)).toEqual(before);
-    migrateMessageSchema(db, env.db, true, nullLogger);
-    for (const before of original.tables) expect(table(db, before.name)).toEqual(before);
+    for (const before of original.tables) expect(preserved(before)).toEqual(before);
+    migrateMessageSchema(db, env.db, true, nullLogger, { kind: "offline-isolated", home: env.home });
+    for (const before of original.tables) expect(preserved(before)).toEqual(before);
+    // Added provenance cannot retroactively grant consumption to old routes.
+    expect(db.prepare("SELECT DISTINCT namespace FROM job_delivery_routes").all().every(row => row.namespace === "")).toBe(true);
     const snapshots = paths(env.home).filter((path) => path !== env.db && !path.endsWith("archive.db") && readFileSync(path).subarray(0, 16).toString() === "SQLite format 3\0");
     expect(snapshots.some((path) => {
       const backup = new DatabaseSync(path, { readOnly: true });
@@ -89,6 +93,17 @@ it.each(captures)("keeps all $tag messages and archival metadata readable and se
   const oldCold = archiveFile ? new DatabaseSync(join(env.home, "archive.db"), { readOnly: true }) : null;
   const cold = oldCold?.prepare("SELECT * FROM messages").all() ?? [];
   oldCold?.close();
+  const originalVersion = capture.files.find(file => file.name === "bridge.db")!.version;
+  if (originalVersion === 2 || originalVersion === 3) {
+    const bytes = readFileSync(env.db);
+    expect(() => new MessageStore(env.db, nullLogger)).toThrow(/explicit offline migration/);
+    expect(readFileSync(env.db).equals(bytes)).toBe(true);
+    // This fixture home is an explicit isolated offline copy, not inferred safe
+    // from missing endpoints. All captured original bytes are checked below.
+    const offline = new DatabaseSync(env.db);
+    try { migrateMessageSchema(offline, env.db, true, nullLogger, { kind: "offline-isolated", home: env.home }); }
+    finally { offline.close(); }
+  }
   const store = new MessageStore(env.db, nullLogger);
   const broker = new Broker(env.pipe, store, nullLogger, "historical-fixture-token");
   const db = new DatabaseSync(env.db), archive = new DatabaseSync(join(env.home, "archive.db"), { readOnly: true });

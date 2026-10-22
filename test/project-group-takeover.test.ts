@@ -21,6 +21,9 @@ import { unquarantined } from "../src/core/sqlite-maintenance.js";
 import { MessageStore } from "../src/core/store.js";
 import { nullLogger } from "../src/core/logger.js";
 import { ReadJournal } from "../src/core/read-journal.js";
+import { readJournalIdentities } from "../src/core/read-journal.js";
+import { fixturePeer, markOwned, ownedMessage } from "./owned-mail.js";
+import { ownershipFromKey } from "../src/core/recipient-ownership.js";
 
 const SERVER = join(import.meta.dirname, "..", "plugins", "claude", "dist", "server.mjs");
 function linkReady(path: string): boolean {
@@ -308,6 +311,21 @@ function finalReportDiagnostics(home: string, jobs: readonly TakeoverJob[], prim
       const reads = messageId ? select("SELECT identity,read_at FROM bridge_read_receipts WHERE message_id=? LIMIT 4", messageId) : undefined;
       const identities = [primary, "codex-master"].map(name => ({ label: name, hash: createHash("sha256").update(`name:${name}`).digest("hex") }));
       identities.push({ label: "fixture-thread", hash: createHash("sha256").update("session:takeover-thread").digest("hex") });
+      if (messageId && db) {
+        // Diagnostics identify current receipts from their complete retained
+        // per-copy owner and namespace, rather than inferring read authority
+        // from a name. Historical marks above remain visible as evidence.
+        const proofs = select("SELECT recipient,state,owner,mailbox FROM message_frontends WHERE id=? LIMIT 4", messageId);
+        if ("rows" in proofs) for (const proof of proofs.rows!) {
+          try {
+            const evidence = ownershipFromKey(`${proof.state === "hosted" ? "hosted" : "native"}:${proof.owner}`);
+            const generation = db.prepare("SELECT generation FROM job_mail_succession WHERE id=? AND recipient=? ORDER BY generation DESC LIMIT 1").get(messageId, proof.recipient!);
+            for (const identity of readJournalIdentities(String(proof.recipient), null, evidence.recipientFrontend, evidence.recipientNative, JSON.parse(String(proof.mailbox)),
+              generation ? { grant: messageId, generation: Number(generation.generation) } : undefined))
+              identities.push({ label: String(recipient(proof.recipient)), hash: createHash("sha256").update(identity).digest("hex") });
+          } catch { /* Invalid historical evidence is not current read authority. */ }
+        }
+      }
       return { name: job.name, state: {
         status: state && ["running", "done", "failed", "cancelled", "interrupted"].includes(state.status) ? state.status : "unknown",
         pid: diagnosticPid(state?.pid), alive: state?.pid ? pidAlive(state.pid) : false,
@@ -399,19 +417,21 @@ it("observes a stored final and consumption receipts on a separate read-only con
   const report = "Subagent codex-job-00ab0292 (codex) done after 0s.\n\nREPORT_BODY_EXCLUDED_FROM_DIAGNOSTICS";
   const store = new MessageStore(env.db, nullLogger);
   try {
+    const recipient = fixturePeer(store, "codex-master", { agent: "codex" });
     writeRunnerState(env.home, job.id, { pid: process.pid, peer: job.name, status: "done", updatedAt: Date.now(), report, reportId, delivered: false });
     expect(finalReportsReady(env.home, [job])).toBe(false);
     const id = completionMessageId(`job:${job.id}`, reportId);
-    store.insertJobDelivery({ id, from: { id: `job:${job.id}`, name: job.name, agent: "codex" }, to: "codex-master", recipient: "codex-master",
-      conversationId: `job-${job.id}:fallback`, replyTo: null, hop: 0, body: report, createdAt: Date.now(), readAt: null });
+    store.insertJobDelivery(ownedMessage(store, recipient, { id, from: { id: `job:${job.id}`, name: job.name, agent: "codex" }, to: "codex-master", recipient: "codex-master",
+      conversationId: `job-${job.id}:fallback`, replyTo: null, hop: 0, body: report, createdAt: Date.now(), readAt: null }));
     expect(readRunnerState(env.home, job.id)?.delivered).toBe(false);
     expect(finalReportsReady(env.home, [job])).toBe(true);
     const pending = finalReportDiagnostics(env.home, [job], "opencode-master", "opencode", 0, "");
     expect(pending.jobs[0]?.envelopes).toEqual({ rows: [{ recipient: "codex-master", readAt: null }] });
     expect(pending.jobs[0]?.routes).toEqual({ rows: [{ recipient: "codex-master", consumedAt: null }] });
     const at = Date.now();
-    store.markRead("codex-master", [id], at);
-    new ReadJournal(env.home).append("name:codex-master", [id]);
+    expect(markOwned(store, recipient, [id], at)).toBe(1);
+    const copy = store.byId(id)!;
+    for (const identity of readJournalIdentities(recipient.name, recipient.sessionId, recipient.frontend, copy.recipientNative, copy.recipientMailbox, copy.jobRoute)) new ReadJournal(env.home).append(identity, [id]);
     const consumed = finalReportDiagnostics(env.home, [job], "opencode-master", "opencode", 1, "");
     expect(consumed.jobs[0]?.envelopes).toEqual({ rows: [{ recipient: "codex-master", readAt: at }] });
     expect(consumed.jobs[0]?.routes).toEqual({ rows: [{ recipient: "codex-master", consumedAt: at }] });

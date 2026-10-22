@@ -14,6 +14,7 @@ import { MessageStore } from "../src/core/store.js";
 import { loadOrCreateToken } from "../src/core/token.js";
 import { daemonIdleExitMs } from "../src/cli/broker-daemon.js";
 import { makeEnv, until, type TestEnv } from "./helpers.js";
+import { retainFixtureRunner } from "./owned-mail.js";
 
 let env: TestEnv, broker: Broker | undefined, clients: BridgeClient[];
 beforeEach(() => { env = makeEnv(); clients = []; broker = undefined; });
@@ -24,7 +25,7 @@ afterEach(async () => {
 });
 
 async function start(handover?: (target: unknown) => void, now: () => number = Date.now) {
-  broker = new Broker(env.pipe, new MessageStore(env.db, nullLogger), nullLogger, loadOrCreateToken(env.home), now);
+  broker = new Broker(env.pipe, new MessageStore(env.db, nullLogger), nullLogger, loadOrCreateToken(env.home), now, join(env.home, "jobs.json"));
   if (handover) { broker.setHostingMode("daemon"); broker.onNewerClient(handover); }
   await broker.listen();
   return broker;
@@ -37,7 +38,12 @@ async function connect(auth = true, canHost = true) {
 // A foreign PID: the idle check deliberately ignores registrations from the broker's own process.
 // canHost: true is what a node that can demand-start its own daemon sends; CLI commands and job runners omit it.
 const hello = (name: string, version = APP_VERSION, extra: Record<string, unknown> = {}, canHost = true) => ({ protocol: PROTOCOL_VERSION, token: loadOrCreateToken(env.home),
-  ...(canHost ? { canHost: true } : {}), peer: { id: randomUUID(), name, agent: "codex" as const, cwd: env.home, pid: 424242, agentPid: null, sessionId: null, startedAt: Date.now(), autoWake: false, version, ...extra } });
+  ...(canHost ? { canHost: true } : {}), peer: { id: randomUUID(), name, agent: "codex" as const, cwd: env.home, pid: 424242, agentPid: null, sessionId: `fixture-session:${name}`, startedAt: Date.now(), autoWake: false, version, ...extra } });
+
+function runnerHello(name: string, version: string) {
+  retainFixtureRunner(env.home, { id: name, name, agent: "codex", owner: "fixture-supervisor", supervisor: "fixture-supervisor-session", cwd: env.home });
+  return hello(name, version, { id: `job:${name}`, agent: "other", jobAgent: "codex", jobOwner: "fixture-supervisor-session" });
+}
 
 describe("release comparison", () => {
   it("treats only a strictly newer x.y.z as newer", () => {
@@ -113,7 +119,7 @@ describe("daemon handover", () => {
     const cli = await connect(true, false);
     await expect(cli.request("hello", hello("newer-cli", "999.0.0", {}, false))).resolves.toMatchObject({ brokerVersion: APP_VERSION });
     const job = await connect();
-    await expect(job.request("hello", hello("newer-job-runner", "999.0.0", { jobAgent: "codex" }))).resolves.toMatchObject({ brokerVersion: APP_VERSION });
+    await expect(job.request("hello", runnerHello("newer-job-runner", "999.0.0"))).resolves.toMatchObject({ brokerVersion: APP_VERSION });
     expect(handover).not.toHaveBeenCalled(); expect(broker!.isDraining).toBe(false);
     expect(existsSync(join(env.home, HANDOVER_MARKER_FILE))).toBe(false);
   });
@@ -153,7 +159,7 @@ describe("daemon handover", () => {
     await start(handover);
     for (const [name, version, extra] of [["same", APP_VERSION, {}], ["older", "0.1.0", {}], ["newer-job", "999.0.0", { jobAgent: "codex" }]] as const) {
       const client = await connect();
-      await expect(client.request("hello", hello(name, version, extra))).resolves.toMatchObject({ brokerVersion: APP_VERSION });
+      await expect(client.request("hello", "jobAgent" in extra ? runnerHello(name, version) : hello(name, version, extra))).resolves.toMatchObject({ brokerVersion: APP_VERSION });
     }
     expect(handover).not.toHaveBeenCalled(); expect(broker!.isDraining).toBe(false);
     await broker!.close(); broker = undefined;

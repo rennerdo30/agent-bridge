@@ -1,5 +1,6 @@
 import { canonicalProjectRoot, migrateProjectJobs } from "../core/project-identity.js";
-import { canControlJob } from "../core/job-ownership.js";
+import { canControlJob, primaryFor } from "../core/job-ownership.js";
+import { jobMailDraftDigest, makeJobMailGrant, type JobMailDraft } from "../core/job-mail-routing.js";
 import { confirmUsageAdmission, currentUsage, holdUsageSubmission, settleUsageAttempt, usageContinuationMessage, usageRefused } from "../core/usage.js";
 import { createHash, randomUUID } from "node:crypto";
 import { worktreeProcesses, worktreeProcessReport } from "../core/worktree-processes.js";
@@ -18,7 +19,7 @@ import { isPureAcknowledgement } from "../core/job-messaging.js";
 import type { Worktree } from "../core/worktree.js";
 import { assertWritableStore, backupPath, isRecord, JSON_STORE_VERSION, mergeStoreFields, readJsonStore, retainBackups, retentionLimit, writeJsonStore } from "../core/json-store.js";
 import { changedJobArgs, JOB_SETTING_KEYS, type JobSettings } from "./job-settings.js";
-import { ownershipFromKey } from "../core/recipient-ownership.js";
+import { ownershipFromKey, recipientKey } from "../core/recipient-ownership.js";
 import { assertStoreUpgrade } from "../core/store-compatibility.js";
 import { archiveJobs, readArchivedJobs, readArchivedJobSnapshot } from "../core/job-archive.js";
 import { indexedJobProjectionCurrent, readIndexedJobs } from "../core/job-archive-index.js";
@@ -95,6 +96,9 @@ export interface Job {
   queuedMessages?: string[];
   /** Append-only inline envelopes: the broker can recover delivery after executor/connection loss. */
   deliveryHistory?: BridgeMessage[];
+  /** Authenticated local producer evidence captured with a fresh durable report;
+   * not a message/wire flag and never inferred for historical drafts. */
+  reportRouting?: Record<string, JobMailDraft>;
   /** Paired PC hosting this job; remote PIDs must never be signalled locally. */
   remote?: { host: string; name: string };
   /** Blocking remote asks forward next-turn settings through the same authenticated control path. */
@@ -643,8 +647,9 @@ export class JobManager {
           const envelopes = [...(Array.isArray(old.deliveryHistory) ? old.deliveryHistory as BridgeMessage[] : [])];
           for (const message of j.deliveryHistory ?? []) if (!envelopes.some(existing => isDeepStrictEqual(existing, message))) envelopes.push(message);
           j.deliveryHistory = envelopes;
+          j.reportRouting = { ...j.reportRouting, ...(isRecord(old.reportRouting) ? old.reportRouting as Record<string, JobMailDraft> : {}) };
           // A late report from an earlier turn may add delivery evidence, but cannot roll back a continuation.
-          if (typeof old.startedAt === "number" && j.startedAt < old.startedAt) return { ...old, deliveryHistory: j.deliveryHistory } as unknown as StoredJob;
+          if (typeof old.startedAt === "number" && j.startedAt < old.startedAt) return { ...old, deliveryHistory: j.deliveryHistory, reportRouting: j.reportRouting } as unknown as StoredJob;
         }
         if (isRecord(old) && Array.isArray(old.ownershipHistory) && old.ownershipHistory.length) {
           // Durable authority wins over a stale manager's in-memory snapshot.
@@ -2732,6 +2737,19 @@ export class JobManager {
     };
     if (job.deliveryOwner) m = { ...m, ...ownershipFromKey(job.deliveryOwner) };
     else if (m.recipient === this.node.name && this.node.prepareLocalMessage) m = this.node.prepareLocalMessage(m);
+    const creator = this.node.mailboxOwner?.(), originalOwner = recipientKey(m.recipientFrontend, m.recipientNative);
+    if (creator && originalOwner && this.node.prepareLocalMessage &&
+        [job.deliveryOwner, ...Object.values(job.deliveryOwners ?? {})].includes(creator)) {
+      const own = this.node.prepareLocalMessage({ ...m, recipient: this.node.name, recipientFrontend: undefined, recipientNative: undefined, recipientMailbox: undefined });
+      const project = canonicalProjectRoot(job.projectRoot ?? job.workdir ?? this.node.cwd ?? process.cwd());
+      const parent = job.parentJob && this.storePath ? readStoredJob(this.storePath, "", job.parentJob, this.log) : undefined;
+      const grant = project && makeJobMailGrant(job as unknown as Record<string, unknown>, creator, project, primaryFor(job as unknown as Record<string, unknown>), originalOwner, parent as unknown as Record<string, unknown> | undefined);
+      if (grant && own.recipientMailbox?.kind === "local") {
+        m = { ...m, senderOwner: `native:${grant.principal}`, senderMailbox: own.recipientMailbox, recipientMailbox: own.recipientMailbox };
+        job.reportRouting ??= {};
+        job.reportRouting[m.id] ??= { namespace: own.recipientMailbox.namespace, grant, digest: jobMailDraftDigest(m) };
+      }
+    }
     // AB-380: the original is what is stored durably (its flush sends a stub). The local path keeps no other copy,
     // so it gets a stub only once the full text is confirmed written to a file.
     if ((job.ownershipHistory?.length || (this.storePath && !this.lineage)) && this.node.reportInlineJob) {
@@ -2802,7 +2820,7 @@ function executorOffline(err: unknown): boolean {
   return (err as { code?: string } | null)?.code === "unknown_target";
 }
 
-type StoredJob = Pick<Job, "deliveryOwner" | "deliveryOwners" | "usageRunId" | "usagePendingControls" | "usagePendingHeld" | "usageAdmittedControls" | "providerUsage" | "executionPid" | "cancellingTurn" | "continuationFailure" | "waitingForStart" | "projectRoot" | "deliveryHistory" | "ownershipHistory" | "masters" | "executionOwner" | "queuedMessages" | "forwarded" | "id" | "name" | "agent" | "model" | "prompt" | "startedAt" | "status" | "pauseReason" | "pausedAt" | "pausePending" | "resumeRequested" | "sessionId" | "workdir" | "worktree" | "args" | "owner" | "supervisor" | "finishedAt" | "resultStored" | "reportId" | "host" | "remote" | "metadataVersion" | "parentJob" | "rootSession" | "rootName" | "percent" | "progressNote" | "etaAt" | "etaReportedAt">;
+type StoredJob = Pick<Job, "reportRouting" | "deliveryOwner" | "deliveryOwners" | "usageRunId" | "usagePendingControls" | "usagePendingHeld" | "usageAdmittedControls" | "providerUsage" | "executionPid" | "cancellingTurn" | "continuationFailure" | "waitingForStart" | "projectRoot" | "deliveryHistory" | "ownershipHistory" | "masters" | "executionOwner" | "queuedMessages" | "forwarded" | "id" | "name" | "agent" | "model" | "prompt" | "startedAt" | "status" | "pauseReason" | "pausedAt" | "pausePending" | "resumeRequested" | "sessionId" | "workdir" | "worktree" | "args" | "owner" | "supervisor" | "finishedAt" | "resultStored" | "reportId" | "host" | "remote" | "metadataVersion" | "parentJob" | "rootSession" | "rootName" | "percent" | "progressNote" | "etaAt" | "etaReportedAt">;
 
 /** Unknown fields survive upgrades; known next-turn settings also honor deletion. */
 function mergeJobFields(previous: Record<string, unknown>, next: Record<string, unknown>): Record<string, unknown> {
@@ -2852,6 +2870,7 @@ function toStored(j: Job): StoredJob {
     queuedMessages: [...j.queue],
     continuationFailure: j.continuationFailure,
     deliveryHistory: j.deliveryHistory,
+    reportRouting: j.reportRouting,
     forwarded: j.forwarded,
     supervisor: j.supervisor,
     metadataVersion: j.metadataVersion,

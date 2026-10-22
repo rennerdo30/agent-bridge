@@ -8,22 +8,26 @@ import { DatabaseSync } from "node:sqlite";
 import type { Logger } from "./logger.js";
 import { t3BindingSchema, type T3Binding } from "./t3-identity.js";
 import { mailboxSchema, verifiedNative, type MailboxProvenance } from "./recipient-ownership.js";
+import { jobRouteSchema, type JobRouteProof } from "./job-mail-routing.js";
 
 /** Old name/session marks remain ambiguous evidence only. A hosted identity is
  * independent of registration names and native provider session IDs. No legacy
  * record contains enough information to infer its complete frontend owner. */
-export function readJournalIdentities(_name: string, _sessionId?: string | null, frontend?: T3Binding, nativeIdentity?: string, mailbox?: MailboxProvenance): string[] {
+export function readJournalIdentities(_name: string, _sessionId?: string | null, frontend?: T3Binding, nativeIdentity?: string, mailbox?: MailboxProvenance, jobRoute?: JobRouteProof): string[] {
  const parsed = mailboxSchema.safeParse(mailbox);
  if (!parsed.success || parsed.data.kind !== "local") return [];
+ const route = jobRoute === undefined ? undefined : jobRouteSchema.safeParse(jobRoute);
+ if (route && !route.success) return [];
+ const suffix = route?.success ? `:job-route:v1:${route.data.grant}:${route.data.generation}` : "";
  const prefix = `mailbox:v1:${parsed.data.namespace}:`;
  if (frontend) {
   const binding = t3BindingSchema.parse(frontend);
-  return [`${prefix}frontend:v1:${JSON.stringify([binding.kind, binding.scope, binding.threadId, binding.providerInstanceId])}`];
+  return [`${prefix}frontend:v1:${JSON.stringify([binding.kind, binding.scope, binding.threadId, binding.providerInstanceId])}${suffix}`];
  }
  // Pre-v11 hosted and native readers shared these namespaces. Retain them for
  // inspection, but they cannot establish consumption by any successor.
  const native = verifiedNative(nativeIdentity);
- return native ? [`${prefix}native-owner:v2:${native}`] : [];
+ return native ? [`${prefix}native-owner:v2:${native}${suffix}`] : [];
 }
 
 /** The metadata store cannot open yet: its fail-closed migration lease needs this process's

@@ -12,6 +12,7 @@ import { recordStorePeer } from "../src/core/store-compatibility.js";
 import { loadOrCreateToken } from "../src/core/token.js";
 import { startUi } from "../src/cli/ui.js";
 import { makeEnv, until, type TestEnv } from "./helpers.js";
+import { retainFixtureRunner } from "./owned-mail.js";
 import { notifyOwnerQuestion } from "../src/core/notifications.js";
 import { loadConfig } from "../src/core/config.js";
 import { migrateHistoryStore } from "../src/core/history-store.js";
@@ -194,8 +195,9 @@ describe("owner dashboard API",() => {
     const node=env.node("codex-main","codex"); await node.start();
     await expect(node.askOwner({...question(),project:join(env.home,"foreign-project")})).rejects.toThrow("own project");
     for (const delegated of [{jobAgent:"codex" as const},{subagent:true}]) {
+      if (delegated.jobAgent) retainFixtureRunner(env.home, { id: "owner-question-child", name: "job-child", agent: "codex", owner: node.name, supervisor: node.currentSessionId!, cwd: env.home });
       const client=await BridgeClient.connect(env.pipe,nullLogger); closers.push(() => client.close());
-      const hello=client.request("hello",{protocol:PROTOCOL_VERSION,token:loadOrCreateToken(env.home),peer:{id:JSON.stringify(delegated),name:delegated.subagent ? "native-child" : "job-child",agent:"codex",cwd:env.home,pid:process.pid,agentPid:null,sessionId:null,startedAt:Date.now(),autoWake:false,...delegated}});
+      const hello=client.request("hello",{protocol:PROTOCOL_VERSION,token:loadOrCreateToken(env.home),peer:{id:delegated.jobAgent ? "job:owner-question-child" : JSON.stringify(delegated),name:delegated.subagent ? "native-child" : "job-child",agent:"codex",cwd:env.home,pid:process.pid,agentPid:null,sessionId:null,startedAt:Date.now(),autoWake:false,...delegated,...delegated.jobAgent ? {jobOwner:node.currentSessionId!,jobParent:node.name} : {}}});
       if (delegated.subagent) {
         // Native children stay inside their parent's bridge session (AB-268).
         await expect(hello).rejects.toThrow("Native subagents cannot register as top-level bridge sessions");

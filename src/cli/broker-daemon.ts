@@ -12,6 +12,7 @@ import { BridgeError } from "../core/protocol.js";
 import type { DashboardInfo } from "./dashboard.js";
 import { EndpointReservation } from "../core/endpoint-reservation.js";
 import { ownProcessIdentity } from "../core/process-identity.js";
+import { guardPriorEndpoints } from "../core/prior-endpoints.js";
 
 /** Bounded idle period: AGENT_BRIDGE_DAEMON_IDLE_EXIT_MS (1 s to 24 h) or the 10-minute default. */
 export function daemonIdleExitMs(value = process.env.AGENT_BRIDGE_DAEMON_IDLE_EXIT_MS): number {
@@ -22,6 +23,7 @@ export function daemonIdleExitMs(value = process.env.AGENT_BRIDGE_DAEMON_IDLE_EX
 /** Existing broker and services, owned by a demand-start process rather than an MCP session. */
 export async function runBrokerDaemon(home: string, pipe: string, log: Logger): Promise<number> {
   const token = loadOrCreateToken(home);
+  await guardPriorEndpoints(home, pipe, token, log);
   // A broker that is handing over (or exiting idle) still holds the endpoint and refuses with `handover`.
   // Wait, bounded, until it has released it; the exclusive bind below stays the only admission, so two
   // brokers never serve at once and this one never starts before the old one closed the pipe.
