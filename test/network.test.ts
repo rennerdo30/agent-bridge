@@ -373,7 +373,8 @@ describe("broker federation", () => {
         cleanup.push(() => n.stop());
         return n;
       };
-      return { admin, node, dir };
+      const refresh = () => { for (const link of ((broker as any).network as any).links.values()) link.refresh(); };
+      return { admin, node, dir, refresh };
     };
     const a = await make("windows");
     const b = await make("mac");
@@ -385,6 +386,8 @@ describe("broker federation", () => {
     expect((await sender.peers()).map((p) => p.name)).toContain("mac/codex-job");
     const claude = b.node("claude-session");
     await claude.start();
+    b.refresh(); // Drive the real advertisement path without waiting for its periodic timer.
+    await expect.poll(async () => (await sender.peers()).some(peer => peer.name === "mac/claude-session"), { timeout: 1000 }).toBe(true);
     claude.setActivity("idle");
     await claude.setWakePolicy(true, true);
     const wake = new RewakeEndpoint(home, claude, (m) => shouldWakeClaudeMessage(claude, DEFAULT_CONFIG, m), nullLogger);
@@ -418,7 +421,7 @@ describe("broker federation", () => {
     // A never-advertised exact remote name has no authenticated owner. Retain
     // offline durability by accepting the concrete copy before disconnection.
     await expect(sender.send({ to: "mac/never-seen", body: "unproven destination" })).rejects.toThrow(/ownership|unproven|advertised/i);
-    const later = b.node("later"); await later.start();
+    const later = b.node("later"); await later.start(); b.refresh();
     await expect.poll(async () => (await sender.peers()).some(peer => peer.name === "mac/later"), { timeout: 1000 }).toBe(true);
     const offlineArgs = { to: "mac/later", body: "saved offline", dedupeKey: randomUUID() };
     const offline = await sender.send(offlineArgs); await later.stop();
@@ -431,8 +434,8 @@ describe("broker federation", () => {
     expect(recipient.unread().filter((m) => m.body === "once")).toHaveLength(1);
     const remoteId = (await sender.peers()).find((p) => p.name === "mac/codex-job")!.id;
     expect(await sender.send({ to: remoteId, body: "by id" })).toMatchObject({ deliveredTo: ["mac/codex-job"] });
-    await later.start();
-    expect(await later.waitForMessage(2_000)).toMatchObject({ body: "saved offline", from: { name: "windows/claude-app" } });
+    const returnedLater = b.node("later"); await returnedLater.setSessionId(later.currentSessionId!); await returnedLater.start();
+    expect(await returnedLater.waitForMessage(2_000)).toMatchObject({ body: "saved offline", from: { name: "windows/claude-app" } });
     const source = join(home, "contract");
     mkdirSync(join(source, "empty"), { recursive: true });
     writeFileSync(join(source, "api.txt"), "contract v1");
