@@ -2,7 +2,7 @@
   "base": "fbc10e67c986091f6d68f036d8dcef335aee33b0",
   "sourceCommit": "9cfa6e73cd94f8a980411a764a4bb020650e1db6",
   "sourceTree": "96462ed6a46c7aa45fe425abef0c6bee4cf1607c",
-  "status": "parent review requested; baseline unchanged",
+  "status": "parent approved constructor-only attributable amendment",
   "reason": "Extract the existing inline report handler to onInlineJobReport. Its local job grant branch is retained. A remote proxy cancellation/status producer uses only its original authenticated local supervisor copy, full durable envelope equality and exact local mailbox proof, never a local native job succession grant.",
   "normalizedDelta": "t3-cross-machine-mobile-pin-r11.patch",
   "newHelper": "src/core/broker.ts:onInlineJobReport",
@@ -83,7 +83,10 @@
   "unchangedMethodCount": 12,
   "uiSha256": "f2a5b28254d4bb467f28bdee139e3b23bd9d4bd0c7c15fee116b4ed85a6ac385",
   "uiSourceChanged": false,
-  "baselineAmended": false,
+  "baselineAmended": true,
   "compatibility": "Protocol6/schema14, pairing and remote capabilities unchanged. Existing typed local source/recipient fields and durable deliveryHistory; no remote grant, downgrade, historical attribution, or installed migration. Missing original namespace proof remains pending.",
-  "behavioralAcceptance": "Not granted. Fresh independent review and hosted native/full/lifecycle remain parent gates."
+  "behavioralAcceptance": "Not granted. Fresh independent review and hosted native/full/lifecycle remain parent gates.",
+  "artifactCommit": "ce14f1bf9c68e21952ce8fbe6555ad690f351f92",
+  "artifactTree": "1ec099a1a18e25fc84a478311ba9018d6f481c2e",
+  "approval": "Parent reviewed exact normalized constructor extraction plus onInlineJobReport and JobManager.post at source9cfa6e73/tree96462ed6. Approve constructor-only attributable pin amendment; other12pins/UI/normalizer/assertions unchanged. This is not behavioral acceptance or blanket permission to move guarded logic outside pins."
 }

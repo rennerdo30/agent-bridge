@@ -75,6 +75,10 @@ retained and pending. No original record is deleted or rewritten to guess it.
 Only the broker constructor's inline-report handler is extracted into a helper;
 the new exact-proxy branch is in that helper. The other twelve protected methods,
 UI and normalizer remain unchanged. This is a new attributable protected delta:
-the baseline stays unchanged pending parent review of the frozen source,
-normalized patch and complete hash inventory. Prior constructor approval does
-not authorize this amendment.
+the baseline stayed unchanged until parent reviewed source freeze
+`9cfa6e73cd94f8a980411a764a4bb020650e1db6` / tree
+`96462ed6a46c7aa45fe425abef0c6bee4cf1607c`. The review artifacts were first
+committed separately in `ce14f1bf9c68e21952ce8fbe6555ad690f351f92`; they are
+absent from the source freeze commit. Parent then approved only this constructor
+extraction and its separate attributable pin amendment. Behavioral acceptance,
+fresh review and hosted gates remain pending.
