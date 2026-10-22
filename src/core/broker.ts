@@ -485,7 +485,7 @@ export class Broker {
         const args = askOwnerSchema.parse(a), root = this.groups.root(peer.cwd);
         if (!root || args.project && !this.groups.sameProject(args.project, peer.cwd)) throw new BridgeError("unauthorized", "File questions only for your own project.");
         const linkedJob = args.job ? this.mailboxJob(args.job) : undefined;
-        if (args.job && (!linkedJob || !this.durableRecipient(linkedJob, peer))) throw new BridgeError("unauthorized", "Linked job must belong to this project session.");
+        if (args.job && (!linkedJob || !this.groups.canControl(peer, linkedJob, this.localPeers()))) throw new BridgeError("unauthorized", "Linked job must belong to this project session.");
         const main = this.localPeers().find(p => this.groups.same(p.cwd, peer.cwd) && this.projectPeer(p).projectMain);
         let deskProject: string | undefined=args.deskProject;
         try { const linked=readJsonSnapshot(join(root,".pair-desk.json")).value; if (isRecord(linked) && typeof linked.project === "string") deskProject=linked.project; } catch { /* Desk linking is optional. */ }

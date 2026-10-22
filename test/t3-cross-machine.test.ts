@@ -350,6 +350,20 @@ it("validates owned runner project identity independently of disabled sharing", 
   expect((await registerJob(host, job)).peer.name).toBe(job.name);
 });
 
+it("retains an explicitly controlled remote-job owner question without granting local job ownership", async () => {
+  const host = await persistentHost("pc-a"), main = await host.register(binding("a", "main"), "main", host.dir, "main-session");
+  const base = durableJob(host, "source-proxy"), job = { ...base, args: { ...base.args, host: "paired-host" } };
+  recordJobs(host, [job]); projectSharing(host.dir, false);
+  const q = (await main.client.request("askOwner", { ...ownerQuestion(), project: host.dir, job: job.name })).question;
+  expect(q.askers[0]!.jobOwner).toBeUndefined();
+  await host.admin.request("answerOwner", { id: q.id, answer: { text: "retain source-side answer" } });
+  const replacement = await host.register(undefined, job.name, host.dir, "local-impostor");
+  expect((await replacement.client.request("pending", {})).filter(m => m.replyTo === q.id)).toEqual([]);
+  expect((await main.client.request("pending", {})).find(m => m.replyTo === q.id)?.body).toContain("retain source-side answer");
+  const retained = (host.broker as any).ownerQuestions().store.list().find((item: any) => item.id === q.id);
+  expect(retained.deliveries.some((d: any) => d.recipient === job.name && d.state === "pending" && !d.owner && !d.messageId)).toBe(true);
+});
+
 it("reconnects a collision-allocated BridgeNode job alias and recovers only its durable incarnation", async () => {
   let host = await persistentHost("pc-b"); const job = durableJob(host, "collision-job"); recordJobs(host, [job]);
   await host.register(undefined, job.name, host.dir, "unrelated-native");
