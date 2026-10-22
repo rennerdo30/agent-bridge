@@ -29,7 +29,7 @@ import { DEFAULT_NETWORK_CONFIG } from "../src/network/config.js";
 import { NetworkService } from "../src/network/link.js";
 import { allowedRemoteDirectory, RemoteJobs } from "../src/network/remote-jobs.js";
 import { REMOTE_JOB_RATE_LIMIT, remoteSpawnArgsSchema } from "../src/network/remote-job-protocol.js";
-import { readProcessIdentities } from "../src/core/process-identity.js";
+import { ownProcessIdentity, readProcessIdentities } from "../src/core/process-identity.js";
 import { fixtureProcessExists, fixtureProcessGeneration } from "./fixture-process-generation.js";
 import { jobWaitSnapshot } from "./job-wait-diagnostics.js";
 import { fixtureOwner, fixturePeer } from "./owned-mail.js";
@@ -414,6 +414,7 @@ describe("remote jobs security", () => {
     vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
     config(localHome, "windows"); config(remoteHome, "mac", true);
     const peers: PeerInfo[] = [];
+    await ownProcessIdentity();
     const identities = new MessageStore(resolveDbPath(localHome), nullLogger);
     cleanup.push(() => identities.close());
     const a = new NetworkService(localHome, { ...DEFAULT_NETWORK_CONFIG, enabled: true, name: "windows", bind: LOOPBACK, port: 0, discovery: false }, { peers: () => peers, receive: () => ({ delivered: true }) }, nullLogger);
