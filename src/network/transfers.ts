@@ -65,9 +65,9 @@ interface TransferTransport {
   supports(remote: string): boolean;
   window?(remote: string): number;
   send(remote: string, payload: Record<string, unknown>): Promise<void>;
-  validSender(remote: string, sender: Sender): boolean;
+  validSender(remote: string, sender: Sender, retained?: InternalMessageOrigin): boolean;
   localPeer(name: string): (Sender & { cwd: string }) | undefined;
-  captureNotification?(remote: string, id: string, direction: "send" | "receive", from: Sender, to: string): InternalMessageOrigin;
+  captureNotification?(remote: string, id: string, direction: "send" | "receive", from: Sender, to: string, retained?: InternalMessageOrigin): InternalMessageOrigin;
   notify(message: BridgeMessage, remote?: string, origin?: InternalMessageOrigin): void;
   legacy(remote: string, transfer: FileTransfer): Promise<TransferResult>;
 }
@@ -577,9 +577,12 @@ export class TransferManager {
       return { status: state?.status ?? "queued" };
     }
     if (request.op === "offer") {
-      if (!this.transport.validSender(remote, request.from)) throw new Error("sender not advertised by paired instance");
+      // Existing admission evidence may survive a registration-ID change. It
+      // is local durable state, never a proof supplied by this request.
+      const retained = state && !state.pull ? state.notification : undefined;
+      if (!this.transport.validSender(remote, request.from, retained)) throw new Error("sender not advertised by paired instance with the original ownership");
       if (!this.transport.localPeer(request.to)) throw new Error("file recipient is not online");
-      const notification = this.transport.captureNotification?.(remote, request.id, "receive", request.from, request.to);
+      const notification = this.transport.captureNotification?.(remote, request.id, "receive", request.from, request.to, retained);
       if (state && notification && (!state.notification || state.notification.recipientOwner !== notification.recipientOwner ||
           !sameMailbox(state.notification.recipientMailbox, notification.recipientMailbox) ||
           !state.pull && (state.notification.owner !== notification.owner || !sameMailbox(state.notification.source, notification.source))))

@@ -57,6 +57,11 @@ export class ReadJournal {
   if (db.prepare("SELECT 1 FROM bridge_components WHERE name='import:read-state'").get()) return db;
   const dir = join(this.home,"read-state"); physicalMetadataPath(dir);
   const files = existsSync(dir) ? readdirSync(dir).filter(f => /^[a-f0-9]{64}\.jsonl$/.test(f)).map(f=>join(dir,f)) : [];
+  // Inspecting an empty journal is read-only. Publishing an empty import
+  // marker here needlessly takes SQLite's writer during broker recovery and
+  // can block unrelated peers behind a held mailbox write. Do not publish the
+  // marker: a later deferred append may still create a legacy file to import.
+  if (!files.length) return db;
   retainMetadataFiles(this.home,files,(store,path,raw) => {
    const identity = path.slice("read-state/".length,-".jsonl".length);
    for (const line of raw.toString("utf8").split("\n")) {

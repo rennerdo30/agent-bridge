@@ -46,6 +46,16 @@ function savedJob(id: string, status = "done") {
 }
 function json(path: string): any { return JSON.parse(readFileSync(path, "utf8")); }
 
+it("archives a metadata-only home without blocking its own mailbox migration or losing metadata", () => {
+  const file = join(home, "bridge.db"), db = new DatabaseSync(file);
+  db.exec("CREATE TABLE retained_metadata(body BLOB); INSERT INTO retained_metadata VALUES(x'0001ff');"); db.close();
+  expect(archiveHome(home, true)).toEqual({ messages: 0, jobs: 0, runs: 0 });
+  const check = new DatabaseSync(file, { readOnly: true });
+  try { expect(check.prepare("PRAGMA user_version").get()!.user_version).toBe(SQLITE_STORE_VERSION); expect([...check.prepare("SELECT body FROM retained_metadata").get()!.body as Uint8Array]).toEqual([0, 1, 255]); }
+  finally { check.close(); }
+  const release = maintenanceLock(home); release(); // All nested archive leases were released.
+});
+
 describe("doctor read-only diagnostics", () => {
   it("reports versions, size, JSON failures and orphaned files without mutating data", () => {
     const s = store(); s.close();
@@ -146,7 +156,7 @@ describe("consistent snapshots and restore", () => {
   it("writer registration refuses an exclusive maintenance lock", () => {
     const release = maintenanceLock(home);
     expect(() => storageLease(home)).toThrow("maintenance");
-    expect(() => new MessageStore(join(home, "bridge.db"), nullLogger)).toThrow("maintenance");
+    expect(() => new MessageStore(join(home, "bridge.db"), nullLogger)).toThrow(expect.objectContaining({ code: "STORE_READER_ACTIVE", cause: expect.objectContaining({ message: expect.stringContaining("maintenance") }) }));
     release();
     const s = store(); s.close();
   });

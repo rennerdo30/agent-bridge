@@ -19,8 +19,15 @@ export interface TestEnv {
   home: string;
   pipe: string;
   db: string;
-  node(name: string, agent?: AgentKind, autoWake?: boolean): BridgeNode;
+  node(name: string, agent?: AgentKind, autoWake?: boolean, sessionId?: string | null): BridgeNode;
   cleanup(): Promise<void>;
+}
+
+/** Ordinary Git layout for canonical path/routing fixtures; no Git child or commit is needed. */
+export function fixtureProject(home: string): void {
+  const git = join(home, ".git");
+  mkdirSync(join(git, "objects"), { recursive: true }); mkdirSync(join(git, "refs"), { recursive: true });
+  writeFileSync(join(git, "HEAD"), "ref: refs/heads/main\n"); writeFileSync(join(git, "config"), "[core]\n bare = false\n");
 }
 
 /** Explicit native host identity for bundled MCP admission tests. */
@@ -59,11 +66,11 @@ export function makeEnv(): TestEnv {
     home,
     pipe,
     db,
-    node(name, agent = "claude", autoWake = false) {
+    node(name, agent = "claude", autoWake = false, sessionId = randomUUID()) {
       const n = new BridgeNode({ pipePath: pipe, token: loadOrCreateToken(home), dbPath: db, agent, name, cwd: home, autoWake, log: nullLogger });
       // Each synthetic peer is a distinct session, independent of this worker's
       // native provider/WMI availability. Reconnect tests explicitly reuse it.
-      void n.setSessionId(randomUUID());
+      if (sessionId) void n.setSessionId(sessionId);
       nodes.push(n);
       return n;
     },

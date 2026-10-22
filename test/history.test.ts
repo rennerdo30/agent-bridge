@@ -10,7 +10,7 @@ import { historySchema, supportsHistoryFts } from "../src/core/history-schema.js
 import { nullLogger } from "../src/core/logger.js";
 import { migrateSqlite } from "../src/core/sqlite-migrations.js";
 import { BridgeClient } from "../src/core/client.js";
-import { MessageStore } from "../src/core/store.js";
+import { MessageStore, migrateMessageSchema } from "../src/core/store.js";
 import { fixturePeer, ownedMessage, unreadOwned } from "./owned-mail.js";
 import { nativeOwner } from "../src/core/recipient-ownership.js";
 import type { BridgeMessage } from "../src/core/protocol.js";
@@ -51,6 +51,7 @@ describe("history migration", () => {
     if (version >= 3) db.exec(DECISIONS_SCHEMA);
     db.exec(`PRAGMA user_version=${version}`);
     db.prepare("INSERT INTO messages VALUES (?,?,?,?,?,?,?,?,?,?,?,?)").run("original", "claude-main", "session-one", "codex-job-example", "codex", "claude-main", "c", null, 0, "original walnut", 100, 200);
+    if (version === 2 || version === 3) migrateMessageSchema(db, env.db, true, nullLogger, { kind: "offline-isolated", home: env.home });
     db.close();
     const s = await store(); s.history.tick();
     expect(s.byId("original")).toMatchObject({ body: "original walnut", readAt: 200 });

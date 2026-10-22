@@ -33,7 +33,7 @@ async function host(name: string) {
   // Even with macOS's long canonical tmpdir prefix, Unix sockets must fit below 104 bytes.
   const pipe = process.platform === "win32" ? resolvePipePath(dir, {}) : `/tmp/ab-${randomUUID().slice(0, 12)}.sock`;
   const db = join(dir, "bridge.db");
-  const broker = new Broker(pipe, new MessageStore(db, nullLogger), nullLogger, "broadcast-test", Date.now, undefined,
+  const broker = new Broker(pipe, new MessageStore(db, nullLogger), nullLogger, "broadcast-test", Date.now, join(dir, "jobs.json"),
     { home: dir, config: { ...DEFAULT_NETWORK_CONFIG, enabled: true, name, bind: "127.0.0.1", port: 0, discovery: false } });
   cleanup.push(() => broker.close());
   await broker.listen();
@@ -44,7 +44,7 @@ async function host(name: string) {
     const session = randomUUID();
     if (job) retainFixtureRunner(dir, { id: session, name: peerName, agent: "codex", owner: "fixture-supervisor", supervisor: "fixture-root", cwd: dir });
     const node = new BridgeNode({ pipePath: pipe, dbPath: db, token: "broadcast-test", agent: "claude", name: peerName,
-      cwd: dir, autoWake: false, canHostBroker: false, log: nullLogger, ...(job ? { jobAgent: "codex" as const, id: `job:${session}`, jobOwner: "fixture-root" } : {}) });
+      cwd: dir, autoWake: false, canHostBroker: false, log: nullLogger, ...(job ? { agent: "other" as const, jobAgent: "codex" as const, id: `job:${session}`, jobOwner: "fixture-root", jobParent: "fixture-supervisor" } : {}) });
     if (!job) void node.setSessionId(session);
     cleanup.push(() => node.stop());
     return node;

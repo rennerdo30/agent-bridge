@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { execFileSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -17,15 +16,16 @@ import { registerTools, type ServerContext } from "../src/mcp/server.js";
 import { ParentLink, parentFromEnv } from "../src/core/parent-link.js";
 import { SiblingLink } from "../src/mcp/siblings.js";
 import type { Job } from "../src/mcp/jobs.js";
-import { makeEnv, until, type TestEnv } from "./helpers.js";
-import { retainFixtureRunner } from "./owned-mail.js";
+import { fixtureProject, makeEnv, until, type TestEnv } from "./helpers.js";
+import { fixturePeer, retainFixtureRunner, unreadOwned } from "./owned-mail.js";
+import { localMailbox } from "../src/core/recipient-ownership.js";
 
 let env: TestEnv, parent: BridgeNode, job: BridgeNode, stranger: BridgeNode, ctx: ServerContext;
 const agentId = "opus-1";
 const hook = (event: HookEvent, over = {}) => buildHookResponse(ctx, { event, subagent: true, agentId, sessionId: "root", stopHookActive: false, ...over });
 beforeEach(async () => {
   env = makeEnv();
-  execFileSync("git", ["init", env.home], { windowsHide: true, stdio: "ignore" });
+  fixtureProject(env.home);
   parent = env.node("claude-main");
   await parent.setSessionId("root"); await parent.start();
   retainFixtureRunner(env.home, { id: "sol", name: "codex-job-sol", agent: "codex", owner: parent.name, supervisor: "root", cwd: env.home });
@@ -155,10 +155,15 @@ it("parent disconnect durably returns mail for its next connection", async () =>
 it("broker recovery returns orphaned child queues without removing retained rows", async () => {
   const store = new MessageStore(":memory:", nullLogger);
   try {
-    store.retainNativeChild("claude-old/sub:opus", "claude-old");
-    store.insert({ id: "orphan", from: { id: "sol", name: "codex-sol", agent: "codex" }, to: "claude-old/sub:opus", recipient: "claude-old/sub:opus", body: "Retained bytes", conversationId: "thread", replyTo: null, hop: 0, createdAt: Date.now(), readAt: null });
+    const parent = fixturePeer(store, "claude-old", { agent: "claude" });
+    const children = new NativeChildren(store), address = (await children.start(parent, "opus")).address;
+    const identity = children.target(address).identity;
+    store.insert({ id: "orphan", from: { id: "sol", name: "codex-sol", agent: "codex" }, to: address, recipient: address,
+      recipientNative: identity, recipientMailbox: localMailbox(store.namespace), body: "Retained bytes", conversationId: "thread", replyTo: null, hop: 0, createdAt: Date.now(), readAt: null });
     await new NativeChildren(store).recover();
-    expect(store.unread("claude-old", 100)).toContainEqual(expect.objectContaining({ id: "orphan", body: "Retained bytes" }));
+    expect(unreadOwned(store, parent)).toContainEqual(expect.objectContaining({ id: "orphan", body: "Retained bytes" }));
+    expect(unreadOwned(store, fixturePeer(store, parent.name, { agent: "claude" }))).toEqual([]);
+    expect(store.messagesById("orphan").find(m => m.recipient === address)).toMatchObject({ body: "Retained bytes", recipientNative: identity });
     expect(store.nativeChildRoutes()).toEqual([]);
   } finally { store.close(); }
 });

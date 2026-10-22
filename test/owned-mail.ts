@@ -14,6 +14,53 @@ import type { AgentKind } from "../src/core/protocol.js";
 import type { DatabaseSync } from "node:sqlite";
 import { jobMailAuthority, jobMailDraftDigest, makeJobMailGrant } from "../src/core/job-mail-routing.js";
 import { primaryFor } from "../src/core/job-ownership.js";
+import type { NetworkBroker } from "../src/network/link.js";
+import { Broker } from "../src/core/broker.js";
+
+/** Standalone link fixtures use the production per-host store for identities,
+ * remote pins and notifications. No static proof or permissive receive stub. */
+export function fixtureNetworkBroker(home: string, peers: PeerInfo[], received: BridgeMessage[] = []): { broker: NetworkBroker; close(): Promise<void> } {
+  const store = new Store(join(home, "bridge.db"), nullLogger);
+  // No listener/services: only the real production receive/notification paths
+  // run behind explicit handler-only registrations and an in-memory event sink.
+  const router = new Broker("fixture-unbound", store, nullLogger, "fixture-only") as any;
+  const register = () => {
+    router.conns.clear();
+    for (const peer of peers) {
+      store.rememberName(peer, Date.now());
+      const conn = fixtureConnection(store, peer);
+      Object.assign(conn.socket, { writableLength: 0, destroy() {}, write: (data: string) => {
+        const frame = JSON.parse(data); if (frame.ev === "message") received.push(frame.data); return true;
+      } });
+      router.conns.add(conn);
+    }
+  };
+  register();
+  return { close: () => router.close(), broker: {
+    peers: () => peers,
+    pinDestination: (message, destination) => store.pinDestination(message, destination),
+    pinnedDestinations: id => store.pinnedDestinations(id),
+    captureNotification: recipient => {
+      const peer = peers.find(p => p.name === recipient);
+      if (!peer) throw new Error("Fixture notification recipient is not registered");
+      return { owner: fixtureOwner(store, peer), mailbox: localMailbox(store.namespace) };
+    },
+    receive: (message, destination) => { register(); return router.receiveRemote(message, destination); },
+    notify: (message, origin) => { register(); return router.receiveNotification(message, origin); },
+  } };
+}
+
+/** Trusted paired-host fixture advertisement, derived from an actual source
+ * store registration. The receiver still runs production control admission. */
+export function fixtureRemotePeer(home: string, pair: { id: string; name: string }, input: { id: string; name: string; sessionId: string; agent?: AgentKind }): PeerInfo {
+  const store = new Store(join(home, "paired-source", "bridge.db"), nullLogger);
+  try {
+    const peer = fixturePeer(store, input.name, { ...input, agent: input.agent ?? "codex" });
+    const owner = fixtureOwner(store, peer);
+    if (!owner.startsWith("native:")) throw new Error("Fixture requires typed native provenance");
+    return { ...peer, id: `${pair.id}/${peer.id}`, name: `${pair.name}/${peer.name}`, nativeOwner: owner.slice(7) };
+  } finally { store.close(); }
+}
 
 /** A fixture registration is explicit evidence, never authority inferred from a name. */
 export function fixturePeer(store: MessageStore, name: string, overrides: Partial<PeerInfo> = {}): PeerInfo {

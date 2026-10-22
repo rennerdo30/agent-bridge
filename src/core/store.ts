@@ -989,7 +989,7 @@ export class MessageStore {
       this.exec(this.db, "SAVEPOINT role_mail_claim");
       try {
         let count = 0;
-        for (const raw of this.statement(this.db, `SELECT m.* FROM messages m JOIN message_frontends f USING(id,recipient)
+        for (const raw of this.statement(this.db, `SELECT m.* FROM deliverable_messages m JOIN message_frontends f USING(id,recipient)
           WHERE m.recipient=? AND m.to_target=? AND m.read_at IS NULL AND f.state='role' AND f.mailbox=?`).all(from, from, mailbox)) {
           const message = this.decode(raw as unknown as Row), role = message.recipientRole;
           if (!role || role.namespace !== namespace || role.agent !== peer.agent || projectKey(role.project) !== projectKey(project) || !this.localCopy(message)) continue;

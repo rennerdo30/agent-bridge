@@ -29,7 +29,7 @@ import { v03017HelloSchema, v03020HelloSchema } from "./fixtures/legacy-network-
 import { decodePairingCode, keyFingerprint, PairingStore } from "../src/network/pairing.js";
 import { collectTransfer, MAX_TRANSFER_BYTES, receiveTransfer, safeTransferPath } from "../src/network/files.js";
 import { until } from "./helpers.js";
-import { retainFixtureRunner } from "./owned-mail.js";
+import { fixtureNetworkBroker, retainFixtureRunner } from "./owned-mail.js";
 
 const LOOPBACK = "127.0.0.1";
 const TOKEN = "network-test-token";
@@ -47,9 +47,11 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 
-const peer = (name: string, jobAgent?: "codex"): PeerInfo => ({ id: randomUUID(), name, agent: "claude", cwd: home, pid: process.pid, agentPid: null, sessionId: randomUUID(), startedAt: Date.now(), autoWake: false, ...(jobAgent ? { jobAgent } : {}) });
+const peer = (name: string, jobAgent?: "codex"): PeerInfo => ({ id: jobAgent ? `job:${randomUUID()}` : randomUUID(), name, agent: "claude", cwd: home, pid: process.pid, agentPid: null, sessionId: randomUUID(), startedAt: Date.now(), autoWake: false, ...(jobAgent ? { jobAgent, jobOwner: "fixture-root" } : {}) });
 function service(name: string, peers: PeerInfo[] = [], received: BridgeMessage[] = [], recipientReceipts = false): NetworkService {
-  const network = new NetworkService(join(home, name), { ...DEFAULT_NETWORK_CONFIG, enabled: true, name, bind: LOOPBACK, port: 0, discovery: false }, { peers: () => peers, recipientReceipts, receive: (m) => { received.push(m); return { delivered: true }; } }, nullLogger);
+  const fixture = fixtureNetworkBroker(join(home, name), peers, received);
+  cleanup.push(() => fixture.close());
+  const network = new NetworkService(join(home, name), { ...DEFAULT_NETWORK_CONFIG, enabled: true, name, bind: LOOPBACK, port: 0, discovery: false }, { ...fixture.broker, recipientReceipts }, nullLogger);
   cleanup.push(() => network.close());
   return network;
 }
@@ -195,7 +197,7 @@ describe("network pairing", () => {
   it("exchanges TLS ciphertext through a loopback proxy, never plaintext messages", async () => {
     const aPeer = peer("claude-app");
     const a = service("windows", [aPeer]);
-    const b = service("mac");
+    const b = service("mac", [peer("later")]);
     await a.start();
     await b.start();
     const traffic: Buffer[] = [];
@@ -254,7 +256,7 @@ describe("network pairing", () => {
     expect(a.status().paired).toEqual([]);
     await a.link(b.keys.invite(), LOOPBACK, b.port);
     const sender = peer("invented-peer");
-    await expect(a.send({ id: randomUUID(), from: { id: sender.id, name: sender.name, agent: sender.agent }, recipient: "mac/later", to: "mac/later", conversationId: randomUUID(), replyTo: null, hop: 0, body: "spoofed", createdAt: Date.now(), readAt: null })).rejects.toThrow(/not advertised/);
+    await expect(a.send({ id: randomUUID(), from: { id: sender.id, name: sender.name, agent: sender.agent }, recipient: "mac/later", to: "mac/later", conversationId: randomUUID(), replyTo: null, hop: 0, body: "spoofed", createdAt: Date.now(), readAt: null })).rejects.toThrow(/sender identity is unproven/);
   });
 
   it("drops encrypted records before hello and oversized frames", async () => {

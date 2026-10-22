@@ -14,6 +14,8 @@ import type { RunnerControl } from "../src/mcp/jobs.js";
 import { RemoteJobs } from "../src/network/remote-jobs.js";
 import { DEFAULT_NETWORK_CONFIG } from "../src/network/config.js";
 import { until } from "./helpers.js";
+import { fixtureRemotePeer } from "./owned-mail.js";
+vi.mock("../src/core/usage.js", async original => ({ ...await original<typeof import("../src/core/usage.js")>(), checkUsagePreflight: async () => ({ type: "allow", reason: "fixture: provider probes outside storage admission contract" }) }));
 
 let home: string, remote: RemoteJobs;
 let nextPid = process.pid + 2_000_000;
@@ -28,7 +30,7 @@ beforeEach(() => {
   vi.spyOn(delegate, "pidAlive").mockReturnValue(false);
   vi.spyOn(worktree, "gitDirsOutside").mockResolvedValue([]);
   control = vi.fn(async () => {});
-  remote = new RemoteJobs({ registerExtension() {} } as any, home, nullLogger, control);
+  remote = new RemoteJobs({ registerExtension() {}, peers: () => [fixtureRemotePeer(home, pair, { ...peer, sessionId: peer.supervisor })] } as any, home, nullLogger, control);
 });
 afterEach(() => { closeMetadataDbs(); remote.close(); vi.useRealTimers(); vi.restoreAllMocks(); rmSync(home, { recursive: true, force: true }); });
 function request(id: string, prompt = "retained prompt") { return { op: "spawn", job: id, target: "codex", args: { cwd: home, prompt, title: "Queued" } } as const; }
@@ -70,7 +72,9 @@ it("retains an actual late host and routes explicit cancellation to that exact o
   const outcome = handle(request("late", "complete retained prompt")); await until(() => Boolean(resolve));
   expect(await handle({ op: "control", job: "late", control: { type: "cancel" } })).toMatchObject({ state: null, alive: true });
   resolve(host); await outcome;
-  expect(control).toHaveBeenCalledWith({ owner: "paired/sender", name: "codex-job-late", id: "late" }, { type: "cancel" });
+  const advertised = fixtureRemotePeer(home, pair, { ...peer, sessionId: peer.supervisor });
+  expect(control).toHaveBeenCalledWith({ owner: "paired/sender", name: "codex-job-late", id: "late" }, { type: "cancel" },
+    { kind: "remote-job-control", operation: "late", owner: `native:${advertised.nativeOwner}`, source: { kind: "remote", hostId: pair.id, hostFingerprint: pair.fingerprint } });
   const stored = JSON.parse(readFileSync(join(home, "remote-jobs.json"), "utf8"));
   expect(stored.jobs[0].job).toMatchObject({ id: "late", prompt: "complete retained prompt", host });
 });

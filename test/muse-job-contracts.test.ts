@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import { chmodSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { fixtureRemotePeer } from "./owned-mail.js";
 import { DEFAULT_CONFIG } from "../src/core/config.js";
 import * as delegate from "../src/core/delegate.js";
 import * as museContext from "../src/core/muse-context.js";
@@ -165,8 +166,9 @@ describe("Muse legacy exec remote profile contracts", () => {
   function receiver() {
     let receive!: (payload: Record<string, unknown>, pair: any) => Promise<void>;
     const responses: any[] = [];
+    const advertised = fixtureRemotePeer(env.home, { id: "pair", name: "paired" }, { id: "supervisor", name: "sender", sessionId: "supervisor" });
     const remote = new RemoteJobs({ registerExtension: (_frame: string, _capability: string, handler: typeof receive) => { receive = handler; },
-      peers: () => [{ id: "pair/supervisor", name: "paired/sender" }], peerSupports: () => true,
+      peers: () => [advertised], peerSupports: () => true,
       sendExtension: async (_host: string, _frame: string, payload: unknown) => { responses.push(payload); } } as any,
     env.home, nullLogger, async () => {});
     remotes.push(remote);

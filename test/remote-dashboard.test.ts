@@ -121,7 +121,7 @@ describe("paired dashboard HTTP", () => {
     expect(state.peers.find((p: any) => p.name === `beta/${JOB}`)).toMatchObject({ jobAgent: "codex", subagent: true, parent: "beta/session", rootName: "beta/session" });
     expect((await fetch(`${base}${route}/chat`, { method: "POST", headers: { cookie } })).status).toBe(404);
     expect((await get(`${route}/chat?path=/etc/passwd`)).status).toBe(400);
-    expect(readFileSync(join(bHome, JOBS_FILE), "utf8")).toContain('"owner":"session"');
+    expect(JSON.parse(readFileSync(join(bHome, JOBS_FILE), "utf8")).jobs.find((job: { name: string }) => job.name === JOB)).toMatchObject({ owner: "session" });
     await a.request("networkUnlink", { id: status.identity!.id });
     expect(await (await get(`${route}/chat`)).json()).toMatchObject({ code: "remote_offline" });
   });

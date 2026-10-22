@@ -61,8 +61,8 @@ export async function links(mode: "current" | "legacy" | "silent" = "current") {
 }
 
 export async function node(home: string, name: string, runner = false, config = cfg(home === aHome ? "alpha" : "beta"), identify = true) {
-  if (runner) retainFixtureRunner(home, { id: "abcd", name, agent: "codex", owner: "session", supervisor: CODEX_SESSION, cwd: "/project/example" });
-  const bridge = new BridgeNode({ pipePath: resolvePipePath(home, {}), token: loadOrCreateToken(home), dbPath: resolveDbPath(home), agent: runner ? "other" : "codex", name, cwd: "/project/example", autoWake: false, log: nullLogger,
+  if (runner) retainFixtureRunner(home, { id: "abcd", name, agent: "codex", owner: "session", supervisor: CODEX_SESSION, cwd: home });
+  const bridge = new BridgeNode({ pipePath: resolvePipePath(home, {}), token: loadOrCreateToken(home), dbPath: resolveDbPath(home), agent: runner ? "other" : "codex", name, cwd: home, autoWake: false, log: nullLogger,
     ...(runner ? { id: "job:abcd", jobAgent: "codex", jobOwner: CODEX_SESSION, jobParent: "session", rootName: "session", rootSession: CODEX_SESSION, jobTitle: "Worker" } : {}),
     network: { home, config } });
   cleanup.push(() => bridge.stop()); if (identify && !runner) await bridge.setSessionId(CODEX_SESSION); await bridge.start(); return bridge;

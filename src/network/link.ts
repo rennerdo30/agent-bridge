@@ -406,12 +406,12 @@ export class NetworkService {
         if (payload.op === "offer" || payload.op === "fetch") this.instanceLink(remote).refresh();
         return this.sendExtension(remote, "file-stream", payload);
       },
-      validSender: (remote, sender) => this.links.get(remote)?.peers.some((peer) => peer.id === sender.id && peer.name === sender.name && (peer.jobAgent ?? peer.agent) === sender.agent) ?? false,
+      validSender: (remote, sender, retained) => Boolean(this.transferSender(remote, sender, retained)),
       localPeer: (name) => {
         const peer = this.broker.peers().find((peer) => peer.name === name);
         return peer ? { id: peer.id, name: peer.name, agent: peer.jobAgent ?? peer.agent, cwd: peer.cwd } : undefined;
       },
-      captureNotification: (remote, id, direction, from, to) => this.captureTransferNotification(remote, id, direction, from, to),
+      captureNotification: (remote, id, direction, from, to, retained) => this.captureTransferNotification(remote, id, direction, from, to, retained),
       notify: (message, remote, origin) => { this.notifyTransfer(message, remote, origin); },
       legacy: (remote, transfer) => this.instanceLink(remote).files(transfer),
     }, log, { maxBytes: cfg.maxTransferBytes, fetchRoots: cfg.fetchRoots });
@@ -778,13 +778,22 @@ export class NetworkService {
 
   fileTarget(address: string): string { return this.target(address).target; }
 
-  private captureTransferNotification(remote: string, operation: string, direction: "send" | "receive", from: FileTransfer["from"], to: string): InternalMessageOrigin {
+  private transferSender(remote: string, from: FileTransfer["from"], retained?: InternalMessageOrigin) {
+    const link = this.links.get(remote), identity = link?.remote;
+    if (retained && (!identity || retained.kind !== "file-transfer" || !retained.owner ||
+        !sameMailbox(retained.source, { kind: "remote", hostId: identity.id, hostFingerprint: identity.fingerprint }))) return undefined;
+    return link?.peers.find(peer => peer.name === from.name && (peer.jobAgent ?? peer.agent) === from.agent &&
+      (retained ? recipientKey(peer.frontend, peer.nativeOwner) === retained.owner : peer.id === from.id));
+  }
+
+  private captureTransferNotification(remote: string, operation: string, direction: "send" | "receive", from: FileTransfer["from"], to: string, retained?: InternalMessageOrigin): InternalMessageOrigin {
     const link = this.links.get(remote), identity = link?.remote;
     if (!link || !identity || !link.recipientOwnershipV1 || !link.nativeOwnershipV1 || !link.mailboxProvenanceV1)
       throw new Error("File notification requires paired ownership/provenance capabilities; no payload dispatched");
     const recipient = direction === "send" ? from.name : to, intended = this.broker.captureNotification?.(recipient);
     if (this.broker.notify && !intended) throw new Error("File notification recipient ownership is unavailable");
-    const sender = direction === "receive" ? link.peers.find(p => p.id === from.id && p.name === from.name && (p.jobAgent ?? p.agent) === from.agent) :
+    if (retained && retained.operation !== operation) throw new Error("Transfer admission operation changed; original evidence retained");
+    const sender = direction === "receive" ? this.transferSender(remote, from, retained) :
       this.broker.peers().find(p => p.id === from.id && p.name === from.name && (p.jobAgent ?? p.agent) === from.agent);
     const owner = sender ? recipientKey(sender.frontend, direction === "receive" ? sender.nativeOwner : nativeOwner(sender)) : null;
     if (!owner) throw new Error("File notification sender ownership is unproven");

@@ -183,7 +183,7 @@ function authorityFixture() {
     conn.peer.name = name; store.rememberName(conn.peer, Date.now());
     conn.mailReady.name = name;
   };
-  return { saved, save, broker, conn, node, jobs, ctx, rename, ...tools(ctx) };
+  return { saved, save, broker, store, conn, node, jobs, ctx, rename, ...tools(ctx) };
 }
 
 function nestedFixture() {
@@ -508,8 +508,8 @@ describe("AB-428 job checklists", () => {
     changeJobChecklistAsJob(home, JOB, { propose: [{ text: "Pending" }] });
     const db = metadataDb(home), exec = db.exec.bind(db);
     const rows = () => db.prepare("SELECT * FROM job_checklist WHERE job=? ORDER BY seq").all(JOB), before = rows();
-    const runner = { ...f.conn, peer: { ...f.conn.peer, id: `job:${f.saved.id}`, name: JOB, jobAgent: "codex", cwd: qualified } };
-    const owner = { ...f.conn, peer: { ...f.conn.peer, id: "original-owner", name: "owner", cwd: qualified } };
+    const runner = fixtureConnection(f.store, fixturePeer(f.store, JOB, { ...f.conn.peer, id: `job:${f.saved.id}`, name: JOB, jobAgent: "codex", jobOwner: f.saved.supervisor, cwd: qualified }));
+    const owner = fixtureConnection(f.store, fixturePeer(f.store, "owner", { ...f.conn.peer, id: "original-owner", name: "owner", cwd: qualified }));
     const spec = join(home, "jobs", `${f.saved.id}.spec.json`); mkdirSync(join(home, "jobs"), { recursive: true });
     let source = "", context = "", phase = "", armed = false;
     const publish = (value: string) => {

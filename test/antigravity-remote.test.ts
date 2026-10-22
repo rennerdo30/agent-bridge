@@ -10,14 +10,20 @@ import type { NetworkPair } from "../src/network/pairing.js";
 import { makeEnv } from "./helpers.js";
 import { changedJobArgs } from "../src/mcp/job-settings.js";
 import { resumeArgs } from "../src/mcp/delegate-run.js";
+import { fixtureRemotePeer } from "./owned-mail.js";
+import * as worktree from "../src/core/worktree.js";
+vi.mock("../src/core/usage.js", async original => ({ ...await original<typeof import("../src/core/usage.js")>(), checkUsagePreflight: async () => ({ type: "allow", reason: "fixture: provider probes outside remote options contract" }) }));
 
 it("admits exact Antigravity options at the paired receiver and rejects them for other agents before runner startup", async () => {
   const env = makeEnv();
+  vi.spyOn(worktree, "gitDirsOutside").mockResolvedValue([]);
   let receive!: (payload: Record<string, unknown>, pair: NetworkPair) => Promise<void>;
   const responses: Record<string, any>[] = [], control = vi.fn(async () => {});
+  const pair = { id: "pair-id", name: "paired" } as NetworkPair;
+  const advertised = fixtureRemotePeer(env.home, pair, { id: "requester-id", name: "owner", sessionId: "requester-id" });
   const network = {
     registerExtension: (_frame: string, _capability: string, handler: typeof receive) => { receive = handler; },
-    peers: () => [{ id: "pair-id/requester-id", name: "paired/owner" }],
+    peers: () => [advertised],
     peerSupports: () => true,
     sendExtension: async (_host: string, _frame: string, response: Record<string, unknown>) => { responses.push(response); },
   } as unknown as NetworkService;
@@ -28,7 +34,6 @@ it("admits exact Antigravity options at the paired receiver and rejects them for
   // target settings, path checks and durable job arguments use production code.
   Object.defineProperty(jobs, "runners", { value: { startAsync: start, alive: () => false } });
   const frame = (target: string, args: Record<string, unknown>, job = "deadbeef") => ({ kind: "request", rid: randomUUID(), peer: { id: "requester-id", name: "owner", supervisor: "requester-id" }, request: { op: "spawn", job, target, args: { title: "native AG options", prompt: "args", cwd: env.home, ...args } } });
-  const pair = { id: "pair-id", name: "paired" } as NetworkPair;
   try {
     for (const target of ["codex", "muse"]) for (const setting of ["terminal_sandbox", "bypass_permissions"]) {
       await receive(frame(target, { [setting]: false }), pair);
@@ -44,12 +49,13 @@ it("admits exact Antigravity options at the paired receiver and rejects them for
     expect(specification.args).toMatchObject({ terminal_sandbox: true, bypass_permissions: false, access: "read" });
     await receive({ kind: "request", rid: randomUUID(), peer: { id: "requester-id", name: "owner", supervisor: "requester-id" }, request: { op: "control", job: "deadbeef", control: { type: "settings", settings: { terminal_sandbox: false, bypass_permissions: true } } } }, pair);
     expect(responses.at(-1)?.error).toBeUndefined();
-    expect(control).toHaveBeenCalledWith(expect.objectContaining({ id: "deadbeef" }), { type: "settings", settings: { terminal_sandbox: false, bypass_permissions: true } });
+    expect(control).toHaveBeenCalledWith(expect.objectContaining({ id: "deadbeef" }), { type: "settings", settings: { terminal_sandbox: false, bypass_permissions: true } },
+      { kind: "remote-job-control", operation: "deadbeef", owner: `native:${advertised.nativeOwner}`, source: { kind: "remote", hostId: pair.id, hostFingerprint: pair.fingerprint } });
     expect(job.args).toMatchObject({ terminal_sandbox: false, bypass_permissions: true });
     expect(job.args.access).toBeUndefined();
     const saved = changedJobArgs(job.args, { bypass_permissions: false });
     const next = resumeArgs({ prompt: "queued turn", title: "continue", bypass_permissions: true, terminal_sandbox: true }, job.name, "queued turn", "native-session", env.home, null, saved);
     expect(next).toMatchObject({ bypass_permissions: false, terminal_sandbox: false, session_id: "native-session" });
     expect(next.access).toBeUndefined();
-  } finally { jobs.close(); await env.cleanup(); }
+  } finally { jobs.close(); await env.cleanup(); vi.restoreAllMocks(); }
 });

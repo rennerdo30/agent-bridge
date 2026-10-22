@@ -35,6 +35,9 @@ const chats: SiblingLink[] = [];
 
 beforeEach(async () => {
   env = makeEnv();
+  // These tests require explicit cross-session grants, independent of optional
+  // project-team sharing between masters in the same physical fixture folder.
+  writeFileSync(join(env.home, "config.json"), JSON.stringify({ projectGroups: false }));
   supervisor = env.node("claude-supervisor");
   await supervisor.start();
 });
@@ -50,9 +53,12 @@ async function sibling(id: string, agent: CodingAgent, owner = "supervisor-sessi
   const name = `${agent}-job-${id}`;
   const job: Job = { id, name, agent, model: null, prompt: "task", startedAt: Date.now(), controller: new AbortController(),
     progress: null, status: "running", sessionId: null, workdir: null, worktree: null, queue: [], args: { send_to: sendTo } };
-  retainFixtureJob(env.home, job, supervisor.name, owner);
+  const saved = readStore(join(env.home, JOBS_FILE)).find(j => j.id === id);
+  if (saved) Object.assign(job, saved);
+  job.args = { ...job.args, send_to: sendTo, title: `Task ${id}` };
+  retainFixtureJob(env.home, job, saved?.owner ?? supervisor.name, saved?.supervisor ?? owner);
   const node = new BridgeNode({ pipePath: env.pipe, token: loadOrCreateToken(env.home), dbPath: env.db,
-    agent: "other", jobAgent: agent, jobOwner: owner, jobParent: supervisor.name, jobTitle: `Task ${id}`,
+    agent: "other", jobAgent: agent, jobOwner: job.supervisor, jobParent: job.owner, jobTitle: `Task ${id}`,
     jobSendTo: sendTo,
     id: `job:${id}`, name, cwd: env.home, autoWake: false, canHostBroker: false, log: nullLogger });
   nodes.push(node);
@@ -133,7 +139,10 @@ describe("sibling job messaging", () => {
     await b.node.updateJob({ jobTitle: "Updated task" });
     expect((await a.chat.peers())[0]!.title).toBe("Updated task");
     await b.node.stop();
-    await expect.poll(() => a.chat.peers()).toEqual([]);
+    // The newly durable fixture keeps offline jobs discoverable too. Session
+    // peers still hide runners; their queued channel keeps its exact job ID.
+    await expect.poll(() => a.chat.peers()).toEqual([{ name: b.job.name, title: "Task b", agent: "opencode", status: "running" }]);
+    expect((await supervisor.peers()).some(p => p.name === b.job.name)).toBe(false);
   });
 
   it("delivers threaded sibling replies and stores quiet supervisor copies without a conversation window", async () => {
@@ -170,8 +179,10 @@ describe("sibling job messaging", () => {
 
   it("lists completed siblings and queues their mail until their next turn", async () => {
     const a = await sibling("a", "codex");
-    writeFileSync(join(env.home, JOBS_FILE), JSON.stringify({ version: 1, jobs: [
-      { id: "past", name: "opencode-job-past", agent: "opencode", status: "done", finishedAt: 123, report: "Saved final report", supervisor: "supervisor-session", args: { title: "Earlier task" } },
+    const past = { id: "past", name: "opencode-job-past", agent: "opencode", status: "done", startedAt: 1, finishedAt: 123, report: "Saved final report", supervisor: "supervisor-session", args: { title: "Earlier task" } };
+    retainFixtureJob(env.home, past as unknown as Job, supervisor.name, "supervisor-session");
+    writeFileSync(join(env.home, JOBS_FILE), JSON.stringify({ version: 4, jobs: [
+      ...readStore(join(env.home, JOBS_FILE)),
       { id: "other", name: "claude-job-other", agent: "claude", status: "failed", supervisor: "other-session" },
     ] }));
     expect(await a.child.siblings.peers()).toEqual([{ name: "opencode-job-past", title: "Earlier task", agent: "opencode", status: "done", finishedAt: 123 }]);
@@ -474,7 +485,12 @@ describe("sibling job messaging", () => {
     await otherOwner.start();
     const a = await sibling("a", "codex", "session-a", true, ["opencode-job-b"]);
     const b = await sibling("b", "opencode", "session-b");
+    await supervisor.handoffSubagents({ to: otherOwner.name, jobs: [b.job.name] });
     await b.node.updateJob({ jobParent: otherOwner.name });
+    // Settle the separate, durable handoff notices before measuring just the
+    // quiet sibling observer copies created by the following send.
+    await until(() => otherOwner.unread().some(m => m.conversationId.startsWith("handoff-")) && supervisor.unread().some(m => m.conversationId.startsWith("handoff-")));
+    otherOwner.markRead(otherOwner.unread().map(m => m.id)); supervisor.markRead(supervisor.unread().map(m => m.id));
     const outsider = await sibling("outsider", "claude", "session-b");
     expect(await a.child.siblings.peers()).toEqual([{ name: b.job.name, title: "Task b", agent: "opencode", status: "running" }]);
     await expect(a.chat.send(outsider.job.name, "Not granted")).rejects.toThrow(/explicit send_to/);
@@ -487,7 +503,7 @@ describe("sibling job messaging", () => {
     expect(supervisor.unread().every(isSiblingNote)).toBe(true);
     await expect(b.chat.send(a.job.name, "No reciprocal grant", first.id)).rejects.toThrow(/explicit send_to/);
     await b.node.stop();
-    await expect.poll(() => a.chat.peers()).toEqual([]);
+    await expect.poll(() => a.chat.peers()).toEqual([expect.objectContaining({ name: b.job.name, status: "running" })]);
     const resumed = await sibling("b", "opencode", "session-b", true, [a.job.name]);
     await resumed.node.updateJob({ jobParent: otherOwner.name });
     const reply = (await resumed.chat.send(a.job.name, "Granted reply", first.id)).messages[0]!;
@@ -573,6 +589,8 @@ describe("sibling job messaging", () => {
     await client.connect(transport);
     try {
       await client.callTool({ name: "peers", arguments: {} });
+      await client.callTool({ name: "hook_event", arguments: { event: "SessionStart", session_id: `observer-${agent}` } });
+      await supervisor.handoffSubagents({ to: name, jobs: [a.job.name] });
       await a.node.updateJob({ jobParent: name });
       await a.chat.send(b.job.name, "Quiet observer copy");
       await expect.poll(async () => JSON.stringify(await client.callTool({ name: "inbox", arguments: { mark_read: false } }))).toContain("Quiet observer copy");
@@ -667,7 +685,7 @@ describe("sibling job messaging", () => {
     await supervisor.stop();
     await until(() => host.isBroker && a.node.isConnected && b.node.isConnected);
     await a.chat.send(b.job.name, "Offline handover");
-    const replacement = env.node("claude-supervisor");
+    const replacement = env.node("claude-supervisor", "claude", false, supervisor.currentSessionId!);
     await replacement.start();
     await until(() => replacement.unread().length === 1);
     expect(replacement.unread()[0]!.body).toContain("Offline handover");

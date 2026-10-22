@@ -2134,7 +2134,10 @@ export class Broker {
         createdAt: this.now(), readAt: null,
       };
       // Persist both notices before surfacing the error. The original text remains inspectable.
-      Object.assign(notice, peerOwnership(sender));
+      Object.assign(notice, peerOwnership(sender), {
+        senderOwner: recipientKey(sender.frontend, nativeOwner(sender)),
+        senderMailbox: localMailbox(this.store.namespace), recipientMailbox: localMailbox(this.store.namespace),
+      });
       await this.store.retryWrite(() => this.store.insert(notice));
       this.emit(conn, "message", notice);
       if (sender.jobParent && sender.jobParent !== sender.name) {
@@ -2299,12 +2302,23 @@ export class Broker {
     };
     this.freezeAgentHost(peer);
     if (peer.jobAgent) {
-      const job = this.storedJobs().find(j => `job:${j.id}` === peer.id) ?? this.remoteJobs?.jobForRegistration(peer.id.slice(4)), root = job && this.groups.jobRoot(job, []);
+      let recoveredRegistration = false;
+      let job = this.storedJobs().find(j => `job:${j.id}` === peer.id) ?? this.remoteJobs?.jobForRegistration(peer.id.slice(4));
+      // A retained runner may outlive the active registry. Recover only the
+      // exact durable ID through the existing backup/spec authority reader;
+      // caller jobOwner/name fields cannot manufacture that evidence.
+      if (!job && this.jobsPath && /^job:[a-zA-Z0-9_-]{1,128}$/.test(peer.id)) {
+        const recovered = await recoverJobRecordAsync(dirname(this.jobsPath), peer.id.slice(4));
+        if (recovered) { job = this.currentJobAuthority(recovered as unknown as Record<string, unknown>); recoveredRegistration = Boolean(job); }
+      }
+      if (conn.socket.destroyed || this.closing) throw new BridgeError("not_registered", "Runner registration closed before durable recovery completed; no mailbox effects admitted.");
+      const root = job && this.groups.jobRoot(job, []);
       const historical = job && Array.isArray(job.ownershipHistory) ? job.ownershipHistory.filter(isRecord).map(h => h.fromRoot) : [];
       const owner = job && durableJobOwner(job);
       if (!job || !owner || nativeOwner(peer) !== owner || job.agent !== peer.jobAgent ||
           (job.name !== peer.name && !this.store.jobNames(owner).includes(peer.name)) || !root || !this.groups.sameProject(root, peer.cwd) ||
           peer.jobOwner !== job.supervisor && !historical.includes(peer.jobOwner)) throw new BridgeError("unauthorized", "Job registration does not match the local durable job incarnation, project or supervisor.");
+      if (recoveredRegistration) this.recoveredJobs.set(String(job.id), job);
     }
     this.refuseRetiredHello(conn, peer);
     if (!peer.sessionId) peer.sessionId = this.store.recoverSession(peer);
@@ -3020,7 +3034,10 @@ export class Broker {
         jobControlAuthorized = true;
       }
     }
-    if (own && (to === own.rootName || to === own.owner || this.groups.members(own, this.localPeers()).some((p) => p.name === to) || mastersFor(own).includes(to))) conversationId = this.jobConversation(own, to, conversationId);
+    // An explicit external send_to reply is an ordinary conversation even when
+    // that session is also a project member. Only supervisor-directed reports
+    // acquire fallback routing/conversation semantics.
+    if (own && supervisorMail) conversationId = this.jobConversation(own, to, conversationId);
 
     const createdAt = this.now();
     const base = {
@@ -3070,7 +3087,7 @@ export class Broker {
     };
     checkReply();
     // With no available master, retain job reports under the primary without waking it.
-    if (own && to === this.jobRecipient(own, question)) {
+    if (supervisorMail) {
       for (let i = live.length - 1; i >= 0; i--) {
         if (live[i]!.peer?.unavailable) queued.push(live.splice(i, 1)[0]!.peer!.name);
       }
@@ -3247,8 +3264,14 @@ export class Broker {
   private async messageReceipt(conn: Conn, id: string) {
     const sender = this.requirePeer(conn);
     const message = this.store.byId(z.uuid().parse(id));
-    this.assertSendOwner(sender, id, Boolean(message));
-    if (!message || message.from.name !== sender.name) throw new BridgeError("unauthorized", "receipt is only available to the sender");
+    // Receipt inspection also serves authenticated producer envelopes which
+    // were never tracked sends (inline job reports and durable hop notices).
+    // Their original per-copy sender proof, not a display name or a new send
+    // intent, authorizes this read. Mutation/retry still uses assertSendOwner.
+    const owner = recipientKey(sender.frontend, nativeOwner(sender));
+    if (!message || !owner || message.from.name !== sender.name || message.from.agent !== (sender.jobAgent ?? sender.agent) ||
+        message.senderOwner !== owner || !sameMailbox(message.senderMailbox, localMailbox(this.store.namespace)))
+      throw new BridgeError("unauthorized", "receipt is only available to the original proven sender in this mailbox namespace");
     const receipts = this.store.receipts(id);
     const copies = this.store.messagesById(id);
     return Promise.all(receipts.map(async r => {

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { BridgeClient, brokerConnectionClosedError } from "../src/core/client.js";
 import { BridgeError } from "../src/core/protocol.js";
 import { makeEnv, until, type TestEnv } from "./helpers.js";
+import { fixtureAck } from "./owned-mail.js";
 
 let env: TestEnv;
 beforeEach(() => { env = makeEnv(); });
@@ -33,7 +34,12 @@ it("reconnects one actual in-flight peers read across broker retirement and pres
     await until(held.entered); await previous.stop();
     expect(await peers).toEqual(expect.arrayContaining([expect.objectContaining({ name: "reader" })]));
     expect(reader.isBroker).toBe(true);
-    const later = env.node("later"); await later.start(); await until(() => later.unread().length === 1);
+    const wrong = env.node("later"); await wrong.start(); await wrong.refreshPending();
+    expect(wrong.unread()).toEqual([]);
+    expect(await ((wrong as any).client as BridgeClient).request("ack", fixtureAck(stored.messages))).toEqual({ acked: 0 });
+    expect((await reader.messageReceipt(stored.messages[0]!.id))[0]!.readAt).toBeNull();
+    await wrong.stop();
+    const later = env.node("later"); await later.setSessionId(registered.currentSessionId!); await later.start(); await until(() => later.unread().length === 1);
     expect(later.unread()[0]!.id).toBe(stored.messages[0]!.id);
   } finally { held.release(); }
 });

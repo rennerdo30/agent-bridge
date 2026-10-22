@@ -11,6 +11,8 @@ import { registerTools, type ServerContext } from "../src/mcp/server.js";
 import { ClaudeMailScopes } from "../src/mcp/claude-mail-scope.js";
 import { RewakeEndpoint, sessionFile } from "../src/mcp/rewake.js";
 import { makeEnv, until, type TestEnv } from "./helpers.js";
+import { MessageStore } from "../src/core/store.js";
+import { migrateHistoryStore } from "../src/core/history-store.js";
 
 let env: TestEnv, ctx: ServerContext;
 let handlers: Map<string, (a: any, extra: any) => Promise<any>>;
@@ -20,6 +22,9 @@ const agentId = "native-reviewer";
 const call = (name: string, args = {}, meta?: Record<string, unknown>) =>
   handlers.get(name)!(args, { signal: new AbortController().signal, _meta: meta });
 beforeEach(async () => {
+  // This privacy fixture owns its index writer explicitly; Windows scheduling
+  // must not decide whether the background worker gets an idle gap in 5s.
+  vi.stubEnv("AGENT_BRIDGE_HISTORY_INGEST", "0");
   env = makeEnv();
   const node = env.node("claude-parent");
   await node.setSessionId("parent-session"); await node.start();
@@ -30,7 +35,7 @@ beforeEach(async () => {
 });
 afterEach(async () => {
   await mcpClient?.close(); await mcpServer?.close(); mcpClient = undefined; mcpServer = undefined;
-  await endpoint?.stop(); endpoint = undefined; await env.cleanup(); vi.restoreAllMocks();
+  await endpoint?.stop(); endpoint = undefined; await env.cleanup(); vi.restoreAllMocks(); vi.unstubAllEnvs();
 });
 
 async function parentMail() {
@@ -274,19 +279,16 @@ it("host agentId scopes an unlabelled child inbox and prevents forged parent or 
 it("an authenticated child's search_history covers only its own mail, never parent history", async () => {
   const host = await hostMod();
   const { message } = await parentMail();
-  const poll = async (fn: () => Promise<boolean>) => {
-    for (const end = Date.now() + 5_000; !(await fn());) {
-      if (Date.now() > end) throw new Error("condition not met in time");
-      await new Promise(r => setTimeout(r, 50));
-    }
-  };
+  const index = async () => { const store = new MessageStore(env.db, nullLogger); try { await migrateHistoryStore(env.db, store.history.storageDatabase); store.history.tick(); } finally { store.close(); } };
   // Positive control: the parent's own search finds its message once indexed.
-  await poll(async () => JSON.stringify(await host("search_history", { query: "Private parent message" })).includes(message.id));
+  await index();
+  expect(JSON.stringify(await host("search_history", { query: "Private parent message" }))).toContain(message.id);
   await childStart();
   const own = (await ctx.node!.send({ to: `${ctx.node!.name}/sub:${agentId}`, body: "Private child briefing" })).messages[0]!;
   // A child-supplied session filter naming the parent is overridden by its own address.
   const childSearch = (query: string) => host("search_history", { query, filters: { session: ctx.node!.name } }, agentId);
-  await poll(async () => JSON.stringify(await childSearch("Private child briefing")).includes(own.id));
+  await index();
+  expect(JSON.stringify(await childSearch("Private child briefing"))).toContain(own.id);
   const result = await childSearch("Private parent message");
   expect(result.isError).not.toBe(true);
   expect(JSON.stringify(result)).not.toContain(message.id);

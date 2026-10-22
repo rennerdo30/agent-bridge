@@ -134,6 +134,10 @@ it("discovers and controls a connected orphan runner retained only in a backup",
   writeFileSync(join(env.home, "jobs", "retained.json"), JSON.stringify({ pid: process.pid, peer: name, status: "running", updatedAt: Date.now() - 120_000, live: true }));
   const runner = new BridgeNode({ pipePath: env.pipe, dbPath: env.db, token: loadOrCreateToken(env.home), agent: "other", jobAgent: "codex", jobOwner: "root", jobParent: owner.name, id: "job:retained", name, cwd: env.home, autoWake: false, canHostBroker: false, log: nullLogger });
   try {
+    for (const [id, jobOwner] of [["job:retained", "wrong-root"], ["job:missing", "root"]]) {
+      const wrong = new BridgeNode({ pipePath: env.pipe, dbPath: env.db, token: loadOrCreateToken(env.home), agent: "other", jobAgent: "codex", jobOwner, jobParent: owner.name, id, name, cwd: env.home, autoWake: false, canHostBroker: false, log: nullLogger });
+      try { await expect(wrong.start()).rejects.toMatchObject({ code: "unauthorized" }); } finally { await wrong.stop(); }
+    }
     await runner.start();
     expect((await owner.projectJobs()).map((job) => job.name)).toContain(name);
     expect(await owner.jobAuthority(name)).toMatchObject({ name, owner: owner.name, status: "running" });

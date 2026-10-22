@@ -1,8 +1,12 @@
 import { EventEmitter } from "node:events";
-import { writeFileSync, rmSync } from "node:fs";
+import { writeFileSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { Worker } from "node:worker_threads";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { ReadJournal, readJournalIdentities } from "../src/core/read-journal.js";
+import { metadataDb } from "../src/core/metadata-db.js";
+import { nativeOwner, localMailbox } from "../src/core/recipient-ownership.js";
+import { readRetainedMetadataFile } from "../src/core/metadata-import.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Broker } from "../src/core/broker.js";
 import { BridgeNode } from "../src/core/node.js";
@@ -21,6 +25,27 @@ beforeEach(() => { env = makeEnv(); extraNodes = []; });
 afterEach(async () => { vi.restoreAllMocks(); for (const node of extraNodes) await node.stop(); await env.cleanup(); });
 
 describe("broker overload survival", () => {
+  it("reads an empty per-copy journal without taking a metadata writer, but never skips retained marks", () => {
+    const store = new MessageStore(env.db, nullLogger);
+    try {
+      const peer = fixturePeer(store, "journal-reader"), identity = readJournalIdentities(peer.name, peer.sessionId, peer.frontend, nativeOwner(peer), localMailbox(store.namespace))[0]!;
+      const db = metadataDb(env.home), prepare = db.prepare.bind(db), id = randomUUID();
+      const writes = vi.spyOn(db, "prepare").mockImplementation(sql => {
+        if (/^\s*(?:INSERT|UPDATE|DELETE|REPLACE)/i.test(sql)) throw Object.assign(new Error("fixture metadata writer held"), { code: "SQLITE_BUSY" });
+        return prepare(sql);
+      });
+      const journal = new ReadJournal(env.home);
+      try { expect(journal.receipt(identity, id)).toEqual({ read: false, at: null }); }
+      finally { writes.mockRestore(); }
+      const dir = join(env.home, "read-state"); mkdirSync(dir);
+      const file = join(dir, `${createHash("sha256").update(identity).digest("hex")}.jsonl`), bytes = JSON.stringify({ ids: [id], at: 123 }) + "\n";
+      writeFileSync(file, bytes);
+      expect(journal.receipt(identity, id)).toEqual({ read: true, at: 123 });
+      const retained = `read-state/${file.split(/[\\/]/).at(-1)}`;
+      expect(readRetainedMetadataFile(env.home, retained)?.toString("utf8")).toBe(bytes);
+      expect(readFileSync(String(db.prepare("SELECT cold_path FROM bridge_imports WHERE path=?").get(retained)!.cold_path), "utf8")).toBe(bytes);
+    } finally { store.close(); }
+  });
   it("defers job replay if the master becomes unavailable before the scheduled callback", async () => {
     const store = new MessageStore(env.db, nullLogger);
     const broker = new Broker(env.pipe, store, nullLogger, loadOrCreateToken(env.home));
@@ -159,7 +184,7 @@ describe("broker overload survival", () => {
       if (operation === "pending result") await recipient.stop();
       if (operation.startsWith("reassigned")) writeFileSync(join(env.home, JOBS_FILE), JSON.stringify({ version: 3, jobs: [{
         ...savedJob, owner: sender.name, rootName: sender.name, deliveryOwner: sender.mailboxOwner()!,
-        ownershipHistory: [...savedJob.ownershipHistory!, { from: recipient.name, to: sender.name, fromRootName: recipient.name, rootName: sender.name }],
+        ownershipHistory: [...savedJob.ownershipHistory!, { from: recipient.name, to: sender.name, fromRoot: savedJob.supervisor, fromRootName: recipient.name, rootSession: savedJob.supervisor, rootName: sender.name }],
       }] }));
       await expect.poll(async () => (await sender.peers()).some((p) => p.name === "recipient")).toBe(operation !== "pending result");
       expect(settled).toBe(false);

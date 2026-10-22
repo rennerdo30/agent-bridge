@@ -11,6 +11,7 @@ import { isQuietMessage, type BridgeMessage, type PeerInfo } from "../src/core/p
 import { DEFAULT_NETWORK_CONFIG, type NetworkConfig } from "../src/network/config.js";
 import { NetworkService } from "../src/network/link.js";
 import { FILE_STREAM_CAPABILITY, FILE_STREAM_WINDOW_CAPABILITY, TRANSFER_CHUNK_BYTES, TRANSFER_WINDOW_CHUNKS } from "../src/network/transfers.js";
+import { fixtureNetworkBroker } from "./owned-mail.js";
 
 vi.mock("node:fs/promises", async (original) => {
   const actual = await original<typeof import("node:fs/promises")>();
@@ -22,8 +23,9 @@ const BIG_FILE_BYTES = 32 * 1024 * 1024 + 17;
 const TRANSFER_TEST_WAIT_MS = 90_000;
 let home: string;
 let services: NetworkService[];
-beforeEach(() => { home = realpathSync.native(mkdtempSync(join(tmpdir(), "ab-transfers-"))); services = []; });
-afterEach(async () => { vi.useRealTimers(); for (const service of services.reverse()) await service.close(); vi.restoreAllMocks(); rmSync(home, { recursive: true, force: true, maxRetries: 5 }); });
+let stores: { close(): Promise<void> }[];
+beforeEach(() => { home = realpathSync.native(mkdtempSync(join(tmpdir(), "ab-transfers-"))); services = []; stores = []; });
+afterEach(async () => { vi.useRealTimers(); for (const service of services.reverse()) await service.close(); for (const store of stores.reverse()) await store.close(); vi.restoreAllMocks(); rmSync(home, { recursive: true, force: true, maxRetries: 5 }); });
 const peer = (name: string): PeerInfo => ({ id: randomUUID(), name, agent: "codex", cwd: home, pid: process.pid, agentPid: null, sessionId: randomUUID(), startedAt: Date.now(), autoWake: false });
 async function wait(check: () => boolean, timeout = TRANSFER_TEST_WAIT_MS): Promise<void> {
   const deadline = Date.now() + timeout;
@@ -37,8 +39,9 @@ async function generate(path: string, bytes = BIG_FILE_BYTES): Promise<string> {
 }
 async function hash(path: string): Promise<string> { const value = createHash("sha256"); for await (const data of createReadStream(path, { highWaterMark: TRANSFER_CHUNK_BYTES })) value.update(data); return value.digest("hex"); }
 function service(name: string, peers: PeerInfo[], messages: BridgeMessage[] = [], config: Partial<NetworkConfig> = {}): NetworkService {
+  const fixture = fixtureNetworkBroker(join(home, name), peers, messages); stores.push(fixture);
   const network = new NetworkService(join(home, name), { ...DEFAULT_NETWORK_CONFIG, enabled: true, name, bind: LOOPBACK, port: 0, discovery: false, ...config },
-    { peers: () => peers, receive: (message) => { messages.push(message); return { delivered: true }; } }, nullLogger);
+    fixture.broker, nullLogger);
   services.push(network); return network;
 }
 async function paired(config: Partial<NetworkConfig> = {}) {
@@ -49,6 +52,28 @@ async function paired(config: Partial<NetworkConfig> = {}) {
 }
 
 describe("chunked paired-PC file transfers", () => {
+  it("reoffers a completed transfer after a same-session registration change but refuses replacement owners", async () => {
+    const { a, b, sender, receiver } = await paired();
+    const source = join(home, "reconnect-owner.txt"); writeFileSync(source, "exact retained bytes");
+    const originalSender = { ...sender }, originalReceiver = { ...receiver }, started = a.startFiles("mac/receiver", [source], home, sender);
+    await wait(() => a.transfers.list().find(state => state.id === started.id)?.status === "completed", 5_000);
+    sender.id = randomUUID(); receiver.id = randomUUID();
+    const transport = (a.transfers as unknown as { transport: { send(remote: string, payload: Record<string, unknown>): Promise<void> } }).transport;
+    const offer = { kind: "request", op: "offer", rid: randomUUID(), id: started.id, from: originalSender, to: receiver.name, entries: [{ kind: "file", path: "reconnect-owner.txt", size: 20 }] };
+    const responses: Record<string, unknown>[] = [], send = b.sendExtension.bind(b);
+    vi.spyOn(b, "sendExtension").mockImplementation((remote, type, payload) => { responses.push(payload); return send(remote, type, payload); });
+    await transport.send(b.keys.identity.id, offer);
+    await wait(() => responses.some(reply => reply.rid === offer.rid), 5_000);
+    expect(responses.find(reply => reply.rid === offer.rid)?.error).toBeUndefined();
+    for (const replacement of [sender, receiver]) {
+      replacement.sessionId = randomUUID();
+      const retry = { ...offer, rid: randomUUID() }; await transport.send(b.keys.identity.id, retry);
+      await wait(() => responses.some(reply => reply.rid === retry.rid), 5_000);
+      expect(responses.find(reply => reply.rid === retry.rid)?.error).toMatch(/sender|ownership/);
+      replacement.sessionId = replacement === sender ? originalSender.sessionId : originalReceiver.sessionId;
+    }
+    expect(readFileSync(join(home, "mac", "inbox", started.id, "reconnect-owner.txt"), "utf8")).toBe("exact retained bytes");
+  });
   it("measures negotiated-window throughput while messages stay responsive across two instances", async () => {
     const { a, b, sender, bMessages } = await paired();
     const source = join(home, "fairness.bin");

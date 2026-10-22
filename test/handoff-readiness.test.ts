@@ -14,7 +14,8 @@ import { codexHost } from "./helpers.js";
 import type { BridgeNode } from "../src/core/node.js";
 import { BridgeClient } from "../src/core/client.js";
 import { PROTOCOL_VERSION } from "../src/core/constants.js";
-import { priorEndpoints } from "../src/core/prior-endpoints.js";
+import { guardPriorEndpoints, priorEndpoints } from "../src/core/prior-endpoints.js";
+import { resolvePipePath } from "../src/core/paths.js";
 import { nullLogger } from "../src/core/logger.js";
 import { loadOrCreateToken } from "../src/core/token.js";
 
@@ -78,12 +79,18 @@ it("waits for a genuine cold current process identity, preserves original bytes,
 });
 
 it("refuses the genuine released JSON3 broker before effects in an explicitly isolated home", async () => {
-  // Protocol2 cannot be admitted to protocol5. Never launch it against the
+  // Protocol2 cannot be admitted to current Core. Never launch it against the
   // already-running current broker's data home just to manufacture coexistence.
   const home = join(env.home, "isolated-old-release"); mkdirSync(home);
   const child = await server("old-reader", true, home); await compatibility.refreshStorePeerIdentities(home);
-  expect(compatibility.liveStorePeers(home).find(peer => peer.pid === child.transport.pid)).toMatchObject({ name: "old-reader", version: "0.29.12", json: 3 });
+  // v0.29.12 predates store-compatibility.ts/presence advertisements. Its actual
+  // common lease plus authenticated protocol2 server are the positive evidence;
+  // do not manufacture a capability record this released binary never wrote.
+  const leases = readdirSync(join(home, ".storage-users")).filter(file => file.startsWith(`${child.transport.pid}-`));
+  expect(leases.length).toBeGreaterThan(0);
+  for (const lease of leases) expect(readFileSync(join(home, ".storage-users", lease)).length).toBe(0);
   const seeded = seed(), file = join(home, "bridge.db"), before = readFileSync(file);
+  await expect(guardPriorEndpoints(home, resolvePipePath(home, {}), loadOrCreateToken(home), nullLogger)).rejects.toMatchObject({ code: "protocol_mismatch" });
   const endpoint = priorEndpoints(home).find(path => /-p2(?:\.sock)?$/.test(path))!;
   const probe = await BridgeClient.connect(endpoint, nullLogger);
   try { await expect(probe.request("auth", { protocol: PROTOCOL_VERSION, token: loadOrCreateToken(home) })).rejects.toMatchObject({ code: "protocol_mismatch" }); }
@@ -92,6 +99,8 @@ it("refuses the genuine released JSON3 broker before effects in an explicitly is
   expect(readFileSync(seeded.path, "utf8")).toBe(seeded.bytes);
   expect(readdirSync(env.home).filter(name => name.startsWith("jobs.json.backup-"))).toEqual([]);
   expect(compatibility.liveStorePeers(env.home).some(peer => peer.pid === child.transport.pid)).toBe(false);
+  expect((await child.client.callTool({ name: "peers", arguments: {} })).isError).not.toBe(true);
+  expect(child.client.getServerVersion()!.version).toBe("0.29.12");
 });
 
 it("keeps peers and ordinary sends responsive while a slow identity query holds no metadata lock", async () => {

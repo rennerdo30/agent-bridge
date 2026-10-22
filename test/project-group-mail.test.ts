@@ -1,4 +1,3 @@
-import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -8,7 +7,7 @@ import { ProjectGroups } from "../src/core/project-groups.js";
 import { BridgeNode } from "../src/core/node.js";
 import { nullLogger } from "../src/core/logger.js";
 import { loadOrCreateToken } from "../src/core/token.js";
-import { makeEnv, type TestEnv } from "./helpers.js";
+import { fixtureProject, makeEnv, type TestEnv } from "./helpers.js";
 import { ReadJournal, readJournalIdentities } from "../src/core/read-journal.js";
 import { JobManager, readStore } from "../src/mcp/jobs.js";
 import { fixtureJobReport, fixtureNodePeer, retainFixtureRunner } from "./owned-mail.js";
@@ -21,11 +20,11 @@ let env: TestEnv;
 const nodes: BridgeNode[] = [];
 beforeEach(() => { env = makeEnv(); });
 afterEach(async () => { for (const n of nodes.splice(0)) await n.stop(); await env.cleanup(); });
-const git = (cwd: string, ...args: string[]) => execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8", windowsHide: true, stdio: ["ignore", "pipe", "ignore"] }).trim();
 function repo() {
   const path = join(env.home, "project"); mkdirSync(path);
-  git(path, "init");
-  git(path, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "--allow-empty", "-m", "Initial");
+  // Canonical project discovery reads the ordinary Git layout directly; this
+  // routing fixture needs no repository mutation or Git subprocess.
+  fixtureProject(path);
   return path;
 }
 async function node(name: string, cwd: string, job?: { id: string; owner: string; parent: string }) {
@@ -105,13 +104,14 @@ describe("durable project job mail", () => {
     retainFixtureRunner(env.home, { id: "one", name: "codex-job-one", agent: "codex", owner: source.name, supervisor: "first", cwd: path });
     const envelope = source.prepareLocalMessage({ id: randomUUID(), from: { id: "job:one", name: "codex-job-one", agent: "codex" }, to: source.name,
       recipient: source.name, body: "Already consumed", conversationId: "job-one", hop: 0, replyTo: null, createdAt: Date.now(), readAt: null });
-    const retained = readStore(join(env.home, "jobs.json"));
     const store = new MessageStore(env.db, nullLogger);
     let report: ReturnType<typeof fixtureJobReport>;
-    try { const peer = fixtureNodePeer(store, source, "claude"); report = fixtureJobReport(store, retained[0] as unknown as Record<string, unknown>, peer, peer, envelope); }
+    const retained = readStore(join(env.home, "jobs.json"));
+    const originalJob = retained.find(job => job.id === "one")!;
+    try { const peer = fixtureNodePeer(store, source, "claude"); report = fixtureJobReport(store, originalJob as unknown as Record<string, unknown>, peer, peer, envelope); }
     finally { store.close(); }
     new ReadJournal(env.home).append(readJournalIdentities(source.name, source.currentSessionId, envelope.recipientFrontend, envelope.recipientNative, envelope.recipientMailbox, { grant: envelope.id, generation: 0 })[0]!, [envelope.id]);
-    writeFileSync(join(env.home, "jobs.json"), JSON.stringify({ version: 4, jobs: [{ ...retained[0], deliveryHistory: [report.message], reportRouting: { [envelope.id]: report.draft } }, retained[1]] }));
+    writeFileSync(join(env.home, "jobs.json"), JSON.stringify({ version: 4, jobs: retained.map(job => job.id === originalJob.id ? { ...job, deliveryHistory: [report.message], reportRouting: { [envelope.id]: report.draft } } : job) }));
     await source.setUnavailable(true);
     expect(secondary.unread().some((m) => m.id === envelope.id)).toBe(false);
     const runner = await node("codex-job-one", path, { id: "one", owner: "first", parent: source.name });

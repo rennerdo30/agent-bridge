@@ -142,13 +142,15 @@ export function archiveHome(home: string, confirmed: boolean, now = Date.now()):
   if (!confirmed) throw new Error("archiving requires confirmation");
   const age = retentionLimit(ARCHIVE_AGE_ENV, DEFAULT_ARCHIVE_AGE_MS);
   if (!age) return { messages: 0, jobs: 0, runs: 0 };
-  const release = storageLease(home);
+  // MessageStore acquires the exclusive upgrade lock before its own lease.
+  // Taking an outer lease first would make an archive-only metadata home
+  // block its own mailbox initialization. Never bypass migration admission.
+  const store = existsSync(join(home, DB_FILE_NAME)) ? new MessageStore(join(home, DB_FILE_NAME), nullLogger) : null;
+  let release: (() => void) | undefined;
   try {
+    release = storageLease(home);
     let messages = 0;
-    if (existsSync(join(home, DB_FILE_NAME))) {
-      const store = new MessageStore(join(home, DB_FILE_NAME), nullLogger);
-      try { messages = store.purgeOlderThan(now - age); } finally { store.close(); }
-    }
+    if (store) messages = store.purgeOlderThan(now - age);
     let jobs = 0;
     const path = join(home, JOBS_FILE);
     if (existsSync(path)) {
@@ -166,5 +168,5 @@ export function archiveHome(home: string, confirmed: boolean, now = Date.now()):
       } finally { unlock(); }
     }
     return { messages, jobs, runs: archiveOldRuns(home, now) };
-  } finally { release(); }
+  } finally { try { store?.close(); } finally { release?.(); } }
 }
