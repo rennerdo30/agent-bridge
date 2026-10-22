@@ -1,0 +1,89 @@
+{
+  "base": "fbc10e67c986091f6d68f036d8dcef335aee33b0",
+  "sourceCommit": "9cfa6e73cd94f8a980411a764a4bb020650e1db6",
+  "sourceTree": "96462ed6a46c7aa45fe425abef0c6bee4cf1607c",
+  "status": "parent review requested; baseline unchanged",
+  "reason": "Extract the existing inline report handler to onInlineJobReport. Its local job grant branch is retained. A remote proxy cancellation/status producer uses only its original authenticated local supervisor copy, full durable envelope equality and exact local mailbox proof, never a local native job succession grant.",
+  "normalizedDelta": "t3-cross-machine-mobile-pin-r11.patch",
+  "newHelper": "src/core/broker.ts:onInlineJobReport",
+  "producer": "src/mcp/jobs.ts:post",
+  "sourceHashes": {
+    "src/core/broker.ts": "91619ecbe0850689a115af7f65b1d7e4536d9463d4c0289a3f1b92e848eedec1",
+    "src/mcp/jobs.ts": "bcf299334e5776a871ae9c2d0d6baafea29afc956edce4bf898e513954c9235c"
+  },
+  "methodNormalizerSha256": "44483a60390a69d21050504d5ebbd59ea8054d170c173e7fd063741b5a0fa971",
+  "normalizerSha256": "19b5fbbccdea0d567510ebca43e4b7d6c9506504375f79d395641c34d6dd4549",
+  "inventory": [
+    {
+      "method": "src/core/broker.ts:constructor",
+      "previous": "edcb662f4cc66dc6fdfd8cd62fd1d59997e7bf2e9c2cac0bfee0bd885b27a80a",
+      "current": "942e12b5a088935e829a232a97984c1e67a68baed145cc6e41fc626376972d27"
+    },
+    {
+      "method": "src/core/broker.ts:listen",
+      "previous": "bd39e0afecb5a74d76161f26d5923f2c1e41da8cc490ed1448a9260b850ce4b0",
+      "current": "bd39e0afecb5a74d76161f26d5923f2c1e41da8cc490ed1448a9260b850ce4b0"
+    },
+    {
+      "method": "src/core/broker.ts:startServices",
+      "previous": "747bad4009529a7c6c8fb150580ce5ed37d66ba5ac3b6f651a6f06ad865b18d7",
+      "current": "747bad4009529a7c6c8fb150580ce5ed37d66ba5ac3b6f651a6f06ad865b18d7"
+    },
+    {
+      "method": "src/core/broker.ts:abortStartup",
+      "previous": "6132967fa78fd39cff064a581f4f49bb9c1c75b644fba78b291708c58733118c",
+      "current": "6132967fa78fd39cff064a581f4f49bb9c1c75b644fba78b291708c58733118c"
+    },
+    {
+      "method": "src/core/broker.ts:close",
+      "previous": "fb5a92326cac082ae181f38208c0af708a2b342297038d021f67a13bcd8b9b27",
+      "current": "fb5a92326cac082ae181f38208c0af708a2b342297038d021f67a13bcd8b9b27"
+    },
+    {
+      "method": "src/core/node.ts:constructor",
+      "previous": "c70bf3e865405166e195839fd1b315548b5a0a56847db0bba52eba72d0b691f5",
+      "current": "c70bf3e865405166e195839fd1b315548b5a0a56847db0bba52eba72d0b691f5"
+    },
+    {
+      "method": "src/core/node.ts:start",
+      "previous": "b504e47bab8d53e8bb71ad3457594988c38cc78bed67e2b1be3e197bc1f5066a",
+      "current": "b504e47bab8d53e8bb71ad3457594988c38cc78bed67e2b1be3e197bc1f5066a"
+    },
+    {
+      "method": "src/core/node.ts:stop",
+      "previous": "b98b5631cf7643be62bce61fac172fc79c0da09db2c7720abf14502736b57359",
+      "current": "b98b5631cf7643be62bce61fac172fc79c0da09db2c7720abf14502736b57359"
+    },
+    {
+      "method": "src/core/node.ts:tryBecomeBroker",
+      "previous": "a945a95f23803cb80cb3ea51d5480d22eb1725854d1ce6f49a2ccf24289e8d36",
+      "current": "a945a95f23803cb80cb3ea51d5480d22eb1725854d1ce6f49a2ccf24289e8d36"
+    },
+    {
+      "method": "src/cli/dashboard.ts:constructor",
+      "previous": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "current": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    },
+    {
+      "method": "src/cli/dashboard.ts:open",
+      "previous": "6eacbb835304e2a5d3c303c54c3c674910cbf4f9a5411b3af62a7747fe2d211b",
+      "current": "6eacbb835304e2a5d3c303c54c3c674910cbf4f9a5411b3af62a7747fe2d211b"
+    },
+    {
+      "method": "src/cli/dashboard.ts:ensure",
+      "previous": "d19ca8a9485ccc07d588997e3497bc11545e730a264e9a6f59bf1ceb0dfcda49",
+      "current": "d19ca8a9485ccc07d588997e3497bc11545e730a264e9a6f59bf1ceb0dfcda49"
+    },
+    {
+      "method": "src/cli/dashboard.ts:close",
+      "previous": "534d315c24ff13f59aa4082abf2fb66906e6bee9b979a6348979cbaef89ec7b4",
+      "current": "534d315c24ff13f59aa4082abf2fb66906e6bee9b979a6348979cbaef89ec7b4"
+    }
+  ],
+  "unchangedMethodCount": 12,
+  "uiSha256": "f2a5b28254d4bb467f28bdee139e3b23bd9d4bd0c7c15fee116b4ed85a6ac385",
+  "uiSourceChanged": false,
+  "baselineAmended": false,
+  "compatibility": "Protocol6/schema14, pairing and remote capabilities unchanged. Existing typed local source/recipient fields and durable deliveryHistory; no remote grant, downgrade, historical attribution, or installed migration. Missing original namespace proof remains pending.",
+  "behavioralAcceptance": "Not granted. Fresh independent review and hosted native/full/lifecycle remain parent gates."
+}
