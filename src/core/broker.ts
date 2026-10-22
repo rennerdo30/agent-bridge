@@ -483,13 +483,13 @@ export class Broker {
         const peer = this.requirePeer(c);
         if (peer.jobAgent || peer.subagent || peer.agent === "other") throw new BridgeError("unauthorized", "Delegated jobs ask their main; only project sessions file owner questions.");
         const args = askOwnerSchema.parse(a), root = this.groups.root(peer.cwd);
-        if (!root || args.project && !this.groups.same(args.project, peer.cwd)) throw new BridgeError("unauthorized", "File questions only for your own project.");
-        if (args.job && !this.storedJobs().some(j => j.name === args.job && this.groups.canControl(peer,j,this.localPeers()))) throw new BridgeError("unauthorized", "Linked job must belong to this project session.");
+        if (!root || args.project && !this.groups.sameProject(args.project, peer.cwd)) throw new BridgeError("unauthorized", "File questions only for your own project.");
+        const linkedJob = args.job ? this.mailboxJob(args.job) : undefined;
+        if (args.job && (!linkedJob || !this.durableRecipient(linkedJob, peer))) throw new BridgeError("unauthorized", "Linked job must belong to this project session.");
         const main = this.localPeers().find(p => this.groups.same(p.cwd, peer.cwd) && this.projectPeer(p).projectMain);
         let deskProject: string | undefined=args.deskProject;
         try { const linked=readJsonSnapshot(join(root,".pair-desk.json")).value; if (isRecord(linked) && typeof linked.project === "string") deskProject=linked.project; } catch { /* Desk linking is optional. */ }
         const owner = recipientKey(peer.frontend, nativeOwner(peer)) ?? undefined, selectedMain = main ?? peer;
-        const linkedJob = args.job ? this.storedJobs().find(j => j.name === args.job && this.groups.canControl(peer, j, this.localPeers())) : undefined;
         const linkedOwner = linkedJob && this.durableRecipient(linkedJob, peer);
         return this.ownerQuestions().store.ask(args, root, { session: peer.name, sessionId: peer.sessionId, peerId:peer.id, agent: peer.agent, owner,
           main: selectedMain.name, mainSessionId:selectedMain.sessionId, mainPeerId:selectedMain.id,
@@ -1318,12 +1318,18 @@ export class Broker {
   /** Local sessions and paired remote peers; local job runners stay hidden (see job-host.ts). */
   private durableRecipient(job: Record<string, unknown>, sender: PeerInfo): string | undefined {
     const root = this.groups.jobRoot(job, []), owner = durableJobOwner(job);
-    if (!owner || !root || !this.groups.same(root, sender.cwd)) return undefined;
+    if (!owner || !root || !this.groups.sameProject(root, sender.cwd)) return undefined;
     return this.groups.canControl(sender, job, this.localPeers()) || sender.jobAgent &&
       this.storedSiblings(sender, String(job.name)).some(p => p.id === `job:${job.id}`) ? owner : undefined;
   }
+  /** Canonical job names or exact retained broker-assigned aliases, never suffix guesses. */
+  private mailboxJob(name: string): Record<string, unknown> | undefined {
+    const jobs = this.storedJobs();
+    const current = this.store.recipientOwnership(name, this.recipientConn(name)?.peer ?? undefined).recipientNative;
+    return jobs.find(j => current && durableJobOwner(j) === current) ?? jobs.find(j => j.name === name);
+  }
   private recipientEvidence(name: string, sender: PeerInfo): Pick<BridgeMessage, "recipientFrontend" | "recipientNative" | "recipientAmbiguous"> {
-    const job = this.storedJobs().find(j => j.name === name), owner = job && this.durableRecipient(job, sender);
+    const job = this.mailboxJob(name), owner = job && this.durableRecipient(job, sender);
     if (owner) return { recipientNative: owner };
     return this.store.recipientOwnership(name, this.recipientConn(name)?.peer ?? undefined);
   }
@@ -1747,7 +1753,7 @@ export class Broker {
   }
 
   private refreshJobPeer(job: Record<string, unknown>): void {
-    const peer = this.connByName(String(job.name))?.peer;
+    const peer = this.localPeers().find(p => p.jobAgent && p.id === `job:${job.id}` && nativeOwner(p) === durableJobOwner(job));
     if (!peer?.jobAgent) return;
     peer.jobParent = String(job.owner); peer.jobOwner = String(job.supervisor);
     peer.rootSession = String(job.rootSession); peer.rootName = String(job.rootName);
@@ -1960,11 +1966,11 @@ export class Broker {
     if (!this.jobsPath || !peer.jobOwner) return [];
     try {
       const records = this.storedJobs();
-      const supervisor = this.jobSupervisor(peer, records);
-      return records.flatMap((j) => j && (!target || j.name === target) && (this.sameJobFamily(peer, { id: `job:${j.id}`, jobOwner: String(j.supervisor) } as PeerInfo, records) || this.sharedJobs(peer, { id: `job:${j.id}` } as PeerInfo, records) || peer.jobSendTo?.includes(String(j.name))) && typeof j.id === "string" &&
+      const targetJob = target ? this.mailboxJob(target) : undefined;
+      return records.flatMap((j) => j && (!target || targetJob?.id === j.id) && (this.sameJobFamily(peer, { id: `job:${j.id}`, jobOwner: String(j.supervisor) } as PeerInfo, records) || this.sharedJobs(peer, { id: `job:${j.id}` } as PeerInfo, records) || peer.jobSendTo?.includes(String(j.name)) || target && peer.jobSendTo?.includes(target)) && typeof j.id === "string" &&
         typeof j.name === "string" && j.name !== peer.name && `job:${j.id}` !== peer.id &&
         AGENT_KINDS.includes(j.agent as AgentKind) && SIBLING_STATUSES.has(j.status as SiblingPeer["status"])
-        ? [{ id: `job:${j.id}`, name: j.name, title: isRecord(j.args) && typeof j.args.title === "string" ? j.args.title : "", agent: j.agent as AgentKind, status: j.status as SiblingPeer["status"], ...(typeof j.pauseReason === "string" ? { pauseReason: j.pauseReason } : {}), ...(typeof j.pausedAt === "number" ? { pausedAt: j.pausedAt } : {}), ...(typeof j.finishedAt === "number" ? { finishedAt: j.finishedAt } : {}), report: typeof j.report === "string" ? j.report : null }]
+        ? [{ id: `job:${j.id}`, name: target ?? j.name, title: isRecord(j.args) && typeof j.args.title === "string" ? j.args.title : "", agent: j.agent as AgentKind, status: j.status as SiblingPeer["status"], ...(typeof j.pauseReason === "string" ? { pauseReason: j.pauseReason } : {}), ...(typeof j.pausedAt === "number" ? { pausedAt: j.pausedAt } : {}), ...(typeof j.finishedAt === "number" ? { finishedAt: j.finishedAt } : {}), report: typeof j.report === "string" ? j.report : null }]
         : []);
     } catch {
       return [];
@@ -2052,7 +2058,7 @@ export class Broker {
     const conversationId = parent?.conversationId ?? `${SIBLING_CONVERSATION_PREFIX}${randomUUID()}`;
     const result = await this.onSend(conn, { ...args, dedupeKey, conversationId });
     const message = result.messages[0]!;
-    const recipientOwner = target?.peer?.jobParent ?? this.storedJobs().find((j) => j.name === args.to)?.owner;
+    const recipientOwner = target?.peer?.jobParent ?? this.mailboxJob(args.to)?.owner;
     const observers = new Set([sender.jobParent, recipientOwner].filter((owner): owner is string => typeof owner === "string"));
     for (const owner of observers) {
       const note = { ...message, id: randomUUID(), recipient: owner,
@@ -2203,7 +2209,9 @@ export class Broker {
     if (peer.jobAgent) {
       const job = this.storedJobs().find(j => `job:${j.id}` === peer.id) ?? this.remoteJobs?.jobForRegistration(peer.id.slice(4)), root = job && this.groups.jobRoot(job, []);
       const historical = job && Array.isArray(job.ownershipHistory) ? job.ownershipHistory.filter(isRecord).map(h => h.fromRoot) : [];
-      if (!job || !durableJobOwner(job) || job.agent !== peer.jobAgent || job.name !== peer.name || !root || !this.groups.same(root, peer.cwd) ||
+      const owner = job && durableJobOwner(job);
+      if (!job || !owner || nativeOwner(peer) !== owner || job.agent !== peer.jobAgent ||
+          (job.name !== peer.name && !this.store.jobNames(owner).includes(peer.name)) || !root || !this.groups.sameProject(root, peer.cwd) ||
           peer.jobOwner !== job.supervisor && !historical.includes(peer.jobOwner)) throw new BridgeError("unauthorized", "Job registration does not match the local durable job incarnation, project or supervisor.");
     }
     this.refuseRetiredHello(conn, peer);
@@ -2211,9 +2219,9 @@ export class Broker {
     // Recover the identity before allocating a name. Arrival order cannot swap an
     // established suffixed session with another session's base name on reconnect.
     const identity = registrationIdentity(peer);
-    const liveOwner = this.localPeers().find(old => old.agent === peer.agent && sameFrontend(old, peer) && (peer.frontend || (peer.sessionId ? old.sessionId === peer.sessionId :
+    const liveOwner = this.localPeers().find(old => old.agent === peer.agent && sameFrontend(old, peer) && (peer.jobAgent ? old.jobAgent && nativeOwner(old) === nativeOwner(peer) : peer.frontend || (peer.sessionId ? old.sessionId === peer.sessionId :
       (old.pid !== peer.pid || old.id === peer.id) && identity && identity === registrationIdentity(old))));
-    const remembered = this.store.namesFor(peer).find(name => name.replace(/-\d+$/, "") === p.name.replace(/-\d+$/, "") && !this.connByName(name));
+    const remembered = this.store.namesFor(peer).find(name => (peer.jobAgent ? name === p.name : name.replace(/-\d+$/, "") === p.name.replace(/-\d+$/, "")) && !this.connByName(name));
     peer.name = liveOwner?.name ?? this.uniqueName(remembered ?? p.name);
     this.store.rememberSession(peer, this.now());
     conn.peer = peer;
@@ -2350,7 +2358,7 @@ export class Broker {
     for (const c of [...this.conns]) {
       const old = c.peer;
       if (c === conn || !old || old.agent !== peer.agent || !sameFrontend(old, peer)) continue;
-      const sameSession = peer.frontend || peer.sessionId && old.sessionId === peer.sessionId;
+      const sameSession = peer.jobAgent ? old.jobAgent && nativeOwner(old) === nativeOwner(peer) : peer.frontend || peer.sessionId && old.sessionId === peer.sessionId;
       const identity = registrationIdentity(peer);
       // Separate MCP processes of the same CLI can overlap before a hook learns its session id.
       const sameProcess = (old.pid !== peer.pid || old.id === peer.id) && identity && identity === registrationIdentity(old) &&
@@ -2380,7 +2388,7 @@ export class Broker {
 
   private restoreNames(peer: PeerInfo, reclaim: boolean): string[] {
     const names = this.store.namesFor(peer);
-    if (reclaim) {
+    if (reclaim && !peer.jobAgent) {
       const base = peer.name.replace(/-\d+$/, "");
       const original = names.find((name) => name.replace(/-\d+$/, "") === base && (name === peer.name || !this.connByName(name)));
       if (original) peer.name = original;
@@ -2702,7 +2710,7 @@ export class Broker {
   /** Native queues admit only their parent, directly owned jobs and exact grants. */
   private nativeAllowed(child: ReturnType<NativeChildren["target"]>, name: string): boolean {
     if (name === child.parent || child.sendTo.includes(name)) return true;
-    const job = this.storedJobs().find(j => j.name === name);
+    const job = this.mailboxJob(name);
     if (job) return job.owner === child.parent && job.supervisor === child.session;
     const peer = this.connByName(name)?.peer;
     return Boolean(peer?.jobAgent && peer.jobParent === child.parent && peer.jobOwner === child.session);
@@ -2778,7 +2786,7 @@ export class Broker {
   /** Reverse permissions use the current durable record, not stale runner registration. */
   private replyRestriction(sender: PeerInfo, name: string): { name: string; supervisor: string } | null {
     const jobs = this.storedJobs(), peer = this.connByName(name)?.peer;
-    const stored = jobs.find((j) => j.name === name);
+    const stored = this.mailboxJob(name);
     if (!stored && !peer?.jobAgent) return null;
     const job = stored ?? { id: peer!.id.replace(/^job:/, ""), name, owner: peer!.jobParent,
       supervisor: peer!.jobOwner, rootName: peer!.rootName, parentJob: peer!.parentJob,
@@ -2823,7 +2831,7 @@ export class Broker {
       else if (Array.isArray(own.ownershipHistory) && own.ownershipHistory.some((h) => isRecord(h) && h.fromRootName === to)) to = String(own.rootName);
       this.refreshJobPeer(own);
     }
-    const controlled = this.storedJobs().find((j) => j.name === to);
+    const controlled = this.mailboxJob(to);
     if ((controlled || this.connByName(to)?.peer?.jobAgent) &&
         !args.conversationId?.startsWith(CONTROL_CONVERSATION_PREFIX) &&
         !args.conversationId?.startsWith(SIBLING_CONVERSATION_PREFIX)) {

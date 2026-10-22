@@ -31,6 +31,12 @@ export class ProjectGroups {
     return Boolean(left && right && projectKey(left) === projectKey(right) && this.enabled(left));
   }
 
+  /** Identity/allowed-path validation is independent of optional automatic sharing. */
+  sameProject(a: string, b: string): boolean {
+    const left = this.root(a), right = this.root(b);
+    return Boolean(left && right && projectKey(left) === projectKey(right));
+  }
+
   decorate(peer: PeerInfo): PeerInfo {
     const root = this.root(peer.cwd);
     return { ...peer, projectRoot: root ?? undefined, projectGroup: root && peer.agent !== "other" && !peer.jobAgent && !peer.subagent && this.enabled(root, peer.agent) ? projectKey(root) : undefined };

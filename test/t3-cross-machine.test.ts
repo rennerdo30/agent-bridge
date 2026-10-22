@@ -334,9 +334,58 @@ function durableJob(host: Awaited<ReturnType<typeof persistentHost>>, name: stri
 function recordJobs(host: Awaited<ReturnType<typeof persistentHost>>, jobs: ReturnType<typeof durableJob>[]) {
   const file = join(host.dir, "jobs.json"); writeJsonStore(file, { jobs }, null); (host.broker as any).jobsPath = file;
 }
+function projectSharing(root: string, enabled: boolean) {
+  mkdirSync(join(root, ".agent-bridge"), { recursive: true });
+  writeFileSync(join(root, ".agent-bridge", "config.json"), JSON.stringify({ projectGroups: enabled }));
+}
 function registerJob(host: Awaited<ReturnType<typeof persistentHost>>, job: ReturnType<typeof durableJob>, supervisor = job.supervisor) {
   return host.register(undefined, job.name, host.dir, null, { id: `job:${job.id}`, agent: "other", jobAgent: "codex", jobOwner: supervisor, jobParent: job.owner });
 }
+
+it("validates owned runner project identity independently of disabled sharing", async () => {
+  const host = await persistentHost("pc-b"), job = durableJob(host, "sharing-off"); recordJobs(host, [job]);
+  projectSharing(host.dir, false);
+  const other = join(home, "foreign-project"); mkdirSync(other);
+  await expect(host.register(undefined, job.name, other, null, { id: `job:${job.id}`, agent: "other", jobAgent: "codex", jobOwner: job.supervisor })).rejects.toThrow(/project|registration/i);
+  expect((await registerJob(host, job)).peer.name).toBe(job.name);
+});
+
+it("reconnects a collision-allocated BridgeNode job alias and recovers only its durable incarnation", async () => {
+  let host = await persistentHost("pc-b"); const job = durableJob(host, "collision-job"); recordJobs(host, [job]);
+  await host.register(undefined, job.name, host.dir, "unrelated-native");
+  const node = new LiveBridgeNode({ pipePath: host.pipe, token: host.token, dbPath: host.db, id: `job:${job.id}`, agent: "other",
+    name: job.name, cwd: host.dir, jobAgent: "codex", jobOwner: job.supervisor, jobParent: job.owner, autoWake: false, canHostBroker: false, log: nullLogger });
+  cleanup.push(() => node.stop()); await node.start(); expect(node.name).toBe(`${job.name}-2`);
+  const alias = node.name;
+  // Restart the real broker; BridgeNode retains its allocated alias in hello.
+  await host.close(); await until(() => !node.isConnected);
+  host = await persistentHost("pc-b"); recordJobs(host, [job]);
+  const occupied = await host.register(undefined, job.name, host.dir, "unrelated-native");
+  await expect(node.ensureConnected()).resolves.toBeUndefined(); expect(node.name).toBe(alias);
+  (node as any).client.close(); await until(() => !(host.broker as any).localPeers().some((p: PeerInfo) => p.id === `job:${job.id}`));
+  const main = await host.register(binding("b", "main"), "main", host.dir, "main-session");
+  await main.client.request("projectMain", { to: main.peer.name });
+  const q = (await main.client.request("askOwner", { ...ownerQuestion(), job: alias })).question;
+  await host.admin.request("answerOwner", { id: q.id, answer: { text: "offline alias answer" } });
+  const impostor = { id: `job:${job.id}`, agent: "other" as const, jobAgent: "codex" as const, jobOwner: job.supervisor };
+  await expect(host.register(undefined, `${job.name}-99`, host.dir, null, impostor)).rejects.toThrow(/registration|alias/i);
+  const other = durableJob(host, "different-job"); recordJobs(host, [job, other]);
+  await expect(host.register(undefined, alias, host.dir, null, { ...impostor, id: `job:${other.id}` })).rejects.toThrow(/registration|alias/i);
+  const sibling = await registerJob(host, other);
+  const siblingSend = await sibling.client.request("sendSibling", { to: alias, body: "offline assigned alias", maxHops: 4 });
+  await expect(node.ensureConnected()).resolves.toBeUndefined(); expect(node.name).toBe(alias);
+  const pending = await (node as any).client.request("pending", {});
+  expect(pending.find((m: BridgeMessage) => m.replyTo === q.id)?.body).toContain("offline alias answer");
+  expect(pending.find((m: BridgeMessage) => m.id === siblingSend.messages[0]!.id)?.body).toContain("offline assigned alias");
+  expect((await occupied.client.request("pending", {})).filter(m => m.replyTo === q.id)).toEqual([]);
+  expect(host.store.messagesById(pending.find((m: BridgeMessage) => m.replyTo === q.id)!.id).some(m => m.recipient === alias && m.recipientNative === JSON.stringify({ kind: "job", agent: "codex", id: `job:${job.id}` }))).toBe(true);
+  expect(JSON.parse(readFileSync(join(host.dir, "jobs.json"), "utf8")).jobs.find((j: any) => j.id === job.id).name).toBe(job.name);
+  const next = await host.register(binding("b", "next-main"), "next-main", host.dir, "next-supervisor");
+  commitHandoff(join(host.dir, "jobs.json"), main.peer, next.peer, { to: next.peer.name, jobs: [job.name] });
+  (host.broker as any).applyHandoffs();
+  expect((host.broker as any).localPeers().find((p: PeerInfo) => p.id === node.id).jobOwner).toBe("next-supervisor");
+  expect(host.store.broadcastNames()).not.toContain(alias);
+});
 
 it("retains proven native job ownership through the real network peer projection and reconnect", async () => {
   const a = await persistentHost("pc-a"), b = await persistentHost("pc-b"), left = durableJob(a, "job-sender"), right = durableJob(b, "job-recipient");
@@ -352,10 +401,12 @@ it("retains proven native job ownership through the real network peer projection
   expect((await sender.client.request("messageReceipt", { id }))[0]!.readAt).not.toBeNull();
 });
 
-it("captures the authorized offline linked job's durable identity before answering and refuses replacements", async () => {
+it.each([true, false])("captures the authorized offline linked job's durable identity before answering and refuses replacements (sharing %s)", async sharing => {
   const host = await persistentHost("pc-b"), main = await host.register(binding("b", "main"), "main", host.dir, "main-session");
+  projectSharing(host.dir, sharing);
   const job = durableJob(host, "offline-linked"); recordJobs(host, [job]);
   const q = (await main.client.request("askOwner", { ...ownerQuestion(), job: job.name })).question;
+  expect(q.askers[0]!.jobOwner).toBe(`native:${JSON.stringify({ kind: "job", agent: "codex", id: `job:${job.id}` })}`);
   await host.admin.request("answerOwner", { id: q.id, answer: { text: "offline job answer" } });
   const replacement = await host.register(undefined, job.name, host.dir, "unrelated-native");
   expect((await replacement.client.request("pending", {})).filter(m => m.replyTo === q.id)).toEqual([]);
@@ -364,11 +415,13 @@ it("captures the authorized offline linked job's durable identity before answeri
   expect((await actual.client.request("pending", {})).find(m => m.replyTo === q.id)?.body).toContain("offline job answer");
 });
 
-it("queues authorized never-registered sibling mail for its exact durable job incarnation", async () => {
+it.each([true, false])("queues authorized never-registered sibling mail for its exact durable job incarnation (sharing %s)", async sharing => {
   const host = await persistentHost("pc-b"), left = durableJob(host, "left"), right = durableJob(host, "right"); recordJobs(host, [left, right]);
   const sender = await registerJob(host, left);
+  projectSharing(host.dir, sharing);
   const result = await sender.client.request("sendSibling", { to: right.name, body: "first registration must recover this", maxHops: 4 });
   const id = result.messages[0]!.id;
+  expect(host.store.byId(id)?.recipientNative).toBe(JSON.stringify({ kind: "job", agent: "codex", id: `job:${right.id}` }));
   const replacement = await host.register(undefined, right.name, host.dir, "unrelated-native");
   expect((await replacement.client.request("pending", {})).map(m => m.id)).not.toContain(id);
   replacement.client.close(); await until(() => !(host.broker as any).localPeers().some((p: PeerInfo) => p.name === right.name));
@@ -462,11 +515,12 @@ it("preserves legacy supplemental job routes through schema13 merge without inve
   expect(() => reopened.insertJobDelivery({ ...message(peer("job"), "historical-owner"), id, recipientFrontend: binding("b", "historical-owner") })).toThrow(/route provenance.*unproven|pending report/i);
 });
 
-it("registers a receiver-side durable remote Bridge runner without trusting a source-side mirror or caller owner", async () => {
+it.each([true, false])("registers a receiver-side durable remote Bridge runner without trusting a source-side mirror or caller owner (sharing %s)", async sharing => {
   const a = await persistentHost("pc-a"); let b = await persistentHost("pc-b");
   const job = { ...durableJob(b, "received-bridge-job"), owner: "pc-a/main", supervisor: `${a.network.status().identity!.id}/remote-root` };
   await b.close(); writeJsonStore(join(b.dir, "remote-jobs.json"), { jobs: [{ pair: a.network.status().identity!.id, peer: "remote-root", owner: job.owner, job, args: job.args }] }, null);
   b = await persistentHost("pc-b"); await pairPersistent(a, b);
+  projectSharing(b.dir, sharing);
   await expect(registerJob(b, job, "wrong-remote-root")).rejects.toThrow(/supervisor|job registration/i);
   const service = (b.broker as any).remoteJobs;
   service.pendingStarts.set(job.id, { committed: false });

@@ -515,7 +515,8 @@ export class MessageStore {
   /** Retain names only with CLI or hook identity; a similar spelling is never an alias. */
   rememberName(peer: PeerInfo, at: number): void {
     return this.acceptedOperation("direct", () => {
-    const identity = registrationIdentity(peer) ?? (!peer.jobAgent && peer.sessionId ? JSON.stringify(["session", peer.agent, peer.sessionId]) : null);
+    const jobOwner = peer.jobAgent ? nativeOwner(peer) : undefined;
+    const identity = jobOwner ? JSON.stringify(["job", jobOwner]) : registrationIdentity(peer) ?? (!peer.jobAgent && peer.sessionId ? JSON.stringify(["session", peer.agent, peer.sessionId]) : null);
     this.exec(this.db, "BEGIN IMMEDIATE");
     try {
       if (identity) this.statement(this.db, `INSERT INTO peer_names VALUES (?,?,?,?,?) ON CONFLICT(identity,name)
@@ -543,11 +544,24 @@ export class MessageStore {
 
   namesFor(peer: PeerInfo): string[] {
     return this.acceptedOperation("direct", () => {
+    if (peer.jobAgent) return this.jobNames(nativeOwner(peer));
     const identity = registrationIdentity(peer);
-    if (peer.jobAgent || (!identity && !peer.sessionId)) return [];
+    if (!identity && !peer.sessionId) return [];
     return this.statement(this.db, `SELECT name FROM peer_names JOIN peer_name_owners USING(name,identity)
-      WHERE identity=? OR (session_id=? AND agent=? AND (CASE WHEN json_valid(identity) THEN json_extract(identity,'$[1]') END) IS NOT 't3') GROUP BY name ORDER BY MIN(learned_at) ASC, MIN(peer_names.rowid) ASC`)
+      WHERE identity=? OR (session_id=? AND agent=? AND (CASE WHEN json_valid(identity) THEN json_extract(identity,'$[1]') END) IS NOT 't3'
+        AND (CASE WHEN json_valid(identity) THEN json_extract(identity,'$[0]') END) IS NOT 'job') GROUP BY name ORDER BY MIN(learned_at) ASC, MIN(peer_names.rowid) ASC`)
       .all(identity, peer.frontend ? null : peer.sessionId, peer.agent).map((r) => String(r.name));
+    });
+  }
+
+  /** Exact broker-issued leases for a validated durable job incarnation. No spelling inference.
+   * Older branch registrations remain usable evidence; new leases survive name reuse. */
+  jobNames(owner: string | undefined): string[] {
+    return this.acceptedOperation("direct", () => {
+      if (!this.frontendOwnership || !owner || verifiedNative(owner) !== owner || JSON.parse(owner).kind !== "job") return [];
+      return this.statement(this.db, `SELECT name FROM peer_names WHERE identity=?
+        UNION SELECT name FROM recipient_registrations WHERE state='native' AND owner=? ORDER BY name`)
+        .all(JSON.stringify(["job", owner]), owner).map(row => String(row.name));
     });
   }
 
@@ -561,6 +575,7 @@ export class MessageStore {
         try {
           const parts: unknown = JSON.parse(identity);
           if (Array.isArray(parts)) {
+            if (parts[0] === "job") return false;
             if (parts[0] === "session" && typeof parts[2] === "string") session = parts[2];
             else if (typeof parts[1] === "number" && typeof parts[3] === "string") return !isPluginCacheCwd(parts[3]);
           }
