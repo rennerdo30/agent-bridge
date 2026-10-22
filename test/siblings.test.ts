@@ -5,6 +5,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { z } from "zod";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { nullLogger } from "../src/core/logger.js";
+import { DEFAULT_CONFIG } from "../src/core/config.js";
 import { DELEGATE_DEPTH_ENV } from "../src/core/delegate.js";
 import { DELEGATION_METADATA_VERSION, JOBS_FILE } from "../src/core/constants.js";
 import * as jsonStore from "../src/core/json-store.js";
@@ -575,6 +576,26 @@ describe("sibling job messaging", () => {
     await expect(a.chat.send("opencode-job-missing", "Unknown job")).rejects.toThrow(/explicit send_to/);
   });
 
+  it.each(["claude", "opencode"] as const)("keeps a handed-off pair authorized with quiet %s observer mail", async agent => {
+    const a = await sibling("a", "codex"), b = await sibling("b", "opencode");
+    const observer = env.node(`${agent}-observer`, agent); await observer.start();
+    await supervisor.handoffSubagents({ to: observer.name, jobs: [a.job.name, b.job.name] });
+    await a.node.updateJob({ jobParent: observer.name }); await b.node.updateJob({ jobParent: observer.name });
+    await observer.refreshPending();
+    expect(observer.unread().some(m => m.conversationId.startsWith("handoff-"))).toBe(true);
+    observer.markRead(observer.unread().map(m => m.id));
+    expect(await a.chat.peers()).toContainEqual(expect.objectContaining({ name: b.job.name }));
+    const sent = (await a.chat.send(b.job.name, "Quiet observer copy")).messages[0]!;
+    await expect.poll(() => observer.unread()).toEqual([expect.objectContaining({ body: expect.stringContaining("Quiet observer copy") })]);
+    expect(observer.unread().every(isSiblingNote)).toBe(true);
+    const ctx = { agent, node: observer, home: env.home, cfg: { ...DEFAULT_CONFIG }, log: nullLogger, cwd: () => env.home, channelActive: () => true } as ServerContext;
+    expect(JSON.stringify(await buildHookResponse(ctx, { event: "UserPromptSubmit", sessionId: observer.currentSessionId, stopHookActive: false }))).not.toContain("Quiet observer copy");
+    expect(observer.unread()).toHaveLength(1);
+    expect((await a.node.messageReceipt(sent.id))[0]!.readAt).toBeNull();
+    const outsider = await sibling("outsider", "claude");
+    await expect(a.chat.send(outsider.job.name, "No grant")).rejects.toThrow(/explicit send_to/);
+  });
+
   it.each(["claude", "opencode"] as const)("keeps supervisor copies quiet for a %s notification client", async (agent) => {
     const a = await sibling("a", "codex");
     const b = await sibling("b", "opencode");
@@ -590,8 +611,18 @@ describe("sibling job messaging", () => {
     try {
       await client.callTool({ name: "peers", arguments: {} });
       await client.callTool({ name: "hook_event", arguments: { event: "SessionStart", session_id: `observer-${agent}` } });
-      await supervisor.handoffSubagents({ to: name, jobs: [a.job.name] });
+      // Keep the pair in the same authenticated supervisor family. Moving only
+      // A deliberately revokes its implicit sibling access to B.
+      await supervisor.handoffSubagents({ to: name, jobs: [a.job.name, b.job.name] });
       await a.node.updateJob({ jobParent: name });
+      await b.node.updateJob({ jobParent: name });
+      // The actionable handoff is separate from the quiet observer copy. Read
+      // it and flush this transport before starting the notification assertion.
+      const handoff = await client.callTool({ name: "inbox", arguments: {} });
+      expect(JSON.stringify(handoff)).toContain("Inherited subagents");
+      await client.callTool({ name: "peers", arguments: {} });
+      expect(notifications.every(n => JSON.stringify(n).includes("Inherited subagents"))).toBe(true);
+      notifications.length = 0;
       await a.chat.send(b.job.name, "Quiet observer copy");
       await expect.poll(async () => JSON.stringify(await client.callTool({ name: "inbox", arguments: { mark_read: false } }))).toContain("Quiet observer copy");
       expect(notifications).toEqual([]);

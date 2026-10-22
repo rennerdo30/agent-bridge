@@ -340,7 +340,7 @@ export interface RequestMap {
   siblings: [Record<string, never>, SiblingPeer[]];
   sendSibling: [SendArgs & { maxHops: number }, SendResult];
   ack: [AckArgs, { acked: number }];
-  messageReceipt: [{ id: string }, MessageReceipt[]];
+  messageReceipt: [{ id: string; nativeChild?: string }, MessageReceipt[]];
   pending: [PendingArgs, BridgeMessage[]];
   updatePeer: [UpdatePeerArgs, PeerInfo];
   /** Take over the unread mail of "-N" stand-in names of this peer that no one holds (after a reload). */

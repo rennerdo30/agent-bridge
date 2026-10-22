@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { localMailbox } from "../src/core/recipient-ownership.js";
 import { EventEmitter } from "node:events";
 import { createServer } from "node:net";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
@@ -314,6 +315,29 @@ async function pairPersistent(a: Awaited<ReturnType<typeof persistentHost>>, b: 
   await a.admin.request("networkLink", { code: invite, host: "127.0.0.1", port: b.network.port });
   return invite;
 }
+
+it("refuses paired-host receipt borrowing for child senders with colliding parent/session IDs", async () => {
+  const a = await persistentHost("pc-a"), b = await persistentHost("pc-b");
+  const parents = await Promise.all([a, b].map(host => host.register(undefined, "parent", host.dir, "same-parent", { agent: "claude", id: "same-registration" })));
+  const receiver = await a.register(undefined, "receiver", a.dir, "receiver-session");
+  for (const parent of parents) {
+    await parent.client.request("nativeChild", { agentId: "worker", action: "start" });
+    await parent.client.request("nativeChild", { agentId: "worker", action: "grant", sendTo: ["receiver"] });
+  }
+  await pairPersistent(a, b);
+  const id = randomUUID();
+  await parents[0]!.client.request("nativeChildSend", { agentId: "worker", to: "receiver", body: "Local child proof", messageId: id });
+  const copy = (await receiver.client.request("pending", {})).find(m => m.id === id)!;
+  expect(copy.senderMailbox).toEqual(localMailbox(a.store.namespace));
+  expect(await parents[0]!.client.request("messageReceipt", { id, nativeChild: "worker" })).toEqual([{ recipient: "receiver", readAt: null }]);
+  await expect(parents[1]!.client.request("messageReceipt", { id, nativeChild: "worker" })).rejects.toMatchObject({ code: "unauthorized" });
+  // Real authenticated receipt wire: B's advertised colliding parent identity
+  // cannot act as A's virtual child or turn a local source into a remote one.
+  await expect(link(b.network).receipt(id, parents[1]!.peer.id, "receiver")).rejects.toThrow(/original.*sender|ownership|host/i);
+  expect(a.store.receipts(id)).toEqual([{ recipient: "receiver", readAt: null }]);
+  expect(await receiver.client.request("ack", { ids: [id], mailboxProofs: proof(copy), nativeOwners: { [id]: copy.recipientNative! } })).toEqual({ acked: 1 });
+  expect((await parents[0]!.client.request("messageReceipt", { id, nativeChild: "worker" }))[0]!.readAt).toBeTypeOf("number");
+});
 
 it("attests a detached infrastructure sender by its own process incarnation when its former parent is unknown", async () => {
   const host = await persistentHost("pc-a"), recipient = await host.register(binding("a", "ui-destination"));

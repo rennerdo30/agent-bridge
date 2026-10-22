@@ -1101,7 +1101,7 @@ export class MessageStore {
   }
 
   /** A recovered inline envelope must never replay after a recipient consumed it or it was forwarded. */
-  insertJobDelivery(m: BridgeMessage, authority?: JobMailGrant): boolean {
+  insertJobDelivery(m: BridgeMessage, authority?: JobMailGrant, request?: { owner: string; fingerprint: string }): boolean {
     return this.acceptedOperation("direct", () => {
     if (authority) m = { ...m, jobRoute: undefined, recipientMailbox: m.recipientMailbox ?? localMailbox(this.namespace), senderMailbox: m.senderMailbox ?? localMailbox(this.namespace) };
     if (this.statement(this.db, "SELECT 1 FROM message_archive_conflicts WHERE source_table='messages' AND id=? AND recipient=?").get(m.id, m.recipient)) return false;
@@ -1116,6 +1116,12 @@ export class MessageStore {
     }
     this.exec(this.db, "BEGIN IMMEDIATE");
     try {
+      if (request) {
+        const owner = JSON.parse(request.owner);
+        if (!authority || !Array.isArray(owner) || owner.length !== 3 || owner[0] !== m.from.name || owner[2] !== `native:${authority.principal}`)
+          throw new Error("Job dispatch request does not match the proven report sender");
+        this.rememberSendIntent(m.id, request.owner, request.fingerprint);
+      }
       if (authority) this.retainJobGrant(m, authority);
       const inserted = this.insertOnce(m);
       const retained = this.messagesById(m.id).find(copy => copy.recipient === m.recipient);

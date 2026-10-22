@@ -12,6 +12,34 @@ async function connected() {
   await previous.start(); await reader.start();
   return { previous, reader };
 }
+
+it("learns a native session while hello is in flight without changing its attested identity", async () => {
+  const host = env.node("host"); await host.start();
+  const reader = env.node("late-session", "opencode", false, null);
+  const broker = (host as any).broker, original = broker.handlers.hello;
+  let entered = false, release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  broker.handlers.hello = async (conn: any, args: any) => {
+    if (args.peer.id === reader.id) { entered = true; await held; }
+    return original(conn, args);
+  };
+  const starting = reader.start();
+  try {
+    await until(() => entered);
+    const learned = reader.setSessionId("late-opencode-session");
+    release();
+    await Promise.all([starting, learned]);
+    expect((await host.peers()).find(p => p.id === reader.id)).toMatchObject({ sessionId: "late-opencode-session" });
+    const sent = await host.send({ to: reader.name, body: "Only the attested session receives this" });
+    await reader.refreshPending();
+    expect(reader.unread()).toContainEqual(expect.objectContaining({ id: sent.messages[0]!.id }));
+    reader.markRead([sent.messages[0]!.id]);
+    await expect.poll(() => host.messageReceipt(sent.messages[0]!.id)).toEqual([{ recipient: reader.name, readAt: expect.any(Number) }]);
+    await reader.stop();
+    const replacement = env.node(reader.name, "opencode", false, "different-session"); await replacement.start();
+    await replacement.refreshPending(); expect(replacement.unread()).toEqual([]);
+  } finally { release(); await starting.catch(() => {}); }
+});
 function holdPeers(node: unknown) {
   const broker = (node as any).broker, original = broker.handlers.peers;
   let entered = false, release!: () => void;

@@ -743,7 +743,7 @@ export class Broker {
         if (!a.ifNoNewerThan) throw new BridgeError("bad_request", "guardedSend requires if_no_newer_than");
         return this.onSend(c, a);
       },
-      messageReceipt: (c, a) => this.messageReceipt(c, a.id),
+      messageReceipt: (c, a) => this.messageReceipt(c, a.id, a.nativeChild),
       ack: async (c, a) => {
         const peer = this.requirePeer(c), registration = { id: peer.id, name: peer.name, sessionId: peer.sessionId, generation: c.mailGeneration, owner: recipientKey(peer.frontend, nativeOwner(peer)), namespace: this.store.namespace };
         return { acked: await this.store.retryWrite(() => {
@@ -2904,7 +2904,9 @@ export class Broker {
     };
     const existing = recovered();
     if (existing) return existing;
-    const message: BridgeMessage = { id, from: sender, to, recipient: to, conversationId, replyTo: args.replyTo ?? null, hop, replyLimit: child.maxHops, body: args.body, createdAt: this.now(), readAt: null };
+    const message: BridgeMessage = { id, from: sender, senderOwner: scope ?? recipientKey(peer.frontend, nativeOwner(peer)) ?? undefined,
+      senderMailbox: localMailbox(this.store.namespace), recipientMailbox: localMailbox(this.store.namespace),
+      to, recipient: to, conversationId, replyTo: args.replyTo ?? null, hop, replyLimit: child.maxHops, body: args.body, createdAt: this.now(), readAt: null };
     const copies = to === child.parent ? [] : [{ ...message, id: randomUUID(), recipient: child.parent, conversationId: `${conversationId}${SIBLING_NOTE_SUFFIX}`, body: `Native child message to ${to}:\n\n${args.body}` }];
     const previous = await this.store.retryWrite(() => {
       check();
@@ -2954,7 +2956,16 @@ export class Broker {
     const retainedRequest = this.store.sendIntentOwner(id) !== undefined;
     this.assertSendOwner(sender, id, Boolean(stored));
     if (stored) this.assertStoredSend(sender, args, stored);
-    await this.persistSendRequest(conn, sender, args, id);
+    const own = sender.jobAgent ? this.storedJobs().find((j) => `job:${j.id}` === sender.id) : undefined;
+    const supervisorMail = Boolean(own && (to === sender.jobParent || mastersFor(own).includes(to)));
+    // Local job dispatch has no external effect before its storage transaction.
+    // Commit request + exact grant + accepted copy together: a failed insert
+    // must not leave a request-only intent which permanently prevents retry.
+    // Existing orphan intents remain refused; ordinary/remote sends retain
+    // their immutable destination admission and never acquire this exception.
+    const atomicJobRequest = !stored && !retainedRequest && !to.includes("/") && supervisorMail && Boolean(this.jobReportGrant(own!, sender));
+    const jobRegistration = atomicJobRequest ? conn.mailReady : undefined;
+    if (!atomicJobRequest) await this.persistSendRequest(conn, sender, args, id);
     if (stored) return { messages: this.store.messagesById(id), deliveredTo: [], queuedFor: [],
       storage: { id, state: "stored", recovered: true, receipts: this.store.receipts(id) } };
     const retained = this.store.pinnedSends(id);
@@ -2966,8 +2977,6 @@ export class Broker {
     }
 
     // Durable ownership wins over the old name cached in a still-running parent link.
-    const own = sender.jobAgent ? this.storedJobs().find((j) => `job:${j.id}` === sender.id) : undefined;
-    const supervisorMail = Boolean(own && (to === sender.jobParent || mastersFor(own).includes(to)));
     const question = isJobQuestion({ conversationId: args.conversationId ?? "" });
     if (own) {
       if (to === sender.jobParent || mastersFor(own).includes(to)) to = this.jobRecipient(own, question);
@@ -3069,6 +3078,7 @@ export class Broker {
       if (!local.length && remote.length) remoteAddress = this.requireNetwork().projectTarget(to);
     }
     if (remoteAddress) {
+      if (atomicJobRequest) throw new BridgeError("unauthorized", "Local job report admission cannot dispatch to a remote host.");
       if (anchor && this.store.replyConflicts(sender.name, [to], conversationId, anchor, sender.frontend, nativeOwner(sender)).length) {
         throw new BridgeError("bad_request", "Stale reply refused: newer unread mail exists. Read inbox before replying.");
       }
@@ -3135,7 +3145,14 @@ export class Broker {
           ...ownershipFromKey(intended), to, conversationId: this.jobConversation(current, to, base.conversationId) };
         const grant = this.jobReportGrant(current, sender);
         if (!grant) throw new BridgeError("unauthorized", "Original local job report grant is unavailable; report remains pending");
-        inserted = this.store.insertJobDelivery(message, grant);
+        if (atomicJobRequest) {
+          if (!jobRegistration) throw new BridgeError("unauthorized", "Send registration is not ready");
+          this.assertQueueRegistration(conn, sender, jobRegistration);
+        }
+        inserted = this.store.insertJobDelivery(message, grant, atomicJobRequest ? {
+          owner: JSON.stringify([sender.name, sender.agent, recipientKey(sender.frontend, nativeOwner(sender))]),
+          fingerprint: JSON.stringify([args.to, args.body, args.replyTo ?? null, args.conversationId ?? null, args.ifNoNewerThan ?? null]),
+        } : undefined);
         Object.assign(message, this.store.messagesById(message.id).find(copy => copy.recipient === recipient));
         messages.splice(0, messages.length, message);
       });
@@ -3261,15 +3278,19 @@ export class Broker {
     return (receipt ?? (addressedAlias ? receipts.find((r) => r.recipient === message.recipient) : undefined))?.readAt ?? null;
   }
 
-  private async messageReceipt(conn: Conn, id: string) {
+  private async messageReceipt(conn: Conn, id: string, nativeChild?: string) {
     const sender = this.requirePeer(conn);
     const message = this.store.byId(z.uuid().parse(id));
     // Receipt inspection also serves authenticated producer envelopes which
     // were never tracked sends (inline job reports and durable hop notices).
     // Their original per-copy sender proof, not a display name or a new send
     // intent, authorizes this read. Mutation/retry still uses assertSendOwner.
-    const owner = recipientKey(sender.frontend, nativeOwner(sender));
-    if (!message || !owner || message.from.name !== sender.name || message.from.agent !== (sender.jobAgent ?? sender.agent) ||
+    // Scoped child inspection is explicit, just like nativeChildSend. The
+    // parent connection cannot borrow it without selecting a currently owned
+    // child, whose complete incarnation/parent lineage must match storage.
+    const child = nativeChild === undefined ? undefined : this.nativeChildren.own(sender, nativeChild);
+    const owner = child ? recipientKey(undefined, child.identity) : recipientKey(sender.frontend, nativeOwner(sender));
+    if (!message || !owner || message.from.name !== (child?.address ?? sender.name) || message.from.agent !== (child ? "claude" : sender.jobAgent ?? sender.agent) ||
         message.senderOwner !== owner || !sameMailbox(message.senderMailbox, localMailbox(this.store.namespace)))
       throw new BridgeError("unauthorized", "receipt is only available to the original proven sender in this mailbox namespace");
     const receipts = this.store.receipts(id);

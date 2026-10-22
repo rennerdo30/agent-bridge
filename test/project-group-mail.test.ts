@@ -41,6 +41,33 @@ function registry(project: string) {
 }
 
 describe("durable project job mail", () => {
+  it("retries a job final after a rolled-back first storage without leaving an orphan send intent", async () => {
+    const path = repo(); registry(path);
+    const source = await node("claude-master", path), secondary = await node("codex-master", path);
+    const runner = await node("codex-job-one", path, { id: "one", owner: "first", parent: source.name });
+    const store = (source as any).broker.store as MessageStore, db = (store as any).db;
+    const accepted = (await source.send({ to: secondary.name, body: "Accepted bytes and ownership survive a later rollback" })).messages[0]!;
+    const original = store.messagesById(accepted.id);
+    const id = randomUUID(), args = { to: source.name, body: "Retained runner final", conversationId: "job-one", messageId: id };
+    db.exec(`CREATE TRIGGER refuse_test_final BEFORE INSERT ON messages WHEN NEW.id='${id}' BEGIN SELECT RAISE(ABORT,'injected final storage failure'); END`);
+    try {
+      await expect((runner as any).client.request("trackedSend", args)).rejects.toThrow(/injected final storage failure/);
+      expect(store.messagesById(id)).toEqual([]);
+      expect(store.jobRoutingGrant(id)).toBeNull();
+      expect(store.messagesById(accepted.id)).toEqual(original);
+    } finally { db.exec("DROP TRIGGER refuse_test_final"); }
+    // No dispatch occurred: the failed transaction must retain neither an
+    // accepted intent nor a grant. A fresh authorized dispatch can choose B.
+    expect(store.sendIntentOwner(id)).toBeUndefined();
+    await source.setUnavailable(true);
+    const retried = await (runner as any).client.request("trackedSend", args);
+    expect(retried.messages).toEqual([expect.objectContaining({ id, recipient: secondary.name, body: args.body })]);
+    expect(store.jobRoutingGrant(id)?.originalRecipient).toBe(secondary.name);
+    expect(store.messagesById(id)).toHaveLength(1);
+    expect((await (runner as any).client.request("trackedSend", args)).storage.recovered).toBe(true);
+    await expect((secondary as any).client.request("trackedSend", args)).rejects.toThrow(/ownership/);
+    expect(store.messagesById(id)).toHaveLength(1);
+  });
   it("keeps pending sibling mail and quiet observer notes at their intended recipients on group changes", async () => {
     const path = repo(); registry(path);
     const source = await node("claude-master", path), secondary = await node("codex-master", path);

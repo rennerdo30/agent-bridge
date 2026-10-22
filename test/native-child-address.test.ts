@@ -112,8 +112,34 @@ it("unconfirmed hook hand-outs return to the parent instead of being acknowledge
   const sent = (await job.sendSibling({ to: address(), body: "Unconfirmed hook context" }, 32)).messages[0]!;
   expect(JSON.stringify(await hook("PostToolUse"))).toContain("Unconfirmed hook context");
   expect((await job.messageReceipt(sent.id)).find(r => r.recipient === address())?.readAt).toBeNull();
+  await expect(stranger.messageReceipt(sent.id)).rejects.toMatchObject({ code: "unauthorized" });
   await hook("SubagentStop"); await parent.refreshPending();
   expect(parent.unread()).toContainEqual(expect.objectContaining({ id: sent.id, body: "Unconfirmed hook context", readAt: null }));
+});
+
+it("authorizes a child-origin receipt only in its original active child incarnation and parent lineage", async () => {
+  await hook("SubagentStart");
+  const sent = (await parent.nativeChildSend(agentId, { to: job.name, body: "Child-owned receipt" })).messages[0]!;
+  expect(JSON.parse(sent.senderOwner!.slice("native:".length))).toMatchObject({ kind: "child", parent: parent.name, session: "root", agentId });
+  const receipt = () => parent.messageReceipt(sent.id, agentId);
+  expect(await receipt()).toContainEqual({ recipient: job.name, readAt: null });
+  await expect(parent.messageReceipt(sent.id)).rejects.toMatchObject({ code: "unauthorized" });
+  await parent.nativeChild({ agentId: "other-child", action: "start" });
+  await expect(parent.messageReceipt(sent.id, "other-child")).rejects.toMatchObject({ code: "unauthorized" });
+  await expect(stranger.messageReceipt(sent.id, agentId)).rejects.toMatchObject({ code: "unauthorized" });
+  const foreign = env.node("claude-foreign", "claude", false, "foreign-root"); await foreign.start();
+  await foreign.nativeChild({ agentId, action: "start" });
+  await expect(foreign.messageReceipt(sent.id, agentId)).rejects.toMatchObject({ code: "unauthorized" });
+  await job.refreshPending(); job.markRead([sent.id]);
+  await expect.poll(receipt).toContainEqual({ recipient: job.name, readAt: expect.any(Number) });
+  await hook("SubagentStop");
+  await expect(receipt()).rejects.toMatchObject({ code: "unauthorized" });
+  // Even an explicit reload of the same parent session creates a new child
+  // incarnation; it cannot inherit the previous child's sender authority.
+  await parent.stop();
+  const replacement = env.node("claude-main", "claude", false, "root"); await replacement.start();
+  await replacement.nativeChild({ agentId, action: "start" });
+  await expect(replacement.messageReceipt(sent.id, agentId)).rejects.toMatchObject({ code: "unauthorized" });
 });
 
 it("SubagentStop returns all pending mail to the parent and late hooks cannot resurrect the address", async () => {

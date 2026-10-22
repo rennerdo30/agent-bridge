@@ -1,5 +1,7 @@
 # AB-458 c69 residual CI matrix
 
+The later [6f9e464 residual matrix](t3-cross-machine-ci-6f9-residuals.md) records all nine remaining distinct CI failures, R10 and the qualified follow-up evidence. This c69 inventory remains historical evidence.
+
 Source head: `c69aed3cd139b4548771fb3229098c7dd17b7372`. Ubuntu job119655412959: 56 failed / 33 files, 4086 passed, 136 skipped. macOS job119655412610: 55 failed / 31 files, 4087 passed; adds one distinct pending-result writer-lock case. Windows shard5 job119656719784: 9 failed / 7 files, all in the Ubuntu set. Thus these logs contain **57 distinct failing full names**. This is a failure inventory, not a claim of fixes or hosted acceptance. Consecutive FAIL headers sharing an error block are each included.
 
 Logs are retained under `E:/AgentData/reports/ab458-ci-job-<job>.log`; line numbers below refer to each original retained log. Local validation excludes native/daemon/provider/subprocess suites and real writer subprocess tests.

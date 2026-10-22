@@ -915,8 +915,8 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     return this.lastSent;
   }
 
-  messageReceipt(id: string) {
-    return this.withClient((c) => c.request("messageReceipt", { id }));
+  messageReceipt(id: string, nativeChild?: string) {
+    return this.withClient((c) => c.request("messageReceipt", { id, ...(nativeChild ? { nativeChild } : {}) }));
   }
 
   nativeChild(args: RequestMap["nativeChild"][0]) { return this.withClient(c => c.request("nativeChild", args)); }
@@ -1264,6 +1264,11 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   }
 
   async setSessionId(sessionId: string | null): Promise<void> {
+    // Hello attests the identity captured when it was sent. A hook may learn
+    // the native session while registration is awaiting the broker; finish
+    // that registration before applying the authenticated update, rather than
+    // comparing its response against an identity it never received.
+    if (this.electing) await this.electing.catch(() => {});
     if (sessionId === this.sessionId) return;
     this.sessionId = sessionId;
     this.nativeIdentity = this.currentNativeIdentity();
