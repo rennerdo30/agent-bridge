@@ -856,7 +856,7 @@ export class MessageStore {
     try { return mailboxSchema.parse(JSON.parse(String(value))); } catch { return undefined; }
   }
   private ledgerKey(row?: Record<string, unknown>): string | null {
-    try { return row?.state === "role" ? `role:${JSON.stringify(roleQueueSchema.parse(JSON.parse(String(row.owner))))}` : row?.state === "hosted" ? recipientKey(t3BindingSchema.parse(JSON.parse(String(row.owner)))) :
+    try { return row?.state === "role" || row?.state === "role-claimed" ? `role:${JSON.stringify(roleQueueSchema.parse(JSON.parse(String(row.owner))))}` : row?.state === "hosted" ? recipientKey(t3BindingSchema.parse(JSON.parse(String(row.owner)))) :
       row?.state === "native" ? recipientKey(undefined, String(row.owner)) : null; } catch { return null; }
   }
   localCopy(message: BridgeMessage): boolean { return !message.recipientAmbiguous && sameMailbox(message.recipientMailbox, localMailbox(this.namespace)); }
@@ -867,7 +867,7 @@ export class MessageStore {
     message.senderMailbox = this.parseMailbox(owner?.source);
     if (owner?.state === "hosted" && owner.owner) message.recipientFrontend = t3BindingSchema.parse(JSON.parse(String(owner.owner)));
     else if (owner?.state === "native" && verifiedNative(String(owner.owner))) message.recipientNative = String(owner.owner);
-    else if (owner?.state === "role") message.recipientRole = roleQueueSchema.parse(JSON.parse(String(owner.owner)));
+    else if (owner?.state === "role" || owner?.state === "role-claimed") message.recipientRole = roleQueueSchema.parse(JSON.parse(String(owner.owner)));
     else message.recipientAmbiguous = true;
     try { message.recipientMailbox = mailboxSchema.parse(JSON.parse(String(owner?.mailbox))); } catch { message.recipientAmbiguous = true; }
     if (message.recipientMailbox?.kind === "local" && message.recipientMailbox.namespace !== this.namespace) message.recipientAmbiguous = true;
@@ -980,7 +980,7 @@ export class MessageStore {
     });
   }
 
-  /** Atomically select a concrete recipient once; retain the original role ledger as evidence. */
+  /** Select once while retaining the original row/proofs; retirement is not consumption. */
   claimRole(peer: PeerInfo, project: string): number {
     return this.acceptedOperation("direct", () => {
       const evidence = peerOwnership(peer), concrete = recipientKey(evidence.recipientFrontend, evidence.recipientNative);
@@ -994,8 +994,13 @@ export class MessageStore {
           const message = this.decode(raw as unknown as Row), role = message.recipientRole;
           if (!role || role.namespace !== namespace || role.agent !== peer.agent || projectKey(role.project) !== projectKey(project) || !this.localCopy(message)) continue;
           if (this.statement(this.db, "SELECT 1 FROM messages WHERE id=? AND recipient=?").get(message.id, peer.name)) continue;
+          // Retire the role grant before insertion can invoke a retained sink.
+          // The same savepoint restores this state if either effect fails. Keep
+          // the original envelope and every proof byte; never fake a read ACK.
+          const retired = this.statement(this.db, "UPDATE message_frontends SET state='role-claimed' WHERE id=? AND recipient=? AND state='role' AND mailbox=?")
+            .run(message.id, from, mailbox);
+          if (Number(retired.changes) !== 1) throw new Error("Role claim changed before concrete copy admission");
           this.insert({ ...message, recipient: peer.name, recipientRole: undefined, ...evidence });
-          this.statement(this.db, "DELETE FROM messages WHERE id=? AND recipient=?").run(message.id, from);
           count++;
         }
         this.exec(this.db, "RELEASE role_mail_claim");
@@ -1292,6 +1297,9 @@ export class MessageStore {
       const rows = this.statement(db, `SELECT recipient, read_at AS readAt FROM ${table} WHERE id = ?`).all(id) as unknown as { recipient: string; readAt: number | null }[];
       for (const row of rows) {
         const owner = this.frontendOwnership ? this.statement(this.db, "SELECT state,owner,mailbox FROM message_frontends WHERE id=? AND recipient=?").get(id, row.recipient) : undefined;
+        // Retained role originals are routing evidence, not another pending or
+        // consumed recipient. The selected concrete copy carries the receipt.
+        if (owner?.state === "role-claimed") continue;
         const proven = Boolean(owner?.state !== "role" && this.ledgerKey(owner) && sameMailbox(this.parseMailbox(owner?.mailbox), localMailbox(this.namespace)));
         // Keep raw historical timestamps intact; ambiguous marks cannot establish
         // consumption through local or remote receipt APIs. Inventory exposes them.

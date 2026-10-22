@@ -2,7 +2,6 @@
   "reviewBase": "3f86ae286a275bb0b3a86dc34883bcec4223d081",
   "implementationCommit": "bb6f598b582c1a82e70f87bf8eedb3944a28595a",
   "implementationTree": "659031f59e3f53bd53703891614377265b929f2c",
-  "exactTestedHead": "5a4f5113c32a44994f74bd0555ba6d0978bc68ed",
   "branch": "t3/fix-t3-cross-pc-messaging",
   "pullRequest": "https://github.com/rennerdo30/agent-bridge/pull/141",
   "protocol": 6,
@@ -13,7 +12,7 @@
     "nativeOwnershipV1",
     "mailboxProvenanceV1"
   ],
-  "sourceFreeze": "src remains byte-identical to implementationCommit; subsequent fixture/docs edits do not amend reviewed protected methods",
+  "sourceFreeze": "Approved protected source files/methods remain byte-identical to bb6f598b. A separately parent-authorized c69 retention correction changes only src/core/store.ts; the pin amendment receipt identifies the subsequent full source head/tree. Source/test equivalence is stated separately from actual execution receipts.",
   "changedFiles": [
     "docs/t3-cross-machine-ci-failures.md",
     "docs/t3-cross-machine-job-routing-design.md",
@@ -167,6 +166,56 @@
       "timeoutMs": 60000,
       "exit": 1,
       "head": "3f86ae2 plus owned working tree mutation"
+    },
+    {
+      "selection": "Same bounded routing/compatibility/grant selection as PID56856, actually rerun on committed c69",
+      "exit": 0,
+      "timeoutMs": 60000,
+      "file": "test/t3-cross-machine.test.ts",
+      "pid": 73708,
+      "logs": "%TEMP%/ab458-final-c69-focused.{out,err}",
+      "head": "c69aed3cd139b4548771fb3229098c7dd17b7372",
+      "passed": 55
+    },
+    {
+      "command": "native tsc --noEmit --pretty false",
+      "timeoutMs": 60000,
+      "logs": "%TEMP%/ab458-final-c69-tsc.{out,err}",
+      "head": "c69aed3cd139b4548771fb3229098c7dd17b7372",
+      "pid": 44500,
+      "exit": 0
+    },
+    {
+      "selection": "Federation, mobile callback, read-only receipt diagnostics",
+      "exit": 0,
+      "timeoutMs": 60000,
+      "logs": "%TEMP%/ab458-final-c69-fixtures.{out,err}",
+      "pid": 54660,
+      "head": "c69aed3cd139b4548771fb3229098c7dd17b7372",
+      "files": [
+        "test/network.test.ts",
+        "test/mobile-wiring.test.ts",
+        "test/project-group-takeover.test.ts"
+      ],
+      "passed": 3
+    },
+    {
+      "failed": 3,
+      "qualification": "Claim deleted original role row; tombstone fault did not participate in a transaction",
+      "timeoutMs": 60000,
+      "logs": "%TEMP%/ab458-role-retention-red.{out,err}",
+      "head": "c69aed3cd139b4548771fb3229098c7dd17b7372 plus new regression tests, unchanged production source",
+      "pid": 59224,
+      "exit": 1
+    },
+    {
+      "passed": 5,
+      "timeoutMs": 60000,
+      "logs": "%TEMP%/ab458-role-retention-guard.{out,err}",
+      "head": "c69aed3 plus owned role-retention source/test correction",
+      "selection": "Original row/proof retention, copy/tombstone rollback, reentrant claim exclusion, archive/backup/restore/restart; unchanged removal guard",
+      "pid": 50040,
+      "exit": 0
     }
   ],
   "failureMatrix": "docs/t3-cross-machine-ci-failures.md",
@@ -174,7 +223,7 @@
   "design": "docs/t3-cross-machine-job-routing-design.md",
   "mobilePinReview": {
     "baselineAmended": false,
-    "supplementalApproval": "pending parent exact review of docs/t3-cross-machine-mobile-pin-supplement.patch",
+    "supplementalApproval": "Parent approved exact c69 normalized constructor/startServices delta in this conversation; recorded on AB-45842246. Separate amendment follows frozen-commit recomputation.",
     "inventory": "docs/t3-cross-machine-mobile-pin-request.json",
     "unchangedMethods": 8,
     "unchangedUiSha256": "f2a5b28254d4bb467f28bdee139e3b23bd9d4bd0c7c15fee116b4ed85a6ac385",
@@ -183,13 +232,32 @@
   "unverified": [
     "Hosted full223/69-file CI acceptance and native lifecycle on Windows/Linux/macOS",
     "Fresh independent complete review",
-    "Live other-PC T3 thread acceptance and native providers",
-    "Supplemental mobile pin approval and separate attributable amendment"
+    "Live other-PC T3 thread acceptance and native providers"
   ],
   "migrationLimits": [
     "Pre-lease schema2/3 automatic shared-home admission refuses before schema/backup mutation; explicit owner-coordinated offline-isolated migration only",
     "Historical ambiguous owner/direction/draft data remains preserved/quarantined; no native name guessing",
     "Unsupported old binaries reopening later shared stores require coordinated upgrade; endpoint probes do not prove exclusion alone",
     "Shared history/archive remains separately authenticated shared access, not confidential per-recipient storage"
+  ],
+  "exactTestedHeads": [
+    "5a4f5113c32a44994f74bd0555ba6d0978bc68ed",
+    "c69aed3cd139b4548771fb3229098c7dd17b7372"
+  ],
+  "commitComparisons": [
+    {
+      "sourceIdentical": true,
+      "from": "bb6f598b582c1a82e70f87bf8eedb3944a28595a",
+      "to": "5a4f5113c32a44994f74bd0555ba6d0978bc68ed",
+      "changes": "Three mobile pin review documentation artifacts only",
+      "testsIdentical": true
+    },
+    {
+      "sourceIdentical": true,
+      "from": "5a4f5113c32a44994f74bd0555ba6d0978bc68ed",
+      "to": "c69aed3cd139b4548771fb3229098c7dd17b7372",
+      "changes": "test/network.test.ts federation advertisement/reconnect fixture correction plus validation receipt. c69 had its own exact-head checks, not an inferred pass.",
+      "testsIdentical": false
+    }
   ]
 }

@@ -35,7 +35,7 @@ import { NetworkService, type NetworkDestination } from "../src/network/link.js"
 import { DEFAULT_NETWORK_CONFIG } from "../src/network/config.js";
 import { T3Waker } from "../src/mcp/t3-wake.js";
 import { until } from "./helpers.js";
-import { fixtureAck } from "./owned-mail.js";
+import { fixtureAck, fixturePeer, fixtureRoleMessage, unreadOwned } from "./owned-mail.js";
 
 // No CLI/provider/daemon subprocess may escape this fixture. Windows ACL queries are
 // mocked as well; TLS pairing and wire framing still run on isolated loopback sockets.
@@ -438,13 +438,75 @@ it("claims only explicit local project role mail once, pins the concrete owner, 
   expect(copy.body).toBe(args.body); expect(copy.recipientRole).toBeUndefined();
   expect(copy.recipientNative).toContain('"sessionId":"role-owner-A"');
   expect((await correct.client.request("pending", {})).map(m => m.id)).not.toContain(exact);
-  await sender.client.request("trackedSend", args); expect(a.store.messagesById(args.messageId)).toHaveLength(1);
+  await sender.client.request("trackedSend", args);
+  const retained = a.store.messagesById(args.messageId); expect(retained).toHaveLength(2);
+  expect(retained.find(m => m.recipient === "agent:codex")).toMatchObject({ body: args.body, readAt: null, recipientRole: role.recipientRole });
+  expect(retained.filter(m => !m.recipientRole)).toHaveLength(1);
   expect(await correct.client.request("ack", { ids: [copy.id], mailboxProofs: proof(copy), nativeOwners: { [copy.id]: copy.recipientNative! } })).toEqual({ acked: 1 });
   correct.client.close(); await until(() => !(a.broker as any).localPeers().some((p: PeerInfo) => p.id === correct.peer.id));
   const replacement = await a.register(undefined, "never-seen", a.dir, "role-owner-B");
   expect((await replacement.client.request("pending", {})).map(m => m.id)).not.toContain(args.messageId);
   expect(await replacement.client.request("ack", { ids: [copy.id], mailboxProofs: proof(copy), nativeOwners: { [copy.id]: copy.recipientNative! } })).toEqual({ acked: 0 });
   expect(a.store.byId(exact)?.recipientAmbiguous).toBe(true);
+});
+
+it("retains the original role row and every proof through concrete claim, archive, backup and same-binding recovery", async () => {
+  let host = await persistentHost("retained-role"), sender = await host.register(binding("a", "sender"), "sender", host.dir);
+  const id = randomUUID(), args = { messageId: id, to: "agent:codex", body: "original role body, UUID and address survive claim" };
+  await sender.client.request("trackedSend", args);
+  const db = new DatabaseSync(host.db), original = db.prepare("SELECT * FROM messages WHERE id=?").get(id)!, proofBefore = db.prepare("SELECT * FROM message_frontends WHERE id=?").get(id)!;
+  let observerClosed = false; cleanup.push(() => { if (!observerClosed) db.close(); });
+  const first = await host.register(undefined, "selected", host.dir, "selected-session");
+  const copy = (await first.client.request("pending", {})).find(m => m.id === id)!;
+  expect(db.prepare("SELECT * FROM messages WHERE id=? AND recipient='agent:codex'").get(id)).toEqual(original);
+  expect(db.prepare("SELECT * FROM message_frontends WHERE id=? AND recipient='agent:codex'").get(id)).toEqual({ ...proofBefore, state: "role-claimed" });
+  expect(copy.body).toBe(original.body); expect(copy.recipientNative).toContain('"sessionId":"selected-session"');
+  // The exact intermediate reader's role-candidate predicate cannot reclaim
+  // retained rows; the unknown state also grants no native/frontend authority.
+  expect(db.prepare("SELECT COUNT(*) n FROM messages m JOIN message_frontends f USING(id,recipient) WHERE m.id=? AND f.state='role'").get(id)!.n).toBe(0);
+  const other = await host.register(undefined, "other", host.dir, "different-session");
+  expect((await other.client.request("pending", {})).map(m => m.id)).not.toContain(id);
+  await sender.client.request("trackedSend", args); expect(host.store.messagesById(id)).toHaveLength(2);
+  expect(host.store.receipts(id)).toEqual([{ recipient: "selected", readAt: null }]);
+  expect(host.store.expireQueued("agent:codex", Date.now() + 1)).toBe(1);
+  const archived = new DatabaseSync(join(host.dir, "archive.db"), { readOnly: true });
+  try { expect(archived.prepare("SELECT * FROM messages WHERE id=? AND recipient='agent:codex'").get(id)).toEqual({ ...original, archive_reason: "stale queue", archived_at: expect.any(Number) }); } finally { archived.close(); }
+  const backup = await messageBackupIfDue(host.dir, { checkpoint: async () => {} });
+  const restored = restoreMessageBackup(backup.path!, "role-restore");
+  expect(restored.messagesById(id).find(m => m.recipient === "agent:codex")?.recipientRole).toEqual(host.store.messagesById(id).find(m => m.recipient === "agent:codex")?.recipientRole);
+  expect(restored.messagesById(id).every(m => m.body === args.body)).toBe(true);
+  expect(restored.claimRole(fixturePeer(restored, "new-owner", { cwd: host.dir }), host.dir)).toBe(0);
+  expect(restored.receipts(id)).toEqual([{ recipient: "selected", readAt: null }]);
+  db.close(); observerClosed = true; // Close this owned observer before broker restart.
+  await host.close(); host = await persistentHost("retained-role");
+  const returned = await host.register(undefined, "selected", host.dir, "selected-session");
+  const recovered = (await returned.client.request("pending", {})).find(m => m.id === id)!;
+  expect(recovered.body).toBe(args.body); expect(recovered.recipientNative).toBe(copy.recipientNative);
+  expect(await returned.client.request("ack", fixtureAck([recovered]))).toEqual({ acked: 1 });
+  expect(host.store.receipts(id)).toEqual([{ recipient: "selected", readAt: expect.any(Number) }]);
+  const all = host.store.messagesById(id); expect(all).toHaveLength(2); expect(all.find(m => m.recipient === "agent:codex")?.readAt).toBeNull();
+});
+
+it.each(["copy", "tombstone"])("rolls back a failed role %s without losing source bytes, proof or claim authority", phase => {
+  const file = join(home, "role-rollback.db"), store = new MessageStore(file, nullLogger); cleanup.push(() => store.close());
+  const sender = fixturePeer(store, "sender", { agent: "claude", cwd: home }), selected = fixturePeer(store, "selected", { cwd: home });
+  const role = fixtureRoleMessage(store, sender, "codex", message(sender, "agent:codex")); store.insert(role);
+  const db = new DatabaseSync(file); cleanup.push(() => db.close());
+  const before = db.prepare("SELECT * FROM messages WHERE id=?").get(role.id), ownership = db.prepare("SELECT * FROM message_frontends WHERE id=?").get(role.id);
+  db.exec(phase === "copy" ? "CREATE TRIGGER role_fault BEFORE INSERT ON messages WHEN NEW.recipient='selected' BEGIN SELECT RAISE(ABORT,'fixture role copy failure'); END"
+    : "CREATE TRIGGER role_fault BEFORE UPDATE OF state ON message_frontends WHEN OLD.recipient='agent:codex' BEGIN SELECT RAISE(ABORT,'fixture role tombstone failure'); END");
+  expect(() => store.claimRole(selected, home)).toThrow(/fixture role/);
+  expect(db.prepare("SELECT * FROM messages WHERE id=?").all(role.id)).toEqual([before]);
+  expect(db.prepare("SELECT * FROM message_frontends WHERE id=?").all(role.id)).toEqual([ownership]);
+  expect(unreadOwned(store, selected)).toEqual([]);
+  db.exec("DROP TRIGGER role_fault");
+  const other = fixturePeer(store, "reentrant-successor", { cwd: home });
+  let entered = false, reentrantClaim = -1;
+  store.historyMessageSink = () => { if (!entered) { entered = true; reentrantClaim = store.claimRole(other, home); } };
+  expect(store.claimRole(selected, home)).toBe(1); expect(store.claimRole(selected, home)).toBe(0);
+  expect(reentrantClaim).toBe(0); expect(unreadOwned(store, other)).toEqual([]);
+  expect(unreadOwned(store, selected).map(m => m.id)).toEqual([role.id]);
+  expect(db.prepare("SELECT * FROM messages WHERE id=? AND recipient='agent:codex'").get(role.id)).toEqual(before);
 });
 
 it("keeps first tracked intent pending under an owned writer lock and commits original bytes once", async () => {
