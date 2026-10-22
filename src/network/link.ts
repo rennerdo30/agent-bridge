@@ -14,6 +14,7 @@ import { receiveTransfer, transferResultSchema, transferSchema, type FileTransfe
 import { FILE_STREAM_CAPABILITY, FILE_STREAM_WINDOW_CAPABILITY, TRANSFER_WINDOW_CHUNKS, TransferManager, type TransferStarted } from "./transfers.js";
 import { REMOTE_JOB_USAGE_CAPABILITY } from "./remote-job-protocol.js";
 import { nativeOwner, recipientKey, verifiedNative } from "../core/recipient-ownership.js";
+import type { MailboxProvenance } from "../core/recipient-ownership.js";
 
 const MAX_METADATA_CHARS = 4_096;
 const MAX_ID_CHARS = 128;
@@ -63,6 +64,7 @@ export const networkHelloSchema = publicIdentitySchema.extend({
   t3ThreadRouting: z.boolean().optional(),
   recipientOwnershipV1: z.boolean().optional(),
   nativeOwnershipV1: z.boolean().optional(),
+  mailboxProvenanceV1: z.boolean().optional(),
 });
 const destinationSchema = z.object({ peerId: textId, frontend: t3BindingSchema.optional(), native: z.string().max(16384).optional() });
 export type NetworkDestination = z.infer<typeof destinationSchema>;
@@ -91,7 +93,7 @@ type NetworkFrame = z.infer<typeof frameSchema>;
 
 export interface NetworkBroker {
   peers(): PeerInfo[];
-  receipt?(id: string, sender: string, recipient?: string): number | null;
+  receipt?(id: string, sender: string, recipient: string | undefined, source: MailboxProvenance): number | null;
   recipientReceipts?: boolean;
   /** null marks legacy network ingress; undefined remains internal/local notification. */
   receive(message: BridgeMessage, destination?: NetworkDestination | null): DeliveryResult;
@@ -127,6 +129,7 @@ class Link {
   t3ThreadRouting = false;
   recipientOwnershipV1 = false;
   nativeOwnershipV1 = false;
+  mailboxProvenanceV1 = false;
   private capabilities: string[] = [];
   private advertisedPeers: string | null = null;
   private extensionHandlers = 0;
@@ -187,6 +190,7 @@ class Link {
           this.t3ThreadRouting = frame.t3ThreadRouting === true;
           this.recipientOwnershipV1 = frame.recipientOwnershipV1 === true;
           this.nativeOwnershipV1 = frame.nativeOwnershipV1 === true;
+          this.mailboxProvenanceV1 = frame.mailboxProvenanceV1 === true;
           this.capabilities = [...new Set([...(frame.capabilities ?? []), ...(frame.additionalCapabilities ?? [])])];
           this.service.attach(this);
           clearTimeout(this.deadline); this.readyResolve();
@@ -326,8 +330,11 @@ class Link {
         throw new Error("Paired host lacks recipientOwnershipV1; mailbox and receipt access refused pending owner-coordinated upgrade.");
       if ((frame.type === "send" || frame.type === "receipt") && !this.nativeOwnershipV1)
         throw new Error("Paired host lacks nativeOwnershipV1; mailbox and receipt access refused pending owner-coordinated upgrade.");
+      if ((frame.type === "send" || frame.type === "receipt") && !this.mailboxProvenanceV1)
+        throw new Error("Paired host lacks mailboxProvenanceV1; mailbox and receipt access refused pending owner-coordinated upgrade.");
       if (frame.type === "receipt") {
-        const readAt = this.service.readReceipt(frame.id, `${this.remote!.id}/${frame.sender}`, frame.recipient);
+        const readAt = this.service.readReceipt(frame.id, `${this.remote!.id}/${frame.sender}`, frame.recipient,
+          { kind: "remote", hostId: this.remote!.id, hostFingerprint: this.remote!.fingerprint });
         this.write({ type: "result", rid: frame.rid, readAt });
         return;
       }
@@ -341,7 +348,8 @@ class Link {
         this.write({ type: "result", rid: frame.rid, transfer: result });
         return;
       }
-      const message = { ...frame.message, from: { ...frame.message.from, id: `${remote.id}/${frame.message.from.id}`, name: `${remote.name}/${frame.message.from.name}` } };
+      const message = { ...frame.message, senderMailbox: { kind: "remote" as const, hostId: remote.id, hostFingerprint: remote.fingerprint },
+        from: { ...frame.message.from, id: `${remote.id}/${frame.message.from.id}`, name: `${remote.name}/${frame.message.from.name}` } };
       const result = this.service.receive(message, frame.destination);
       this.refresh();
       this.write({ type: "result", rid: frame.rid, ...result });
@@ -421,7 +429,7 @@ export class NetworkService {
     return [...this.extensions.values()].flatMap((extension) => [extension.capability, ...extension.aliases]).concat([FILE_STREAM_WINDOW_CAPABILITY], this.broker.recipientReceipts ? ["recipient-receipts-v1"] : []);
   }
 
-  extensionHelloCapabilities(): { capabilities: string[]; additionalCapabilities: string[]; t3ThreadRouting: boolean; recipientOwnershipV1: boolean; nativeOwnershipV1: boolean } {
+  extensionHelloCapabilities(): { capabilities: string[]; additionalCapabilities: string[]; t3ThreadRouting: boolean; recipientOwnershipV1: boolean; nativeOwnershipV1: boolean; mailboxProvenanceV1: boolean } {
     const capabilities = this.extensionCapabilities();
     return {
       capabilities: capabilities.filter(capability => capability !== REMOTE_JOB_USAGE_CAPABILITY),
@@ -429,6 +437,7 @@ export class NetworkService {
       t3ThreadRouting: true,
       recipientOwnershipV1: true,
       nativeOwnershipV1: true,
+      mailboxProvenanceV1: true,
     };
   }
 
@@ -469,15 +478,18 @@ export class NetworkService {
   }
 
   get supportsReceipts(): boolean { return Boolean(this.broker.receipt); }
-  readReceipt(id: string, sender: string, recipient?: string): number | null {
+  readReceipt(id: string, sender: string, recipient: string | undefined, source: MailboxProvenance): number | null {
     this.requireAuthority();
     if (!this.broker.receipt) throw new Error("read receipts unavailable");
-    return this.broker.receipt(id, sender, recipient);
+    return this.broker.receipt(id, sender, recipient, source);
   }
-  async receipt(address: string, id: string, sender: string, requireRecipient = false): Promise<number | null> {
-    const { link, target } = this.target(address);
+  async receipt(address: string, id: string, sender: string, requireRecipient = false, authority?: MailboxProvenance): Promise<number | null> {
+    const targetName = address.slice(address.indexOf("/") + 1);
+    const { link, target } = this.target(authority?.kind === "remote" ? `${authority.hostId}/${targetName}` : address);
+    if (authority?.kind === "remote" && (authority.hostId !== link.remote!.id || authority.hostFingerprint !== link.remote!.fingerprint)) throw new BridgeError("unauthorized", "Receipt authenticated host differs from the original copy.");
     if (!link.recipientOwnershipV1) throw new BridgeError("unknown_target", "Paired host cannot attest recipient ownership for this receipt.");
     if (!link.nativeOwnershipV1) throw new BridgeError("unknown_target", "Paired host lacks nativeOwnershipV1 for this receipt.");
+    if (!link.mailboxProvenanceV1) throw new BridgeError("unknown_target", "Paired host lacks mailboxProvenanceV1 for this receipt.");
     const retained = this.broker.pinnedDestinations?.(id) ?? [];
     if (retained.length && !retained.some(destination => destination.hostId === link.remote!.id &&
         destination.hostFingerprint === link.remote!.fingerprint && destination.name === target)) {
@@ -499,7 +511,11 @@ export class NetworkService {
       const label = String((raw as { name?: unknown } | null)?.name ?? "?").slice(0, 80);
       if (!parsed.success || names.has(parsed.data.name) || ids.has(parsed.data.id) || out.length >= MAX_NETWORK_PEERS) { dropped.push(label); continue; }
       names.add(parsed.data.name); ids.add(parsed.data.id);
-      out.push({ ...parsed.data, nativeOwner: nativeOwner(parsed.data as PeerInfo) } as PeerInfo);
+      // The callback is the authoritative local broker registration. Derive its
+      // proof before the public schema intentionally strips private job grants.
+      // Never preserve a caller-supplied public nativeOwner as an attestation.
+      const owner = nativeOwner(raw as PeerInfo);
+      out.push({ ...parsed.data, nativeOwner: owner && verifiedNative(owner) } as PeerInfo);
     }
     const signature = dropped.join("\n");
     if (dropped.length && signature !== droppedPeersLogged.get(this)) {
@@ -691,6 +707,7 @@ export class NetworkService {
       throw new BridgeError("unknown_target", "Paired host lacks verified recipient ownership; payload was withheld without native fallback.");
     }
     if (!link.nativeOwnershipV1) throw new BridgeError("unknown_target", "Paired host lacks nativeOwnershipV1; no payload or native fallback was dispatched.");
+    if (!link.mailboxProvenanceV1) throw new BridgeError("unknown_target", "Paired host lacks mailboxProvenanceV1; no payload or fallback was dispatched.");
     if (!pinned.destination.frontend && !verifiedNative(pinned.destination.native)) {
       throw new BridgeError("unknown_target", "Original destination ownership is unproven; no unadvertised native fallback was dispatched.");
     }
@@ -706,7 +723,7 @@ export class NetworkService {
       { peerId: destination.id, ...(destination.frontend ? { frontend: destination.frontend } : { native: destination.nativeOwner }) } : undefined);
     const actual = result.recipient ?? target;
     const recipient = `${link.remote!.name}/${actual}`;
-    return { messages: [{ ...message, recipient }], deliveredTo: result.delivered ? [recipient] : [], queuedFor: result.delivered ? [] : [recipient],
+    return { messages: [{ ...message, recipient, recipientMailbox: { kind: "remote", hostId: pinned.destination.hostId, hostFingerprint: pinned.destination.hostFingerprint } }], deliveredTo: result.delivered ? [recipient] : [], queuedFor: result.delivered ? [] : [recipient],
       ...(result.stored ? { storage: { id: message.id, state: "stored" as const, recovered: result.recovered, receipts: [{ recipient, readAt: result.readAt ?? null }] } } : {}),
       recipientStates: link.peers.filter((p) => p.name === actual).map((p) => ({ name: recipient, activity: p.activity, autoWake: p.autoWake, wakeOnDirect: p.wakeOnDirect, wakeAvailable: p.wakeAvailable, wakeMaxHops: p.wakeMaxHops })) };
   }

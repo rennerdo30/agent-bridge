@@ -124,6 +124,10 @@ export interface MessageAddress {
 }
 
 export interface BridgeMessage {
+  /** Mailbox direction and authority are independent of colliding provider/frontend IDs. */
+  recipientMailbox?: import("./recipient-ownership.js").MailboxProvenance;
+  /** Authenticated source host or the original local store namespace. */
+  senderMailbox?: import("./recipient-ownership.js").MailboxProvenance;
   /** Authenticated sender ownership retained for remote duplicate/receipt fencing. */
   senderOwner?: string;
   /** Durable hosted ownership. Absence alone proves neither native nor hosted authority. */
@@ -160,6 +164,7 @@ export interface HelloArgs {
   canHost?: boolean;
 }
 export interface HelloResult {
+  mailboxNamespace?: string;
   nativeOwner?: string;
   frontend?: T3Binding;
   brokerPid: number;
@@ -243,6 +248,7 @@ export interface SendResult {
 }
 
 export interface AckArgs {
+  mailboxProofs?: Record<string, import("./recipient-ownership.js").MailboxProvenance>;
   ids: string[];
   /** Original per-copy native ownership; never reconstructed from a later registration. */
   nativeOwners?: Record<string, string>;
@@ -286,7 +292,7 @@ export interface RequestMap {
   nativeChildren: [Record<string, never>, NativeChildAddress[]];
   nativeChildrenEnd: [Record<string, never>, { ended: boolean }];
   nativeChildPending: [{ agentId: string }, BridgeMessage[]];
-  nativeChildAck: [{ agentId: string; ids: string[] }, { acked: number }];
+  nativeChildAck: [{ agentId: string; ids: string[]; mailboxProofs?: AckArgs["mailboxProofs"] }, { acked: number }];
   nativeChildSend: [SendArgs & { agentId: string }, SendResult];
   /** Authenticated owner connection only; senderId selects the dashboard's reply listener. */
   dashboardJobSend: [SendArgs & { senderId: string }, SendResult];

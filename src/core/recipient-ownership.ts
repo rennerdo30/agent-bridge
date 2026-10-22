@@ -5,6 +5,16 @@ import { physicalPath } from "./project-identity.js";
 import { t3BindingSchema, type T3Binding } from "./t3-identity.js";
 
 const agent = z.enum(AGENT_KINDS), text = z.string().min(1).max(8192);
+export const mailboxSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("local"), namespace: z.string().regex(/^[a-f0-9]{64}$/) }).strict(),
+  z.object({ kind: z.literal("remote"), hostId: z.uuid(), hostFingerprint: z.string().regex(/^[a-f0-9]{64}$/) }).strict(),
+]);
+export type MailboxProvenance = z.infer<typeof mailboxSchema>;
+export function localMailbox(namespace: string): MailboxProvenance { return mailboxSchema.parse({ kind: "local", namespace }); }
+export function sameMailbox(left: unknown, right: unknown): boolean {
+  const a = mailboxSchema.safeParse(left), b = mailboxSchema.safeParse(right);
+  return a.success && b.success && JSON.stringify(a.data) === JSON.stringify(b.data);
+}
 /** Typed provenance: a session ID can never be confused with a serialized process identity. */
 export const nativeIdentitySchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("session"), agent, sessionId: text }).strict(),
@@ -30,6 +40,15 @@ export function recipientKey(frontend?: T3Binding, native?: string): string | nu
   const verified = verifiedNative(native);
   return frontend ? `hosted:${JSON.stringify(t3BindingSchema.parse(frontend))}` : verified ? `native:${verified}` : null;
 }
+/** Local durable registry evidence, never a peer display name or remote projection. */
+export function durableJobOwner(job: Record<string, unknown>): string | undefined {
+  // `host` is the local JobHostInfo, not a paired-PC destination. Only proxy
+  // records/explicit remote spawn addresses are excluded from local authority.
+  if (job.remote || typeof job.args === "object" && job.args && "host" in job.args && job.args.host) return undefined;
+  if (typeof job.id !== "string" || !/^[a-zA-Z0-9_-]{1,128}$/.test(job.id) || !agent.safeParse(job.agent).success ||
+      typeof job.supervisor !== "string" || !job.supervisor || job.supervisor.length > 8192) return undefined;
+  return JSON.stringify({ kind: "job", agent: job.agent, id: `job:${job.id}` });
+}
 export function peerOwnership(peer: PeerInfo): { recipientFrontend?: T3Binding; recipientNative?: string; recipientAmbiguous?: true } {
   const owner = nativeOwner(peer);
   return peer.frontend ? { recipientFrontend: t3BindingSchema.parse(peer.frontend) } : owner ? { recipientNative: owner } : { recipientAmbiguous: true };
@@ -41,7 +60,7 @@ export function ownershipFromKey(key: string): ReturnType<typeof peerOwnership> 
     return native ? { recipientNative: native } : { recipientAmbiguous: true };
   } catch { return { recipientAmbiguous: true }; }
 }
-export function ownsMessage(peer: PeerInfo, message: { recipientFrontend?: T3Binding; recipientNative?: string; recipientAmbiguous?: true }): boolean {
+export function ownsMessage(peer: PeerInfo, message: { recipientFrontend?: T3Binding; recipientNative?: string; recipientAmbiguous?: true; recipientMailbox?: MailboxProvenance }, namespace: string): boolean {
   const key = recipientKey(peer.frontend, nativeOwner(peer));
-  return !message.recipientAmbiguous && key !== null && key === recipientKey(message.recipientFrontend, message.recipientNative);
+  return sameMailbox(message.recipientMailbox, localMailbox(namespace)) && !message.recipientAmbiguous && key !== null && key === recipientKey(message.recipientFrontend, message.recipientNative);
 }

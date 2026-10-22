@@ -7,20 +7,23 @@ import { storageLease } from "./storage-lock.js";
 import { DatabaseSync } from "node:sqlite";
 import type { Logger } from "./logger.js";
 import { t3BindingSchema, type T3Binding } from "./t3-identity.js";
-import { verifiedNative } from "./recipient-ownership.js";
+import { mailboxSchema, verifiedNative, type MailboxProvenance } from "./recipient-ownership.js";
 
 /** Old name/session marks remain ambiguous evidence only. A hosted identity is
  * independent of registration names and native provider session IDs. No legacy
  * record contains enough information to infer its complete frontend owner. */
-export function readJournalIdentities(_name: string, _sessionId?: string | null, frontend?: T3Binding, nativeIdentity?: string): string[] {
+export function readJournalIdentities(_name: string, _sessionId?: string | null, frontend?: T3Binding, nativeIdentity?: string, mailbox?: MailboxProvenance): string[] {
+ const parsed = mailboxSchema.safeParse(mailbox);
+ if (!parsed.success || parsed.data.kind !== "local") return [];
+ const prefix = `mailbox:v1:${parsed.data.namespace}:`;
  if (frontend) {
   const binding = t3BindingSchema.parse(frontend);
-  return [`frontend:v1:${JSON.stringify([binding.kind, binding.scope, binding.threadId, binding.providerInstanceId])}`];
+  return [`${prefix}frontend:v1:${JSON.stringify([binding.kind, binding.scope, binding.threadId, binding.providerInstanceId])}`];
  }
  // Pre-v11 hosted and native readers shared these namespaces. Retain them for
  // inspection, but they cannot establish consumption by any successor.
  const native = verifiedNative(nativeIdentity);
- return native ? [`native-owner:v2:${native}`] : [];
+ return native ? [`${prefix}native-owner:v2:${native}`] : [];
 }
 
 /** The metadata store cannot open yet: its fail-closed migration lease needs this process's

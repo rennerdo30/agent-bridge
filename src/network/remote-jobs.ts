@@ -54,6 +54,13 @@ export class RemoteJobs {
   private readonly starting = new Set<string>();
   /** A remote request awaiting its answer, or a spawn still being admitted or started: a daemon must not exit idle. */
   get busy(): boolean { return this.pending.size > 0 || this.starting.size > 0 || this.pendingStarts.size > 0; }
+  /** A local Bridge runner may register from this durable receiver-side record.
+   * Source-side mirrors are not local jobs, and no public advertisement grants control. */
+  jobForRegistration(id: string): Record<string, unknown> | undefined {
+    const record = this.records.get(id);
+    if (!record || this.pendingStarts.get(id)?.committed === false || record.job.id !== id || record.job.supervisor !== `${record.pair}/${record.peer}`) return undefined;
+    return { id, name: record.job.name, agent: record.job.agent, supervisor: record.job.supervisor, workdir: record.job.workdir };
+  }
   private readonly pendingStarts = new Map<string, { record: RemoteRecord; previous?: RemoteRecord; controller: AbortController; cancelRequested: boolean; committed: boolean }>();
   private readonly runners: JobRunners | null;
   private closed = false;

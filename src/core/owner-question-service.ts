@@ -37,7 +37,7 @@ export class OwnerQuestionService {
   }
   private readAt(delivery: OwnerQuestion["deliveries"][number]): number | null {
     if (!delivery.messageId || !delivery.owner) return null;
-    const copies = this.messages.messagesById(delivery.messageId).filter(m => !m.recipientAmbiguous && recipientKey(m.recipientFrontend, m.recipientNative) === delivery.owner);
+    const copies = this.messages.messagesById(delivery.messageId).filter(m => this.messages.localCopy(m) && recipientKey(m.recipientFrontend, m.recipientNative) === delivery.owner);
     return this.messages.receipts(delivery.messageId).find(r => copies.some(m => m.recipient === r.recipient) && r.readAt !== null)?.readAt ?? null;
   }
   complete(q: OwnerQuestion): OwnerQuestion {
@@ -75,7 +75,7 @@ export class OwnerQuestionService {
       const recipient = live?.name ?? target.name;
       const before = q.deliveries.find(d => target.owner ? d.owner === target.owner : !d.owner && d.recipient === recipient);
       if (before?.messageId) {
-        const copy = this.messages.messagesById(before.messageId).find(m => !m.recipientAmbiguous && target.owner && recipientKey(m.recipientFrontend, m.recipientNative) === target.owner);
+        const copy = this.messages.messagesById(before.messageId).find(m => this.messages.localCopy(m) && target.owner && recipientKey(m.recipientFrontend, m.recipientNative) === target.owner);
         if (!copy) {
           before.state = "pending"; before.detail = "Retained delivery has no proven matching mailbox copy; original evidence and answer retained for reviewed recovery.";
           changed = true; continue;
@@ -98,7 +98,7 @@ export class OwnerQuestionService {
         body: `Owner answer to question ${q.id}: ${q.title}\n\n${q.answer.text}\n\n${JSON.stringify({ questionId: q.id, option: q.answer.option, author: q.answer.author, at: q.answer.at, source: q.answer.source, decisionId: q.answer.decisionId })}\nAn answer does not bypass native approvals, expand authorization or accept implementation.` };
       // Durable inbox plus the ordinary direct event reaches every CLI's real wake endpoint.
       const inserted = this.messages.insertOnce(message);
-      const durable = this.messages.messagesById(messageId).find(m => !m.recipientAmbiguous && recipientKey(m.recipientFrontend, m.recipientNative) === target.owner);
+      const durable = this.messages.messagesById(messageId).find(m => this.messages.localCopy(m) && recipientKey(m.recipientFrontend, m.recipientNative) === target.owner);
       if (!durable) {
         q.deliveries = [...q.deliveries.filter(d => d !== before), { recipient, owner: target.owner, main: target.main, state: "pending", detail: "A conflicting historical mailbox copy is retained; delivery requires reviewed recovery.", readAt: null }];
         changed = true; continue;
@@ -112,7 +112,7 @@ export class OwnerQuestionService {
       if (q.fallbackTargets?.some(d => d.owner === target.owner)) delivery.detail = "Original session is absent; this answer goes to the captured project-main owner as fallback. " + delivery.detail;
       q.deliveries = [...q.deliveries.filter(d => d !== before), delivery]; changed = true;
     }
-    const complete = mainRead && [...targets.values()].every(t => t.owner && q.deliveries.some(d => d.owner === t.owner && d.messageId && this.messages.messagesById(d.messageId).some(m => !m.recipientAmbiguous && recipientKey(m.recipientFrontend, m.recipientNative) === t.owner)));
+    const complete = mainRead && [...targets.values()].every(t => t.owner && q.deliveries.some(d => d.owner === t.owner && d.messageId && this.messages.messagesById(d.messageId).some(m => this.messages.localCopy(m) && recipientKey(m.recipientFrontend, m.recipientNative) === t.owner)));
     if (q.deliveryComplete && !complete) { q.deliveryComplete = false; changed = true; }
     if (complete && !q.deliveryComplete) { q.deliveryComplete = true; changed = true; }
     if (changed) this.store.save(q);

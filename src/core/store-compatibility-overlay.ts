@@ -74,7 +74,11 @@ export function attachStoreCompatibility(db: DatabaseSync, file: string, log: Lo
         : table === "session_bindings"
           ? "ON CONFLICT(identity,session_id) DO UPDATE SET learned_at=MAX(session_bindings.learned_at,excluded.learned_at)"
           : "ON CONFLICT DO NOTHING";
-      db.exec(`INSERT INTO main.${table} SELECT * FROM store_compatibility.${table} WHERE 1 ${merge}`);
+      // Schema13 adds namespace evidence. Legacy supplemental route rows retain
+      // their original values and the empty default, never fabricated authority.
+      const columns = table === "job_delivery_routes" ? "(id,recipient,consumed_at)" : "";
+      const selected = table === "job_delivery_routes" ? "id,recipient,consumed_at" : "*";
+      db.exec(`INSERT INTO main.${table}${columns} SELECT ${selected} FROM store_compatibility.${table} WHERE 1 ${merge}`);
     }
     if (!db.prepare("SELECT name FROM main.sqlite_master WHERE name='peer_last_seen'").get()) {
       db.exec(`INSERT INTO store_compatibility.peer_last_seen SELECT name, MAX(learned_at) FROM peer_names GROUP BY name

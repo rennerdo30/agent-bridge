@@ -25,7 +25,7 @@ import { launchDaemon, RelaunchBackoff, type DaemonLaunch } from "./daemon-launc
 import { BridgeError, isQuietMessage, isUnsupportedOperation, type AgentKind, type BridgeMessage, type EventMap, type PeerActivity, type PeerInfo, type RequestMap, type SendArgs, type SendResult, type SiblingPeer, type ModeSendArgs, type ModeSendResult } from "./protocol.js";
 import { completionMessageId, COMPLETION_DEDUPE_PREFIX } from "./completion.js";
 import { ReadJournal, readJournalIdentities } from "./read-journal.js";
-import { nativeOwner, recipientKey } from "./recipient-ownership.js";
+import { localMailbox, nativeOwner, recipientKey, sameMailbox } from "./recipient-ownership.js";
 import { existingMetadataDb, retainMetadataReader } from "./metadata-db.js";
 import { recordLocalResult } from "./local-result-receipts.js";
 import { compareProjectJobSummaries, summarizeProjectJob, type ProjectJobSummary, type ProjectJobSummaryPage } from "./project-job-summary.js";
@@ -134,6 +134,8 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   private readonly readJournal: ReadJournal;
   private releaseMetadata: (() => void) | undefined;
   private readonly unflushedAcks = new Set<string>();
+  private readonly ackMailboxes = new Map<string, BridgeMessage["recipientMailbox"]>();
+  private readonly nativeChildMailboxes = new Map<string, Map<string, BridgeMessage["recipientMailbox"]>>();
   private readonly ackOwners = new Map<string, string>();
   private readonly pendingAcks = new Set<Promise<unknown>>();
   private pendingRefreshTimer: NodeJS.Timeout | null = null;
@@ -142,6 +144,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   private sessionId: string | null = null;
   private agentCreation: string | null = null;
   private nativeIdentity: string | undefined;
+  private mailboxNamespace: string | undefined;
   private autoWake: boolean;
   private wakeOnDirect = false;
   private wakeAvailable = false;
@@ -565,7 +568,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     };
   }
 
-  private afterHello(client: BridgeClient, hello: { name: string; brokerPid: number; sessionId?: string | null; nativeOwner?: string }): void {
+  private afterHello(client: BridgeClient, hello: { name: string; brokerPid: number; sessionId?: string | null; nativeOwner?: string; mailboxNamespace?: string }): void {
     if (this.stopping) { client.close(); return; }
     // Any authenticated registration settles creation, including an ambiguous attempt: a broker is serving, so
     // after a later loss (crash, idle exit, handover) discovery may demand-start again.
@@ -578,6 +581,11 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
       this.sessionId = hello.sessionId;
     }
     this.nativeIdentity = this.currentNativeIdentity();
+    if (!hello.mailboxNamespace || !/^[a-f0-9]{64}$/.test(hello.mailboxNamespace)) {
+      client.close(); this.client = null;
+      throw new BridgeError("protocol_mismatch", "Broker lacks schema13 local mailbox provenance; owner-coordinated compatible broker required. No automatic daemon replacement.");
+    }
+    this.mailboxNamespace = hello.mailboxNamespace;
     if (!this.opts.frontend && hello.nativeOwner !== this.nativeIdentity) {
       client.close(); this.client = null;
       throw new BridgeError("protocol_mismatch", "Broker did not attest the exact native identity; mailbox access refused.");
@@ -619,7 +627,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
       this.emit("inline_job_control", data as BridgeNodeEvents["inline_job_control"][0]);
     } else if (ev === "message") {
       const m = data as BridgeMessage;
-      if (m.recipientAmbiguous || (!m.recipientFrontend && !m.recipientNative) ||
+      if (!this.mailboxNamespace || !sameMailbox(m.recipientMailbox, localMailbox(this.mailboxNamespace)) || m.recipientAmbiguous || (!m.recipientFrontend && !m.recipientNative) ||
           !sameFrontend(this.opts, { frontend: m.recipientFrontend }) || !this.opts.frontend && (!this.nativeIdentity || m.recipientNative !== this.nativeIdentity)) return;
       const consumed = this.opts.frontend ? this.readIds.has(m.id) : this.readIdentities(m).some(key => this.readJournal.receipt(key, m.id).read);
       if (consumed) {
@@ -901,8 +909,13 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   nativeChild(args: RequestMap["nativeChild"][0]) { return this.withClient(c => c.request("nativeChild", args)); }
   nativeChildren() { return this.withClient(c => c.request("nativeChildren", {})); }
   nativeChildrenEnd() { return this.withClient(c => c.request("nativeChildrenEnd", {})); }
-  nativeChildPending(agentId: string) { return this.withClient(c => c.request("nativeChildPending", { agentId })); }
-  nativeChildAck(agentId: string, ids: string[]) { return this.withClient(c => c.request("nativeChildAck", { agentId, ids })); }
+  nativeChildPending(agentId: string) { return this.withClient(async c => {
+    const messages = await c.request("nativeChildPending", { agentId });
+    const proofs = new Map(messages.map(m => [m.id, m.recipientMailbox ? Object.freeze({ ...m.recipientMailbox }) : undefined])); this.nativeChildMailboxes.set(agentId, proofs);
+    return messages;
+  }); }
+  nativeChildAck(agentId: string, ids: string[]) { return this.withClient(c => c.request("nativeChildAck", { agentId, ids,
+    mailboxProofs: Object.fromEntries(ids.flatMap(id => this.nativeChildMailboxes.get(agentId)?.get(id) ? [[id, this.nativeChildMailboxes.get(agentId)!.get(id)!]] : [])) })); }
   nativeChildSend(agentId: string, args: SendArgs) { return this.withClient(c => c.request("nativeChildSend", { ...args, agentId })); }
 
   peers(signal?: AbortSignal): Promise<PeerInfo[]> {
@@ -1139,7 +1152,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   notificationWaitsChanged(): void { this.emit("notification_waits_changed"); }
 
   private readIdentities(message?: BridgeMessage): string[] {
-    return readJournalIdentities(this.currentName, this.sessionId, this.opts.frontend, message?.recipientNative);
+    return readJournalIdentities(this.currentName, this.sessionId, this.opts.frontend, message?.recipientNative, message?.recipientMailbox ?? (this.mailboxNamespace ? localMailbox(this.mailboxNamespace) : undefined));
   }
 
   private currentNativeIdentity(): string | undefined {
@@ -1151,13 +1164,16 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     const owner = this.currentNativeIdentity();
     if (message.recipientFrontend && !sameFrontend(this.opts, { frontend: message.recipientFrontend }) || message.recipientNative && message.recipientNative !== owner)
       throw new BridgeError("unauthorized", "Local envelope belongs to a different proven recipient.");
+    if (message.recipientMailbox && (!this.mailboxNamespace || !sameMailbox(message.recipientMailbox, localMailbox(this.mailboxNamespace)))) throw new BridgeError("unauthorized", "Local envelope belongs to a different mailbox authority.");
     return { ...message, recipientFrontend: this.opts.frontend, recipientNative: this.opts.frontend ? undefined : owner,
-      recipientAmbiguous: !recipientKey(this.opts.frontend, owner) ? true : undefined };
+      recipientMailbox: this.mailboxNamespace ? localMailbox(this.mailboxNamespace) : undefined,
+      recipientAmbiguous: !recipientKey(this.opts.frontend, owner) || !this.mailboxNamespace ? true : undefined };
   }
   mailboxOwner(): string | null { return recipientKey(this.opts.frontend, this.currentNativeIdentity()); }
 
   private restoreReadState(): void {
-    if (!this.opts.frontend) for (const [id, message] of this.inbox) if (!this.nativeIdentity || message.recipientNative !== this.nativeIdentity) this.inbox.delete(id);
+    for (const [id, message] of this.inbox) if (!this.mailboxNamespace || !sameMailbox(message.recipientMailbox, localMailbox(this.mailboxNamespace)) || !this.opts.frontend && (!this.nativeIdentity || message.recipientNative !== this.nativeIdentity)) this.inbox.delete(id);
+    this.readIds.clear();
     for (const identity of this.readIdentities()) for (const id of this.readJournal.read(identity)) this.readIds.add(id);
     const messages = [...this.inbox.values()].filter(m => this.opts.frontend ? this.readIds.has(m.id) :
       this.readIdentities(m).some(key => this.readJournal.receipt(key, m.id).read));
@@ -1167,7 +1183,8 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   }
 
   private ackArgs(ids: string[]) {
-    return { ids, ...(!this.opts.frontend ? { nativeOwners: Object.fromEntries(ids.flatMap(id => this.ackOwners.has(id) ? [[id, this.ackOwners.get(id)!]] : [])) } : {}) };
+    return { ids, mailboxProofs: Object.fromEntries(ids.flatMap(id => this.ackMailboxes.get(id) ? [[id, this.ackMailboxes.get(id)!]] : [])),
+      ...(!this.opts.frontend ? { nativeOwners: Object.fromEntries(ids.flatMap(id => this.ackOwners.has(id) ? [[id, this.ackOwners.get(id)!]] : [])) } : {}) };
   }
 
   private async flushAcks(client: BridgeClient, ids: string[]): Promise<void> {
@@ -1175,7 +1192,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     ids.forEach(id => this.unflushedAcks.delete(id));
     try {
       await client.request("ack", args);
-      for (const id of ids) if (!this.unflushedAcks.has(id) && this.ackOwners.get(id) === args.nativeOwners?.[id]) this.ackOwners.delete(id);
+      for (const id of ids) if (!this.unflushedAcks.has(id) && this.ackOwners.get(id) === args.nativeOwners?.[id] && this.ackMailboxes.get(id) === args.mailboxProofs[id]) { this.ackOwners.delete(id); this.ackMailboxes.delete(id); }
     } catch (error) {
       ids.forEach(id => this.unflushedAcks.add(id));
       throw error;
@@ -1184,7 +1201,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
 
   private acknowledge(ids: string[], messages: BridgeMessage[] = []): void {
     if (!ids.length) return;
-    for (const m of messages) if (m.recipientNative) this.ackOwners.set(m.id, m.recipientNative);
+    for (const m of messages) { if (m.recipientNative) this.ackOwners.set(m.id, m.recipientNative); if (m.recipientMailbox) this.ackMailboxes.set(m.id, Object.freeze({ ...m.recipientMailbox })); }
     ids.forEach((id) => this.unflushedAcks.add(id));
     if (!this.isConnected || this.ackFlushScheduled) return;
     // A channel can consume hundreds of replayed messages in one stream chunk. One ack per

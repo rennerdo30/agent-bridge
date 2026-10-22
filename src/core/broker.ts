@@ -5,7 +5,7 @@ import { loadConfig } from "./config.js";
 import { conversationPageSchema } from "./conversations.js";
 import { historySearchSchema } from "./history.js";
 import { ReadJournal, readJournalIdentities } from "./read-journal.js";
-import { nativeOwner, ownsMessage, ownershipFromKey, peerOwnership, recipientKey } from "./recipient-ownership.js";
+import { durableJobOwner, localMailbox, nativeOwner, ownsMessage, ownershipFromKey, peerOwnership, recipientKey, sameMailbox, type MailboxProvenance } from "./recipient-ownership.js";
 import { recordStorePeer, refreshStorePeerIdentities, validStoreCapabilities } from "./store-compatibility.js";
 import { randomUUID } from "node:crypto";
 import { existsSync, lstatSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
@@ -137,7 +137,7 @@ const MAX_CONNECTION_BUFFER_BYTES = 4 * MAX_FRAME_BYTES;
 const HANDOFF_STORE_READY_MS = 5_500;
 
 type StoredSibling = SiblingPeer & { id: string; report: string | null };
-type QueueRegistration = Pick<PeerInfo, "id" | "name" | "sessionId"> & { generation: number; owner: string | null };
+type QueueRegistration = Pick<PeerInfo, "id" | "name" | "sessionId"> & { generation: number; owner: string | null; namespace: string };
 type ProjectMainIdentity = Pick<PeerInfo, "id" | "agent" | "sessionId" | "name" | "frontend"> & { owner?: string | null };
 const projectMainOwner = (peer: ProjectMainIdentity) => peer.owner ?? recipientKey(peer.frontend, "cwd" in peer ? nativeOwner(peer as PeerInfo) : undefined);
 const ownsProjectMain = (owner: ProjectMainIdentity, peer: ProjectMainIdentity) => owner.agent === peer.agent &&
@@ -489,11 +489,12 @@ export class Broker {
         let deskProject: string | undefined=args.deskProject;
         try { const linked=readJsonSnapshot(join(root,".pair-desk.json")).value; if (isRecord(linked) && typeof linked.project === "string") deskProject=linked.project; } catch { /* Desk linking is optional. */ }
         const owner = recipientKey(peer.frontend, nativeOwner(peer)) ?? undefined, selectedMain = main ?? peer;
-        const jobPeer = args.job ? this.localPeers().find(p => p.name === args.job) : undefined;
+        const linkedJob = args.job ? this.storedJobs().find(j => j.name === args.job && this.groups.canControl(peer, j, this.localPeers())) : undefined;
+        const linkedOwner = linkedJob && this.durableRecipient(linkedJob, peer);
         return this.ownerQuestions().store.ask(args, root, { session: peer.name, sessionId: peer.sessionId, peerId:peer.id, agent: peer.agent, owner,
           main: selectedMain.name, mainSessionId:selectedMain.sessionId, mainPeerId:selectedMain.id,
           mainOwner: recipientKey(selectedMain.frontend, nativeOwner(selectedMain)) ?? undefined,
-          ...(args.job ? {job:args.job, jobOwner: jobPeer ? recipientKey(jobPeer.frontend, nativeOwner(jobPeer)) ?? undefined : undefined} : {}) }, this.now(),deskProject);
+          ...(args.job ? {job:args.job, jobOwner: linkedOwner ? recipientKey(undefined, linkedOwner) ?? undefined : undefined} : {}) }, this.now(),deskProject);
       },
       ownerQuestions: () => this.ownerQuestions().list(),
       answerOwner: (c,a) => {
@@ -720,11 +721,11 @@ export class Broker {
       nativeChildPending: (c, a) => { const child = this.nativeChildren.own(this.requirePeer(c), a.agentId); return this.pendingMail(child.address, HOOK_MAX_MESSAGES, child.identity); },
       nativeChildAck: async (c, a) => {
         const peer = this.requirePeer(c);
-        const child = this.nativeChildren.own(peer, a.agentId), registration = { id: peer.id, name: peer.name, sessionId: peer.sessionId, generation: c.mailGeneration, owner: recipientKey(peer.frontend, nativeOwner(peer)) };
+        const child = this.nativeChildren.own(peer, a.agentId), registration = { id: peer.id, name: peer.name, sessionId: peer.sessionId, generation: c.mailGeneration, owner: recipientKey(peer.frontend, nativeOwner(peer)), namespace: this.store.namespace };
         return { acked: await this.store.retryWrite(() => {
           this.assertQueueRegistration(c, peer, registration);
           if (this.nativeChildren.own(peer, a.agentId) !== child) throw new BridgeError("unauthorized", "Native child incarnation changed.");
-          return this.store.markRead(child.address, a.ids, this.now(), undefined, undefined, child.identity);
+          return this.store.markRead(child.address, a.ids.filter(id => sameMailbox(a.mailboxProofs?.[id], localMailbox(this.store.namespace))), this.now(), undefined, undefined, child.identity);
         }) };
       },
       nativeChildSend: (c, a) => {
@@ -737,10 +738,10 @@ export class Broker {
       },
       messageReceipt: (c, a) => this.messageReceipt(c, a.id),
       ack: async (c, a) => {
-        const peer = this.requirePeer(c), registration = { id: peer.id, name: peer.name, sessionId: peer.sessionId, generation: c.mailGeneration, owner: recipientKey(peer.frontend, nativeOwner(peer)) };
+        const peer = this.requirePeer(c), registration = { id: peer.id, name: peer.name, sessionId: peer.sessionId, generation: c.mailGeneration, owner: recipientKey(peer.frontend, nativeOwner(peer)), namespace: this.store.namespace };
         return { acked: await this.store.retryWrite(() => {
           this.assertQueueRegistration(c, peer, registration);
-          return this.store.markRead(registration.name, a.ids ?? [], this.now(), peer.frontend, a.nativeOwners ?? {}, nativeOwner(peer));
+          return this.store.markRead(registration.name, (a.ids ?? []).filter(id => sameMailbox(a.mailboxProofs?.[id], localMailbox(this.store.namespace))), this.now(), peer.frontend, a.nativeOwners ?? {}, nativeOwner(peer));
         }) };
       },
       pending: (c, a) => {
@@ -940,7 +941,7 @@ export class Broker {
               receive: (message, destination) => this.receiveRemote(message, destination),
               pinDestination: (message, destination) => this.store.pinDestination(message, destination),
               pinnedDestinations: id => this.store.pinnedDestinations(id),
-        receipt: (id, sender, recipient) => this.remoteReceipt(id, sender, recipient),
+        receipt: (id, sender, recipient, source) => this.remoteReceipt(id, sender, recipient, source),
         recipientReceipts: true,
             }, this.log);
             this.installRemoteJobs(this.network);
@@ -1082,7 +1083,7 @@ export class Broker {
         receive: (message, destination) => this.receiveRemote(message, destination),
         pinDestination: (message, destination) => this.store.pinDestination(message, destination),
         pinnedDestinations: id => this.store.pinnedDestinations(id),
-        receipt: (id, sender, recipient) => this.remoteReceipt(id, sender, recipient),
+        receipt: (id, sender, recipient, source) => this.remoteReceipt(id, sender, recipient, source),
         recipientReceipts: true,
       }, this.log);
       this.installRemoteJobs(service);
@@ -1259,7 +1260,7 @@ export class Broker {
    * Honour stream backpressure so a large retained inbox is not repeatedly disconnected on replay.
    */
   private replayMail(conn: Conn, peer: PeerInfo, before?: () => void): void {
-    const registration = { id: peer.id, name: peer.name, sessionId: peer.sessionId, generation: conn.mailGeneration, owner: recipientKey(peer.frontend, nativeOwner(peer)) };
+    const registration = { id: peer.id, name: peer.name, sessionId: peer.sessionId, generation: conn.mailGeneration, owner: recipientKey(peer.frontend, nativeOwner(peer)), namespace: this.store.namespace };
     const current = () => this.queueReady(conn, peer) && conn.mailGeneration === registration.generation && !conn.socket.destroyed && conn.peer === peer && peer.id === registration.id &&
       peer.name === registration.name && peer.sessionId === registration.sessionId && recipientKey(peer.frontend, nativeOwner(peer)) === registration.owner && this.connByName(registration.name) === conn;
     setImmediate(() => {
@@ -1289,7 +1290,7 @@ export class Broker {
   private emit<E extends EventName>(conn: Conn, ev: E, data: EventMap[E]): void {
     if (ev === "message") {
       const message = data as BridgeMessage;
-      if (!conn.peer || !ownsMessage(conn.peer, message)) return;
+      if (!conn.peer || !this.queueReady(conn, conn.peer) || !ownsMessage(conn.peer, message, this.store.namespace)) return;
     }
     const publicData = ev === "peer_joined" || ev === "peer_left" ? this.publicPeer(data as PeerInfo) as EventMap[E] : data;
     const frame: EventFrame<E> = { t: "evt", ev, data: publicData };
@@ -1302,6 +1303,7 @@ export class Broker {
 
   private requirePeer(conn: Conn): PeerInfo {
     if (!conn.peer) throw new BridgeError("not_registered", "send hello first");
+    if (conn.mailReady && conn.mailReady.namespace !== this.store.namespace) throw new BridgeError("unauthorized", "Mailbox store namespace changed; reconnect before mailbox operations.");
     return conn.peer;
   }
 
@@ -1314,6 +1316,18 @@ export class Broker {
   }
 
   /** Local sessions and paired remote peers; local job runners stay hidden (see job-host.ts). */
+  private durableRecipient(job: Record<string, unknown>, sender: PeerInfo): string | undefined {
+    const root = this.groups.jobRoot(job, []), owner = durableJobOwner(job);
+    if (!owner || !root || !this.groups.same(root, sender.cwd)) return undefined;
+    return this.groups.canControl(sender, job, this.localPeers()) || sender.jobAgent &&
+      this.storedSiblings(sender, String(job.name)).some(p => p.id === `job:${job.id}`) ? owner : undefined;
+  }
+  private recipientEvidence(name: string, sender: PeerInfo): Pick<BridgeMessage, "recipientFrontend" | "recipientNative" | "recipientAmbiguous"> {
+    const job = this.storedJobs().find(j => j.name === name), owner = job && this.durableRecipient(job, sender);
+    if (owner) return { recipientNative: owner };
+    return this.store.recipientOwnership(name, this.recipientConn(name)?.peer ?? undefined);
+  }
+
   private livePeers(): PeerInfo[] {
     return this.localPeers().filter((p) => !p.jobAgent).map((p) => this.projectPeer(p)).concat(this.network?.peers() ?? []).filter((p) => !isPluginCacheCwd(p.cwd)).map(peer => this.publicPeer(peer));
   }
@@ -1495,7 +1509,7 @@ export class Broker {
     return this.livenessSweep = sweep;
   }
 
-  private localPeers(): PeerInfo[] { return this.liveConns().map((c) => c.peer!); }
+  private localPeers(): PeerInfo[] { return this.liveConns().filter(c => this.queueReady(c, c.peer!)).map((c) => c.peer!); }
 
   private projectPeer(peer: PeerInfo): PeerInfo {
     const decorated = this.groups.decorate(peer), key = decorated.projectGroup;
@@ -1573,7 +1587,7 @@ export class Broker {
 
   /** Project local runner lineage from durable jobs; do not alter broker routing identities. */
   private dashboardPeers(): PeerInfo[] {
-    const peers = this.liveConns().flatMap((c) => c.peer ? [c.peer] : []);
+    const peers = this.localPeers();
     const jobs = this.peerJobs(peers);
     return peers.flatMap((peer) => {
       const job = jobs.find((j) => j.name === peer.name || `job:${j.id}` === peer.id);
@@ -1686,7 +1700,7 @@ export class Broker {
             // ambiguous insert which would suppress the later real report.
             if (!recipientKey(message.recipientFrontend, message.recipientNative) || message.recipientAmbiguous) continue;
             const inserted = this.store.insertJobDelivery(message);
-            const identities = message.recipientAmbiguous ? [] : readJournalIdentities(recipient, null, message.recipientFrontend, message.recipientNative);
+            const identities = message.recipientAmbiguous ? [] : readJournalIdentities(recipient, null, message.recipientFrontend, message.recipientNative, message.recipientMailbox);
             const consumed = this.jobsPath && identities.some(key => new ReadJournal(dirname(this.jobsPath!)).receipt(key, message.id).read);
             if (consumed) this.store.markRead(recipient, [message.id], this.now(), message.recipientFrontend,
               message.recipientNative ? { [message.id]: message.recipientNative } : undefined, message.recipientNative);
@@ -1695,7 +1709,7 @@ export class Broker {
           if (!target || target.peer?.unavailable) return;
           for (const from of this.store.pendingJobRecipients(String(job.id))) {
             if (this.jobsPath) for (const copy of this.store.pendingJobCopies(from, String(job.id))) {
-              const keys = readJournalIdentities(from, null, copy.recipientFrontend, copy.recipientNative);
+              const keys = readJournalIdentities(from, null, copy.recipientFrontend, copy.recipientNative, copy.recipientMailbox);
               if (keys.some(key => new ReadJournal(dirname(this.jobsPath!)).receipt(key, copy.id).read))
                 this.store.markRead(from, [copy.id], this.now(), copy.recipientFrontend, copy.recipientNative ? { [copy.id]: copy.recipientNative } : undefined, copy.recipientNative);
             }
@@ -2091,7 +2105,7 @@ export class Broker {
   }
 
   private decisionSessionKey(peer: PeerInfo): string {
-    return recipientKey(peer.frontend, nativeOwner(peer)) ?? `unproven:${peer.id}`;
+    return `${this.store.namespace}:${recipientKey(peer.frontend, nativeOwner(peer)) ?? `unproven:${peer.id}`}`;
   }
 
   /** Deliver one decision notification per local session; receipts make redelivery a no-op. */
@@ -2147,7 +2161,7 @@ export class Broker {
       throw new BridgeError("bad_request", "invalid peer info");
     }
     if (conn.peer) throw new BridgeError("bad_request", "already registered");
-    if (p.frontend && !this.store.frontendOwnership) throw new BridgeError("protocol_mismatch", "Hosted registration requires the durable frontend ownership schema; legacy readers must release the upgrade first.");
+    if (!this.store.frontendOwnership) throw new BridgeError("protocol_mismatch", "Mailbox registration requires schema13 provenance; retained older readers must release the upgrade first. No mailbox attribution or automatic daemon replacement.");
     if (isPluginCacheCwd(String(p.cwd ?? ""))) throw new BridgeError("bad_request", "Plugin-cache processes cannot register as sessions.");
     if (p.subagent && !p.jobAgent) throw new BridgeError("bad_request", "Native subagents cannot register as top-level bridge sessions.");
     // Only a newer client that can demand-start its own daemon may ask for handover (never a job runner).
@@ -2186,6 +2200,12 @@ export class Broker {
       } : {}),
     };
     this.freezeAgentHost(peer);
+    if (peer.jobAgent) {
+      const job = this.storedJobs().find(j => `job:${j.id}` === peer.id) ?? this.remoteJobs?.jobForRegistration(peer.id.slice(4)), root = job && this.groups.jobRoot(job, []);
+      const historical = job && Array.isArray(job.ownershipHistory) ? job.ownershipHistory.filter(isRecord).map(h => h.fromRoot) : [];
+      if (!job || !durableJobOwner(job) || job.agent !== peer.jobAgent || job.name !== peer.name || !root || !this.groups.same(root, peer.cwd) ||
+          peer.jobOwner !== job.supervisor && !historical.includes(peer.jobOwner)) throw new BridgeError("unauthorized", "Job registration does not match the local durable job incarnation, project or supervisor.");
+    }
     this.refuseRetiredHello(conn, peer);
     if (!peer.sessionId) peer.sessionId = this.store.recoverSession(peer);
     // Recover the identity before allocating a name. Arrival order cannot swap an
@@ -2200,7 +2220,7 @@ export class Broker {
     const aliases = this.replaceStale(conn, peer);
     aliases.push(...this.restoreNames(peer, true));
     if (this.jobsPath) recordStorePeer(dirname(this.jobsPath), peer, { authoritative: true });
-    const registration = { id: peer.id, name: peer.name, sessionId: peer.sessionId, generation: ++conn.mailGeneration, owner: recipientKey(peer.frontend, nativeOwner(peer)) };
+    const registration = { id: peer.id, name: peer.name, sessionId: peer.sessionId, generation: ++conn.mailGeneration, owner: recipientKey(peer.frontend, nativeOwner(peer)), namespace: this.store.namespace };
     conn.mailReady = undefined;
     await this.expireStaleQueue(peer.name);
     this.assertQueueRegistration(conn, peer, registration);
@@ -2230,7 +2250,7 @@ export class Broker {
     if (!peer.jobAgent) this.broadcastEvent("peer_joined", peer, conn);
     // Deliver the backlog right after the hello response has been written.
     this.replayMail(conn, peer, () => { this.queueCurrentDecisions(peer); });
-    return { brokerPid: process.pid, brokerVersion: APP_VERSION, name: peer.name, sessionId: peer.sessionId, nativeOwner: nativeOwner(peer), ...(peer.frontend ? { frontend: peer.frontend } : {}), peers: this.livePeers().filter((x) => x.id !== peer.id) };
+    return { brokerPid: process.pid, brokerVersion: APP_VERSION, name: peer.name, sessionId: peer.sessionId, nativeOwner: nativeOwner(peer), mailboxNamespace: this.store.namespace, ...(peer.frontend ? { frontend: peer.frontend } : {}), peers: this.livePeers().filter((x) => x.id !== peer.id) };
   }
 
   /**
@@ -2306,7 +2326,7 @@ export class Broker {
     this.transferProjectMain({ ...previousIdentity, sessionId: peer.sessionId }, peer);
     replay ||= previousName !== peer.name || aliases.length > 0 || previousOwner !== recipientKey(peer.frontend, nativeOwner(peer));
     if (replay || args.sessionId !== undefined) {
-      const registration = { id: peer.id, name: peer.name, sessionId: peer.sessionId, generation: ++conn.mailGeneration, owner: recipientKey(peer.frontend, nativeOwner(peer)) };
+      const registration = { id: peer.id, name: peer.name, sessionId: peer.sessionId, generation: ++conn.mailGeneration, owner: recipientKey(peer.frontend, nativeOwner(peer)), namespace: this.store.namespace };
       conn.mailReady = undefined;
       await this.expireStaleQueue(peer.name);
       this.assertQueueRegistration(conn, peer, registration);
@@ -2407,14 +2427,14 @@ export class Broker {
   /** An expiry retry must not grant queued mail to a changed or replaced session. */
   private assertQueueRegistration(conn: Conn, peer: PeerInfo, registration: QueueRegistration): void {
     if (conn.socket.destroyed || conn.peer !== peer || peer.id !== registration.id || peer.name !== registration.name ||
-      peer.sessionId !== registration.sessionId || recipientKey(peer.frontend, nativeOwner(peer)) !== registration.owner || conn.mailGeneration !== registration.generation || this.connByName(registration.name) !== conn) {
+      registration.namespace !== this.store.namespace || conn.mailReady && conn.mailReady.namespace !== registration.namespace || peer.sessionId !== registration.sessionId || recipientKey(peer.frontend, nativeOwner(peer)) !== registration.owner || conn.mailGeneration !== registration.generation || this.connByName(registration.name) !== conn) {
       throw new BridgeError("unauthorized", "Session changed while queued mail was archived; reconnect to claim retained mail.");
     }
   }
 
   private queueReady(conn: Conn, peer: PeerInfo): boolean {
     const ready = conn.mailReady;
-    return Boolean(ready && conn.peer === peer && ready.generation === conn.mailGeneration && ready.id === peer.id &&
+    return Boolean(ready && ready.namespace === this.store.namespace && conn.peer === peer && ready.generation === conn.mailGeneration && ready.id === peer.id &&
       ready.name === peer.name && ready.sessionId === peer.sessionId && ready.owner === recipientKey(peer.frontend, nativeOwner(peer)) && this.connByName(peer.name) === conn);
   }
 
@@ -2930,7 +2950,7 @@ export class Broker {
       });
     const envelope = (recipient: string): BridgeMessage => {
       const restriction = replyRestrictions.find((r) => r.name === recipient);
-      return { ...base, recipient, ...this.store.recipientOwnership(recipient, this.recipientConn(recipient)?.peer ?? undefined), body: restriction ? base.body +
+      return { ...base, recipient, ...this.recipientEvidence(recipient, sender), body: restriction ? base.body +
         `\n\n[agent-bridge routing hint: this sender can't receive your direct reply; answer via your supervisor ${restriction.supervisor} if needed.]` : base.body };
     };
     const messages: BridgeMessage[] = [];
@@ -2961,17 +2981,19 @@ export class Broker {
       for (const key of queued) messages.push(envelope(key));
       await this.store.retryWrite(() => this.store.insertBatch(messages, checkReply));
     }
-    if (inserted) live.forEach((c, i) => this.emit(c, "message", messages[i]!));
+    const delivered = live.filter((c, i) => c.peer && this.queueReady(c, c.peer) && ownsMessage(c.peer, messages[i]!, this.store.namespace));
+    for (const c of live) if (!delivered.includes(c)) queued.push(c.peer!.name);
+    if (inserted) live.forEach((c, i) => { if (delivered.includes(c)) this.emit(c, "message", messages[i]!); });
 
     this.log.info("message routed", {
       id,
       from: sender.name,
       to,
       hop,
-      deliveredTo: live.map((c) => c.peer!.name),
+      deliveredTo: delivered.map((c) => c.peer!.name),
       queuedFor: queued,
     });
-    const result: RequestMap["send"][1] = { messages, ...(skipped ? { skippedFor: skipped } : {}), deliveredTo: live.map((c) => c.peer!.name), queuedFor: queued, recipientStates: live.map((c) => ({ name: c.peer!.name, activity: c.peer!.activity, autoWake: c.peer!.autoWake, wakeOnDirect: c.peer!.wakeOnDirect, wakeAvailable: c.peer!.wakeAvailable, wakeMaxHops: c.peer!.wakeMaxHops })) };
+    const result: RequestMap["send"][1] = { messages, ...(skipped ? { skippedFor: skipped } : {}), deliveredTo: delivered.map((c) => c.peer!.name), queuedFor: queued, recipientStates: delivered.map((c) => ({ name: c.peer!.name, activity: c.peer!.activity, autoWake: c.peer!.autoWake, wakeOnDirect: c.peer!.wakeOnDirect, wakeAvailable: c.peer!.wakeAvailable, wakeMaxHops: c.peer!.wakeMaxHops })) };
     if (to.startsWith("project:") && live[0]?.peer) result.projectRoute = this.projectPeer(live[0].peer).projectRoute;
     if (replyRestrictions.length) result.replyRestrictions = replyRestrictions;
     if (unreadBeforeSend.length) result.unreadBeforeSend = unreadBeforeSend.map((m) => ({ id: m.id, from: m.from.name, conversationId: m.conversationId }));
@@ -3062,12 +3084,13 @@ export class Broker {
     return messages.filter((m) => !obsolete.includes(m));
   }
 
-  private remoteReceipt(id: string, sender: string, recipient?: string): number | null {
+  private remoteReceipt(id: string, sender: string, recipient: string | undefined, source: MailboxProvenance): number | null {
     const message = this.store.byId(id);
     const current = this.network?.peers().find((p) => p.id === sender);
+    const bare = (name: string) => name.slice(name.indexOf("/") + 1);
     const sameSender = message && (message.from.id === sender || sender.includes("/") &&
-      message.from.id.split("/")[0] === sender.split("/")[0] && current?.name === message.from.name && current.agent === message.from.agent);
-    if (!message || !sameSender || !current || message.senderOwner !== recipientKey(current.frontend, current.nativeOwner)) throw new BridgeError("unauthorized", "receipt is only available to the original proven sender");
+      message.from.id.split("/")[0] === sender.split("/")[0] && current && bare(current.name) === bare(message.from.name) && current.agent === message.from.agent);
+    if (!message || !this.store.localCopy(message) || !sameSender || !current || !sameMailbox(message.senderMailbox, source) || message.senderOwner !== recipientKey(current.frontend, current.nativeOwner)) throw new BridgeError("unauthorized", "receipt is only available to the original proven sender and authenticated host");
     const receipts = this.store.receipts(id);
     const receipt = recipient ? receipts.find((r) => r.recipient === recipient) : receipts[0];
     // A queued direct envelope may have moved from a retained alias to the reclaimed name.
@@ -3081,10 +3104,14 @@ export class Broker {
     this.assertSendOwner(sender, id, Boolean(message));
     if (!message || message.from.name !== sender.name) throw new BridgeError("unauthorized", "receipt is only available to the sender");
     const receipts = this.store.receipts(id);
-    return Promise.all(receipts.map(async (r) => r.recipient.includes("/") && !isNativeChildAddress(r.recipient)
-      ? { ...r, readAt: await this.requireNetwork().receipt(r.recipient, id, sender.id,
-        receipts.filter((other) => other.recipient.startsWith(`${r.recipient.split("/")[0]}/`)).length > 1) }
-      : r));
+    const copies = this.store.messagesById(id);
+    return Promise.all(receipts.map(async r => {
+      if (!r.recipient.includes("/") || isNativeChildAddress(r.recipient)) return r;
+      const authority = copies.find(copy => copy.recipient === r.recipient)?.recipientMailbox;
+      if (authority?.kind !== "remote") throw new BridgeError("unauthorized", "Remote receipt provenance is missing; no display-name host was selected.");
+      return { ...r, readAt: await this.requireNetwork().receipt(r.recipient, id, sender.id,
+        receipts.filter(other => copies.find(copy => copy.recipient === other.recipient)?.recipientMailbox?.kind === "remote").length > 1, authority) };
+    }));
   }
 
   private requireNetwork(): NetworkService {
@@ -3118,23 +3145,24 @@ export class Broker {
         !recipientKey(target.peer.frontend, nativeOwner(target.peer)) || recipientKey(target.peer.frontend, nativeOwner(target.peer)) !== recipientKey(destination.frontend, destination.native))) {
       throw new BridgeError("unknown_target", "T3 destination binding changed or is missing; refresh peers and select the exact thread.");
     }
-    message = { ...message, recipientFrontend: undefined, recipientNative: undefined, recipientAmbiguous: undefined, ...evidence };
+    message = { ...message, recipientFrontend: undefined, recipientNative: undefined, recipientAmbiguous: undefined, recipientMailbox: undefined, ...evidence };
     if (target?.peer) message = { ...message, recipient: target.peer.name };
     const existing = this.store.byId(message.id);
     if (existing) {
       const broadcastCopy = existing.to === BROADCAST && message.to === BROADCAST;
       const originalCopy = this.store.messagesById(message.id).find(copy => copy.recipient === message.recipient) ?? (!broadcastCopy ? existing : undefined);
-      if (originalCopy && (originalCopy.recipientAmbiguous || (!originalCopy.recipientFrontend && !originalCopy.recipientNative) ||
+      if (originalCopy && (!this.store.localCopy(originalCopy) || (!originalCopy.recipientFrontend && !originalCopy.recipientNative) ||
           !sameFrontend({ frontend: originalCopy.recipientFrontend }, { frontend: message.recipientFrontend }) || originalCopy.recipientNative !== message.recipientNative)) {
         throw new BridgeError("unauthorized", "Stored recipient ownership does not match this destination; no duplicate receipt was acknowledged.");
       }
       // A reloaded sending session has a new process id, but retains its authenticated paired
       // origin and stable name. Those identities and the full content must still match.
+      const bare = (name: string) => name.slice(name.indexOf("/") + 1);
       const sameSender = existing.from.id === message.from.id || message.from.id.includes("/") &&
-        existing.from.id.split("/")[0] === message.from.id.split("/")[0] && existing.from.name === message.from.name;
+        existing.from.id.split("/")[0] === message.from.id.split("/")[0] && bare(existing.from.name) === bare(message.from.name);
       const projectRetry = message.to.startsWith("project:") || /^[^/]+\/project:/.test(message.to);
       const sameRecipient = existing.recipient === message.recipient || projectRetry || !broadcastCopy && target?.peer && this.recipientConn(existing.recipient) === target;
-      if (!sameSender || existing.senderOwner !== message.senderOwner || existing.from.name !== message.from.name || existing.from.agent !== message.from.agent || (!broadcastCopy && !sameRecipient) || existing.to !== message.to || existing.body !== message.body || existing.conversationId !== message.conversationId || existing.replyTo !== message.replyTo || existing.hop !== message.hop) throw new BridgeError("bad_request", "Message id already stored with different content or sender ownership; use a new id for a new message.");
+      if (!sameSender || !sameMailbox(existing.senderMailbox, message.senderMailbox) || existing.senderOwner !== message.senderOwner || bare(existing.from.name) !== bare(message.from.name) || existing.from.agent !== message.from.agent || (!broadcastCopy && !sameRecipient) || existing.to !== message.to || existing.body !== message.body || existing.conversationId !== message.conversationId || existing.replyTo !== message.replyTo || existing.hop !== message.hop) throw new BridgeError("bad_request", "Message id already stored with different content or sender ownership/host; use a new id for a new message.");
       const receipt = this.store.receipts(message.id).find((r) => (!broadcastCopy && r.recipient === existing.recipient) || r.recipient === message.recipient);
       if (receipt) return { delivered: Boolean(this.recipientConn(receipt.recipient)), recipient: receipt.recipient, stored: true, recovered: true, readAt: receipt.readAt };
     }
