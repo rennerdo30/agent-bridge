@@ -53,7 +53,7 @@ const host = { pid: null, peer: "detached-fixture", startedAt: Date.now() };
 it("retains admitted paired-host job authority when the local job registry has no copy", async () => {
   vi.spyOn(JobRunners.prototype, "startAsync").mockResolvedValue(host);
   await handle(request("1234abcd"));
-  const record = remote.jobForRegistration("1234abcd")!;
+  const record = remote.jobForRegistration("1234abcd")!, originalParent = `${pair.name}/${peer.name}`;
   expect(record.supervisor).toBe(`${pair.id}/${peer.supervisor}`);
   const token = loadOrCreateToken(home), pipe = resolvePipePath(home, {});
   const store = new MessageStore(resolveDbPath(home), nullLogger), broker = new Broker(pipe, store, nullLogger, token, Date.now, join(home, "jobs.json"));
@@ -65,7 +65,7 @@ it("retains admitted paired-host job authority when the local job registry has n
       pid: process.pid, agentPid: null, sessionId: "local-session", startedAt: Date.now(), autoWake: false } });
     const runner = await BridgeClient.connect(pipe, nullLogger); clients.push(runner);
     await runner.request("hello", { protocol: PROTOCOL_VERSION, token, peer: { id: "job:1234abcd", name: String(record.name), agent: "other", jobAgent: "codex",
-      jobOwner: String(record.supervisor), jobParent: String(record.owner), cwd: home, pid: process.pid, agentPid: null, sessionId: null, startedAt: Date.now(), autoWake: false } });
+      jobOwner: record.supervisor, jobParent: originalParent, cwd: home, pid: process.pid, agentPid: null, sessionId: null, startedAt: Date.now(), autoWake: false } });
     expect(existsSync(join(home, "jobs.json"))).toBe(false);
     const sent = await runner.request("trackedSend", { messageId: "11111111-1111-4111-8111-111111111111", to: "local-reader", body: "Explicit local context from admitted remote-owned job" });
     expect(sent.messages).toHaveLength(1);
@@ -75,7 +75,7 @@ it("retains admitted paired-host job authority when the local job registry has n
     for (const spoof of [{ id: "job:abcdef12", owner: String(record.supervisor) }, { id: "job:1234abcd", owner: "pair/other-session" }]) {
       const impostor = await BridgeClient.connect(pipe, nullLogger); clients.push(impostor);
       await expect(impostor.request("hello", { protocol: PROTOCOL_VERSION, token, peer: { id: spoof.id, name: String(record.name), agent: "other", jobAgent: "codex",
-        jobOwner: spoof.owner, jobParent: String(record.owner), cwd: home, pid: process.pid, agentPid: null, sessionId: null, startedAt: Date.now(), autoWake: false } })).rejects.toMatchObject({ code: "unauthorized" });
+        jobOwner: spoof.owner, jobParent: originalParent, cwd: home, pid: process.pid, agentPid: null, sessionId: null, startedAt: Date.now(), autoWake: false } })).rejects.toMatchObject({ code: "unauthorized" });
     }
   } finally { for (const client of clients) client.close(); await broker.close(); }
 });

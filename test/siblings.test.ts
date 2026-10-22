@@ -611,7 +611,12 @@ describe("sibling job messaging", () => {
     await client.connect(transport);
     try {
       await client.callTool({ name: "peers", arguments: {} });
-      await client.callTool({ name: "hook_event", arguments: { event: "SessionStart", session_id: `observer-${agent}` } });
+      const started = await client.callTool({ name: "hook_event", arguments: { event: "SessionStart", session_id: `observer-${agent}` } });
+      expect(started.isError).not.toBe(true);
+      // Hooks have a bounded response budget and may return while the real
+      // session update is still queued. Handoff needs the broker's published
+      // binding, not merely a successful tool response from that earlier turn.
+      await expect.poll(async () => (await supervisor.peers()).find(p => p.name === name)?.sessionId).toBe(`observer-${agent}`);
       // Keep the pair in the same authenticated supervisor family. Moving only
       // A deliberately revokes its implicit sibling access to B.
       const observer = (await supervisor.peers()).find(p => p.name === name)!;

@@ -47,7 +47,7 @@ const peerSchema = z.object({
 /** The last set of left-out local peers each service logged, so a persistent one is reported once. */
 const droppedPeersLogged = new WeakMap<object, string>();
 const peersSchema = z.array(peerSchema).max(MAX_NETWORK_PEERS).refine((peers) => new Set(peers.map((p) => p.name)).size === peers.length && new Set(peers.map((p) => p.id)).size === peers.length);
-const messageSchema = z.object({
+export const messageSchema = z.object({
   senderOwner: z.string().min(1).max(16384).optional(),
   id: z.uuid(), from: z.object({ id: textId, name: z.string().regex(NETWORK_NAME_PATTERN), agent: z.enum(AGENT_KINDS) }),
   to: z.string().min(1).max(MAX_METADATA_CHARS), recipient: z.string().regex(NETWORK_NAME_PATTERN),
@@ -687,7 +687,10 @@ export class NetworkService {
     finally { this.links.get(id)?.socket.destroy(); }
   }
 
-  async send(message: BridgeMessage): Promise<SendResult> {
+  /** Resolve and validate without persistence or transport effects. Call again
+   * at admission after a writer wait; advertisements are not durable authority. */
+  prepareSend(message: BridgeMessage, required?: RemoteDestination): { message: BridgeMessage; destination: RemoteDestination } {
+    this.requireAuthority();
     const { link, target } = this.target(message.recipient);
     const destination = link.peers.find(peer => peer.name === target);
     const sender = this.localPeers().find(peer => peer.id === message.from.id);
@@ -699,27 +702,37 @@ export class NetworkService {
     if (!senderOwner) throw new BridgeError("unauthorized", "Native sender identity is unproven.");
     const proposed: RemoteDestination = { hostId: link.remote!.id, hostFingerprint: link.remote!.fingerprint,
       name: target, ...(destination?.frontend ? { frontend: destination.frontend } : { native: destination?.nativeOwner }) };
-    message = { ...message, senderOwner, recipientFrontend: undefined, recipientNative: undefined, recipientAmbiguous: undefined,
+    message = { ...message, senderOwner, recipientMailbox: { kind: "remote", hostId: proposed.hostId, hostFingerprint: proposed.hostFingerprint },
+      recipientFrontend: undefined, recipientNative: undefined, recipientAmbiguous: undefined,
       ...(destination?.frontend ? { recipientFrontend: destination.frontend } : destination ?
         { recipientNative: destination.nativeOwner, ...(!destination.nativeOwner ? { recipientAmbiguous: true as const } : {}) } :
         { recipientAmbiguous: true as const }) };
-    // Legacy native-only embedders have no recovery store; production brokers always
-    // supply the durable callback, including for native tracked remote sends.
-    const pinned = this.broker.pinDestination?.(message, proposed) ?? { message, destination: proposed };
     if (!link.recipientOwnershipV1) {
       throw new BridgeError("unknown_target", "Paired host lacks verified recipient ownership; payload was withheld without native fallback.");
     }
     if (!link.nativeOwnershipV1) throw new BridgeError("unknown_target", "Paired host lacks nativeOwnershipV1; no payload or native fallback was dispatched.");
     if (!link.mailboxProvenanceV1) throw new BridgeError("unknown_target", "Paired host lacks mailboxProvenanceV1; no payload or fallback was dispatched.");
-    if (!pinned.destination.frontend && !verifiedNative(pinned.destination.native)) {
+    const original = required ?? proposed;
+    if (!original.frontend && !verifiedNative(original.native)) {
       throw new BridgeError("unknown_target", "Original destination ownership is unproven; no unadvertised native fallback was dispatched.");
     }
-    if (pinned.destination.hostId !== link.remote!.id || pinned.destination.hostFingerprint !== link.remote!.fingerprint ||
-        pinned.destination.name !== target || recipientKey(pinned.destination.frontend, pinned.destination.native) !== recipientKey(destination?.frontend, destination?.nativeOwner)) {
+    if (original.hostId !== link.remote!.id || original.hostFingerprint !== link.remote!.fingerprint ||
+        original.name !== target || recipientKey(original.frontend, original.native) !== recipientKey(destination?.frontend, destination?.nativeOwner)) {
       throw new BridgeError("unknown_target", "Original authenticated remote host or destination binding changed; retained send was not retargeted.");
     }
-    if (pinned.message.senderOwner !== senderOwner) throw new BridgeError("unauthorized", "Original sender ownership changed; retained payload was withheld.");
-    message = { ...pinned.message, from: message.from, senderOwner, ...(pinned.destination.frontend ? { recipientFrontend: pinned.destination.frontend } : {}) };
+    return { message, destination: proposed };
+  }
+
+  async send(message: BridgeMessage): Promise<SendResult> {
+    const prepared = this.prepareSend(message);
+    // Admission must retain only a complete proven destination. Production
+    // tracked sends have already atomically committed this pin with their intent.
+    const pinned = this.broker.pinDestination?.(prepared.message, prepared.destination) ?? prepared;
+    this.prepareSend(prepared.message, pinned.destination);
+    if (pinned.message.senderOwner !== prepared.message.senderOwner) throw new BridgeError("unauthorized", "Original sender ownership changed; retained payload was withheld.");
+    const { link, target } = this.target(message.recipient);
+    const destination = link.peers.find(peer => peer.name === target);
+    message = { ...pinned.message, from: message.from, senderOwner: prepared.message.senderOwner };
     // Advertise a just-reconnected sender before the receiver authenticates its frame.
     link.refresh();
     const result = await link.send({ ...message, recipient: target }, destination ?

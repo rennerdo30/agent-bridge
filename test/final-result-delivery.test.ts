@@ -126,6 +126,19 @@ it("captures bounded refusal evidence without exposing payloads or altering deli
   } finally { vi.useRealTimers(); }
 });
 
+it.each([
+  ["metadata lease has live or unknown owner", "metadata-owner-unavailable"],
+  ["broker connection closed", "connection-unavailable"],
+  ["broker request timed out: trackedSend", "request-deadline"],
+  ["OWNER_QUIESCED", "owner-quiesced"],
+  ["Message id already retained with different content", "retained-content-mismatch"],
+  ["Cannot read properties of undefined", "runtime-type-error"],
+])("categorizes retained delivery refusal %s without copying arbitrary error content", (message, reason) => {
+  const evidence = deliveryFailure(new Error(`${message}; EXCLUDED_PRIVATE_BODY`));
+  expect(evidence.reason).toBe(reason);
+  expect(JSON.stringify(evidence)).not.toContain("EXCLUDED_PRIVATE_BODY");
+});
+
 it("posts the same retained report when the runner exits without delivery", async () => {
   const env = makeEnv();
   const node = env.node("claude-final-fallback", "claude");

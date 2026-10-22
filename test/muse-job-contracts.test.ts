@@ -166,14 +166,15 @@ describe("Muse legacy exec remote profile contracts", () => {
   function receiver() {
     let receive!: (payload: Record<string, unknown>, pair: any) => Promise<void>;
     const responses: any[] = [];
-    const advertised = fixtureRemotePeer(env.home, { id: "pair", name: "paired" }, { id: "supervisor", name: "sender", sessionId: "supervisor" });
+    const pair = { id: randomUUID(), name: "paired", fingerprint: "a".repeat(64) };
+    const advertised = fixtureRemotePeer(env.home, pair, { id: "supervisor", name: "sender", sessionId: "supervisor" });
     const remote = new RemoteJobs({ registerExtension: (_frame: string, _capability: string, handler: typeof receive) => { receive = handler; },
       peers: () => [advertised], peerSupports: () => true,
       sendExtension: async (_host: string, _frame: string, payload: unknown) => { responses.push(payload); } } as any,
     env.home, nullLogger, async () => {});
     remotes.push(remote);
     return { remote, request: async (request: RemoteJobRequest, supervisor = "supervisor") => {
-      await receive({ kind: "request", rid: randomUUID(), peer: { id: "supervisor", name: "sender", supervisor }, request }, { id: "pair", name: "paired" });
+      await receive({ kind: "request", rid: randomUUID(), peer: { id: "supervisor", name: "sender", supervisor }, request }, pair);
       return responses.at(-1);
     } };
   }

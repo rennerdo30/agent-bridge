@@ -11,7 +11,7 @@ import { isRecord, readJsonStore, writeJsonStore } from "../core/json-store.js";
 import type { Logger } from "../core/logger.js";
 import type { BridgeNode } from "../core/node.js";
 import type { PeerInfo } from "../core/protocol.js";
-import { recipientKey, type InternalMessageOrigin } from "../core/recipient-ownership.js";
+import { mailboxSchema, recipientKey, type InternalMessageOrigin } from "../core/recipient-ownership.js";
 import { answerPendingApproval, listPendingApprovals, publishApproval, type PendingApproval } from "../core/relay.js";
 import { startRunFeedReady, type RunFeed, type RunFeedOptions } from "../core/runfeed.js";
 import { createWorktree, git, gitDirsOutside, type Worktree } from "../core/worktree.js";
@@ -19,12 +19,17 @@ import { isInside, resumeArgs, type DelegateArgs } from "../mcp/delegate-run.js"
 import { JobRunners, readRunnerState } from "../mcp/job-host.js";
 import { changedJobArgs, JOB_SETTING_KEYS, parseJobSettings, type JobSettings } from "../mcp/job-settings.js";
 import type { Job, RunnerControl, RunnerState } from "../mcp/jobs.js";
-import type { NetworkService } from "./link.js";
+import type { NetworkService, RemoteDestination } from "./link.js";
 import type { NetworkPair } from "./pairing.js";
 import { MAX_REMOTE_JOBS, REMOTE_JOB_ANTIGRAVITY_OPTIONS_CAPABILITY, REMOTE_JOB_CAPABILITY, REMOTE_JOB_CANCELLED_CAPABILITY, REMOTE_JOB_FRAME, REMOTE_JOB_RATE_LIMIT, REMOTE_JOB_RATE_WINDOW_MS, REMOTE_JOB_REQUEST_TIMEOUT_MS, REMOTE_JOB_SPAWN_LIMIT, remoteJobRequestSchema, remoteJobWireSchema, remoteJobSnapshotSchema, remoteSnapshotForPeer, type RemoteJobRequest } from "./remote-job-protocol.js";
 
 export interface RemoteJobSnapshot { state: RunnerState | null; alive: boolean; approvals: PendingApproval[]; usageTurn?: string }
-interface RemoteRecord { pair: string; peer: string; owner: string; job: Job; args: DelegateArgs; usageRefusal?: RunnerState; usageTurn?: string }
+/** Registration authority is deliberately not a local Job routing record. */
+export interface RemoteRegistrationPrincipal extends Record<string, unknown> {
+  kind: "remote-registration"; id: string; name: string; agent: Job["agent"]; supervisor: string; workdir: string | null; ownerAddress: string;
+}
+interface RemoteSupervisorRoute { kind: "remote-supervisor"; address: string; supervisor: string; destination: RemoteDestination }
+interface RemoteRecord { pair: string; peer: string; owner: string; job: Job; args: DelegateArgs; returnRoute?: RemoteSupervisorRoute; usageRefusal?: RunnerState; usageTurn?: string }
 type StoredRemoteRecord = Omit<RemoteRecord, "job"> & { job: Omit<Job, "controller" | "queue"> };
 const REMOTE_JOBS_FILE = "remote-jobs.json";
 interface Pending { host: string; resolve: (value: RemoteJobSnapshot) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }
@@ -57,10 +62,30 @@ export class RemoteJobs {
   get busy(): boolean { return this.pending.size > 0 || this.starting.size > 0 || this.pendingStarts.size > 0; }
   /** A local Bridge runner may register from this durable receiver-side record.
    * Source-side mirrors are not local jobs, and no public advertisement grants control. */
-  jobForRegistration(id: string): Record<string, unknown> | undefined {
+  jobForRegistration(id: string): RemoteRegistrationPrincipal | undefined {
     const record = this.records.get(id);
-    if (!record || this.pendingStarts.get(id)?.committed === false || record.job.id !== id || record.job.supervisor !== `${record.pair}/${record.peer}`) return undefined;
-    return { id, name: record.job.name, agent: record.job.agent, supervisor: record.job.supervisor, workdir: record.job.workdir };
+    if (!record || this.pendingStarts.get(id)?.committed === false || record.job.id !== id || record.job.supervisor !== `${record.pair}/${record.peer}` ||
+        typeof record.owner !== "string" || !record.owner.includes("/") || record.job.owner !== record.owner) return undefined;
+    return { kind: "remote-registration", id, name: record.job.name, agent: record.job.agent, supervisor: record.job.supervisor, workdir: record.job.workdir, ownerAddress: record.owner };
+  }
+  /** Original paired-host evidence, never a route rebuilt from today's names. */
+  jobReturnRoute(id: string): RemoteSupervisorRoute | undefined {
+    const record = this.records.get(id), route = record?.returnRoute;
+    if (!record || !this.jobForRegistration(id) || !route || route.kind !== "remote-supervisor" || route.address !== record.owner ||
+        route.supervisor !== record.job.supervisor || route.destination?.hostId !== record.pair ||
+        route.address.slice(route.address.indexOf("/") + 1) !== route.destination.name ||
+        !mailboxSchema.safeParse({ kind: "remote", hostId: route.destination.hostId, hostFingerprint: route.destination.hostFingerprint }).success ||
+        !recipientKey(route.destination.frontend, route.destination.native)) return undefined;
+    return route;
+  }
+
+  private returnRoute(pair: NetworkPair, peer: { id: string; name: string; supervisor: string }): RemoteSupervisorRoute | undefined {
+    const advertised = this.network.peers().find(p => p.id === `${pair.id}/${peer.id}` && p.name === `${pair.name}/${peer.name}`);
+    if (!advertised || advertised.jobAgent || !recipientKey(advertised.frontend, advertised.nativeOwner) ||
+        !mailboxSchema.safeParse({ kind: "remote", hostId: pair.id, hostFingerprint: pair.fingerprint }).success) return undefined;
+    return { kind: "remote-supervisor", address: `${pair.name}/${peer.name}`, supervisor: `${pair.id}/${peer.supervisor}`,
+      destination: { hostId: pair.id, hostFingerprint: pair.fingerprint, name: peer.name,
+        ...(advertised.frontend ? { frontend: advertised.frontend } : { native: advertised.nativeOwner }) } };
   }
   private readonly pendingStarts = new Map<string, { record: RemoteRecord; previous?: RemoteRecord; controller: AbortController; cancelRequested: boolean; committed: boolean }>();
   private readonly runners: JobRunners | null;
@@ -145,6 +170,8 @@ export class RemoteJobs {
     try {
       const advertised = this.network.peers().find((p) => p.id === `${pair.id}/${frame.peer.id}` && p.name === `${pair.name}/${frame.peer.name}`);
       if (!advertised || advertised.jobAgent) throw new Error("Remote job requester is not an advertised supervisor session.");
+      const returnRoute = this.returnRoute(pair, frame.peer);
+      if (!returnRoute) throw new Error("Remote supervisor return ownership is unproven; no runner was admitted.");
       const cfg = loadConfig(this.home, "other", this.log, {});
       const policy = cfg.network.remoteJobs;
       if (!policy.enabled || !policy.allowPeers.includes(pair.name)) throw new Error("Remote jobs are disabled for this pair; enable network.remoteJobs and explicitly allow its instance name.");
@@ -155,7 +182,7 @@ export class RemoteJobs {
       if (frame.request.op === "spawn" && this.starting.has(frame.request.job)) throw new Error("Remote job is already starting.");
       if (frame.request.op === "spawn") this.starting.add(frame.request.job);
       let value: RemoteJobSnapshot;
-      try { value = await this.handle(pair, frame.peer, frame.request); }
+      try { value = await this.handle(pair, frame.peer, frame.request, returnRoute); }
       finally { if (frame.request.op === "spawn") this.starting.delete(frame.request.job); }
       const compatible = remoteSnapshotForPeer(value, this.network.peerSupports(pair.id, REMOTE_JOB_CANCELLED_CAPABILITY));
       await this.network.sendExtension(pair.id, REMOTE_JOB_FRAME, { kind: "response", rid: frame.rid, value: compatible });
@@ -164,9 +191,13 @@ export class RemoteJobs {
     }
   }
 
-  private async handle(pair: NetworkPair, peer: { id: string; name: string; supervisor: string }, request: RemoteJobRequest): Promise<RemoteJobSnapshot> {
+  private async handle(pair: NetworkPair, peer: { id: string; name: string; supervisor: string }, request: RemoteJobRequest, returnRoute?: RemoteSupervisorRoute): Promise<RemoteJobSnapshot> {
     let record = this.records.get(request.job);
     if (record && (record.pair !== pair.id || record.peer !== peer.supervisor)) throw new Error("Remote job belongs to another supervisor.");
+    if (record?.returnRoute && (!returnRoute || record.returnRoute.destination.hostFingerprint !== returnRoute.destination.hostFingerprint ||
+        record.returnRoute.destination.name !== returnRoute.destination.name ||
+        recipientKey(record.returnRoute.destination.frontend, record.returnRoute.destination.native) !== recipientKey(returnRoute.destination.frontend, returnRoute.destination.native)))
+      throw new Error("Remote job belongs to the original authenticated supervisor binding.");
     if (request.op === "spawn") {
       const cfg = loadConfig(this.home, request.target, this.log, {});
       const policy = loadConfig(this.home, "other", this.log, {}).network.remoteJobs;
@@ -204,7 +235,7 @@ export class RemoteJobs {
         cwd = allowedRemoteDirectory(worktree.cwd, policy.allowRoots);
         args = { ...args, cwd, worktree: false, _worktree: worktree };
       }
-      const owner = `${pair.name}/${peer.name}`;
+      const owner = record?.owner ?? `${pair.name}/${peer.name}`;
       const job: Job = { id: request.job, name: `${request.target}-job-${request.job}`, agent: request.target,
         model: args.model ?? null, prompt: args.prompt, args: { ...args }, owner, supervisor: `${pair.id}/${peer.supervisor}`,
         startedAt: Date.now(), controller: new AbortController(), queue: [], status: "running", progress: null,
@@ -212,7 +243,8 @@ export class RemoteJobs {
       job.providerUsage = { runId: job.usageRunId, turnStartedAt: job.startedAt, decision: usage, warningReported: false,
         ...(usage.type === "block" ? { retainedControls: job.usagePendingControls } : {}) };
       const previous = this.records.get(request.job);
-      record = { pair: pair.id, peer: peer.supervisor, owner, job, args: { ...args, cwd, _job: job.name }, usageTurn: request.usageTurn };
+      record = { pair: pair.id, peer: peer.supervisor, owner, job, args: { ...args, cwd, _job: job.name },
+        returnRoute: previous ? previous.returnRoute : returnRoute, usageTurn: request.usageTurn };
       this.records.set(job.id, record);
       if (usage.type === "block") {
         job.status = "failed";

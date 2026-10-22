@@ -3006,10 +3006,17 @@ export class Broker {
     const retainedRequest = this.store.sendIntentOwner(id) !== undefined;
     this.assertSendOwner(sender, id, Boolean(stored));
     if (stored) this.assertStoredSend(sender, args, stored);
-    const own = sender.jobAgent ? this.storedJobs().find((j) => `job:${j.id}` === sender.id) ?? this.remoteJobs?.jobForRegistration(sender.id.slice(4)) : undefined;
+    const own = sender.jobAgent ? this.storedJobs().find((j) => `job:${j.id}` === sender.id) : undefined;
+    // A receiver-side remote runner has registration authority, not a local
+    // supervisor succession grant. Never pass that principal to jobRecipient.
+    const remotePrincipal = sender.jobAgent && !own ? this.remoteJobs?.jobForRegistration(sender.id.slice(4)) : undefined;
+    const remoteRoute = remotePrincipal ? this.remoteJobs?.jobReturnRoute(sender.id.slice(4)) : undefined;
     // A temporarily unavailable registry is not authority to downgrade a job
     // report to ordinary name routing or retain a destination-less send intent.
-    if (!stored && sender.jobAgent && !own) throw new BridgeError("job_index_preparing", "Current job routing authority is unavailable; no send intent was stored. Retry the original report after recovery.");
+    if (!stored && sender.jobAgent && !own && !remotePrincipal) throw new BridgeError("job_index_preparing", "Current job routing authority is unavailable; no send intent was stored. Retry the original report after recovery.");
+    const remoteSupervisorMail = Boolean(remotePrincipal && (to === remotePrincipal.ownerAddress || to === sender.jobParent));
+    if (!stored && remoteSupervisorMail && (!remoteRoute || to !== remoteRoute.address || sender.jobOwner !== remoteRoute.supervisor))
+      throw new BridgeError("unauthorized", "Original remote supervisor ownership is unproven; report remains pending without local fallback.");
     const supervisorMail = Boolean(own && (to === sender.jobParent || mastersFor(own).includes(to)));
     // Local job dispatch has no external effect before its storage transaction.
     // Commit request + exact grant + accepted copy together: a failed insert
@@ -3021,7 +3028,9 @@ export class Broker {
       throw new BridgeError("unauthorized", "Original local job report grant is unavailable; no send intent was stored and the report remains pending.");
     const atomicJobRequest = !stored && !retainedRequest && localJobReport;
     const jobRegistration = atomicJobRequest ? conn.mailReady : undefined;
-    if (!atomicJobRequest) await this.persistSendRequest(conn, sender, args, id);
+    // New remote sends admit request + complete destination atomically below.
+    // Existing intents are checked before any local/remote resolution branch.
+    if (!atomicJobRequest && (stored || retainedRequest)) await this.persistSendRequest(conn, sender, args, id);
     if (stored) return { messages: this.store.messagesById(id), deliveredTo: [], queuedFor: [],
       storage: { id, state: "stored", recovered: true, receipts: this.store.receipts(id) } };
     const retained = this.store.pinnedSends(id);
@@ -3108,6 +3117,7 @@ export class Broker {
     const base = {
       id,
       senderOwner: recipientKey(sender.frontend, nativeOwner(sender)) ?? undefined,
+      senderMailbox: localMailbox(this.store.namespace),
       // A job runner speaks for its job: from the subagent's agent, like a job run inside the session's server.
       from: { id: sender.id, name: sender.name, agent: sender.jobAgent ?? sender.agent },
       to,
@@ -3125,7 +3135,8 @@ export class Broker {
     // A retry addresses the authenticated host ID and exact original recipient,
     // never a fresh project/group/alias choice or a reused host display name.
     const original = retained[0]?.destination;
-    let remoteAddress = original ? `${original.hostId}/${original.name}` : to.includes("/") ? to : undefined;
+    const remoteRequired = original ?? (remoteSupervisorMail ? remoteRoute?.destination : undefined);
+    let remoteAddress = remoteRequired ? `${remoteRequired.hostId}/${remoteRequired.name}` : to.includes("/") ? to : undefined;
     if (!original && to.startsWith("project:")) {
       const local = this.localPeers().filter((p) => !p.jobAgent && !p.subagent).map((p) => this.projectPeer(p)).filter((p) => p.projectAddress === to);
       const remote = this.network?.projectPeers(to) ?? [];
@@ -3138,10 +3149,24 @@ export class Broker {
       if (anchor && this.store.replyConflicts(sender.name, [to], conversationId, anchor, sender.frontend, nativeOwner(sender)).length) {
         throw new BridgeError("bad_request", "Stale reply refused: newer unread mail exists. Read inbox before replying.");
       }
-      const result = await this.requireNetwork().send({ ...base, recipient: remoteAddress });
+      const network = this.requireNetwork(), registration = conn.mailReady;
+      if (!registration) throw new BridgeError("unauthorized", "Send registration is not ready");
+      await this.store.retryWrite(() => {
+        this.assertQueueRegistration(conn, sender, registration);
+        // Re-resolve only to verify the pinned host and exact binding after any
+        // writer wait. A failed proof leaves neither intent nor partial pin.
+        const prepared = network.prepareSend({ ...base, recipient: remoteAddress! }, remoteRequired);
+        this.store.admitRemoteSend(prepared.message, prepared.destination, {
+          owner: JSON.stringify([sender.name, sender.agent, recipientKey(sender.frontend, nativeOwner(sender))]),
+          fingerprint: JSON.stringify([args.to, args.body, args.replyTo ?? null, args.conversationId ?? null, args.ifNoNewerThan ?? null]),
+        });
+      });
+      this.assertQueueRegistration(conn, sender, registration);
+      const result = await network.send({ ...base, recipient: remoteAddress });
       for (const message of result.messages) await this.store.retryWrite(() => this.store.insert(message));
       return result;
     }
+    if (!atomicJobRequest && !retainedRequest) await this.persistSendRequest(conn, sender, args, id);
     const remoteTargets = to === BROADCAST ? this.network?.peers().filter((p) => !p.jobAgent).map((p) => p.name) ?? [] : [];
     let { live, queued, skipped } = this.resolveTargets(to, sender);
     const unreadBeforeSend = conversationId.startsWith(CONTROL_CONVERSATION_PREFIX) || isQuietMessage({ conversationId }) ? [] :

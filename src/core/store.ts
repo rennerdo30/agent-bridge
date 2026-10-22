@@ -937,6 +937,28 @@ export class MessageStore {
       return record ? String(record.owner) : undefined;
     });
   }
+  /** A crash may leave both original request and exact destination, or neither;
+   * never a request-only intent that a future registration could retarget. */
+  admitRemoteSend(message: BridgeMessage, destination: RemoteDestination, request: { owner: string; fingerprint: string }): void {
+    this.acceptedOperation("direct", () => {
+      if (!mailboxSchema.safeParse({ kind: "remote", hostId: destination.hostId, hostFingerprint: destination.hostFingerprint }).success ||
+          !destination.name || !recipientKey(destination.frontend, destination.native) || !message.senderOwner ||
+          !sameMailbox(message.senderMailbox, localMailbox(this.namespace)) ||
+          !sameMailbox(message.recipientMailbox, { kind: "remote", hostId: destination.hostId, hostFingerprint: destination.hostFingerprint }) ||
+          recipientKey(message.recipientFrontend, message.recipientNative) !== recipientKey(destination.frontend, destination.native))
+        throw new Error("Complete authenticated remote destination is required before admission");
+      this.exec(this.db, "SAVEPOINT remote_send_admission");
+      try {
+        this.rememberSendIntent(message.id, request.owner, request.fingerprint);
+        this.pinDestination(message, destination);
+        this.exec(this.db, "RELEASE remote_send_admission");
+      } catch (error) {
+        this.exec(this.db, "ROLLBACK TO remote_send_admission");
+        this.exec(this.db, "RELEASE remote_send_admission");
+        throw error;
+      }
+    });
+  }
   pinDestination(message: BridgeMessage, destination: RemoteDestination): { message: BridgeMessage; destination: RemoteDestination } {
     return this.acceptedOperation("direct", () => {
       if (!this.frontendOwnership) throw new Error("Durable destination storage upgrade is required.");

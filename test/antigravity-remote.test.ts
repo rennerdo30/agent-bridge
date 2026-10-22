@@ -19,7 +19,7 @@ it("admits exact Antigravity options at the paired receiver and rejects them for
   vi.spyOn(worktree, "gitDirsOutside").mockResolvedValue([]);
   let receive!: (payload: Record<string, unknown>, pair: NetworkPair) => Promise<void>;
   const responses: Record<string, any>[] = [], control = vi.fn(async () => {});
-  const pair = { id: "pair-id", name: "paired" } as NetworkPair;
+  const pair = { id: randomUUID(), name: "paired", fingerprint: "a".repeat(64) } as NetworkPair;
   const advertised = fixtureRemotePeer(env.home, pair, { id: "requester-id", name: "owner", sessionId: "requester-id" });
   const network = {
     registerExtension: (_frame: string, _capability: string, handler: typeof receive) => { receive = handler; },
