@@ -22,6 +22,8 @@ import { makeEnv, until, type TestEnv } from "./helpers.js";
 import { retainFixtureNode } from "./owned-mail.js";
 import { startUi, type UiOptions } from "../src/cli/ui.js";
 import { readDashboardInfo } from "../src/cli/dashboard.js";
+import { deliveryFailure } from "../src/mcp/delivery-evidence.js";
+import { httpFailureEvidence } from "./http-failure-evidence.js";
 
 const cli = join(import.meta.dirname, "../plugins/codex/dist/cli.mjs");
 let env: TestEnv, nodes: BridgeNode[], children: ChildProcess[], owned: Map<number, string>;
@@ -311,14 +313,30 @@ function fixtureStartupLogger(diagnostics?: UiUnknownDiagnostics): typeof nullLo
   const record = (phase: string, code?: string | number, stage?: string) => {
     const previous = evidence.find(event => event.phase === phase && event.code === code && event.stage === stage);
     if (previous) { previous.count++; previous.elapsedMs = Math.round(performance.now() - started); }
-    else evidence.push({ phase, ...(code === undefined ? {} : { code }), ...(stage ? { stage } : {}), elapsedMs: Math.round(performance.now() - started), count: 1 });
+    else if (evidence.length < 31) evidence.push({ phase, ...(code === undefined ? {} : { code }), ...(stage ? { stage } : {}), elapsedMs: Math.round(performance.now() - started), count: 1 });
+    else {
+      const capped = evidence.find(event => event.phase === "diagnostic_overflow");
+      if (capped) capped.count++; else evidence.push({ phase: "diagnostic_overflow", elapsedMs: Math.round(performance.now() - started), count: 1 });
+    }
   };
   const fixtureLog: typeof nullLogger = { ...nullLogger, child: scope => { if (scope === "node") diagnostics?.constructorLogger(); return fixtureLog; },
+    error: (message, data) => {
+      if (message === "broker refused this peer" || message === "could not join the bridge") {
+        const failure = deliveryFailure({ code: data?.code, message: data?.message ?? data?.err });
+        record("admission_refused", failure.code, failure.protocol?.source ?? failure.reason);
+      }
+    },
     debug: (message, data) => { if (message === "connect attempt failed" && ["ENOENT", "ECONNREFUSED", "ETIMEDOUT", "EUNSAFESOCKETDIR"].includes(String(data?.code))) {
       record("discovery", String(data!.code)); diagnostics?.discovery(data?.code);
     } },
     info: (message, data) => {
       if (message === "connected to broker") record("authenticated_ready");
+      else if (message === "client protocol refusal observation") {
+        const protocol = deliveryFailure({ code: "protocol_mismatch", details: { protocolObservation: data?.protocolObservation } }).protocol;
+        if (protocol?.connectionGeneration !== undefined) record("protocol_connection", protocol.connectionGeneration, protocol.operation);
+        if (protocol?.clientProtocol !== undefined) record("client_protocol", protocol.clientProtocol);
+        if (protocol?.brokerProtocol !== undefined) record("broker_protocol", protocol.brokerProtocol);
+      }
       else if (message === "daemon creation observation; authenticated readiness still required" && ["created", "unknown", "unavailable"].includes(String(data?.kind))) {
         record("creation_" + String(data!.kind), Number.isSafeInteger(data?.errorCode) ? Number(data!.errorCode) : undefined,
           ["read", "startup", "create"].includes(String(data?.stage)) ? String(data!.stage) : undefined);
@@ -427,15 +445,7 @@ async function cliCreationEvidence(child: ChildProcess, identity: string | null)
   } catch { return unavailable(); }
 }
 async function httpFailureCategory(response: Response): Promise<string> {
-  if (response.ok) return "none";
-  try {
-    const data = await response.clone().json() as { error?: unknown }, error = typeof data.error === "string" ? data.error : "";
-    if (error.includes("could not connect to or start")) return "discovery_unavailable";
-    if (error.includes("connection to broker closed")) return "connection_closed";
-    if (error.includes("timed out")) return "timeout";
-    if (/unauthorized|authentication/i.test(error)) return "auth_rejection";
-    return "unclassified";
-  } catch { return "invalid_response"; }
+  return (await httpFailureEvidence(response)).category;
 }
 function copyFixtureRuntime(source: string, target: string): void {
   // Node's native cpSync has Windows Unicode regressions (nodejs/node#59636).
@@ -548,7 +558,12 @@ describe("standalone demand-start broker", () => {
     const observed = observeUiSender();
     try {
       const send = await dashboard();
-      expect((await send("embedded-by-default", { brokerDaemon: { cli }, daemon: { enabled: true } })).status).toBe(200);
+      const response = await send("embedded-by-default", { brokerDaemon: { cli }, daemon: { enabled: true } });
+      if (response.status !== 200) process.stderr.write("Embedded UI admission diagnostics " + JSON.stringify({
+        ...await httpFailureEvidence(response), stages: startupEvidence, startCount: observed.starts.length,
+        embedded: observed.starts.map(node => node.isBroker), listenCount: observed.listen.mock.calls.length,
+      }) + "\n");
+      expect(response.status).toBe(200);
       expect(observed.starts).toHaveLength(1); expect(observed.starts[0]!.isBroker).toBe(true);
       expect(observed.listen).toHaveBeenCalledOnce();
       process.stderr.write("AB325 UI pre-election metadata evidence " + JSON.stringify(observed.metadataAtStart) + "\n");

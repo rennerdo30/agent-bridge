@@ -549,10 +549,20 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
       client.close();
       throw err;
     });
-    if (this.opts.frontend && !sameFrontend(this.opts, hello)) {
-      client.close(); throw new BridgeError("protocol_mismatch", "Broker did not attest the exact T3 frontend binding; hosted registration refused.");
+    try {
+      if (this.opts.frontend && !sameFrontend(this.opts, hello)) {
+        client.close(); throw new BridgeError("protocol_mismatch", "Broker did not attest the exact T3 frontend binding; hosted registration refused.");
+      }
+      this.afterHello(client, hello);
     }
-    this.afterHello(client, hello);
+    catch (error) {
+      if (error instanceof BridgeError && error.code === "protocol_mismatch") {
+        let observed = error;
+        try { observed = client.observeProtocolRefusal?.(error, this.opts.frontend ? "helloT3" : "hello") ?? error; } catch { /* Original refusal wins. */ }
+        throw observed;
+      }
+      throw error;
+    }
   }
 
   private helloArgs() {

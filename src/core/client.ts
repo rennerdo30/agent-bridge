@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { connect, type Socket } from "node:net";
-import { APP_VERSION, CONNECT_TIMEOUT_MS, MAX_FRAME_BYTES, REQUEST_TIMEOUT_MS } from "./constants.js";
+import { APP_VERSION, CONNECT_TIMEOUT_MS, MAX_FRAME_BYTES, PROTOCOL_VERSION, REQUEST_TIMEOUT_MS } from "./constants.js";
 import type { Logger } from "./logger.js";
 import { brokerTcpPortAsync, ensurePrivateSocketDirectory, resolveHome, resolvePipePath } from "./paths.js";
 import {
@@ -44,7 +44,7 @@ function transportOperation(op: Op): TransportOperation {
   switch (op) {
     case "trackedSend": return "tracked_send";
     case "send": case "sendSibling": return "legacy_send";
-    case "auth": case "hello": return "auth_hello";
+    case "auth": case "hello": case "helloT3": return "auth_hello";
     case "ack": return "ack";
     case "ping": case "coreStatus": case "sendState": case "messageReceipt": return "status_read";
     default: return "other";
@@ -69,6 +69,9 @@ export interface BridgeClientEvents {
 
 /** A single connection to the broker. Reconnection and election live in {@link BridgeNode}. */
 export class BridgeClient extends EventEmitter<BridgeClientEvents> {
+  private static diagnosticSequence = 0;
+  private readonly diagnosticGeneration = BridgeClient.diagnosticSequence = Math.min(2_147_483_647, BridgeClient.diagnosticSequence + 1);
+  private protocolObservationEmissions = 0;
   private nextId = 1;
   private readonly pending = new Map<number, Pending>();
   private closed = false;
@@ -186,6 +189,23 @@ export class BridgeClient extends EventEmitter<BridgeClientEvents> {
     return this.closed;
   }
 
+  /** Local connection/operation observation only; never compatibility or IO authority. */
+  observeProtocolRefusal(error: BridgeError, op: Op): BridgeError {
+    try {
+      const brokerProtocol = error.details?.brokerProtocol;
+      const protocolObservation = {
+        operation: transportOperation(op), connectionGeneration: this.diagnosticGeneration, clientProtocol: PROTOCOL_VERSION,
+        ...(typeof brokerProtocol === "number" && Number.isInteger(brokerProtocol) && brokerProtocol >= 0 && brokerProtocol <= 65_535 ? { brokerProtocol } : {}),
+      };
+      const observed = new BridgeError(error.code, error.message, { ...error.details, protocolObservation });
+      if (error.code === "protocol_mismatch" && this.protocolObservationEmissions < CLIENT_TRANSPORT_DIAGNOSTIC_RECORD_LIMIT) {
+        this.protocolObservationEmissions++;
+        try { this.log.info("client protocol refusal observation", { code: "protocol_mismatch", protocolObservation }); } catch { /* Original refusal and metadata survive log failure. */ }
+      }
+      return observed;
+    } catch { return error; } // Observation can never replace the original refusal.
+  }
+
   request<O extends Op>(op: O, args: RequestMap[O][0], timeoutMs: number = REQUEST_TIMEOUT_MS): Promise<RequestMap[O][1]> {
     if (this.closed) return Promise.reject(this.#observedConnectionClosed("prewrite_closed", {
       operation: transportOperation(op), frame_encoded: false, write_call_boundary: "not_reached", write_returned: false,
@@ -203,9 +223,9 @@ export class BridgeClient extends EventEmitter<BridgeClientEvents> {
         if (typeof version === "string") this.brokerVersion = version;
         resolve(value as RequestMap[O][1]);
       }, reject: (err) => {
-        if (/unknown op:/.test(err.message)) reject(new BridgeError("protocol_mismatch",
-          `Broker ${this.brokerVersion ? "v" + this.brokerVersion : "version unknown (older protocol)"} does not support ${op} required by server v${APP_VERSION}. Update the broker host and reload its session after current jobs finish; no operation was applied.`, { operation: op }));
-        else reject(err);
+        if (/unknown op:/.test(err.message)) reject(this.observeProtocolRefusal(new BridgeError("protocol_mismatch",
+          `Broker ${this.brokerVersion ? "v" + this.brokerVersion : "version unknown (older protocol)"} does not support ${op} required by server v${APP_VERSION}. Update the broker host and reload its session after current jobs finish; no operation was applied.`, { operation: op }), op));
+        else reject(err instanceof BridgeError && err.code === "protocol_mismatch" ? this.observeProtocolRefusal(err, op) : err);
       }, timer };
       pendingWriteObservations.set(pending, transport);
       this.pending.set(id, pending);

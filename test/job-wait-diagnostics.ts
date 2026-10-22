@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { LOG_DIR_NAME, LOG_FILE_NAME } from "../src/core/constants.js";
 import { pidAlive } from "../src/core/delegate.js";
-import { deliveryEvidenceSchema, deliveryFailure } from "../src/mcp/delivery-evidence.js";
+import { deliveryEvidenceSchema, deliveryFailure, finalDeliverySettlementSchema } from "../src/mcp/delivery-evidence.js";
 
 /** Fixture-only evidence, never a recovery/ownership decision. All reads are
  * bounded and output is allowlisted: no prompts, bodies, env, tokens or specs. */
@@ -40,19 +40,21 @@ function reason(value: unknown): string {
 export function jobWaitEvents(home: string, ids: readonly string[]) {
   const known = ids.filter(id => /^[a-f0-9]{8}$/.test(id)).slice(0, 10);
   return (boundedText(join(home, LOG_DIR_NAME, LOG_FILE_NAME), 256 * 1024, true) ?? "").split("\n").flatMap(line => {
-    const match = /^(\d{4}-\d\d-\d\dT[\d:.]+Z)\s+\w+\s+\[[^\]]+\] pid=(\d+) (job process ownership established|job runner started|job runner done|job delivery evidence|could not deliver to the session; retrying|request rejected|inline report delivery failed; retained for replay)(?: (\{.*\}))?$/.exec(line);
+    const match = /^(\d{4}-\d\d-\d\dT[\d:.]+Z)\s+\w+\s+\[[^\]]+\] pid=(\d+) (job process ownership established|job runner started|job runner done|job delivery evidence|job final delivery settled|client protocol refusal observation|broker refused this peer|could not deliver to the session; retrying|request rejected|inline report delivery failed; retained for replay)(?: (\{.*\}))?$/.exec(line);
     if (!match || match[1]!.length > 32 || !Number.isFinite(Date.parse(match[1]!))) return [];
     let fields: Record<string, any> = {};
     try { if (match[4]) fields = JSON.parse(match[4]); } catch { return []; }
     if (!object(fields) || match[3] === "request rejected" && !["hello", "inlineJobReport", "trackedSend", "remoteJob"].includes(fields.op)) return [];
     const job = known.find(id => line.includes(`-job-${id}`)), pid = Number(match[2]);
     const delivery = match[3] === "job delivery evidence" ? deliveryEvidenceSchema.safeParse(fields) : undefined;
-    const failure = deliveryFailure({ code: fields.code, message: fields.message ?? fields.err });
+    const finalDelivery = match[3] === "job final delivery settled" ? finalDeliverySettlementSchema.safeParse(fields) : undefined;
+    const failure = deliveryFailure({ code: fields.code, message: fields.message ?? fields.err, details: { protocolObservation: fields.protocolObservation } });
     const coarse = reason(fields.message ?? fields.err);
     return [{ at: match[1], event: match[3], pid: Number.isSafeInteger(pid) && pid > 0 ? pid : undefined, job,
       ...(match[3] === "job runner done" ? { status: status(fields.status), delivered: fields.delivered === true } : {}),
       ...(delivery?.success ? { delivery: delivery.data } : {}),
-      ...(["request rejected", "inline report delivery failed; retained for replay", "could not deliver to the session; retrying"].includes(match[3]!) ? {
+      ...(finalDelivery?.success ? { finalDelivery: finalDelivery.data } : {}),
+      ...(["request rejected", "client protocol refusal observation", "broker refused this peer", "inline report delivery failed; retained for replay", "could not deliver to the session; retrying"].includes(match[3]!) ? {
         // Retain existing coarse labels where they were already meaningful,
         // alongside the same strict taxonomy used in the actual runner state.
         code: failure.code, reason: coarse !== "other" ? coarse : failure.reason, failure } : {}) }];
@@ -75,6 +77,7 @@ export function jobWaitSnapshot(home: string, ids: readonly string[]) {
     const hosted = Array.isArray(remote?.jobs) ? remote.jobs.find((row: any) => object(row) && object(row.job) && row.job.id === id) : undefined;
     const cached = document(home, `remote-job-states/${id}.json`), snapshot = object(cached?.snapshot) ? cached.snapshot : undefined;
     const delivery = deliveryEvidenceSchema.safeParse(runner?.deliveryEvidence);
+    const finalDelivery = finalDeliverySettlementSchema.safeParse(runner?.finalDelivery);
     return { id, local: local ? { status: status(local.status), remoteAddress: object(local.remote), explicitRemote: typeof local.args?.host === "string",
       waitingForStart: local.waitingForStart === true, hostRecorded: object(local.host), deliveryOwner: typeof local.deliveryOwner === "string",
       reportEnvelopes: Array.isArray(local.deliveryHistory) ? Math.min(100, local.deliveryHistory.length) : 0,
@@ -85,6 +88,8 @@ export function jobWaitSnapshot(home: string, ids: readonly string[]) {
       runnerEvidence,
       runner: runner ? { status: status(runner.status), pid: Number.isSafeInteger(runner.pid) && runner.pid > 0 ? runner.pid : undefined,
         ...(delivery.success ? { delivery: delivery.data } : {}),
+        ...(finalDelivery.success ? { finalDelivery: finalDelivery.data } : {}),
+        retainedDeliveries: typeof runner.retainedDeliveryCount === "number" && Number.isSafeInteger(runner.retainedDeliveryCount) && runner.retainedDeliveryCount >= 0 ? Math.min(65_535, runner.retainedDeliveryCount) : undefined,
         alive: Number.isSafeInteger(runner.pid) && runner.pid > 0 && pidAlive(runner.pid), identityRecorded: typeof runner.identity === "string",
         session: Boolean(runner.sessionId), live: runner.live === true, delivered: runner.delivered === true, reportPresent: Boolean(runner.report),
         progress: ["queued: runner startup admission", "preparing run context", "queued: waiting for root admission", "queued: waiting for machine startup admission", "starting native CLI", "queued: waiting for compatible storage readers to retain run context"].includes(runner.progress ?? "") ? runner.progress : "other" } : null };

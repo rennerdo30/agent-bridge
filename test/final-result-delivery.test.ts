@@ -8,11 +8,23 @@ import { deliveryEvidenceSchema, deliveryFailure } from "../src/mcp/delivery-evi
 import { JobManager, readStore, type Job, type RunnerState } from "../src/mcp/jobs.js";
 import { nullLogger } from "../src/core/logger.js";
 import { BridgeError } from "../src/core/protocol.js";
-import { JOBS_FILE } from "../src/core/constants.js";
+import { JOBS_FILE, PROTOCOL_VERSION } from "../src/core/constants.js";
 import { makeEnv, until } from "./helpers.js";
 
 const report = "Subagent codex-job-12345678 done after 1s.\n\nFinal review";
 const initial = (): StoredFinalResult => ({ report, reportId: "turn-one", delivered: false });
+
+it("retries only compatible handover without weakening terminal protocol refusal", async () => {
+  const waits = vi.fn(async () => {}), persist = vi.fn();
+  const send = vi.fn().mockRejectedValueOnce(new BridgeError("protocol_mismatch", "broker is stopping", { handover: true, brokerProtocol: PROTOCOL_VERSION }))
+    .mockResolvedValue({ stored: true });
+  expect(await deliverFinalResult(initial(), persist, send, waits)).toMatchObject({ state: "stored", cause: "send-receipt", attempt: 2 });
+  expect(send).toHaveBeenCalledTimes(2); expect(waits).toHaveBeenCalledOnce();
+  send.mockReset().mockRejectedValue(new BridgeError("protocol_mismatch", "broker speaks protocol 5", { handover: true, brokerProtocol: PROTOCOL_VERSION - 1 }));
+  waits.mockClear(); persist.mockClear();
+  expect(await deliverFinalResult(initial(), persist, send, waits)).toMatchObject({ state: "retained", cause: "permanent-refusal", attempt: 1, persisted: true, code: "protocol_mismatch" });
+  expect(send).toHaveBeenCalledOnce(); expect(waits).not.toHaveBeenCalled(); expect(persist).toHaveBeenLastCalledWith(initial());
+});
 
 it("stores before a failed send, then retries with the same identity", async () => {
   let saved: StoredFinalResult | null = null;

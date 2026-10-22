@@ -4,6 +4,8 @@ import { DatabaseSync } from "node:sqlite";
 import { readRunnerState } from "./job-host.js";
 import { resolveDbPath } from "../core/paths.js";
 import { archiveDbPath } from "../core/sqlite-maintenance.js";
+import { PROTOCOL_VERSION } from "../core/constants.js";
+import { deliveryFailure, type FinalDeliveryOutcome } from "./delivery-evidence.js";
 export interface StoredFinalResult {
   report: string;
   reportId: string;
@@ -14,7 +16,14 @@ export interface StoredFinalResult {
 const MAX_BACKOFF_MS = 30_000;
 const MAX_DELIVERY_ATTEMPTS = 6;
 /** Refusals that no retry can fix: the session fallback must take over at once. */
-export const PERMANENT_DELIVERY_CODES: ReadonlySet<string> = new Set(["unauthorized", "not_found", "bad_request", "too_large", "forbidden"]);
+export const PERMANENT_DELIVERY_CODES: ReadonlySet<string> = new Set(["unauthorized", "not_found", "bad_request", "too_large", "forbidden", "protocol_mismatch"]);
+export function compatibleDeliveryHandover(error: unknown): boolean {
+  const value = error as { code?: unknown; details?: { handover?: unknown; brokerProtocol?: unknown } } | null;
+  return value?.code === "protocol_mismatch" && value.details?.handover === true && value.details.brokerProtocol === PROTOCOL_VERSION;
+}
+export function permanentDeliveryRefusal(error: unknown): boolean {
+  return PERMANENT_DELIVERY_CODES.has((error as { code?: string } | null)?.code ?? "") && !compatibleDeliveryHandover(error);
+}
 
 /**
  * Persist before the first send. Bound retries so the session can settle and post a retained result.
@@ -28,13 +37,18 @@ export async function deliverFinalResult(
   wait: (ms: number) => Promise<void>,
   shutdown?: AbortSignal,
   alreadyStored?: (reportId: string) => Promise<boolean>,
-): Promise<void> {
-  if (result.delivered) return;
+): Promise<FinalDeliveryOutcome> {
+  if (result.delivered) return { state: "stored", cause: "previous-receipt", attempt: 0, persisted: true };
+  let persisted = false, failure: unknown;
+  const retained = (cause: FinalDeliveryOutcome["cause"], attempt: number): FinalDeliveryOutcome => ({
+    state: persisted ? "retained" : "unretained", cause, attempt, persisted, ...(failure ? deliveryFailure(failure) : {}),
+  });
   let backoff = 1_000;
   // Never send before the runner state holds the report for session fallback, unless storage stays unavailable.
   for (let attempt = 0; attempt < MAX_DELIVERY_ATTEMPTS; attempt++) {
-    try { persist(result); break; }
-    catch {
+    try { persist(result); persisted = true; break; }
+    catch (error) {
+      failure = error;
       // Exhausted (for example a Windows EPERM/EBUSY lock that persists): still send best-effort below.
       if (attempt === MAX_DELIVERY_ATTEMPTS - 1 || shutdown?.aborted) break;
       await wait(backoff);
@@ -42,7 +56,7 @@ export async function deliverFinalResult(
     }
   }
   const markDelivered = () => {
-    try { persist({ ...result, delivered: true }); }
+    try { persist({ ...result, delivered: true }); persisted = true; }
     catch { /* The broker holds the result; the same completion ID dedupes a session fallback. */ }
   };
   backoff = 1_000;
@@ -51,18 +65,20 @@ export async function deliverFinalResult(
       let found = false;
       try { found = alreadyStored ? await alreadyStored(result.reportId) : false; }
       catch { /* Older or restarting brokers still accept the stable send identity. */ }
-      if (found) { markDelivered(); return; }
+      if (found) { markDelivered(); return { state: "stored", cause: "receipt-probe", attempt: attempt + 1, persisted }; }
       const receipt = await send(result.report, result.reportId);
-      if (receipt?.stored) { markDelivered(); return; }
+      if (receipt?.stored) { markDelivered(); return { state: "stored", cause: "send-receipt", attempt: attempt + 1, persisted }; }
     } catch (error) {
-      if (PERMANENT_DELIVERY_CODES.has((error as { code?: string } | null)?.code ?? "")) return;
+      failure = error;
+      if (permanentDeliveryRefusal(error)) return retained("permanent-refusal", attempt + 1);
       // The result is retained; the next attempt uses the same id.
     }
-    if (shutdown?.aborted || attempt === MAX_DELIVERY_ATTEMPTS - 1) return;
+    if (shutdown?.aborted || attempt === MAX_DELIVERY_ATTEMPTS - 1) return retained(shutdown?.aborted ? "shutdown" : "attempts-exhausted", attempt + 1);
     await wait(backoff);
-    if (shutdown?.aborted) return;
+    if (shutdown?.aborted) return retained("shutdown", attempt + 1);
     backoff = Math.min(backoff * 2, MAX_BACKOFF_MS);
   }
+  return retained("attempts-exhausted", MAX_DELIVERY_ATTEMPTS);
 }
 
 /** A broker storage acknowledgement alone does not prove that the parent received the result. */

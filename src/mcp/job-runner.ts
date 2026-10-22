@@ -13,7 +13,7 @@ import { failureCause } from "../core/delegate.js";
 import { createLogger } from "../core/logger.js";
 import { BridgeNode } from "../core/node.js";
 import { resolveDbPath, resolvePipePath } from "../core/paths.js";
-import { quarantineMessage } from "../core/oversize.js";
+import { quarantineMessage, quarantineText } from "../core/oversize.js";
 import { loadOrCreateToken } from "../core/token.js";
 import { ACK_CONVERSATION_SUFFIX, QUESTION_CONVERSATION_SUFFIX, SIBLING_CONVERSATION_PREFIX, type BridgeMessage, type SendResult } from "../core/protocol.js";
 import type { ParentRoute } from "../core/parent-link.js";
@@ -30,13 +30,15 @@ import { acquireStartup } from "../core/startup-admission.js";
 import { refreshStorePeerIdentities } from "../core/store-compatibility.js";
 import { guardRunnerErrors } from "./job-runner-errors.js";
 import { configurePathDisplay } from "../core/display-paths.js";
-import { deliverFinalResult, PERMANENT_DELIVERY_CODES } from "./final-result.js";
+import { compatibleDeliveryHandover, deliverFinalResult, permanentDeliveryRefusal, PERMANENT_DELIVERY_CODES } from "./final-result.js";
 import { deliveryFailure, type DeliveryEvidence } from "./delivery-evidence.js";
 
 /** Delivering a message to the session: tries for several minutes (the bridge may be changing hands, or no session hosts it). */
 const SEND_ATTEMPTS = 30;
 /** deliverFinalResult retries a final result itself, with backoff, and then leaves it to the session fallback. */
 const FINAL_SEND_ATTEMPTS = 1;
+/** Node latches these compatibility refusals; retries cannot heal that connection. */
+const NOTE_TERMINAL_CODES: ReadonlySet<string> = new Set(["protocol_mismatch"]);
 const SEND_RETRY_MAX_MS = 10_000;
 /** Progress lines come fast: the state file is written at most this often for them. */
 const PROGRESS_SAVE_MS = 1_000;
@@ -223,20 +225,35 @@ export async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: Wi
   const deliver = async (body: string, replyTo: string | null, note = false, key?: string, question = false, final = false): Promise<SendResult | null> => {
     // One key for all attempts: a send that timed out here may still be queued at a slow broker.
     const dedupeKey = key ?? randomUUID();
+    const intendedOwner = owner, originalBody = body;
     const kind = final ? "final" : question ? "question" : note ? "note" : "message";
+    const terminalCodes = final ? PERMANENT_DELIVERY_CODES : note && !question ? NOTE_TERMINAL_CODES : undefined;
     const messageId = final && dedupeKey.startsWith(COMPLETION_DEDUPE_PREFIX) ? completionMessageId(`job:${job.id}`, dedupeKey.slice(COMPLETION_DEDUPE_PREFIX.length)) : completionMessageId(`send:${node.name}`, dedupeKey);
     deliveryEvidence(kind, "sending", messageId);
     // AB-380: a body over the message limit can never be sent: once its full text is in a file, send a stub.
     body = quarantineMessage(home, { id: dedupeKey, body }).body;
+    const suffix = isPureAcknowledgement(body) ? ACK_CONVERSATION_SUFFIX : question ? QUESTION_CONVERSATION_SUFFIX : note ? NOTE_CONVERSATION_SUFFIX : "";
+    const conversationId = `job-${job.id}${suffix}`;
     // deliverFinalResult retries a final result with bounded attempts; a permanent refusal starts the session fallback at once.
     return deliverWithRetry(() => {
       // A retry may cross a handoff or reload. Routing changes never replace the active delegate.
       refreshOwner();
       // A question is marked so the broker can route it to the project main while the parent is offline (AB-249).
-      const suffix = isPureAcknowledgement(body) ? ACK_CONVERSATION_SUFFIX : question ? QUESTION_CONVERSATION_SUFFIX : note ? NOTE_CONVERSATION_SUFFIX : "";
-      return node.send({ to: owner, body, conversationId: `job-${job.id}${suffix}`, ...(replyTo ? { replyTo } : {}), dedupeKey }, { quiet: true });
-    }, log, owner, final ? FINAL_SEND_ATTEMPTS : SEND_ATTEMPTS, final ? PERMANENT_DELIVERY_CODES : undefined,
-    (attempt, error) => deliveryEvidence(kind, final && PERMANENT_DELIVERY_CODES.has((error as { code?: string })?.code ?? "") ? "refused" : "retrying", messageId, attempt, error))
+      return node.send({ to: owner, body, conversationId, ...(replyTo ? { replyTo } : {}), dedupeKey }, { quiet: true });
+    }, log, owner, final ? FINAL_SEND_ATTEMPTS : SEND_ATTEMPTS, terminalCodes,
+    (attempt, error) => deliveryEvidence(kind, (final ? permanentDeliveryRefusal(error) : note && !question && (error as { code?: string })?.code === "protocol_mismatch" && !compatibleDeliveryHandover(error)) ? "refused" : "retrying", messageId, attempt, error))
+      .catch(error => {
+        if (final || !note || question || (error as { code?: string })?.code !== "protocol_mismatch") throw error;
+        // An exact-version/attestation refusal cannot heal by retrying this
+        // connection. Preserve accepted bytes and original intent before letting
+        // the final settle. This record grants NO replay or new recipient rights.
+        quarantineText(home, messageId, JSON.stringify({ version: 1, kind: "refused-runner-delivery", authority: "evidence-only-no-replay",
+          job: job.id, intendedSender: { kind: "job", agent: job.agent, id: `job:${job.id}` }, to: intendedOwner, attemptedTo: owner,
+          body: originalBody, wireBody: body, conversationId, replyTo, note, question, dedupeKey, messageId, supervisor: spec.job.supervisor ?? null,
+          parentJob: spec.job.parentJob ?? null, rootSession: spec.job.rootSession ?? null }));
+        save({ retainedDeliveryCount: Math.min(65_535, (extra.retainedDeliveryCount ?? 0) + 1) }, true);
+        return null;
+      })
       .then(result => { if (result) deliveryEvidence(kind, "stored", messageId); return result; });
   };
   const inOrder = inSendOrder(deliver);
@@ -390,7 +407,7 @@ export async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: Wi
     const messageId = completionMessageId(`job:${job.id}`, final.reportId);
     deliveryEvidence("final", "queued", messageId);
     const finishedAt = Date.now();
-    await deliverFinalResult(final,
+    const settlement = await deliverFinalResult(final,
       (stored) => save({ status, ...stored, finishedAt }, true),
       async (body, id) => {
         const result = await inOrder(body, null, false, `${COMPLETION_DEDUPE_PREFIX}${id}`, false, true);
@@ -405,7 +422,9 @@ export async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: Wi
           deliveryEvidence("final", stored ? "stored" : "queued", messageId); return stored;
         } catch (error) { deliveryEvidence("final", "receipt-failed", messageId, 1, error); throw error; }
       });
-    if (!extra.delivered) save(); // Retain a terminal refusal before this runner exits, too.
+    extra.finalDelivery = { ...settlement, messageId, at: Date.now() };
+    try { log.info("job final delivery settled", extra.finalDelivery); } catch { /* Evidence never changes delivery. */ }
+    save(); // Retain the precise exit outcome, including refusal, before this runner exits.
   };
 
   let args = spec.args;
@@ -553,7 +572,7 @@ export async function deliverWithRetry<T>(send: () => Promise<T>, log: Logger, o
     } catch (err) {
       try { failed?.(attempt, err); } catch { /* Diagnostics never alter delivery or failure policy. */ }
       // The caller handles these refusals itself (a final result hands over to the session fallback).
-      if (rethrow?.has((err as { code?: string } | null)?.code ?? "")) throw err;
+      if (rethrow?.has((err as { code?: string } | null)?.code ?? "") && !compatibleDeliveryHandover(err)) throw err;
       if ((err as { code?: string } | null)?.code === "too_large") {
         log.error("message too large to deliver; not retried", { owner, err: (err as Error).message });
         return null;

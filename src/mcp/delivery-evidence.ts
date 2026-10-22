@@ -5,6 +5,12 @@ import { isSqliteBusy } from "../core/sqlite-policy.js";
 const failureCode = z.enum(["unauthorized", "unknown_target", "job_index_preparing", "internal", "timeout", "bad_request", "too_large", "forbidden", "not_found",
   "not_registered", "protocol_mismatch", "ambiguous_target", "ELEASEBUSY", "OWNER_QUIESCED", "OWNER_UNAVAILABLE", "STORE_UPGRADE_DEFERRED", "STORE_READER_ACTIVE",
   "STORE_OFFLINE_REQUIRED", "SQLITE_BUSY", "SQLITE_LOCKED", "ERR_SQLITE_ERROR", "other"]);
+const protocolEvidenceSchema = z.object({
+  source: z.enum(["version", "native-attestation", "frontend-attestation", "mailbox-attestation", "schema-admission", "unsupported-operation", "handover", "unspecified"]),
+  operation: z.enum(["tracked_send", "legacy_send", "auth_hello", "ack", "status_read", "other"]).optional(),
+  connectionGeneration: z.number().int().min(1).max(2_147_483_647).optional(),
+  clientProtocol: z.number().int().min(0).max(65_535).optional(), brokerProtocol: z.number().int().min(0).max(65_535).optional(),
+}).strict();
 
 /** Diagnostic only: never ownership, routing, receipt or liveness authority. */
 export const deliveryEvidenceSchema = z.object({
@@ -13,12 +19,21 @@ export const deliveryEvidenceSchema = z.object({
   messageId: z.uuid(), at: z.number().int().nonnegative(), attempt: z.number().int().min(1).max(30),
   finalQueued: z.boolean(),
   code: failureCode.optional(),
+  protocol: protocolEvidenceSchema.optional(),
   reason: z.enum(["unretained-destination", "job-grant-unproven", "job-authority-unavailable", "registration-unavailable", "writer-busy",
     "metadata-owner-unavailable", "connection-unavailable", "request-deadline", "owner-quiesced", "retained-content-mismatch", "runtime-type-error",
     "storage-admission-deferred", "storage-version-unavailable", "owner-unavailable", "ownership-proof-conflict", "mailbox-provenance-unproven", "job-route-unproven",
     "job-route-changed", "destination-binding-changed", "protocol-refusal", "admission-cancelled", "other"]).optional(),
 }).strict();
 export type DeliveryEvidence = z.infer<typeof deliveryEvidenceSchema>;
+export const finalDeliverySettlementSchema = z.object({
+  messageId: z.uuid(), at: z.number().int().nonnegative(),
+  state: z.enum(["stored", "retained", "unretained"]),
+  cause: z.enum(["previous-receipt", "receipt-probe", "send-receipt", "permanent-refusal", "attempts-exhausted", "shutdown"]),
+  attempt: z.number().int().min(0).max(6), persisted: z.boolean(),
+  code: failureCode.optional(), reason: deliveryEvidenceSchema.shape.reason, protocol: protocolEvidenceSchema.optional(),
+}).strict();
+export type FinalDeliveryOutcome = Omit<z.infer<typeof finalDeliverySettlementSchema>, "messageId" | "at">;
 
 // Diagnostics must not invoke exception getters, proxy traps or coercion hooks.
 function dataField(value: unknown, key: string): unknown {
@@ -41,7 +56,7 @@ function errorName(error: unknown): unknown {
   return undefined;
 }
 
-export function deliveryFailure(error: unknown): Pick<DeliveryEvidence, "code" | "reason"> {
+export function deliveryFailure(error: unknown): Pick<DeliveryEvidence, "code" | "reason" | "protocol"> {
   const rawCode = dataField(error, "code"), rawMessage = dataField(error, "message"), rawErrcode = dataField(error, "errcode");
   const boundedCode = typeof rawCode === "string" && rawCode.length <= 64 ? rawCode : "";
   const parsedCode = failureCode.safeParse(boundedCode);
@@ -75,5 +90,18 @@ export function deliveryFailure(error: unknown): Pick<DeliveryEvidence, "code" |
     /broker request timed out|connect timeout|timed out connecting/i.test(message) ? "request-deadline" :
     name === "AbortError" ? "admission-cancelled" :
     name === "TypeError" || /Cannot (?:read properties|access .+ before initialization)/.test(message) ? "runtime-type-error" : "other";
-  return { code, reason };
+  if (code !== "protocol_mismatch") return { code, reason };
+  const source = /broker speaks protocol/.test(message) ? "version" : /did not attest the exact native identity/.test(message) ? "native-attestation" :
+    /did not attest the exact T3 frontend/.test(message) ? "frontend-attestation" : /lacks schema14 local mailbox provenance/.test(message) ? "mailbox-attestation" :
+    /requires schema14 ownership/.test(message) ? "schema-admission" : /unknown op:|does not support \w+ required/.test(message) ? "unsupported-operation" :
+    /broker is stopping/.test(message) ? "handover" : "unspecified";
+  const observed = dataField(dataField(error, "details"), "protocolObservation");
+  const protocol: z.infer<typeof protocolEvidenceSchema> = { source };
+  const operation = dataField(observed, "operation");
+  if (["tracked_send", "legacy_send", "auth_hello", "ack", "status_read", "other"].some(value => value === operation)) protocol.operation = operation as NonNullable<typeof protocol.operation>;
+  for (const key of ["connectionGeneration", "clientProtocol", "brokerProtocol"] as const) {
+    const value = dataField(observed, key), max = key === "connectionGeneration" ? 2_147_483_647 : 65_535;
+    if (typeof value === "number" && Number.isInteger(value) && value >= (key === "connectionGeneration" ? 1 : 0) && value <= max) protocol[key] = value;
+  }
+  return { code, reason, protocol };
 }

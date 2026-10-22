@@ -7,8 +7,27 @@ import { jobWaitSnapshot } from "./job-wait-diagnostics.js";
 import { makeEnv } from "./helpers.js";
 import { metadataFileLease } from "../src/core/metadata-file-lease.js";
 import { nullLogger } from "../src/core/logger.js";
-import { deliveryFailure } from "../src/mcp/delivery-evidence.js";
+import { deliveryFailure, finalDeliverySettlementSchema } from "../src/mcp/delivery-evidence.js";
 import { deliverWithRetry, inSendOrder } from "../src/mcp/job-runner.js";
+
+it("retains exact final settlement and protocol admission families without private errors", async () => {
+  const env = makeEnv(), id = "a1b2c3d4", messageId = "11111111-1111-4111-8111-111111111111", at = Date.now();
+  const protocol = { source: "native-attestation", operation: "auth_hello", connectionGeneration: 3, clientProtocol: 6, brokerProtocol: 6 } as const;
+  const finalDelivery = { messageId, at, state: "retained", cause: "permanent-refusal", attempt: 1, persisted: true, code: "protocol_mismatch", reason: "protocol-refusal", protocol } as const;
+  try {
+    writeRunnerState(env.home, id, { pid: process.pid, peer: `codex-job-${id}`, status: "done", updatedAt: at, report: "PRIVATE_REPORT", reportId: messageId,
+      finalDelivery, retainedDeliveryCount: 1 });
+    mkdirSync(join(env.home, LOG_DIR_NAME), { recursive: true });
+    writeFileSync(join(env.home, LOG_DIR_NAME, LOG_FILE_NAME), `${new Date(at).toISOString()} INFO [codex-job-${id}] pid=${process.pid} job final delivery settled ${JSON.stringify(finalDelivery)}\n` +
+      `${new Date(at).toISOString()} ERROR [node] pid=${process.pid} broker refused this peer ${JSON.stringify({ code: "protocol_mismatch", message: "Broker did not attest the exact native identity PRIVATE_ERROR_TOKEN", protocolObservation: protocol })}\n`);
+    const snapshot = jobWaitSnapshot(env.home, [id]);
+    expect(snapshot.jobs[0]?.runner).toMatchObject({ finalDelivery, retainedDeliveries: 1, delivered: false, reportPresent: true });
+    expect(snapshot.events[0]).toMatchObject({ finalDelivery });
+    expect(snapshot.events[1]).toMatchObject({ failure: { code: "protocol_mismatch", reason: "protocol-refusal", protocol } });
+    expect(JSON.stringify(snapshot)).not.toMatch(/PRIVATE_REPORT|PRIVATE_ERROR_TOKEN|did not attest/);
+    expect(finalDeliverySettlementSchema.safeParse({ ...finalDelivery, body: "PRIVATE_REPORT" }).success).toBe(false);
+  } finally { await env.cleanup(); }
+});
 
 it("reports actual retained admission/registration facts while bounding and excluding private fixture content", async () => {
   const env = makeEnv(), id = "1234abcd", secret = "EXCLUDED_PROMPT_BODY_ENV_PROOF";

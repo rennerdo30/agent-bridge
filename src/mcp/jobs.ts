@@ -185,6 +185,10 @@ export interface JobHostInfo {
 export interface RunnerState {
   /** Latest bounded delivery phase; diagnostic only, never admission/ACK proof. */
   deliveryEvidence?: import("./delivery-evidence.js").DeliveryEvidence;
+  /** Diagnostic outcome; never a receipt, replay grant or ownership authority. */
+  finalDelivery?: import("zod").infer<typeof import("./delivery-evidence.js").finalDeliverySettlementSchema>;
+  /** Refused status notes are evidence-only immutable quarantine records. */
+  retainedDeliveryCount?: number;
   /** Admission provenance is independent of usage classification and error type. */
   usageSubmission?: import("../core/usage.js").UsageSubmissionReceipt;
   providerUsage?: import("../core/usage.js").ProviderUsageState;

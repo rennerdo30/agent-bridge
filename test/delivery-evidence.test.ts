@@ -52,3 +52,14 @@ it("retains ordinary Error and explicit cancellation names without reading inher
   expect(deliveryFailure(error)).toEqual({ code: "other", reason: "other" });
   expect(inherited).not.toHaveBeenCalled();
 });
+
+it("bounds protocol source and numeric connection evidence without getters or caller text", () => {
+  const marker = "Broker did not attest the exact native identity", getter = vi.fn(() => { throw new Error("not inspected"); });
+  expect(deliveryFailure({ code: "protocol_mismatch", message: "x".repeat(4096) + marker }).protocol).toEqual({ source: "unspecified" });
+  expect(deliveryFailure({ code: "protocol_mismatch", message: marker, details: { protocolObservation: {
+    operation: "PRIVATE_TOKEN", connectionGeneration: Infinity, clientProtocol: -1, brokerProtocol: 6.1,
+  } } }).protocol).toEqual({ source: "native-attestation" });
+  expect(deliveryFailure({ code: "protocol_mismatch", message: marker, details: Object.defineProperty({}, "protocolObservation", { get: getter }) }).protocol)
+    .toEqual({ source: "native-attestation" });
+  expect(getter).not.toHaveBeenCalled();
+});

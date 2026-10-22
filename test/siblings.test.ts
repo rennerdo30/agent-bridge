@@ -26,6 +26,7 @@ import { SiblingLink } from "../src/mcp/siblings.js";
 import type { ServerContext } from "../src/mcp/server.js";
 import { makeEnv, until, type TestEnv } from "./helpers.js";
 import { retainFixtureJob } from "./owned-mail.js";
+import { jobWaitSnapshot } from "./job-wait-diagnostics.js";
 
 const MAX_HOPS = 3;
 const SERVER = join(import.meta.dirname, "..", "plugins", "claude", "dist", "server.mjs");
@@ -616,7 +617,18 @@ describe("sibling job messaging", () => {
       // Hooks have a bounded response budget and may return while the real
       // session update is still queued. Handoff needs the broker's published
       // binding, not merely a successful tool response from that earlier turn.
-      await expect.poll(async () => (await supervisor.peers()).find(p => p.name === name)?.sessionId).toBe(`observer-${agent}`);
+      let publication: Awaited<ReturnType<typeof supervisor.peers>>[number] | undefined;
+      try {
+        await expect.poll(async () => { publication = (await supervisor.peers()).find(p => p.name === name); return publication?.sessionId; }).toBe(`observer-${agent}`);
+      } catch (error) {
+        // Failure-only sanitized evidence, using the original poll's last reply.
+        // No extra RPC, sleep, notification drain or identity substitution.
+        try { console.error("Quiet observer publication diagnostics: " + JSON.stringify({ agent, hookError: started.isError === true,
+          peerSeen: Boolean(publication), session: publication?.sessionId === `observer-${agent}` ? "expected" : publication?.sessionId ? "other" : "missing",
+          peerPid: publication && Number.isSafeInteger(publication.pid) && publication.pid > 0 ? publication.pid : undefined,
+          admission: jobWaitSnapshot(env.home, [a.job.id, b.job.id]) })); } catch { /* Original failure wins. */ }
+        throw error;
+      }
       // Keep the pair in the same authenticated supervisor family. Moving only
       // A deliberately revokes its implicit sibling access to B.
       const observer = (await supervisor.peers()).find(p => p.name === name)!;
