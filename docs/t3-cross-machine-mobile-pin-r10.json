@@ -1,6 +1,6 @@
 {
   "base": "6f9e464668e055243e8028b4ee7c8b19e6fd2b9b",
-  "status": "parent approved exact one-line delta; baseline amendment waits for source freeze",
+  "status": "parent-approved attributable constructor-only baseline amendment",
   "approval": "OwnerContinue2026-10-23 parent reviewed normalized patch and receipt helper; approve only forwarding a.nativeChild and the corresponding separate attributable constructor pin amendment. No behavioral acceptance.",
   "reason": "R10 child-origin receipt authorization: forward explicit child selector into the existing ownership-fenced receipt helper. It must resolve a current authenticated child incarnation; no caller-supplied ownership is trusted.",
   "normalizedDelta": "t3-cross-machine-mobile-pin-r10.patch",
@@ -76,5 +76,9 @@
   ],
   "uiSha256": "f2a5b28254d4bb467f28bdee139e3b23bd9d4bd0c7c15fee116b4ed85a6ac385",
   "uiSourceChanged": false,
-  "compatibility": "Optional scoped receipt selector only. Missing selector retains exact peer-only authorization. Older intermediate readers refuse child-origin receipt access; no fallback. Protocol6/schema14/pairing and remote capabilities unchanged."
+  "compatibility": "Optional scoped receipt selector only. Missing selector retains exact peer-only authorization. Older intermediate readers refuse child-origin receipt access; no fallback. Protocol6/schema14/pairing and remote capabilities unchanged.",
+  "sourceCommit": "183c59e8884741cf422c85224290244d20edadde",
+  "sourceTree": "af4974fd3f97af4bfa65c6c3cc50b8fc840e3a7a",
+  "unchangedMethodCount": 12,
+  "behavioralAcceptance": "Not granted. Fresh independent review and hosted full/lifecycle/integration required."
 }

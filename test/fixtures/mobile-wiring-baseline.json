@@ -1,7 +1,7 @@
 {
   "base": "8deb0286773a6b61243caaae237e16227dc2f591",
   "methods": {
-    "src/core/broker.ts:constructor": "cb47f6c17a44e8915ac2be8aaa5266e70617dcc4c48281a3593ca01028a8a6a2",
+    "src/core/broker.ts:constructor": "edcb662f4cc66dc6fdfd8cd62fd1d59997e7bf2e9c2cac0bfee0bd885b27a80a",
     "src/core/broker.ts:listen": "bd39e0afecb5a74d76161f26d5923f2c1e41da8cc490ed1448a9260b850ce4b0",
     "src/core/broker.ts:startServices": "747bad4009529a7c6c8fb150580ce5ed37d66ba5ac3b6f651a6f06ad865b18d7",
     "src/core/broker.ts:abortStartup": "6132967fa78fd39cff064a581f4f49bb9c1c75b644fba78b291708c58733118c",
@@ -417,6 +417,19 @@
       "uiSha256": "f2a5b28254d4bb467f28bdee139e3b23bd9d4bd0c7c15fee116b4ed85a6ac385",
       "receipt": "docs/t3-cross-machine-mobile-pin-amendment.json",
       "reason": "Registration/current durable authority/grant/source provenance/persisted copy emission/jobRoutes ACK fence and captureNotification callback only; no behavioral acceptance. Other eight method pins, UI hash, normalizer and all behavioral assertions unchanged."
+    },
+    "AB-458-R10": {
+      "sourceCommit": "183c59e8884741cf422c85224290244d20edadde",
+      "sourceTree": "af4974fd3f97af4bfa65c6c3cc50b8fc840e3a7a",
+      "approval": "OwnerContinue2026-10-23 parent reviewed normalized patch and receipt helper; approve only forwarding a.nativeChild and the corresponding separate attributable constructor pin amendment. No behavioral acceptance.",
+      "changes": [
+        {
+          "method": "src/core/broker.ts:constructor",
+          "previous": "cb47f6c17a44e8915ac2be8aaa5266e70617dcc4c48281a3593ca01028a8a6a2",
+          "current": "edcb662f4cc66dc6fdfd8cd62fd1d59997e7bf2e9c2cac0bfee0bd885b27a80a"
+        }
+      ],
+      "receipt": "docs/t3-cross-machine-mobile-pin-r10.json"
     }
   },
   "revertedUpdates": {
