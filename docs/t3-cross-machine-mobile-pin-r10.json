@@ -80,5 +80,10 @@
   "sourceCommit": "183c59e8884741cf422c85224290244d20edadde",
   "sourceTree": "af4974fd3f97af4bfa65c6c3cc50b8fc840e3a7a",
   "unchangedMethodCount": 12,
-  "behavioralAcceptance": "Not granted. Fresh independent review and hosted full/lifecycle/integration required."
+  "behavioralAcceptance": "Not granted. Fresh independent review and hosted full/lifecycle/integration required.",
+  "subsequentUnprotectedSource": {
+    "head": "530267be50ae4921b72104625af9854d198d84ac",
+    "tree": "5af60b00db86f6975e919bd9e96c03e3fcafc8a4",
+    "reason": "Preserve an explicit invalid child selector for broker rejection instead of omitting it. Node.messageReceipt is outside the pinned method set; constructor delta/all other protected source remain identical to the approved freeze."
+  }
 }
