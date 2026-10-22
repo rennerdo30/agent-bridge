@@ -354,8 +354,12 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
 
   private async elect(): Promise<void> {
     if (this.opts.dbPath !== ":memory:") {
-      try { await guardPriorEndpoints(dirname(this.opts.dbPath), this.opts.pipePath, this.opts.token, this.log); }
+      const admission = new AbortController(), stopped = () => admission.abort();
+      this.once("stopped", stopped);
+      if (this.stopping) admission.abort();
+      try { await guardPriorEndpoints(dirname(this.opts.dbPath), this.opts.pipePath, this.opts.token, this.log, admission.signal); }
       catch (error) { if (error instanceof BridgeError && error.code === "protocol_mismatch") this.protocolRefusal = error; throw error; }
+      finally { this.off("stopped", stopped); }
     }
     for (let attempt = 1; attempt <= ELECTION_MAX_ATTEMPTS && !this.stopping; attempt++) {
       try {

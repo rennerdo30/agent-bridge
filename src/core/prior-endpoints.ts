@@ -4,12 +4,13 @@ import { dirname, join, posix, resolve } from "node:path";
 import { connect } from "node:net";
 import { DatabaseSync } from "node:sqlite";
 import { BridgeClient } from "./client.js";
-import { APP_NAME, DB_FILE_NAME, PROTOCOL_VERSION, WINDOWS_PIPE_PREFIX } from "./constants.js";
+import { APP_NAME, CONNECT_TIMEOUT_MS, DB_FILE_NAME, PROTOCOL_VERSION, WINDOWS_PIPE_PREFIX } from "./constants.js";
 import type { Logger } from "./logger.js";
 import { maxSocketPathBytes, shortSocketDirectory } from "./paths.js";
 import { physicalPath } from "./project-identity.js";
 import { BridgeError } from "./protocol.js";
 import { assertCompatibleMailboxReaders } from "./storage-lock.js";
+import { isSqliteBusy, retrySqlite } from "./sqlite-policy.js";
 
 const PROBE_MS = 300;
 /** Only historical endpoints derived from this data home; never discovery/config scanning. */
@@ -40,16 +41,28 @@ function refused(endpoint: string, reason: string): BridgeError {
 
 /** Current-protocol auth only; no hello, handover, mailbox RPC or loopback fallback.
  * This observation is NOT migration exclusion: the storage maintenance lock supplies that boundary. */
-export async function guardPriorEndpoints(home: string, current: string, token: string, log: Logger): Promise<void> {
+export async function guardPriorEndpoints(home: string, current: string, token: string, log: Logger, signal?: AbortSignal): Promise<void> {
+  signal?.throwIfAborted();
   const file = join(home, DB_FILE_NAME);
   if (existsSync(file)) {
-    const inspection = new DatabaseSync(file, { readOnly: true });
+    let version: number;
     try {
-      const version = Number(inspection.prepare("PRAGMA user_version").get()!.user_version);
-      if (version === 2 || version === 3) throw refused(home, "a pre-lease schema2/3 store requiring explicit offline migration into an isolated home");
-    } finally { inspection.close(); }
+      version = await retrySqlite(() => {
+        // Each failed attempt releases its own read-only handle before yielding.
+        // Never wait synchronously on a writer or infer compatibility from busy.
+        const inspection = new DatabaseSync(file, { readOnly: true, timeout: 0 });
+        try { return Number(inspection.prepare("PRAGMA user_version").get()!.user_version); }
+        finally { inspection.close(); }
+      }, CONNECT_TIMEOUT_MS, signal);
+    } catch (error) {
+      if (isSqliteBusy(error)) throw new BridgeError("timeout", "Prior mailbox schema inspection remained busy; startup was not admitted. Retry after the active writer settles.");
+      throw error;
+    }
+    signal?.throwIfAborted();
+    if (version === 2 || version === 3) throw refused(home, "a pre-lease schema2/3 store requiring explicit offline migration into an isolated home");
   }
   for (const endpoint of priorEndpoints(home)) {
+    signal?.throwIfAborted();
     if (endpoint === current) continue; // The ordinary current endpoint exact-auth gate handles custom overrides.
     if (process.platform === "win32") {
       // Node cannot attest a foreign named pipe's ACL/server identity. Do not
@@ -74,11 +87,12 @@ export async function guardPriorEndpoints(home: string, current: string, token: 
       if (["ENOENT", "ECONNREFUSED"].includes((error as NodeJS.ErrnoException).code ?? "")) continue;
       throw refused(endpoint, "inaccessible or unresponsive");
     }
-    try { await client.request("auth", { protocol: PROTOCOL_VERSION, token }, PROBE_MS); }
-    catch { throw refused(endpoint, "active and incompatible or unauthenticated"); }
+    try { signal?.throwIfAborted(); await client.request("auth", { protocol: PROTOCOL_VERSION, token }, PROBE_MS); }
+    catch { signal?.throwIfAborted(); throw refused(endpoint, "active and incompatible or unauthenticated"); }
     finally { client.close(); }
     throw refused(endpoint, "active");
   }
+  signal?.throwIfAborted();
   try { assertCompatibleMailboxReaders(home); }
   catch { throw refused(home, "retained by an unproven storage reader"); }
 }

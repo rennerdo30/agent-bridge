@@ -139,6 +139,24 @@ it.each([
   expect(JSON.stringify(evidence)).not.toContain("EXCLUDED_PRIVATE_BODY");
 });
 
+it.each([
+  ["ELEASEBUSY", "metadata lease has a live or unknown owner", "metadata-owner-unavailable"],
+  ["STORE_UPGRADE_DEFERRED", "Waiting for metadata upgrade", "storage-admission-deferred"],
+  ["OWNER_UNAVAILABLE", "store ownership cannot resume", "owner-unavailable"],
+  ["not_registered", "Registration admission changed or closed before durable recovery completed", "registration-unavailable"],
+  ["internal", "Retained message ownership cannot be overwritten.", "ownership-proof-conflict"],
+  ["internal", "Retained sender namespace is unproven; recovery requires explicit reviewed evidence.", "mailbox-provenance-unproven"],
+  ["internal", "Historical job route provenance is unproven; pending report retained.", "job-route-unproven"],
+  ["internal", "Job report route changed during succession", "job-route-changed"],
+  ["internal", "unsupported job archive version 7; retry later", "storage-version-unavailable"],
+  ["job_index_preparing", "Job authority unavailable (authority_store_read; authority_fence)", "job-authority-unavailable"],
+  ["protocol_mismatch", "Mailbox registration requires ownership and succession provenance", "protocol-refusal"],
+])("retains allowlisted ownership/admission failure %s as %s", (code, message, reason) => {
+  const evidence = deliveryFailure(Object.assign(new Error(`${message} EXCLUDED_BODY_TOKEN_PROOF`), { code }));
+  expect(evidence.reason).toBe(reason);
+  expect(JSON.stringify(evidence)).not.toContain("EXCLUDED_BODY_TOKEN_PROOF");
+});
+
 it("posts the same retained report when the runner exits without delivery", async () => {
   const env = makeEnv();
   const node = env.node("claude-final-fallback", "claude");

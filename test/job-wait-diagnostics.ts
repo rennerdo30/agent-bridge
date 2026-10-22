@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { LOG_DIR_NAME, LOG_FILE_NAME } from "../src/core/constants.js";
 import { pidAlive } from "../src/core/delegate.js";
-import { deliveryEvidenceSchema } from "../src/mcp/delivery-evidence.js";
+import { deliveryEvidenceSchema, deliveryFailure } from "../src/mcp/delivery-evidence.js";
 
 /** Fixture-only evidence, never a recovery/ownership decision. All reads are
  * bounded and output is allowlisted: no prompts, bodies, env, tokens or specs. */
@@ -26,7 +26,7 @@ function document(home: string, file: string): Record<string, any> | undefined {
 const statuses = new Set(["running", "paused", "done", "failed", "cancelled", "interrupted"]);
 const status = (value: unknown) => typeof value === "string" && statuses.has(value) ? value : "unknown";
 function reason(value: unknown): string {
-  const text = typeof value === "string" ? value : "";
+  const text = typeof value === "string" ? value.slice(0, 4096) : "";
   if (/Proven local job report grant is unavailable/.test(text)) return "local-report-grant-unproven";
   if (/Original local remote-proxy report ownership/.test(text)) return "remote-proxy-report-owner-unproven";
   if (/Original job reporter identity/.test(text)) return "reporter-replaced";
@@ -35,7 +35,7 @@ function reason(value: unknown): string {
   if (/SQLITE_BUSY|database is (?:locked|busy)/i.test(text)) return "sqlite-writer-blocked";
   if (/timed? ?out|deadline/i.test(text)) return "deadline";
   if (/closed|disconnect/i.test(text)) return "connection-closed";
-  return "other";
+  return deliveryFailure({ message: text }).reason ?? "other";
 }
 export function jobWaitEvents(home: string, ids: readonly string[]) {
   const known = ids.filter(id => /^[a-f0-9]{8}$/.test(id)).slice(0, 10);
@@ -47,11 +47,15 @@ export function jobWaitEvents(home: string, ids: readonly string[]) {
     if (!object(fields) || match[3] === "request rejected" && !["hello", "inlineJobReport", "trackedSend", "remoteJob"].includes(fields.op)) return [];
     const job = known.find(id => line.includes(`-job-${id}`)), pid = Number(match[2]);
     const delivery = match[3] === "job delivery evidence" ? deliveryEvidenceSchema.safeParse(fields) : undefined;
+    const failure = deliveryFailure({ code: fields.code, message: fields.message ?? fields.err });
+    const coarse = reason(fields.message ?? fields.err);
     return [{ at: match[1], event: match[3], pid: Number.isSafeInteger(pid) && pid > 0 ? pid : undefined, job,
       ...(match[3] === "job runner done" ? { status: status(fields.status), delivered: fields.delivered === true } : {}),
       ...(delivery?.success ? { delivery: delivery.data } : {}),
-      ...(["request rejected", "inline report delivery failed; retained for replay", "could not deliver to the session; retrying"].includes(match[3]!) ? { reason: reason(fields.message ?? fields.err),
-        code: ["unauthorized", "bad_request", "not_registered", "job_index_preparing"].includes(fields.code) ? fields.code : "other" } : {}) }];
+      ...(["request rejected", "inline report delivery failed; retained for replay", "could not deliver to the session; retrying"].includes(match[3]!) ? {
+        // Retain existing coarse labels where they were already meaningful,
+        // alongside the same strict taxonomy used in the actual runner state.
+        code: failure.code, reason: coarse !== "other" ? coarse : failure.reason, failure } : {}) }];
   }).slice(-40);
 }
 export function jobWaitSnapshot(home: string, ids: readonly string[]) {

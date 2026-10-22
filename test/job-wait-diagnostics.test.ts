@@ -1,10 +1,14 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { LOG_DIR_NAME, LOG_FILE_NAME } from "../src/core/constants.js";
 import { writeRunnerState } from "../src/mcp/job-host.js";
 import { jobWaitSnapshot } from "./job-wait-diagnostics.js";
 import { makeEnv } from "./helpers.js";
+import { metadataFileLease } from "../src/core/metadata-file-lease.js";
+import { nullLogger } from "../src/core/logger.js";
+import { deliveryFailure } from "../src/mcp/delivery-evidence.js";
+import { deliverWithRetry, inSendOrder } from "../src/mcp/job-runner.js";
 
 it("reports actual retained admission/registration facts while bounding and excluding private fixture content", async () => {
   const env = makeEnv(), id = "1234abcd", secret = "EXCLUDED_PROMPT_BODY_ENV_PROOF";
@@ -30,4 +34,37 @@ it("reports actual retained admission/registration facts while bounding and excl
     expect(JSON.stringify(snapshot)).not.toContain(secret);
     expect(JSON.stringify(snapshot)).not.toContain("effective config");
   } finally { await env.cleanup(); }
+});
+
+it("retains the actual lease refusal and note stage while a final waits behind retry, without exposing error text", async () => {
+  const env = makeEnv(), id = "abcdef12", messageId = "22222222-2222-4222-8222-222222222222";
+  const release = metadataFileLease(join(env.home, "fixture.lock"));
+  let refusal: unknown;
+  try { metadataFileLease(join(env.home, "fixture.lock"), 0, true); } catch (error) { refusal = error; }
+  expect(refusal).toMatchObject({ code: "ELEASEBUSY" });
+  vi.useFakeTimers();
+  const starts: string[] = []; let attempt = 0;
+  const ordered = inSendOrder(async (kind: "note" | "final") => {
+    starts.push(kind);
+    return deliverWithRetry(async () => { if (kind === "note" && ++attempt === 1) throw refusal; return "stored"; }, nullLogger, "fixture-owner", 2, undefined,
+      (attempt, error) => {
+        writeRunnerState(env.home, id, { pid: process.pid, peer: `codex-job-${id}`, status: "done", updatedAt: Date.now(),
+          deliveryEvidence: { kind, stage: "retrying", messageId, at: Date.now(), attempt, finalQueued: true, ...deliveryFailure(error) } });
+        mkdirSync(join(env.home, LOG_DIR_NAME), { recursive: true });
+        writeFileSync(join(env.home, LOG_DIR_NAME, LOG_FILE_NAME), `${new Date().toISOString()} WARN [codex-job-${id}] pid=${process.pid} could not deliver to the session; retrying ` +
+          JSON.stringify({ code: (error as any).code, err: `${(error as Error).message} EXCLUDED_PRIVATE_BODY` }) + "\n");
+      });
+  });
+  try {
+    const note = ordered("note"), final = ordered("final");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(starts).toEqual(["note"]);
+    const snapshot = jobWaitSnapshot(env.home, [id]);
+    expect(snapshot.jobs[0]?.runner?.delivery).toMatchObject({ kind: "note", stage: "retrying", finalQueued: true, code: "ELEASEBUSY", reason: "metadata-owner-unavailable" });
+    expect(snapshot.events[0]).toMatchObject({ code: "ELEASEBUSY", reason: "metadata-owner-unavailable", failure: { code: "ELEASEBUSY", reason: "metadata-owner-unavailable" } });
+    expect(JSON.stringify(snapshot)).not.toContain("metadata lease has");
+    expect(JSON.stringify(snapshot)).not.toContain("EXCLUDED_PRIVATE_BODY");
+    await vi.advanceTimersByTimeAsync(1000); expect(await note).toBe("stored"); expect(await final).toBe("stored");
+    expect(starts).toEqual(["note", "final"]);
+  } finally { vi.useRealTimers(); release(); await env.cleanup(); }
 });
