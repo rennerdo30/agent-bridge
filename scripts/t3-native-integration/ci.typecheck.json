@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": { "types": ["node"], "lib": ["ESNext", "esnext.disposable"], "noEmit": true },
+  "include": [
+    "apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts",
+    "apps/server/src/orchestration-v2/Adapters/CodexBridgeDynamicTools*.ts",
+    "packages/effect-codex-app-server/src/protocol.ts",
+    "packages/effect-codex-app-server/src/PrivateRequestAdmission*.ts",
+    "packages/effect-codex-app-server/src/PrivateProtocolLifecycle.test.ts",
+    "packages/effect-codex-app-server/src/protocol.test.ts"
+  ]
+}

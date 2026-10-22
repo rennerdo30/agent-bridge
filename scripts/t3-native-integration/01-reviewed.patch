@@ -1,0 +1,1202 @@
+diff --git a/apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts b/apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts
+index 5c4df98..8917ccf 100644
+--- a/apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts
++++ b/apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts
+@@ -1,3 +1,4 @@
++import { bridgeDenied, bridgeDynamicTools, makeBridgeDynamicSession, type BridgeAppScope, type BridgeMessagingPort } from "./CodexBridgeDynamicTools.ts";
+ import { revertCodexThread } from "../../provider/CodexThreadRevert.ts";
+ import { historyResponseItems } from "@t3tools/provider-core/server/handoffBudget";
+ import { makeProviderTextDeltaCoalescer } from "./ProviderTextDeltaCoalescer.ts";
+@@ -1683,6 +1684,11 @@ const layer: Layer.Layer<
+ );
+ 
+ export interface CodexAdapterV2Options {
++  /** Default absent. Only app composition may supply an already-scoped owned port.
++   * No env/config lookup, implicit broker launch, or MCP orchestration capability.
++   * Requires a verified compatible private-stdio Codex runtime; never enable for TCP.
++   */
++  readonly openBridgeMessaging?: (scope: BridgeAppScope) => BridgeMessagingPort | undefined;
+   readonly instanceId: ProviderInstanceId;
+   readonly settings: CodexSettings;
+   readonly environment: NodeJS.ProcessEnv;
+@@ -1827,6 +1833,22 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
+           new Map<ProviderThreadId, Extract<OrchestrationV2TurnItem, { type: "error" }>>(),
+         );
+         const activeTurns = yield* Ref.make(new Map<string, ActiveCodexTurnContext>());
++        const bridgePort = adapterOptions.openBridgeMessaging?.({
++          appThreadId: input.threadId,
++          providerInstanceId: adapterOptions.instanceId,
++          providerSessionId: input.providerSessionId,
++        });
++        const bridgeSession = bridgePort === undefined ? undefined : makeBridgeDynamicSession({
++          appThreadId: input.threadId,
++          providerInstanceId: adapterOptions.instanceId,
++          providerSessionId: input.providerSessionId,
++        }, bridgePort);
++        if (bridgeSession) {
++          yield* Effect.addFinalizer(() => Effect.promise(() => bridgeSession.close()).pipe(
++            Effect.flatMap((result) => result.status === "closed" ? Effect.void :
++              Effect.logWarning("Bridge owned connection disposal incomplete", { status: result.status })),
++          ));
++        }
+         const turnTokenUsageByThread = new Map<string, CodexTurnTokenUsageState>();
+         const usageStateForThread = (nativeThreadId: string) => {
+           let state = turnTokenUsageByThread.get(nativeThreadId);
+@@ -5143,6 +5165,27 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
+           }).pipe(Effect.orDie, turnTerminalizationPermit.withPermits(1)),
+         );
+ 
++        yield* client.handleServerRequest("item/tool/call", (payload) =>
++          Effect.gen(function* () {
++            if (!bridgeSession) return bridgeDenied();
++            const context = yield* awaitActiveTurn(payload.turnId);
++            return yield* Effect.tryPromise({
++              try: (signal) => bridgeSession.dispatch(payload, context === undefined ? undefined : {
++                appThreadId: context.input.threadId,
++                nativeThreadId: context.providerThread.nativeThreadRef?.nativeId ?? "",
++                nativeTurnId: context.nativeTurnId,
++                isChild: context.subagent !== null,
++                isCurrent: () => Effect.runPromise(Ref.get(activeTurns).pipe(
++                  Effect.map((turns) => turns.get(payload.turnId) === context),
++                )),
++              }, signal),
++              catch: () => bridgeDenied(),
++            // The shared operation owns its deadline. Per-request timeouts could
++            // settle a replayed RPC while its original effect is still running.
++            }).pipe(Effect.catch(() => Effect.succeed(bridgeDenied())));
++          }),
++        );
++
+         yield* client.handleServerRequest("item/commandExecution/requestApproval", (payload) =>
+           Effect.gen(function* () {
+             const context = yield* awaitActiveTurn(payload.turnId);
+@@ -6612,16 +6655,24 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
+           ensureThread: (threadInput) =>
+             ensureInitialized.pipe(
+               Effect.andThen(mcpSessions.read(threadInput.threadId)),
+-              Effect.flatMap((mcpSession) =>
+-                client.request(
+-                  "thread/start",
+-                  codexThreadRuntimeParams({
+-                    mcpSession,
+-                    modelSelection: threadInput.modelSelection,
+-                    runtimePolicy: threadInput.runtimePolicy,
+-                  }),
+-                ),
+-              ),
++              Effect.flatMap((mcpSession) => {
++                const params = codexThreadRuntimeParams({
++                  mcpSession,
++                  modelSelection: threadInput.modelSelection,
++                  runtimePolicy: threadInput.runtimePolicy,
++                });
++                if (!bridgeSession || threadInput.threadId !== input.threadId || !bridgeSession.reserveStart()) {
++                  return client.request("thread/start", params);
++                }
++                // Experimental dynamicTools is omitted from the stable start codec.
++                // Do not pass it through client.request, which strips unknown fields.
++                return client.raw.request("thread/start", {
++                  ...params, dynamicTools: bridgeDynamicTools,
++                }).pipe(
++                  Effect.flatMap(Schema.decodeUnknownEffect(CodexSchema.V2ThreadStartResponse)),
++                  Effect.tap((response) => Effect.sync(() => bridgeSession.bindStartedRoot(response.thread.id))),
++                );
++              }),
+               Effect.map((response): OrchestrationV2ProviderThread =>
+                 providerThreadFromCodexThread({
+                   appThreadId: threadInput.threadId,
+diff --git a/apps/server/src/orchestration-v2/Adapters/CodexBridgeDynamicTools.adapter.test.ts b/apps/server/src/orchestration-v2/Adapters/CodexBridgeDynamicTools.adapter.test.ts
+new file mode 100644
+index 0000000..79c3f3c
+--- /dev/null
++++ b/apps/server/src/orchestration-v2/Adapters/CodexBridgeDynamicTools.adapter.test.ts
+@@ -0,0 +1,233 @@
++// CI only: production adapter -> real client -> patched private protocol.
++// No test installs an item/tool/call handler or registers dynamicTools itself.
++import { assert, it } from "@effect/vitest";
++import * as NodeServices from "@effect/platform-node/NodeServices";
++import { CodexSettings, ThreadId, ProviderSessionId, ProjectId, RunAttemptId, RunId, NodeId, MessageId, type OrchestrationV2AppThread, type OrchestrationV2ProviderThread } from "@t3tools/contracts";
++import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
++import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
++import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
++import * as Client from "effect-codex-app-server/client";
++import type * as Protocol from "effect-codex-app-server/schema";
++import type { CodexAppServerProtocolLogEvent } from "effect-codex-app-server/protocol";
++import * as Effect from "effect/Effect";
++import * as Layer from "effect/Layer";
++import * as Queue from "effect/Queue";
++import * as Stream from "effect/Stream";
++import * as Scope from "effect/Scope";
++import * as Exit from "effect/Exit";
++import * as Fiber from "effect/Fiber";
++import * as Crypto from "effect/Crypto";
++import * as FileSystem from "effect/FileSystem";
++import * as DateTime from "effect/DateTime";
++import * as Schema from "effect/Schema";
++import { makeInMemoryStdio } from "../../../../../packages/effect-codex-app-server/src/_internal/stdio.ts";
++import * as Adapter from "./CodexAdapterV2.ts";
++import { makeReplayServerConfig } from "./CodexAdapterV2.testkit.ts";
++import { bridgeDynamicTools, type BridgeMessagingPort } from "./CodexBridgeDynamicTools.ts";
++
++function latch<T>() {
++  let resolve!: (value: T) => void;
++  let reject!: (error: Error) => void;
++  const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; });
++  return { promise, resolve, reject };
++}
++const encode = (value: unknown) => new TextEncoder().encode(`${JSON.stringify(value)}\n`);
++const rootId = "ab458-root", rootTurn = "ab458-turn";
++const policy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({ runtimeMode: "full-access", interactionMode: "default", cwd: "/workspace" });
++const selection = { instanceId: Adapter.CODEX_DEFAULT_INSTANCE_ID, model: "gpt-5.4" };
++const threadReply: Protocol.V2ThreadStartResponse = {
++  approvalPolicy: "never", approvalsReviewer: "user", cwd: "/workspace", model: "gpt-5.4", modelProvider: "mock",
++  sandbox: { type: "readOnly" }, thread: {
++    cliVersion: "mock", createdAt: 1, updatedAt: 1, cwd: "/workspace", ephemeral: false,
++    id: rootId, modelProvider: "mock", preview: "", projectId: null, sessionId: "mock-session",
++    source: "appServer", status: { type: "idle" }, turns: [],
++  },
++};
++const turn = (id: string) => ({ id, items: [], itemsView: "notLoaded", status: "inProgress", error: null, startedAt: 1, completedAt: null, durationMs: null });
++
++// Same actual contract shape as pinned upstream makeCodexTestTurnInput; these
++// are mocked app records, not substitutes for production adapter state.
++function turnInput(threadId: ThreadId, providerThread: OrchestrationV2ProviderThread, now: DateTime.Utc): ProviderAdapter.ProviderAdapterV2TurnInput {
++  const appThread: OrchestrationV2AppThread = {
++    createdBy: "user", creationSource: "web", id: threadId, projectId: ProjectId.make("ab458-project"), title: "AB458",
++    providerInstanceId: Adapter.CODEX_DEFAULT_INSTANCE_ID, modelSelection: selection,
++    runtimeMode: "full-access", interactionMode: "default", branch: null, worktreePath: null,
++    activeProviderThreadId: providerThread.id,
++    lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId }, forkedFrom: null,
++    createdAt: now, updatedAt: now, archivedAt: null, settledOverride: null, settledAt: null, lastVisitedAt: null, deletedAt: null,
++  };
++  return {
++    appThread, threadId, providerThread, runId: RunId.make("ab458-run"), runOrdinal: 1, providerTurnOrdinal: 1,
++    attemptId: RunAttemptId.make("ab458-attempt"), rootNodeId: NodeId.make("ab458-node"),
++    message: { createdBy: "user", creationSource: "web", messageId: MessageId.make("ab458-message"), text: "mock", attachments: [] },
++    modelSelection: selection, runtimePolicy: policy,
++  };
++}
++
++const makeHarness = Effect.fnUntraced(function* (scope: Scope.Scope) {
++  const pipe = yield* makeInMemoryStdio();
++  const outgoing: Array<Record<string, unknown>> = [];
++  const markers = new Map<string, ReturnType<typeof latch<void>>>();
++  const replyWaiters = new Map<number, { readonly count: number; readonly ready: ReturnType<typeof latch<void>> }>();
++  let closed = 0, sends = 0, phase: "hold" | "fault" | "shutdown" = "hold";
++  const allStarted = latch<void>(), release = latch<Protocol.DynamicToolCallParams["arguments"]>();
++  const prematureReply = latch<void>();
++  const faultEntered = latch<void>(), fault = latch<Protocol.DynamicToolCallParams["arguments"]>();
++  const shutdownEntered = latch<void>(), closeEntered = latch<void>(), releaseClose = latch<void>();
++  const hanging = latch<Protocol.DynamicToolCallParams["arguments"]>();
++  const nativeTurns = new Set<string>();
++  const turnWaiters = new Map<string, ReturnType<typeof latch<void>>>();
++  const logger = (event: CodexAppServerProtocolLogEvent) => Effect.sync(() => {
++    if (event.stage !== "decoded" || !event.payload || typeof event.payload !== "object") return;
++    const frame = event.payload as Record<string, unknown>;
++    if (event.direction === "outgoing") {
++      outgoing.push(frame);
++      if (typeof frame.id === "number" && !frame.method) {
++        if (frame.id >= 100 && frame.id < 132) prematureReply.resolve();
++        const pending = replyWaiters.get(frame.id);
++        if (pending && outgoing.filter((candidate) => candidate.id === frame.id && !candidate.method).length >= pending.count) {
++          pending.ready.resolve(); replyWaiters.delete(frame.id);
++        }
++      }
++    }
++    if (event.direction === "incoming" && frame.method === "ab458/barrier") {
++      const nonce = (frame.params as Record<string, unknown>).nonce;
++      if (typeof nonce === "string") markers.get(nonce)?.resolve();
++    }
++  });
++  const client = yield* Client.make(pipe.stdio, { logIncoming: true, logOutgoing: true, logger });
++  yield* Stream.fromQueue(pipe.output).pipe(Stream.runForEach((line) => Effect.gen(function* () {
++    const frame = JSON.parse(line) as Record<string, unknown>;
++    if (typeof frame.method !== "string") return; // Actual encoded server-request responses are observed by logger.
++    if (frame.method === "initialized") return;
++    let result: unknown;
++    switch (frame.method) {
++      case "initialize": result = { userAgent: "mock", codexHome: "/mock", platformFamily: "unix", platformOs: "linux" }; break;
++      case "thread/start": result = threadReply; break;
++      case "thread/resume": {
++        const id = (frame.params as Record<string, unknown>).threadId;
++        result = id === rootId ? threadReply : { thread: { id }, model: null }; break;
++      }
++      case "thread/read": result = { thread: { id: (frame.params as Record<string, unknown>).threadId }, model: null }; break;
++      case "turn/start": result = { turn: turn(rootTurn) }; break;
++      default: return yield* Effect.die(`Unexpected mocked outbound method ${frame.method}`);
++    }
++    yield* Queue.offer(pipe.input, encode({ id: frame.id, result }));
++  })), Effect.forkScoped);
++  const port: BridgeMessagingPort = {
++    isLive: () => closed === 0, admitMain: async () => true,
++    peers: async () => [], pending: async () => [], readMessage: async () => ({}), sendStatus: async () => ({}),
++    send: async (_lease, _args, guard, signal) => {
++      assert.equal(await guard(), true); assert.equal(signal.aborted, false); sends++;
++      if (phase === "fault") { faultEntered.resolve(); return fault.promise; }
++      if (phase === "shutdown") { shutdownEntered.resolve(); return hanging.promise; }
++      if (sends === 32) allStarted.resolve();
++      return release.promise;
++    },
++    close: async (signal) => { closed++; assert.equal(signal.aborted, false); closeEntered.resolve(); return releaseClose.promise; },
++  };
++  const adapter = yield* Adapter.makeCodexAdapterV2({
++    instanceId: Adapter.CODEX_DEFAULT_INSTANCE_ID, settings: Schema.decodeSync(CodexSettings)({}), environment: {},
++    clientFactory: { open: () => Effect.succeed(client) }, openBridgeMessaging: () => port,
++    crypto: yield* Crypto.Crypto, fileSystem: yield* FileSystem.FileSystem,
++    idAllocator: yield* IdAllocator.IdAllocatorV2,
++    serverConfig: yield* makeReplayServerConfig("ab458-production-admission").pipe(Effect.orDie),
++  });
++  const appId = ThreadId.make("app-ab458");
++  const runtime = yield* adapter.openSession({ threadId: appId, providerSessionId: ProviderSessionId.make("session-ab458"), modelSelection: selection, runtimePolicy: policy });
++  const providerThread = yield* runtime.ensureThread({ threadId: appId, modelSelection: selection, runtimePolicy: policy });
++  const events: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
++  yield* runtime.events.pipe(Stream.runForEach((event) => Effect.sync(() => {
++    events.push(event);
++    if (event.type === "provider_turn.updated") {
++      const id = event.providerTurn.nativeTurnRef?.nativeId;
++      if (id) { nativeTurns.add(id); turnWaiters.get(id)?.resolve(); }
++    }
++  })), Effect.forkScoped);
++  const start = outgoing.find((frame) => frame.method === "thread/start");
++  assert.deepEqual((start?.params as Record<string, unknown>).dynamicTools, bridgeDynamicTools);
++  yield* runtime.startTurn(turnInput(appId, providerThread, yield* DateTime.now));
++  const waitTurn = (id: string) => Effect.promise(() => {
++    if (nativeTurns.has(id)) return Promise.resolve();
++    const waiter = latch<void>(); turnWaiters.set(id, waiter); return waiter.promise;
++  });
++  yield* waitTurn(rootTurn);
++  let nonce = 0;
++  const barrier = Effect.fnUntraced(function* () {
++    const key = String(++nonce), pending = latch<void>(); markers.set(key, pending);
++    yield* Queue.offer(pipe.input, encode({ method: "ab458/barrier", params: { nonce: key } }));
++    yield* Effect.promise(() => pending.promise); markers.delete(key);
++  });
++  const emit = (value: unknown) => Queue.offer(pipe.input, encode(value));
++  const replies = (id: number) => outgoing.filter((frame) => frame.id === id && !frame.method);
++  const waitReplies = (id: number, count: number) => Effect.promise(() => {
++    if (replies(id).length >= count) return Promise.resolve();
++    const ready = latch<void>(); replyWaiters.set(id, { count, ready }); return ready.promise;
++  });
++  return { scope, runtime, providerThread, appId, emit, barrier, replies, waitReplies, waitTurn, events,
++    sends: () => sends, closed: () => closed, allStarted, prematureReply, release, faultEntered, fault, shutdownEntered,
++    closeEntered, releaseClose, hanging, phase: (next: "hold" | "fault" | "shutdown") => { phase = next; } };
++});
++
++const rpc = (id: number, changes: Partial<Protocol.DynamicToolCallParams> = {}) => ({ id, method: "item/tool/call", params: {
++  threadId: rootId, turnId: rootTurn, callId: `call-${id}`, namespace: "agent_bridge", tool: "send",
++  arguments: { messageId: `m-${id}`, recipientRef: "peer", text: "mock" }, ...changes,
++} satisfies Protocol.DynamicToolCallParams });
++const services = Layer.mergeAll(NodeServices.layer, IdAllocator.layer, McpProviderSessions.layer);
++
++it.effect("AB458 production admission: actual adapter registration, 32-limit warm replay, roots, fault and close", () =>
++  Effect.gen(function* () {
++    const scope = yield* Scope.make();
++    yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
++    const h = yield* makeHarness(scope).pipe(Effect.provideService(Scope.Scope, scope));
++    for (let id = 100; id < 132; id++) yield* h.emit(rpc(id));
++    const admitted = yield* Effect.promise(() => Promise.race([
++      h.allStarted.promise.then(() => true), h.prematureReply.promise.then(() => false),
++    ]));
++    assert.equal(admitted, true, "production handler must reach 32 suspended effects before replying");
++    // Actual adapter warm resume while the 32 original effects remain suspended.
++    yield* h.runtime.resumeThread({ threadId: h.appId, providerThread: h.providerThread });
++    for (let id = 100; id < 132; id++) yield* h.emit(rpc(id));
++    yield* h.emit(rpc(100, { arguments: { messageId: "changed", recipientRef: "peer", text: "conflict" } }));
++    yield* h.emit({ ...rpc(100), method: "other/method" });
++    yield* h.emit(rpc(999)); yield* h.barrier();
++    assert.equal(h.sends(), 32);
++    for (let id = 100; id < 132; id++) assert.equal(h.replies(id).length, 0);
++    assert.equal(h.replies(999).length, 1); assert.notEqual(h.replies(999)[0]!.error, undefined);
++    h.release.resolve({ accepted: "mock" });
++    for (let id = 100; id < 132; id++) { yield* h.waitReplies(id, 1); assert.equal((h.replies(id)[0]!.result as Protocol.DynamicToolCallResponse).success, true); }
++    yield* h.emit(rpc(100)); yield* h.barrier();
++    assert.equal(h.replies(100).length, 1); assert.equal(h.sends(), 32); // completed same-ID tombstone, no cached transport payload
++
++    // Production native child discovery and activeTurns population, not a supplied helper context.
++    yield* h.emit({ method: "item/completed", params: { threadId: rootId, turnId: rootTurn, completedAtMs: 2,
++      item: { type: "subAgentActivity", id: "spawn-child", kind: "started", agentThreadId: "child-native", agentPath: "/root/mock_child" } } });
++    yield* h.emit({ method: "turn/started", params: { threadId: "child-native", turn: turn("child-turn") } });
++    yield* h.waitTurn("child-turn");
++    assert.equal(h.events.some((event) => event.type === "subagent.updated"), true);
++    yield* h.emit(rpc(700, { threadId: "child-native", turnId: "child-turn" }));
++    yield* h.emit(rpc(701, { threadId: rootId, turnId: "child-turn" }));
++    yield* h.emit(rpc(702, { threadId: rootId, turnId: "unknown-turn" }));
++    for (const id of [700, 701, 702]) { yield* h.waitReplies(id, 1); assert.equal((h.replies(id)[0]!.result as Protocol.DynamicToolCallResponse).success, false); }
++    assert.equal(h.sends(), 32);
++
++    // Deferred mocked broker timeout/failure, then replay after the terminal response.
++    // The pure clock tests separately cover the exact shared 10-second deadline.
++    h.phase("fault"); yield* h.emit(rpc(800)); yield* Effect.promise(() => h.faultEntered.promise);
++    yield* h.emit(rpc(800)); yield* h.barrier(); assert.equal(h.replies(800).length, 0);
++    h.fault.reject(new Error("mock broker timeout")); yield* h.waitReplies(800, 1);
++    assert.equal((h.replies(800)[0]!.result as Protocol.DynamicToolCallResponse).success, false);
++    yield* h.emit(rpc(800)); yield* h.barrier(); assert.equal(h.replies(800).length, 1); assert.equal(h.sends(), 33);
++
++    h.phase("shutdown"); yield* h.emit(rpc(900)); yield* Effect.promise(() => h.shutdownEntered.promise);
++    const closing = yield* Scope.close(scope, Exit.void).pipe(Effect.forkScoped);
++    yield* Effect.promise(() => h.closeEntered.promise);
++    yield* h.emit(rpc(900)); // closing connection cannot allocate a replacement operation
++    h.releaseClose.resolve(); yield* Fiber.join(closing);
++    const count = h.replies(900).length;
++    h.hanging.resolve({ private: "late-mock" });
++    for (let i = 0; i < 20; i++) yield* Effect.yieldNow;
++    assert.equal(h.sends(), 34); assert.equal(h.closed(), 1); assert.equal(h.replies(900).length, count);
++    assert.equal(JSON.stringify(h.replies(900)).includes("late-mock"), false);
++  }).pipe(Effect.scoped, Effect.provide(services)),
++);
+diff --git a/apps/server/src/orchestration-v2/Adapters/CodexBridgeDynamicTools.replay.test.ts b/apps/server/src/orchestration-v2/Adapters/CodexBridgeDynamicTools.replay.test.ts
+new file mode 100644
+index 0000000..156fa46
+--- /dev/null
++++ b/apps/server/src/orchestration-v2/Adapters/CodexBridgeDynamicTools.replay.test.ts
+@@ -0,0 +1,183 @@
++import { it } from "@effect/vitest";
++import assert from "node:assert/strict";
++import type * as Protocol from "effect-codex-app-server/schema";
++import { makeBridgeDynamicSession, type BridgeMessagingPort } from "./CodexBridgeDynamicTools.ts";
++
++const deferred = <T>() => {
++  let resolve!: (value: T) => void;
++  const promise = new Promise<T>((r) => { resolve = r; });
++  return { promise, resolve };
++};
++const flush = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); };
++function clock() {
++  let id = 0;
++  const jobs = new Map<number, () => void>();
++  return {
++    setTimeout: (callback: () => void, _ms: number) => { jobs.set(++id, callback); return id; },
++    clearTimeout: (handle: unknown) => { jobs.delete(handle as number); },
++    expireAll: () => { for (const [key, job] of [...jobs]) { jobs.delete(key); job(); } },
++    size: () => jobs.size,
++  };
++}
++const scope = { appThreadId: "app-A", providerInstanceId: "provider", providerSessionId: "runtime-A" };
++const active = { appThreadId: "app-A", nativeThreadId: "native-A", nativeTurnId: "turn-A", isChild: false, isCurrent: async () => true };
++const call = (overrides: Partial<Protocol.DynamicToolCallParams> = {}): Protocol.DynamicToolCallParams => ({
++  namespace: "agent_bridge", tool: "send", threadId: "native-A", turnId: "turn-A", callId: "call-A",
++  arguments: { messageId: "m", recipientRef: "r", text: "hello" }, ...overrides,
++});
++function fixture(overrides: Partial<BridgeMessagingPort> = {}) {
++  const timer = clock(); let submissions = 0;
++  const port: BridgeMessagingPort = {
++    isLive: () => true, admitMain: async () => true,
++    peers: async () => [], pending: async () => [], readMessage: async () => ({ text: "mock-private" }),
++    send: async () => { submissions++; return { accepted: "m" }; }, sendStatus: async () => ({ status: "accepted" }),
++    close: async () => {}, ...overrides,
++  };
++  const session = makeBridgeDynamicSession(scope, port, { clock: timer });
++  assert.equal(session.reserveStart(), true); session.bindStartedRoot("native-A");
++  return { session, timer, submissions: () => submissions };
++}
++const signal = () => new AbortController().signal;
++
++it("coalesces canonical-equivalent replay during real suspension without early settlement", async () => {
++  const entered = deferred<void>(), release = deferred<Protocol.DynamicToolCallParams["arguments"]>();
++  let effects = 0;
++  const f = fixture({ send: async () => { effects++; entered.resolve(); return release.promise; } });
++  const first = f.session.dispatch(call(), active, signal());
++  await entered.promise;
++  let replaySettled = false;
++  const replay = f.session.dispatch(call({ arguments: { text: "hello", recipientRef: "r", messageId: "m" } }), active, signal()).then((value) => { replaySettled = true; return value; });
++  try { await flush(); assert.equal(replaySettled, false, "replay must await original suspended effect"); }
++  finally { release.resolve({ accepted: "m" }); }
++  assert.deepEqual(await replay, await first); assert.equal(effects, 1);
++});
++
++it("conflicting replay is rejected while original still settles normally", async () => {
++  const entered = deferred<void>(), release = deferred<Protocol.DynamicToolCallParams["arguments"]>();
++  const f = fixture({ send: async () => { entered.resolve(); return release.promise; } });
++  const first = f.session.dispatch(call(), active, signal()); await entered.promise;
++  assert.equal((await f.session.dispatch(call({ arguments: { messageId: "m", recipientRef: "r", text: "changed" } }), active, signal())).success, false);
++  release.resolve({ accepted: "m" }); assert.equal((await first).success, true);
++});
++
++it("exact pending replay with temporarily missing context joins only the original authenticated call", async () => {
++  const entered = deferred<void>(), release = deferred<Protocol.DynamicToolCallParams["arguments"]>();
++  let effects = 0;
++  const f = fixture({ send: async () => { effects++; entered.resolve(); return release.promise; } });
++  const first = f.session.dispatch(call(), active, signal()); await entered.promise;
++  let settled = false;
++  const replay = f.session.dispatch(call(), undefined, signal()).then((result) => { settled = true; return result; });
++  try {
++    await flush(); assert.equal(settled, false);
++    assert.equal((await f.session.dispatch(call({ callId: "unknown" }), undefined, signal())).success, false);
++  } finally { release.resolve({ accepted: "m" }); }
++  assert.deepEqual(await first, await replay); assert.equal(effects, 1);
++});
++
++it("cancelling one admitted waiter does not create a competing replay settlement", async () => {
++  const entered = deferred<void>(), release = deferred<Protocol.DynamicToolCallParams["arguments"]>();
++  let effects = 0;
++  const f = fixture({ send: async () => { effects++; entered.resolve(); return release.promise; } });
++  const waiter = new AbortController();
++  const first = f.session.dispatch(call(), active, waiter.signal); await entered.promise; waiter.abort();
++  let settled = false;
++  const replay = f.session.dispatch(call(), active, signal()).then((result) => { settled = true; return result; });
++  try { await flush(); assert.equal(settled, false); } finally { release.resolve({ accepted: "m" }); }
++  assert.deepEqual(await first, await replay); assert.equal((await first).success, true); assert.equal(effects, 1);
++});
++
++it("oversized private results leave a bounded failure settlement without re-execution", async () => {
++  let effects = 0;
++  const f = fixture({ send: async () => { effects++; return { text: "x".repeat(16_385) }; } });
++  const first = await f.session.dispatch(call(), active, signal());
++  assert.equal(first.success, false); assert.equal(JSON.stringify(first).length < 512, true);
++  assert.deepEqual(await f.session.dispatch(call(), active, signal()), first); assert.equal(effects, 1);
++});
++
++it("completed identical replay returns the original settlement without another effect", async () => {
++  const f = fixture(); const first = await f.session.dispatch(call(), active, signal());
++  assert.deepEqual(await f.session.dispatch(call(), active, signal()), first);
++  assert.equal(first.success, true); assert.equal(f.submissions(), 1);
++});
++
++it("same call ID in another native turn is a separate authenticated operation", async () => {
++  const f = fixture(); await f.session.dispatch(call(), active, signal());
++  const next = { ...active, nativeTurnId: "turn-B" };
++  assert.equal((await f.session.dispatch(call({ turnId: "turn-B" }), next, signal())).success, true);
++  assert.equal(f.submissions(), 2);
++});
++
++it("revocation during suspended send suppresses all replay payloads and never retargets", async () => {
++  const entered = deferred<void>(), release = deferred<Protocol.DynamicToolCallParams["arguments"]>();
++  let effects = 0;
++  const f = fixture({ send: async () => { effects++; entered.resolve(); return release.promise; } });
++  const first = f.session.dispatch(call(), active, signal()); await entered.promise;
++  const replay = f.session.dispatch(call(), active, signal());
++  await f.session.close(); release.resolve({ private: "must-not-leak" });
++  for (const result of await Promise.all([first, replay])) {
++    assert.equal(result.success, false); assert.equal(JSON.stringify(result).includes("must-not-leak"), false);
++  }
++  assert.equal(effects, 1);
++  assert.equal((await f.session.dispatch(call(), active, signal())).success, false);
++  const replacement = fixture(); assert.equal((await replacement.session.dispatch(call(), active, signal())).success, true);
++  assert.equal(replacement.submissions(), 1);
++});
++
++it("completed cache cannot disclose after revocation or to a child", async () => {
++  const f = fixture(); await f.session.dispatch(call(), active, signal());
++  assert.equal((await f.session.dispatch(call(), { ...active, isChild: true }, signal())).success, false);
++  await f.session.close(); assert.equal((await f.session.dispatch(call(), active, signal())).success, false);
++  assert.equal(f.submissions(), 1);
++});
++
++it("one shared operation deadline settles all waiters and late completion is never replayed", async () => {
++  const entered = deferred<void>(), release = deferred<Protocol.DynamicToolCallParams["arguments"]>();
++  let effects = 0;
++  const f = fixture({ send: async () => { effects++; entered.resolve(); return release.promise; } });
++  const first = f.session.dispatch(call(), active, signal()); await entered.promise;
++  const replay = f.session.dispatch(call(), active, signal());
++  let firstSettled = false; first.then(() => { firstSettled = true; });
++  await flush(); f.timer.expireAll(); await flush();
++  try { assert.equal(firstSettled, true, "shared operation must settle at its deadline"); }
++  finally { release.resolve({ private: "late-private" }); }
++  const results = await Promise.all([first, replay]);
++  assert.deepEqual(results[0], results[1]); assert.equal(results[0]!.success, false);
++  assert.equal((await f.session.dispatch(call(), active, signal())).success, false); assert.equal(effects, 1);
++});
++
++it("close aborts admission immediately and every caller awaits the same disposal result", async () => {
++  const entered = deferred<void>(), release = deferred<void>(); let closes = 0;
++  const f = fixture({ close: async () => { closes++; entered.resolve(); return release.promise; } });
++  const first = f.session.close(); await entered.promise;
++  const second = f.session.close(); let secondSettled = false;
++  second.then(() => { secondSettled = true; });
++  try {
++    await flush(); assert.equal(secondSettled, false, "later close must await owned disposal");
++    assert.equal(first, second, "close callers share the exact promise");
++    assert.equal((await f.session.dispatch(call(), active, signal())).success, false);
++  } finally { release.resolve(); }
++  assert.deepEqual(await first, { status: "closed" }); assert.equal(await second, await first); assert.equal(closes, 1);
++});
++
++it("failed disposal is sanitized and later close cannot pretend it succeeded", async () => {
++  let closes = 0;
++  const f = fixture({ close: async () => { closes++; throw new Error("private internal diagnostic"); } });
++  const results = await Promise.allSettled([f.session.close(), f.session.close()]);
++  for (const result of results) {
++    assert.equal(result.status, "fulfilled");
++    if (result.status === "fulfilled") { assert.equal(result.value.status, "failed"); assert.equal(JSON.stringify(result.value).includes("private internal"), false); }
++  }
++  const again = await f.session.close(); assert.equal(again.status, "failed"); assert.equal(closes, 1);
++});
++
++it("hung owned disposal times out once, aborts its close signal, and stays unknown after late resolution", async () => {
++  const entered = deferred<void>(), release = deferred<void>(); let closeSignal: AbortSignal | undefined;
++  const f = fixture({ close: async (abort) => { closeSignal = abort; entered.resolve(); return release.promise; } });
++  let settled = false; const first = f.session.close(); first.then(() => { settled = true; });
++  await entered.promise; f.timer.expireAll(); await flush();
++  try { assert.equal(settled, true, "close must not hang the session finalizer"); }
++  finally { release.resolve(); }
++  const result = await first;
++  assert.equal(result.status, "timedOut"); assert.equal(closeSignal?.aborted, true);
++  assert.equal(await f.session.close(), result); assert.equal(f.timer.size(), 0);
++});
+diff --git a/apps/server/src/orchestration-v2/Adapters/CodexBridgeDynamicTools.test.ts b/apps/server/src/orchestration-v2/Adapters/CodexBridgeDynamicTools.test.ts
+new file mode 100644
+index 0000000..3f2df28
+--- /dev/null
++++ b/apps/server/src/orchestration-v2/Adapters/CodexBridgeDynamicTools.test.ts
+@@ -0,0 +1,172 @@
++import { it } from "@effect/vitest";
++import assert from "node:assert/strict";
++import type * as CodexRpc from "effect-codex-app-server/rpc";
++import type * as CodexSchema from "effect-codex-app-server/schema";
++import { bridgeDynamicTools, makeBridgeDynamicSession, type BridgeActiveRoot, type BridgeMessagingPort, type BridgeRootLease } from "./CodexBridgeDynamicTools.ts";
++
++type Call = CodexRpc.ServerRequestParamsByMethod["item/tool/call"];
++type Reply = CodexRpc.ServerRequestResponsesByMethod["item/tool/call"];
++const signal = () => new AbortController().signal;
++const call = (overrides: Partial<Call> = {}): Call => ({
++  threadId: "native-A", turnId: "turn-A", callId: "call-A", namespace: "agent_bridge",
++  tool: "pending", arguments: {}, ...overrides,
++});
++const active = (overrides: Partial<BridgeActiveRoot> = {}): BridgeActiveRoot => ({
++  appThreadId: "app-A", nativeThreadId: "native-A", nativeTurnId: "turn-A",
++  isChild: false, isCurrent: async () => true, ...overrides,
++});
++function deferred<T>() {
++  let resolve!: (value: T) => void;
++  const promise = new Promise<T>((r) => { resolve = r; });
++  return { promise, resolve };
++}
++function fixture(app = "A", overrides: Partial<BridgeMessagingPort> = {}) {
++  let live = true;
++  const effects: BridgeRootLease[] = [];
++  const effect: BridgeMessagingPort["pending"] = async (lease, guard, abort) => {
++    assert.equal(abort.aborted, false);
++    if (!await guard()) throw new Error("revoked before effect");
++    effects.push(lease);
++    return { owner: lease.appThreadId };
++  };
++  const port: BridgeMessagingPort = {
++    isLive: () => live, admitMain: async () => true,
++    peers: effect, pending: effect, readMessage: (lease, _args, guard, abort) => effect(lease, guard, abort),
++    send: (lease, _args, guard, abort) => effect(lease, guard, abort),
++    sendStatus: (lease, _args, guard, abort) => effect(lease, guard, abort),
++    close: async () => { live = false; },
++    ...overrides,
++  };
++  const scope = { appThreadId: `app-${app}`, providerInstanceId: "provider", providerSessionId: `session-${app}` };
++  const session = makeBridgeDynamicSession(scope, port);
++  const bind = (id: string) => { assert.equal(session.reserveStart(), true); session.bindStartedRoot(id); };
++  return { scope, port, session, effects, bind, revokePort: () => { live = false; } };
++}
++
++it("registers actual experimental protocol specs only on the raw start path", async () => {
++  const payload: CodexSchema.V2ThreadStartParams & {
++    dynamicTools: ReadonlyArray<CodexSchema.ClientRequest__DynamicToolSpec>;
++  } = { dynamicTools: bridgeDynamicTools };
++  const requests: unknown[] = [];
++  const raw = { request: async (method: "thread/start", params: typeof payload) => {
++    requests.push({ method, params }); return { thread: { id: "native-A" } };
++  } };
++  const f = fixture();
++  const response = await raw.request("thread/start", payload);
++  f.bind(response.thread.id);
++  assert.equal(requests.length, 1);
++  const namespace = payload.dynamicTools[0]!;
++  assert.equal(namespace.type, "namespace");
++  if (namespace.type !== "namespace") throw new Error("expected namespace");
++  assert.deepEqual(namespace.tools.map((tool) => tool.name), ["peers", "pending", "read_message", "send", "send_status"]);
++  assert.equal(JSON.stringify(payload).includes("http_headers"), false);
++});
++
++it("dispatches the actual typed item/tool/call response under its original private request ID", async () => {
++  const f = fixture(); f.bind("native-A");
++  const handlers = new Map<string, (payload: Call) => Promise<Reply>>();
++  const handleServerRequest = (method: "item/tool/call", handler: (payload: Call) => Promise<Reply>) => handlers.set(method, handler);
++  handleServerRequest("item/tool/call", (payload) => f.session.dispatch(payload, active(), signal()));
++  const request = { id: "rpc-123", method: "item/tool/call", params: call() };
++  const result = await handlers.get(request.method)!(request.params);
++  const response = { id: request.id, result };
++  assert.equal(response.id, "rpc-123"); assert.equal(result.success, true);
++  assert.deepEqual(f.effects[0], { ...f.scope, nativeThreadId: "native-A" });
++});
++
++it("refuses a child even when its schemas are inherited", async () => {
++  const f = fixture(); f.bind("native-A");
++  assert.equal((await f.session.dispatch(call(), active({ isChild: true }), signal())).success, false);
++  assert.equal(f.effects.length, 0);
++});
++
++it("refuses an unknown native thread without substituting the parent", async () => {
++  const f = fixture(); f.bind("native-A");
++  assert.equal((await f.session.dispatch(call({ threadId: "native-child" }), active(), signal())).success, false);
++  assert.equal(f.effects.length, 0);
++});
++
++it("refuses wrong native turn, inactive context and missing context", async () => {
++  const f = fixture(); f.bind("native-A");
++  for (const context of [undefined, active({ nativeTurnId: "other" }), active({ isCurrent: async () => false })])
++    assert.equal((await f.session.dispatch(call(), context, signal())).success, false);
++  assert.equal(f.effects.length, 0);
++});
++
++it("two app scopes cannot read or send as the other root", async () => {
++  const a = fixture(), b = fixture("B");
++  a.bind("native-A"); b.bind("native-B");
++  assert.equal((await b.session.dispatch(call(), active(), signal())).success, false);
++  assert.equal((await a.session.dispatch(call({ threadId: "native-B", tool: "send", arguments: { messageId: "m", recipientRef: "r", text: "hello" } }), active({ appThreadId: "app-B", nativeThreadId: "native-B" }), signal())).success, false);
++  assert.equal(a.effects.length + b.effects.length, 0);
++});
++
++it("rejects identity overrides, generic opcodes and delegation tool names", async () => {
++  const f = fixture(); f.bind("native-A");
++  for (const overrides of [
++    { arguments: { appThreadId: "app-B" } }, { arguments: { opcode: "spawn" } },
++    { tool: "delegate_task" }, { tool: "dispatch" }, { namespace: "t3-code" },
++  ]) assert.equal((await f.session.dispatch(call(overrides), active(), signal())).success, false);
++  assert.equal(f.effects.length, 0);
++});
++
++it("requires app-owned Bridge main-lineage admission", async () => {
++  const f = fixture("A", { admitMain: async () => false }); f.bind("native-A");
++  assert.equal((await f.session.dispatch(call(), active(), signal())).success, false);
++  assert.equal(f.effects.length, 0);
++});
++
++it("send forwards only explicit messaging arguments to its pinned app port", async () => {
++  const args = { messageId: "stable-id", recipientRef: "server-issued-peer", text: "hello" };
++  let submitted = 0;
++  const f = fixture("A", { send: async (lease, received, guard, abort) => {
++    assert.equal(await guard(), true); assert.equal(abort.aborted, false);
++    assert.equal(lease.appThreadId, "app-A"); assert.deepEqual(received, args);
++    submitted++; return { messageId: received.messageId, state: "accepted" };
++  } });
++  f.bind("native-A");
++  assert.equal((await f.session.dispatch(call({ tool: "send", arguments: args }), active(), signal())).success, true);
++  assert.equal((await f.session.dispatch(call({ callId: "bad", tool: "send", arguments: { ...args, frontend: "other" } }), active(), signal())).success, false);
++  assert.equal(submitted, 1);
++});
++
++it("revocation during admission never retargets the old call", async () => {
++  const admission = deferred<boolean>(), entered = deferred<void>();
++  const f = fixture("A", { admitMain: async () => { entered.resolve(); return admission.promise; } });
++  f.bind("native-A");
++  const pending = f.session.dispatch(call(), active(), signal());
++  await entered.promise; await f.session.close();
++  assert.throws(() => f.session.bindStartedRoot("native-B"));
++  const replacement = fixture(); replacement.bind("native-A");
++  admission.resolve(true);
++  assert.equal((await pending).success, false);
++  assert.equal(f.effects.length + replacement.effects.length, 0);
++});
++
++it("suppresses private results revoked after submission and never retries the call", async () => {
++  const result = deferred<Call["arguments"]>(), entered = deferred<void>();
++  let submissions = 0;
++  const f = fixture("A", { pending: async () => { submissions++; entered.resolve(); return result.promise; } });
++  f.bind("native-A");
++  const pending = f.session.dispatch(call(), active(), signal());
++  await entered.promise; f.revokePort(); result.resolve({ private: "mock-only" });
++  const reply = await pending;
++  assert.equal(reply.success, false); assert.equal(JSON.stringify(reply).includes("mock-only"), false);
++  assert.equal((await f.session.dispatch(call(), active(), signal())).success, false);
++  assert.equal(submissions, 1);
++});
++
++it("resumed persisted definitions do not reconstruct an untrusted root binding", async () => {
++  const f = fixture();
++  assert.equal((await f.session.dispatch(call(), active(), signal())).success, false);
++  assert.equal(f.effects.length, 0);
++});
++
++it("identical replay preserves settlement and cancelled new requests produce no repeated effect", async () => {
++  const f = fixture(); f.bind("native-A");
++  assert.equal((await f.session.dispatch(call(), active(), signal())).success, true);
++  assert.equal((await f.session.dispatch(call(), active(), signal())).success, true);
++  const abort = new AbortController(); abort.abort();
++  assert.equal((await f.session.dispatch(call({ callId: "other" }), active(), abort.signal)).success, false);
++  assert.equal(f.effects.length, 1);
++});
+diff --git a/apps/server/src/orchestration-v2/Adapters/CodexBridgeDynamicTools.ts b/apps/server/src/orchestration-v2/Adapters/CodexBridgeDynamicTools.ts
+new file mode 100644
+index 0000000..2ce058c
+--- /dev/null
++++ b/apps/server/src/orchestration-v2/Adapters/CodexBridgeDynamicTools.ts
+@@ -0,0 +1,217 @@
++// Proposed upstream file. No broker connection or default production wiring.
++import type * as CodexSchema from "effect-codex-app-server/schema";
++
++export interface BridgeAppScope {
++  readonly appThreadId: string;
++  readonly providerInstanceId: string;
++  readonly providerSessionId: string;
++}
++export interface BridgeRootLease extends BridgeAppScope {
++  readonly nativeThreadId: string;
++}
++export interface BridgeActiveRoot {
++  readonly appThreadId: string;
++  readonly nativeThreadId: string;
++  readonly nativeTurnId: string;
++  readonly isChild: boolean;
++  readonly isCurrent: () => Promise<boolean>;
++}
++type Json = CodexSchema.DynamicToolCallParams["arguments"];
++type Guard = () => Promise<boolean>;
++// The app-owned implementation must pin its broker registration to this scope;
++// it must never reconnect an in-flight operation to a replacement registration.
++// Every method checks guard AND its lease at the actual broker effect boundary.
++// admitMain retains Bridge codexMainThreadAdmission using the trusted native ID.
++export interface BridgeMessagingPort {
++  readonly isLive: () => boolean;
++  readonly admitMain: (lease: BridgeRootLease, signal: AbortSignal) => Promise<boolean>;
++  readonly peers: (lease: BridgeRootLease, guard: Guard, signal: AbortSignal) => Promise<Json>;
++  readonly pending: (lease: BridgeRootLease, guard: Guard, signal: AbortSignal) => Promise<Json>;
++  readonly readMessage: (lease: BridgeRootLease, args: { messageId: string }, guard: Guard, signal: AbortSignal) => Promise<Json>;
++  readonly send: (lease: BridgeRootLease, args: { messageId: string; recipientRef: string; text: string }, guard: Guard, signal: AbortSignal) => Promise<Json>;
++  readonly sendStatus: (lease: BridgeRootLease, args: { messageId: string }, guard: Guard, signal: AbortSignal) => Promise<Json>;
++  // This closes only the captured owned broker registration/connection. The
++  // signal aborts on disposal deadline; it is not the already-aborted call life.
++  readonly close: (signal: AbortSignal) => Promise<void>;
++}
++
++export type BridgeDisposal = { readonly status: "closed" | "failed" | "timedOut" };
++export interface BridgeClock {
++  readonly setTimeout: (callback: () => void, ms: number) => unknown;
++  readonly clearTimeout: (handle: unknown) => void;
++}
++const realClock: BridgeClock = {
++  setTimeout: (callback, ms) => setTimeout(callback, ms),
++  clearTimeout: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
++};
++
++const empty = { type: "object", properties: {}, additionalProperties: false } as const;
++const strings = (names: string[]) => ({
++  type: "object", properties: Object.fromEntries(names.map((name) => [name, { type: "string", minLength: 1 }])),
++  required: names, additionalProperties: false,
++});
++export const bridgeDynamicTools: ReadonlyArray<CodexSchema.ClientRequest__DynamicToolSpec> = [{
++  type: "namespace", name: "agent_bridge", description: "App-owned peer messaging for this root only.",
++  tools: [
++    { type: "function", name: "peers", description: "List permitted peer references.", inputSchema: empty },
++    { type: "function", name: "pending", description: "List pending messages.", inputSchema: empty },
++    { type: "function", name: "read_message", description: "Read a message using existing acknowledgment rules.", inputSchema: strings(["messageId"]) },
++    { type: "function", name: "send", description: "Send text to a permitted peer; never starts or controls tasks.", inputSchema: strings(["messageId", "recipientRef", "text"]) },
++    { type: "function", name: "send_status", description: "Read the outcome of this scope's message ID.", inputSchema: strings(["messageId"]) },
++  ],
++}];
++
++export const bridgeDenied = (): CodexSchema.DynamicToolCallResponse => ({
++  success: false, contentItems: [{ type: "inputText", text: "Bridge messaging unavailable for this call; do not retry automatically." }],
++});
++
++function exactStrings(value: Json, keys: readonly string[]): Record<string, string> | undefined {
++  if (!value || typeof value !== "object" || Array.isArray(value)) return;
++  if (Object.keys(value).length !== keys.length) return;
++  const out: Record<string, string> = {};
++  for (const key of keys) {
++    if (!Object.hasOwn(value, key)) return;
++    const text = value[key as keyof typeof value];
++    if (typeof text !== "string" || text.length === 0 || text.length > 16_384) return;
++    out[key] = text;
++  }
++  return out;
++}
++
++// One instance per owned app-server stdio session; absence of the injected port
++// means no instance, no tool registration, and denied persisted tool requests.
++export function makeBridgeDynamicSession(scope: BridgeAppScope, port: BridgeMessagingPort, options: { readonly clock?: BridgeClock } = {}) {
++  const owner = Object.freeze({ ...scope });
++  const lifetime = new AbortController();
++  const clock = options.clock ?? realClock;
++  let root: BridgeRootLease | undefined;
++  let startReserved = false;
++  let disposal: Promise<BridgeDisposal> | undefined;
++  type Entry = {
++    readonly fingerprint: string;
++    readonly active: BridgeActiveRoot;
++    pending: Promise<void>;
++    response: CodexSchema.DynamicToolCallResponse | undefined;
++  };
++  // No eviction or re-execution: at most 1,024 operations, each with at most
++  // 16,384 response-text characters, retained only in this session generation.
++  const entries = new Map<string, Entry>();
++  const staticAdmission = (lease: BridgeRootLease, call: CodexSchema.DynamicToolCallParams, active: BridgeActiveRoot) =>
++    root === lease && !lifetime.signal.aborted && port.isLive() && !active.isChild &&
++    active.appThreadId === owner.appThreadId && active.nativeThreadId === lease.nativeThreadId &&
++    call.threadId === lease.nativeThreadId && active.nativeTurnId === call.turnId;
++  const current = async (lease: BridgeRootLease, call: CodexSchema.DynamicToolCallParams, active: BridgeActiveRoot) =>
++    staticAdmission(lease, call, active) && await active.isCurrent() && staticAdmission(lease, call, active);
++
++  async function execute(entry: Entry, lease: BridgeRootLease, call: CodexSchema.DynamicToolCallParams, active: BridgeActiveRoot, args: Record<string, string>) {
++    const operation = new AbortController();
++    const combined = AbortSignal.any([lifetime.signal, operation.signal]);
++    const guard = async () => !combined.aborted && await current(lease, call, active) && !combined.aborted;
++    let abortWaiter: () => void = () => {};
++    let timer: unknown;
++    const interrupted = new Promise<CodexSchema.DynamicToolCallResponse>((resolve) => {
++      abortWaiter = () => resolve(bridgeDenied());
++      combined.addEventListener("abort", abortWaiter, { once: true });
++      timer = clock.setTimeout(() => operation.abort(), 10_000);
++    });
++    const work = (async (): Promise<CodexSchema.DynamicToolCallResponse> => {
++      try {
++        if (!await guard() || !await port.admitMain(lease, combined) || !await guard()) return bridgeDenied();
++        let result: Json;
++        switch (call.tool) {
++          case "peers": result = await port.peers(lease, guard, combined); break;
++          case "pending": result = await port.pending(lease, guard, combined); break;
++          case "read_message": result = await port.readMessage(lease, { messageId: args.messageId! }, guard, combined); break;
++          case "send": result = await port.send(lease, { messageId: args.messageId!, recipientRef: args.recipientRef!, text: args.text! }, guard, combined); break;
++          case "send_status": result = await port.sendStatus(lease, { messageId: args.messageId! }, guard, combined); break;
++          default: return bridgeDenied();
++        }
++        if (!await guard()) return bridgeDenied();
++        const text = JSON.stringify(result);
++        if (text === undefined || text.length > 16_384) return bridgeDenied();
++        return Object.freeze({ success: true, contentItems: Object.freeze([Object.freeze({ type: "inputText" as const, text })]) });
++      } catch {
++        // Any uncertain send/read stays settled; no retry against this or a new lease.
++        return bridgeDenied();
++      }
++    })();
++    try {
++      const response = await Promise.race([work, interrupted]);
++      if (staticAdmission(lease, call, active)) entry.response = response;
++    } finally {
++      clock.clearTimeout(timer);
++      combined.removeEventListener("abort", abortWaiter);
++      operation.abort();
++    }
++  }
++  return {
++    // Reserve synchronously before sending start; uncertain registration is not
++    // retried in this session. Another ensureThread cannot acquire this root.
++    reserveStart(): boolean {
++      if (startReserved || lifetime.signal.aborted || !port.isLive()) return false;
++      startReserved = true;
++      return true;
++    },
++    // Invoke only with thread/start's response, never IDs supplied by tools,
++    // native children, thread/resume, or an untrusted transcript/HTTP request.
++    bindStartedRoot(nativeThreadId: string): void {
++      if (!startReserved || lifetime.signal.aborted || !port.isLive() || root || !nativeThreadId) throw new Error("Bridge root cannot be rebound");
++      root = Object.freeze({ ...owner, nativeThreadId });
++    },
++    close(): Promise<BridgeDisposal> {
++      if (disposal) return disposal;
++      // Revoke before any await. Pending operations settle unavailable, and no
++      // cached private response remains reachable through a suspended waiter.
++      lifetime.abort();
++      for (const entry of entries.values()) entry.response = undefined;
++      entries.clear();
++      const closing = new AbortController();
++      disposal = new Promise<BridgeDisposal>((resolve) => {
++        let done = false;
++        const finish = (status: BridgeDisposal["status"]) => {
++          if (done) return;
++          done = true;
++          clock.clearTimeout(timer);
++          resolve(Object.freeze({ status }));
++        };
++        const timer = clock.setTimeout(() => { closing.abort(); finish("timedOut"); }, 2_000);
++        // Catch synchronous throws and promise rejections without logging internals.
++        Promise.resolve().then(() => port.close(closing.signal)).then(
++          () => finish("closed"), () => finish("failed"),
++        );
++      });
++      return disposal;
++    },
++    async dispatch(call: CodexSchema.DynamicToolCallParams, active: BridgeActiveRoot | undefined, signal: AbortSignal): Promise<CodexSchema.DynamicToolCallResponse> {
++      const lease = root;
++      if (!lease || call.namespace !== "agent_bridge" || !call.callId ||
++          call.threadId !== lease.nativeThreadId || lifetime.signal.aborted || !port.isLive()) return bridgeDenied();
++      const keys = call.tool === "peers" || call.tool === "pending" ? [] :
++        call.tool === "read_message" || call.tool === "send_status" ? ["messageId"] :
++        call.tool === "send" ? ["messageId", "recipientRef", "text"] : undefined;
++      const args = keys && exactStrings(call.arguments, keys);
++      if (!args) return bridgeDenied();
++      const key = JSON.stringify([owner.appThreadId, owner.providerInstanceId, owner.providerSessionId, call.threadId, call.turnId, call.callId]);
++      // Current whitelist permits only string-valued fields. Sorted tuples are
++      // an exact canonical representation, independent of input property order.
++      const fingerprint = JSON.stringify([call.namespace, call.tool, Object.entries(args).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)]);
++      let entry = entries.get(key);
++      if (entry) {
++        if (entry.fingerprint !== fingerprint) return bridgeDenied();
++        if (active && !staticAdmission(lease, call, active)) return bridgeDenied();
++      } else {
++        if (!active || !staticAdmission(lease, call, active) || signal.aborted || entries.size >= 1_024) return bridgeDenied();
++        entry = { fingerprint, active, pending: Promise.resolve(), response: undefined };
++        entries.set(key, entry); // Reserve before the first asynchronous admission.
++        entry.pending = execute(entry, lease, call, active, args);
++      }
++      // Request cancellation detaches an Effect waiter, not the shared broker
++      // operation. One session-owned deadline/abort controls every replay.
++      await entry.pending;
++      // Warm replay may precede active-turn reconstruction. It may join only
++      // this exact saved call, and still uses the original authenticated guard.
++      if (!await current(lease, call, entry.active)) return bridgeDenied();
++      return entry.response ?? bridgeDenied();
++    },
++  };
++}
+diff --git a/packages/effect-codex-app-server/src/PrivateRequestAdmission.test.ts b/packages/effect-codex-app-server/src/PrivateRequestAdmission.test.ts
+new file mode 100644
+index 0000000..6bcf3fb
+--- /dev/null
++++ b/packages/effect-codex-app-server/src/PrivateRequestAdmission.test.ts
+@@ -0,0 +1,49 @@
++import { it } from "@effect/vitest";
++import assert from "node:assert/strict";
++import { makePrivateRequestAdmission } from "./PrivateRequestAdmission.ts";
++const request = (id: string | number, params: unknown = { threadId: "root", turnId: "turn", callId: "call", arguments: { a: "x", b: "y" } }) => ({ id, method: "item/tool/call", params });
++it("32 active admission tickets deduplicate before overload without allocating another handler", () => {
++  const gate = makePrivateRequestAdmission();
++  const tickets = Array.from({ length: 32 }, (_, id) => gate.admit(request(id)));
++  assert.equal(tickets.every((ticket) => ticket.kind === "accepted"), true);
++  for (let i = 0; i < 64; i++) assert.equal(gate.admit(request(0)).kind, "replay");
++  assert.deepEqual(gate.size(), { active: 32, records: 32 });
++  assert.equal(gate.admit(request(33)).kind, "overloaded");
++  assert.equal(gate.admit(request(33)).kind, "replay");
++  assert.deepEqual(gate.size(), { active: 32, records: 33 });
++});
++it("same ID with changed method/params conflicts without releasing original admission", () => {
++  const gate = makePrivateRequestAdmission();
++  const original = gate.admit(request("same")); assert.equal(original.kind, "accepted");
++  assert.equal(gate.admit({ ...request("same"), method: "other" }).kind, "conflict");
++  assert.equal(gate.admit(request("same", { threadId: "child" })).kind, "conflict");
++  assert.deepEqual(gate.size(), { active: 1, records: 1 });
++  if (original.kind === "accepted") gate.finish(original.ticket);
++  assert.equal(gate.admit(request("same")).kind, "replay");
++  assert.deepEqual(gate.size(), { active: 0, records: 1 });
++});
++it("canonical key order coalesces but distinct JSON values and ID types do not alias", () => {
++  const gate = makePrivateRequestAdmission();
++  gate.admit(request(1, { a: "a", b: ["b", "c"] }));
++  assert.equal(gate.admit(request(1, { b: ["b", "c"], a: "a" })).kind, "replay");
++  assert.equal(gate.admit(request(1, { a: "a", b: ["c", "b"] })).kind, "conflict");
++  assert.equal(gate.admit(request("1")).kind, "accepted");
++  gate.admit({ id: 2, method: "item/tool/call" });
++  assert.equal(gate.admit({ id: 2, method: "item/tool/call", params: null }).kind, "conflict");
++});
++it("timeout/cancellation settlement is tombstoned; shutdown isolates replacement generation", () => {
++  const old = makePrivateRequestAdmission(); const entry = old.admit(request(1));
++  if (entry.kind !== "accepted") throw new Error("expected acceptance");
++  old.finish(entry.ticket); old.finish(entry.ticket);
++  assert.equal(old.admit(request(1)).kind, "replay");
++  old.close(); assert.equal(old.admit(request(1)).kind, "closed");
++  const replacement = makePrivateRequestAdmission(); replacement.admit(request(1));
++  old.finish(entry.ticket); assert.deepEqual(replacement.size(), { active: 1, records: 1 });
++});
++it("record exhaustion is explicit and never evicts a call into re-execution", () => {
++  const gate = makePrivateRequestAdmission(1, 2);
++  gate.admit(request(1)); gate.admit(request(2));
++  assert.equal(gate.admit(request(3)).kind, "exhausted");
++  assert.equal(gate.admit(request(1)).kind, "replay");
++  assert.deepEqual(gate.size(), { active: 1, records: 2 });
++});
+diff --git a/packages/effect-codex-app-server/src/PrivateRequestAdmission.ts b/packages/effect-codex-app-server/src/PrivateRequestAdmission.ts
+new file mode 100644
+index 0000000..4b15f5a
+--- /dev/null
++++ b/packages/effect-codex-app-server/src/PrivateRequestAdmission.ts
+@@ -0,0 +1,70 @@
++// One instance per private protocol/connection generation. No payload cache.
++import { createHash } from "node:crypto";
++import type { CodexAppServerIncomingRequest } from "./protocol.ts";
++
++export type RequestTicket = { readonly id: string; readonly fingerprint: string; state: "active" | "settled" };
++export type RequestAdmission =
++  | { readonly kind: "accepted"; readonly ticket: RequestTicket }
++  | { readonly kind: "replay" | "conflict" | "overloaded" | "exhausted" | "closed" };
++
++// Incoming JSON has already passed the wire-size cap. Hash sorted JSON members
++// incrementally: never retain request params or private result payloads here.
++function fingerprint(request: CodexAppServerIncomingRequest): string {
++  const hash = createHash("sha256");
++  const visit = (value: unknown, depth: number): void => {
++    if (depth > 128) throw new Error("RPC JSON nesting exceeds admission limit");
++    if (value === null || typeof value !== "object") {
++      const text = JSON.stringify(value);
++      if (text === undefined) throw new Error("RPC value must be JSON");
++      hash.update(text); return;
++    }
++    if (Array.isArray(value)) {
++      hash.update("[");
++      value.forEach((item, index) => { if (index) hash.update(","); visit(item, depth + 1); });
++      hash.update("]"); return;
++    }
++    hash.update("{");
++    Object.keys(value).sort().forEach((key, index) => {
++      if (index) hash.update(",");
++      hash.update(JSON.stringify(key)); hash.update(":");
++      visit((value as Record<string, unknown>)[key], depth + 1);
++    });
++    hash.update("}");
++  };
++  visit({ method: request.method, ...(Object.hasOwn(request, "params") ? { params: request.params } : {}) }, 0);
++  return hash.digest("hex");
++}
++
++export function makePrivateRequestAdmission(maxActive = 32, maxRecords = 1_024) {
++  const records = new Map<string, RequestTicket>();
++  let active = 0;
++  let open = true;
++  return {
++    isOpen: () => open,
++    admit(request: CodexAppServerIncomingRequest): RequestAdmission {
++      if (!open) return { kind: "closed" };
++      if (String(request.id).length > 512) return { kind: "exhausted" };
++      const id = JSON.stringify([typeof request.id, request.id]);
++      let digest: string;
++      try { digest = fingerprint(request); } catch { return { kind: "exhausted" }; }
++      const existing = records.get(id);
++      // Resolve before the cap; duplicate/conflict never creates a fiber or
++      // emits an RPC response which could steal the original's callback.
++      if (existing) return { kind: existing.fingerprint === digest ? "replay" : "conflict" };
++      if (records.size >= maxRecords) return { kind: "exhausted" };
++      const ticket: RequestTicket = { id, fingerprint: digest, state: active >= maxActive ? "settled" : "active" };
++      records.set(id, ticket);
++      if (ticket.state === "settled") return { kind: "overloaded" };
++      active++;
++      return { kind: "accepted", ticket };
++    },
++    finish(ticket: RequestTicket): void {
++      if (!open || records.get(ticket.id) !== ticket || ticket.state !== "active") return;
++      ticket.state = "settled";
++      active--;
++    },
++    close(): void { open = false; records.clear(); active = 0; },
++    // Scalar counters only; diagnostics/tests never expose payloads or results.
++    size: () => ({ active, records: records.size }),
++  };
++}
+diff --git a/packages/effect-codex-app-server/src/protocol.ts b/packages/effect-codex-app-server/src/protocol.ts
+index bf67174..9c0c539 100644
+--- a/packages/effect-codex-app-server/src/protocol.ts
++++ b/packages/effect-codex-app-server/src/protocol.ts
+@@ -1,3 +1,4 @@
++import { makePrivateRequestAdmission } from "./PrivateRequestAdmission.ts";
+ import * as Cause from "effect/Cause";
+ import * as Deferred from "effect/Deferred";
+ import * as Effect from "effect/Effect";
+@@ -174,7 +175,8 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
+     const terminationHandled = yield* Ref.make(false);
+     const terminationFailure = yield* Ref.make(Option.none<CodexError.CodexAppServerError>());
+     const terminationSignal = yield* Deferred.make<void>();
+-    const activeRequestHandlers = yield* Ref.make(0);
++    const requestAdmission = makePrivateRequestAdmission();
++    yield* Effect.addFinalizer(() => Effect.sync(() => requestAdmission.close()));
+ 
+     const logProtocol = (event: CodexAppServerProtocolLogEvent) => {
+       if (event.direction === "incoming" && !options.logIncoming) {
+@@ -207,6 +209,7 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
+         return [
+           Effect.gen(function* () {
+             const error = yield* classify();
++            requestAdmission.close();
+             yield* Ref.set(terminationFailure, Option.some(error));
+             yield* failAllPending(error);
+             yield* Queue.end(outgoing);
+@@ -226,6 +229,7 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
+     const offerOutgoing =
+       /* Every protocol write reaches this helper; request spans cover the operation. */
+       Effect.fnUntraced(function* (message: Record<string, unknown>) {
++        if (!requestAdmission.isOpen()) return yield* new CodexError.CodexAppServerInputStreamEndedError({});
+         const failure = yield* Ref.get(terminationFailure);
+         if (Option.isSome(failure)) return yield* failure.value;
+ 
+@@ -303,53 +307,53 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
+     };
+ 
+     const handleRequest = (request: CodexAppServerIncomingRequest) =>
+-      Queue.offer(incomingRequests, request).pipe(
+-        Effect.flatMap(() => {
+-          const handler = options.onRequest;
+-          if (!handler) return Effect.void;
+-
+-          return Ref.modify(activeRequestHandlers, (count) =>
+-            count >= MAX_BUFFERED_RAW_MESSAGES ? [false, count] : [true, count + 1],
+-          ).pipe(
+-            Effect.flatMap((accepted) => {
+-              if (!accepted) {
+-                return respondError(
+-                  request.id,
+-                  CodexError.CodexAppServerRequestError.overloaded(
+-                    "Too many Codex requests are already active.",
+-                  ),
+-                );
+-              }
+-
+-              return handler(request).pipe(
+-                Effect.matchEffect({
+-                  onFailure: (error) =>
+-                    respondError(
+-                      request.id,
+-                      CodexError.CodexAppServerRequestError.fromAppServerError(
+-                        error,
+-                        request.method,
+-                      ),
+-                    ),
+-                  onSuccess: (result) => respond(request.id, result),
+-                }),
+-                Effect.ensuring(
+-                  Ref.update(activeRequestHandlers, (count) => Math.max(0, count - 1)),
+-                ),
+-                Effect.catch((error) =>
+-                  handleTermination(() => Effect.succeed(error)).pipe(
+-                    Effect.forkIn(protocolScope),
+-                    Effect.asVoid,
+-                  ),
+-                ),
+-                Effect.forkIn(requestHandlerScope, { startImmediately: true }),
+-                Effect.asVoid,
+-              );
++      Effect.suspend(() => {
++        const handler = options.onRequest;
++        // Passive raw-observer mode has no managed handler/cap. CodexClient
++        // always supplies onRequest; that path owns identity and settlement.
++        if (!handler) return Queue.offer(incomingRequests, request).pipe(Effect.asVoid);
++        const decision = requestAdmission.admit(request);
++        if (decision.kind === "replay" || decision.kind === "conflict" || decision.kind === "closed") {
++          // Never answer a conflicting replay under the legitimate original ID.
++          // Pending replay shares its one handler/response; settled replay is a
++          // tombstone on this reliable stdio generation, with no private cache.
++          return Effect.void;
++        }
++        if (decision.kind === "exhausted") {
++          return handleTermination(() => Effect.succeed(
++            new CodexError.CodexAppServerTransportError({
++              operation: "read-input-stream", cause: new Error("Private RPC admission budget exhausted."),
+             }),
+-          );
+-        }),
+-        Effect.asVoid,
+-      );
++          ));
++        }
++        if (decision.kind === "overloaded") {
++          return respondError(request.id, CodexError.CodexAppServerRequestError.overloaded(
++            "Too many Codex requests are already active.",
++          ));
++        }
++        const ticket = decision.ticket;
++        return Queue.offer(incomingRequests, request).pipe(
++          Effect.andThen(handler(request).pipe(
++            Effect.matchEffect({
++              onFailure: (error) => respondError(request.id,
++                CodexError.CodexAppServerRequestError.fromAppServerError(error, request.method)),
++              onSuccess: (result) => respond(request.id, result),
++            }),
++            Effect.ensuring(Effect.sync(() => requestAdmission.finish(ticket))),
++            // Interruption without a response must end this generation, rather
++            // than leave an unanswered tombstone on an otherwise live channel.
++            Effect.onInterrupt(() => handleTermination(() => Effect.succeed(
++              new CodexError.CodexAppServerInputStreamEndedError({}),
++            )).pipe(Effect.forkIn(protocolScope, { startImmediately: true }), Effect.asVoid)),
++            Effect.catch((error) => handleTermination(() => Effect.succeed(error)).pipe(
++              Effect.forkIn(protocolScope), Effect.asVoid,
++            )),
++            Effect.forkIn(requestHandlerScope, { startImmediately: true }),
++            Effect.asVoid,
++          )),
++          Effect.asVoid,
++        );
++      });
+ 
+     const handleNotification = (notification: CodexAppServerIncomingNotification) =>
+       Queue.offer(incomingNotifications, notification).pipe(

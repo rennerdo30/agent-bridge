@@ -19,6 +19,8 @@ Source evidence: upstream pin `67c0fc0cdaf963b103518862dd7b68a9c758ecf2`, `packa
 
 **Native Codex is currently unsupported without new, deliberate upstream transport injection.** The AB-446 audited native Codex shell had no `T3_*` environment. Its scoped T3 MCP token existed only in provider MCP configuration; Bridge never extracts it. Native Claude's injected SDK MCP configuration likewise does not establish inherited ACP transport. Having T3 tools in the model's tool list alone is insufficient for a separate Bridge server to call them. Automatic detection does not change this boundary or claim that every native T3 session receives reduced tools. No new live host probe was performed for AB-457.
 
+AB-458's [native injection contract](t3-native-bridge-contract.md) traces upstream T3 commit `968dd51704441138559a3fe9c348719f2b11e0c6`. Native Codex receives inline per-thread `mcp_servers.t3-code` URL/header configuration, rather than the token environment described by that pin's older orchestration document. The proposed integration supplies transport only to an explicitly registered local Bridge stdio server. Its upstream patch artifact is hard-disabled pending proof of native-child isolation and runtime-config non-persistence. Neither gate is satisfied by this documentation or its projection fixtures; native acceptance remains open. No Bridge production code or installed T3 files change in this package.
+
 ## MCP profiles
 
 Set `AGENT_BRIDGE_MCP_PROFILE` at server startup:

@@ -1,0 +1,355 @@
+{
+  "schema": 4,
+  "kind": "Offline identity/selector correction; previous hosted baseline qualified separately",
+  "pid": 63228,
+  "bridgeInputHead": "bd1ab3397987a009f42364fecae8274dc6c39354",
+  "t3Pin": "968dd51704441138559a3fe9c348719f2b11e0c6",
+  "codexInspectedSourcePin": "6203846fb3ef040f62eed9b35bc6629c8e88980a",
+  "sourceGitBlobCount": 30,
+  "externalVitestSourceGitBlobCount": 4,
+  "effectiveTreeSha256": "4148804c9fde7472a94370627ef88117bc1b77924bae0175d2a026ede2a021a3",
+  "changedEffectiveSourcesSinceHosted": [
+    {
+      "path": "apps/server/src/orchestration-v2/Adapters/CodexBridgeDynamicTools.test.ts",
+      "sha256": "e4d4965a1cf45cfc4a8258edc61ef8e079186d567c1a0890c92c2cce14ed4117"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/Adapters/CodexBridgeDynamicTools.ts",
+      "sha256": "b36639f0142732f7b70d096a40292931bb6b285cd23c41bc6becb8d71c17189f"
+    }
+  ],
+  "patches": [
+    {
+      "path": "01-reviewed.patch",
+      "sha256": "e0b3c5ba6357eaf656aed86f8980b7a83338617efabbc4c4e0ce0d583e348f61"
+    },
+    {
+      "path": "02-disposal-test.patch",
+      "sha256": "c799b3e14096ab75ffa60528faa3800a8b7057a5487d25238afd893b3ed0d4f7"
+    },
+    {
+      "path": "03-round3.patch",
+      "sha256": "ea3645b11ce13cc8ddfd6ee1a2601e0734707d58dd121d8fc78f9a6163ccfbb7"
+    }
+  ],
+  "materializedConfigs": [
+    {
+      "source": "ci.vitest.config.ts.template",
+      "path": ".ab458-ci.vitest.config.ts",
+      "sha256": "43b4ab80ef6e94cc2b4306acc4975f59602314b35ad008066cf499da7a5b6ac3"
+    },
+    {
+      "source": "ci.typecheck.json",
+      "path": ".ab458-ci.typecheck.json",
+      "sha256": "bab00e3cc1be9b79fb6b0e32096d2b324d9d430435beee357ca41ea6cce1302b"
+    }
+  ],
+  "historicalHostedEvidence": {
+    "head": "bd1ab3397987a009f42364fecae8274dc6c39354",
+    "runId": "39701228124",
+    "overall": "failed-or-inconclusive",
+    "typecheck": {
+      "label": "pinned-typecheck",
+      "command": "/home/runner/work/_temp/ab458-VLx2Ay/tools/pnpm",
+      "args": [
+        "exec",
+        "tsc-rs",
+        "--noEmit",
+        "-p",
+        ".ab458-ci.typecheck.json"
+      ],
+      "cwd": "/home/runner/work/_temp/ab458-VLx2Ay/t3",
+      "timeoutMs": 180000,
+      "expected": 0,
+      "pid": 2952,
+      "exit": 0,
+      "signal": null,
+      "timedOut": false
+    },
+    "baseline": {
+      "pid": 3003,
+      "exit": 0,
+      "reportSha256": "de19cdf2c225a77411f344979347f98f1138eb97d7101bfbc0a38f2e0d92e773",
+      "proof": {
+        "total": 58,
+        "executed": 58,
+        "target": "AB458 production admission: actual adapter registration, 32-limit warm replay, roots, fault and close",
+        "status": "passed",
+        "marker": null
+      }
+    },
+    "qualifiedMutations": [
+      {
+        "name": "production-handler",
+        "pid": 3122,
+        "exit": 1,
+        "reportSha256": "0d9af861225ccb71f030e19270632a97dd96f3089e293c0b3f334cf5e7c9636d",
+        "proof": {
+          "total": 1,
+          "executed": 1,
+          "target": "AB458 production admission: actual adapter registration, 32-limit warm replay, roots, fault and close",
+          "status": "failed",
+          "marker": "AB458_HANDLER_MUST_SUSPEND32"
+        }
+      },
+      {
+        "name": "production-registration",
+        "pid": 3195,
+        "exit": 1,
+        "reportSha256": "f59398a5e9b7b7563d29110ca31c487cfe73f9902258e0bcdd1bd0e972e5db40",
+        "proof": {
+          "total": 1,
+          "executed": 1,
+          "target": "AB458 production admission: actual adapter registration, 32-limit warm replay, roots, fault and close",
+          "status": "failed",
+          "marker": "AB458_REGISTRATION"
+        }
+      },
+      {
+        "name": "cap-order",
+        "pid": 3268,
+        "exit": 1,
+        "reportSha256": "92f358088cd63652c8f7721da15ef7056bddf19da6cd10af99acc91b4ec7727d",
+        "proof": {
+          "total": 1,
+          "executed": 1,
+          "target": "AB458 production admission: actual adapter registration, 32-limit warm replay, roots, fault and close",
+          "status": "failed",
+          "marker": "AB458_REPLAY_MUST_REMAIN_PENDING"
+        }
+      },
+      {
+        "name": "encoded-response",
+        "pid": 3342,
+        "exit": 1,
+        "reportSha256": "4c01f9312afa8724d33d5dab54509b91adb412a355ec8bb98ba59908052adf18",
+        "proof": {
+          "total": 1,
+          "executed": 1,
+          "target": "AB458 production admission: actual adapter registration, 32-limit warm replay, roots, fault and close",
+          "status": "failed",
+          "marker": "AB458_WIRE_RESULT"
+        }
+      }
+    ],
+    "unqualifiedSuspendedMutation": {
+      "pid": 3415,
+      "exit": 0,
+      "executed": 0,
+      "skipped": 8,
+      "reportSha256": "e05aff516fd7e8444ed19b662758d8519107eb7f6c609961c8b686ce91f383c9"
+    },
+    "receiptSha256": "a88435b464f83b2ba76c4fdf54887bccdeab7c3ffa6b2abf73d5ce190d15f62c"
+  },
+  "currentOffline": {
+    "validator": {
+      "passed": 23,
+      "failed": 0,
+      "exit": 0
+    },
+    "selectorSeparatorMutation": {
+      "passed": 20,
+      "failed": 3,
+      "exit": 1
+    },
+    "infrastructureBypassMutation": {
+      "passed": 19,
+      "failed": 4,
+      "exit": 1
+    },
+    "scope": "Pure Node validator/selector only; no new actual upstream execution",
+    "allFiveSelections": [
+      {
+        "name": "production-handler",
+        "file": "apps/server/src/orchestration-v2/Adapters/CodexBridgeDynamicTools.adapter.test.ts",
+        "expectedTest": "AB458 production admission: actual adapter registration, 32-limit warm replay, roots, fault and close",
+        "testNamePattern": "^\\x41B458\\x20production\\x20admission\\x3a\\x20actual\\x20adapter\\x20registration\\x2c\\x2032\\x2dlimit\\x20warm\\x20replay\\x2c\\x20roots\\x2c\\x20fault\\x20and\\x20close$"
+      },
+      {
+        "name": "production-registration",
+        "file": "apps/server/src/orchestration-v2/Adapters/CodexBridgeDynamicTools.adapter.test.ts",
+        "expectedTest": "AB458 production admission: actual adapter registration, 32-limit warm replay, roots, fault and close",
+        "testNamePattern": "^\\x41B458\\x20production\\x20admission\\x3a\\x20actual\\x20adapter\\x20registration\\x2c\\x2032\\x2dlimit\\x20warm\\x20replay\\x2c\\x20roots\\x2c\\x20fault\\x20and\\x20close$"
+      },
+      {
+        "name": "cap-order",
+        "file": "apps/server/src/orchestration-v2/Adapters/CodexBridgeDynamicTools.adapter.test.ts",
+        "expectedTest": "AB458 production admission: actual adapter registration, 32-limit warm replay, roots, fault and close",
+        "testNamePattern": "^\\x41B458\\x20production\\x20admission\\x3a\\x20actual\\x20adapter\\x20registration\\x2c\\x2032\\x2dlimit\\x20warm\\x20replay\\x2c\\x20roots\\x2c\\x20fault\\x20and\\x20close$"
+      },
+      {
+        "name": "encoded-response",
+        "file": "apps/server/src/orchestration-v2/Adapters/CodexBridgeDynamicTools.adapter.test.ts",
+        "expectedTest": "AB458 production admission: actual adapter registration, 32-limit warm replay, roots, fault and close",
+        "testNamePattern": "^\\x41B458\\x20production\\x20admission\\x3a\\x20actual\\x20adapter\\x20registration\\x2c\\x2032\\x2dlimit\\x20warm\\x20replay\\x2c\\x20roots\\x2c\\x20fault\\x20and\\x20close$"
+      },
+      {
+        "name": "suspended-terminal-publication",
+        "file": "packages/effect-codex-app-server/src/PrivateProtocolLifecycle.test.ts",
+        "expectedTest": "AB458 real protocol lifecycle publishes suspended-handler termination before owned cleanup completes",
+        "testNamePattern": "^\\x41B458\\x20real\\x20protocol\\x20lifecycle > \\x70ublishes\\x20suspended\\x2dhandler\\x20termination\\x20before\\x20owned\\x20cleanup\\x20completes$"
+      }
+    ],
+    "steps": [
+      {
+        "label": "syntax-gate.mjs",
+        "pid": 75792,
+        "timeoutMs": 20000,
+        "exit": 0,
+        "expected": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "label": "syntax-gate.test.mjs",
+        "pid": 45584,
+        "timeoutMs": 20000,
+        "exit": 0,
+        "expected": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "label": "syntax-run.mjs",
+        "pid": 75040,
+        "timeoutMs": 20000,
+        "exit": 0,
+        "expected": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "label": "syntax-verify.mjs",
+        "pid": 9176,
+        "timeoutMs": 20000,
+        "exit": 0,
+        "expected": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "label": "validator-green",
+        "pid": 64576,
+        "timeoutMs": 20000,
+        "exit": 0,
+        "expected": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "label": "selector-separator-red",
+        "pid": 29352,
+        "timeoutMs": 20000,
+        "exit": 1,
+        "expected": 1,
+        "signal": null,
+        "error": null
+      },
+      {
+        "label": "infrastructure-red",
+        "pid": 35056,
+        "timeoutMs": 20000,
+        "exit": 1,
+        "expected": 1,
+        "signal": null,
+        "error": null
+      }
+    ],
+    "layeredApplication": [
+      {
+        "label": "verify-workflow",
+        "pid": 73852,
+        "timeoutMs": 20000,
+        "exit": 0,
+        "expected": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "label": "verify-entry",
+        "pid": 71180,
+        "timeoutMs": 20000,
+        "exit": 0,
+        "expected": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "label": "check-01-reviewed.patch",
+        "pid": 57664,
+        "timeoutMs": 20000,
+        "exit": 0,
+        "expected": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "label": "apply-01-reviewed.patch",
+        "pid": 68580,
+        "timeoutMs": 20000,
+        "exit": 0,
+        "expected": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "label": "check-02-disposal-test.patch",
+        "pid": 78700,
+        "timeoutMs": 20000,
+        "exit": 0,
+        "expected": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "label": "apply-02-disposal-test.patch",
+        "pid": 26168,
+        "timeoutMs": 20000,
+        "exit": 0,
+        "expected": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "label": "check-03-round3.patch",
+        "pid": 70840,
+        "timeoutMs": 20000,
+        "exit": 0,
+        "expected": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "label": "apply-03-round3.patch",
+        "pid": 61996,
+        "timeoutMs": 20000,
+        "exit": 0,
+        "expected": 0,
+        "signal": null,
+        "error": null
+      }
+    ],
+    "syntax": {
+      "effectiveFiles": 14,
+      "productionMutationVariants": 5,
+      "exit": 0,
+      "individualPidsAndExits": "Bound in rawOfflineReceiptSha256"
+    }
+  },
+  "preparedIdentityFixtures": {
+    "count": 4,
+    "execution": "NOT RUN",
+    "scope": "Nonempty 1..512-code-unit scope/root/call/active identities; no JSON/cache/port access on invalid input; bounded coalescing and argument checks"
+  },
+  "unchangedProductionPolicies": "Protocol admission, terminal publication, production adapter wiring, disposal/replay policy and five production mutations unchanged; only helper ID preflight and its tests change upstream",
+  "notRun": [
+    "Revised pinned upstream typecheck",
+    "Revised real production baseline including four new identity fixtures",
+    "Corrected hosted CLI selector invocation",
+    "Corrected suspended-terminal-publication mutation and complete five-mutation gate",
+    "Native/provider/broker acceptance"
+  ],
+  "checksSha256": "44f6c5142403a9108356fc37563f3419e1f688a5f23c2242ebb0119a0c15db8a",
+  "rawOfflineReceiptSha256": "24cfc4ead2eb2d010a9016d86634e505422956f5f5a0b642980790d44387054e",
+  "rawEvidenceDirectory": "E:/AgentData/reports/ab458-selector-20261022-t32af0942b"
+}
