@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import * as jobArchive from "../src/core/job-archive.js";
 import { canonicalProjectRoot, projectGroupsEnabled } from "../src/core/project-identity.js";
 import { ProjectGroups } from "../src/core/project-groups.js";
 import { BridgeNode } from "../src/core/node.js";
@@ -19,7 +20,7 @@ import type { ServerContext } from "../src/mcp/server.js";
 let env: TestEnv;
 const nodes: BridgeNode[] = [];
 beforeEach(() => { env = makeEnv(); });
-afterEach(async () => { for (const n of nodes.splice(0)) await n.stop(); await env.cleanup(); });
+afterEach(async () => { vi.restoreAllMocks(); for (const n of nodes.splice(0)) await n.stop(); await env.cleanup(); });
 function repo() {
   const path = join(env.home, "project"); mkdirSync(path);
   // Canonical project discovery reads the ordinary Git layout directly; this
@@ -41,6 +42,50 @@ function registry(project: string) {
 }
 
 describe("durable project job mail", () => {
+  it("leaves no orphan report intent while original supervisor proof is temporarily unavailable", async () => {
+    const path = repo(); registry(path);
+    const source = await node("claude-master", path), secondary = await node("codex-master", path);
+    const runner = await node("codex-job-one", path, { id: "one", owner: "first", parent: source.name });
+    const store = (source as any).broker.store as MessageStore, file = join(env.home, "jobs.json");
+    const original = readFileSync(file, "utf8"), delayed = JSON.parse(original);
+    const record = delayed.jobs.find((row: any) => row.id === "one");
+    expect(record.deliveryOwner).toBeTruthy();
+    // Model a late authority projection without inventing recipient proof. The
+    // original evidence is retained, and only its actual admission restores it.
+    record.pendingOwnerEvidence = { deliveryOwner: record.deliveryOwner, deliveryOwners: record.deliveryOwners };
+    delete record.deliveryOwner; delete record.deliveryOwners;
+    writeFileSync(file, JSON.stringify(delayed));
+    const id = randomUUID(), args = { to: source.name, body: "Exact tenth-stage retained final", conversationId: "job-one", messageId: id };
+    let retainedIntent: string | undefined;
+    try {
+      await expect(runner.send(args)).rejects.toMatchObject({ code: "unauthorized" });
+      expect(store.messagesById(id)).toEqual([]);
+      expect(store.jobRoutingGrant(id)).toBeNull();
+      retainedIntent = store.sendIntentOwner(id);
+    } finally { writeFileSync(file, original); }
+    await source.setUnavailable(true);
+    const accepted = await runner.send(args);
+    expect(retainedIntent).toBeUndefined();
+    expect(accepted.messages).toEqual([expect.objectContaining({ id, body: args.body, recipient: secondary.name })]);
+    expect((await runner.send(args)).storage?.recovered).toBe(true);
+    expect(store.messagesById(id)).toHaveLength(1);
+  });
+  it("refuses a job report before ordinary routing when a transient authority read fails", async () => {
+    const path = repo(); registry(path);
+    const source = await node("claude-master", path), secondary = await node("codex-master", path);
+    const runner = await node("codex-job-one", path, { id: "one", owner: "first", parent: source.name });
+    const store = (source as any).broker.store as MessageStore, original = jobArchive.readArchivedJobSnapshot;
+    await source.setUnavailable(true);
+    const fault = vi.spyOn(jobArchive, "readArchivedJobSnapshot").mockImplementation(() => { throw Object.assign(new Error("injected authority writer busy"), { code: "SQLITE_BUSY" }); });
+    const id = randomUUID(), args = { to: source.name, body: "Retained final during authority recovery", conversationId: "job-one", messageId: id };
+    try {
+      await expect(runner.send(args)).rejects.toMatchObject({ code: "job_index_preparing" });
+      expect(store.messagesById(id)).toEqual([]); expect(store.sendIntentOwner(id)).toBeUndefined();
+    } finally { fault.mockImplementation(original); }
+    expect((await runner.send(args)).messages).toEqual([expect.objectContaining({ id, recipient: secondary.name, body: args.body })]);
+    expect(source.unread().some(m => m.id === id)).toBe(false);
+    expect(store.messagesById(id)).toHaveLength(1);
+  });
   it("retries a job final after a rolled-back first storage without leaving an orphan send intent", async () => {
     const path = repo(); registry(path);
     const source = await node("claude-master", path), secondary = await node("codex-master", path);

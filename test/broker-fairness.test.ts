@@ -14,12 +14,15 @@ import { makeEnv, until } from "./helpers.js";
 it("accepts a fresh hook connection between synchronous request starts in a burst", async () => {
   const env = makeEnv(), token = loadOrCreateToken(env.home);
   let slow = false, probe: Promise<BridgeClient[]> | undefined;
+  const evidence = { starts: 0, completed: 0, connected: 0, probeSetupMs: 0, maxHandlerMs: 0, firstConnectAtStart: -1 };
   const hooks: BridgeClient[] = [];
   const clock = () => {
     if (slow) {
       if (!probe) {
+        const setup = performance.now();
         probe = Promise.all(Array.from({ length: 6 }, () => BridgeClient.connect(env.pipe, nullLogger, 500)
-          .then((client) => { hooks.push(client); return client; })));
+          .then((client) => { if (!evidence.connected) evidence.firstConnectAtStart = evidence.starts; evidence.connected++; hooks.push(client); return client; })));
+        evidence.probeSetupMs = performance.now() - setup;
         void probe.catch(() => {});
       }
       const end = performance.now() + 40;
@@ -30,7 +33,11 @@ it("accepts a fresh hook connection between synchronous request starts in a burs
   const broker = new Broker(env.pipe, new MessageStore(env.db, nullLogger), nullLogger, token);
   const handlers = (broker as unknown as { handlers: { send: (...args: any[]) => unknown } }).handlers;
   const send = handlers.send;
-  handlers.send = (...args) => { clock(); return send(...args); };
+  handlers.send = (...args) => {
+    const began = performance.now(); evidence.starts++;
+    try { clock(); return Promise.resolve(send(...args)).finally(() => { evidence.completed++; }); }
+    finally { evidence.maxHandlerMs = Math.max(evidence.maxHandlerMs, performance.now() - began); }
+  };
   let sender: BridgeClient | undefined, receiver: BridgeClient | undefined;
   try {
     await broker.listen();
@@ -52,6 +59,9 @@ it("accepts a fresh hook connection between synchronous request starts in a burs
     expect((await completed).every((result) => result.messages.length === 1)).toBe(true);
     slow = false;
     expect((await receiver.request("pending", {}))).toHaveLength(24);
+  } catch (error) {
+    console.error(`Fresh-hook admission evidence: ${JSON.stringify({ ...evidence, deadlineMs: 500, expectedBurst: 24, expectedHooks: 6 })}`);
+    throw error;
   } finally {
     slow = false;
     sender?.close(); receiver?.close(); for (const hook of hooks) hook.close();

@@ -183,6 +183,8 @@ export interface JobHostInfo {
 
 /** What a job runner reports about its job (its state file, written only by the runner). */
 export interface RunnerState {
+  /** Latest bounded delivery phase; diagnostic only, never admission/ACK proof. */
+  deliveryEvidence?: import("./delivery-evidence.js").DeliveryEvidence;
   /** Admission provenance is independent of usage classification and error type. */
   usageSubmission?: import("../core/usage.js").UsageSubmissionReceipt;
   providerUsage?: import("../core/usage.js").ProviderUsageState;

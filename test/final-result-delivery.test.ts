@@ -4,6 +4,7 @@ import { expect, it, vi } from "vitest";
 import { deliverFinalResult, PERMANENT_DELIVERY_CODES, readJobReport, readStoredFinalResult, resultDeliveryLabel, type StoredFinalResult } from "../src/mcp/final-result.js";
 import { writeRunnerState } from "../src/mcp/job-host.js";
 import { deliverWithRetry, inSendOrder } from "../src/mcp/job-runner.js";
+import { deliveryEvidenceSchema, deliveryFailure } from "../src/mcp/delivery-evidence.js";
 import { JobManager, readStore, type Job, type RunnerState } from "../src/mcp/jobs.js";
 import { nullLogger } from "../src/core/logger.js";
 import { BridgeError } from "../src/core/protocol.js";
@@ -104,6 +105,25 @@ it("caps transient delivery attempts with the same ID and leaves the result for 
   expect(send.mock.calls.every(call => call[1] === "turn-one")).toBe(true);
   expect(waits).toEqual([1_000, 2_000, 4_000, 8_000, 16_000]);
   expect(saved.delivered).toBe(false);
+});
+
+it("captures bounded refusal evidence without exposing payloads or altering delivery retries", async () => {
+  vi.useFakeTimers();
+  const secret = "EXCLUDED_BODY_OWNER_TOKEN", refusal = Object.assign(new Error(`Original destination was not retained ${secret}`), { code: "unknown_target" });
+  const evidence: unknown[] = [], send = vi.fn().mockRejectedValueOnce(refusal).mockResolvedValue("stored");
+  try {
+    const result = deliverWithRetry(send, nullLogger, "owner", 2, undefined, (attempt, error) => evidence.push({ attempt, ...deliveryFailure(error) }));
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(await result).toBe("stored"); expect(send).toHaveBeenCalledTimes(2);
+    expect(evidence).toEqual([{ attempt: 1, code: "unknown_target", reason: "unretained-destination" }]);
+    expect(JSON.stringify(evidence)).not.toContain(secret);
+    const proof = { kind: "note", stage: "retrying", messageId: "11111111-1111-4111-8111-111111111111", at: 1, attempt: 1, finalQueued: true, ...deliveryFailure(refusal) };
+    expect(deliveryEvidenceSchema.safeParse(proof).success).toBe(true);
+    expect(deliveryEvidenceSchema.safeParse({ ...proof, body: secret }).success).toBe(false);
+    const permanent = Object.assign(new Error("Original local job report grant is unavailable"), { code: "unauthorized" });
+    await expect(deliverWithRetry(async () => { throw permanent; }, nullLogger, "owner", 1, PERMANENT_DELIVERY_CODES,
+      () => { throw new Error("diagnostic sink failed"); })).rejects.toBe(permanent);
+  } finally { vi.useRealTimers(); }
 });
 
 it("posts the same retained report when the runner exits without delivery", async () => {

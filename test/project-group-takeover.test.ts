@@ -12,7 +12,7 @@ import { readStore } from "../src/mcp/jobs.js";
 import { parentFromEnv } from "../src/core/parent-link.js";
 import { listPendingApprovals } from "../src/core/relay.js";
 import { pidAlive, killPid } from "../src/core/delegate.js";
-import { readProcessIdentities } from "../src/core/process-identity.js";
+import { ownProcessIdentity, readProcessIdentities } from "../src/core/process-identity.js";
 import { LOG_DIR_NAME, LOG_FILE_NAME } from "../src/core/constants.js";
 import { STARTUP_CAPACITY } from "../src/core/startup-admission.js";
 import { completionMessageId } from "../src/core/completion.js";
@@ -416,11 +416,15 @@ function readinessEvents(home: string, names: ReadonlySet<string>, runnerPids: R
   finally { try { if (fd !== undefined) closeSync(fd); } catch { /* Keep the original readiness failure. */ } }
 }
 
-it("observes a stored final and consumption receipts on a separate read-only connection before delivery confirmation", () => {
+it("observes a stored final and consumption receipts on a separate read-only connection before delivery confirmation", async () => {
   const job = { id: "00ab0292", name: "codex-job-00ab0292" }, reportId = "11111111-1111-4111-8111-111111111111";
   const report = "Subagent codex-job-00ab0292 (codex) done after 0s.\n\nREPORT_BODY_EXCLUDED_FROM_DIAGNOSTICS";
   const store = new MessageStore(env.db, nullLogger);
   try {
+    // This offline fixture has no node.start/listen admission to warm its own
+    // creation identity. Await the same verified readiness before first metadata
+    // migration; never lend a synthetic identity or steal an unknown lease.
+    expect(await ownProcessIdentity()).toBeTypeOf("string");
     const recipient = fixturePeer(store, "codex-master", { agent: "codex" });
     writeRunnerState(env.home, job.id, { pid: process.pid, peer: job.name, status: "done", updatedAt: Date.now(), report, reportId, delivered: false });
     expect(finalReportsReady(env.home, [job])).toBe(false);

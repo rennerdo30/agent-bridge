@@ -13,7 +13,9 @@ it("reports actual retained admission/registration facts while bounding and excl
       args: { host: "paired", prompt: secret }, deliveryHistory: [{ body: secret, senderOwner: secret }], reportRouting: {}, host: null }] }));
     writeFileSync(join(env.home, "remote-jobs.json"), JSON.stringify({ jobs: [{ pair: secret, peer: secret, owner: secret, job: { id, status: "running", supervisor: secret } }] }));
     writeRunnerState(env.home, id, { pid: process.pid, peer: `codex-job-${id}`, status: "running", updatedAt: Date.now(), identity: secret,
-      sessionId: secret, progress: "queued: waiting for machine startup admission", report: secret });
+      sessionId: secret, progress: "queued: waiting for machine startup admission", report: secret,
+      deliveryEvidence: { kind: "note", stage: "retrying", messageId: "11111111-1111-4111-8111-111111111111", at: Date.now(), attempt: 7,
+        finalQueued: true, code: "unknown_target", reason: "unretained-destination" } });
     mkdirSync(join(env.home, LOG_DIR_NAME), { recursive: true });
     const log = join(env.home, LOG_DIR_NAME, LOG_FILE_NAME), at = "2026-10-23T00:00:00.000Z";
     writeFileSync(log, "discarded oversized older prefix".repeat(10_000) + "\n" + Array.from({ length: 60 }, () =>
@@ -22,7 +24,8 @@ it("reports actual retained admission/registration facts while bounding and excl
     const snapshot = jobWaitSnapshot(env.home, [id, "../../config", ...Array.from({ length: 20 }, (_, i) => i.toString(16).padStart(8, "0"))]);
     expect(snapshot.jobs).toHaveLength(10); expect(snapshot.events).toHaveLength(40);
     expect(snapshot.jobs[0]).toMatchObject({ id, local: { status: "cancelled", explicitRemote: true, hostRecorded: false, reportEnvelopes: 1, reportGrants: 0 },
-      remote: { pairedOrigin: true, peerOrigin: true, ownerRecorded: true }, runner: { identityRecorded: true, session: true, progress: "queued: waiting for machine startup admission" } });
+      remote: { pairedOrigin: true, peerOrigin: true, ownerRecorded: true }, runner: { identityRecorded: true, session: true, progress: "queued: waiting for machine startup admission",
+        delivery: { kind: "note", finalQueued: true, reason: "unretained-destination", attempt: 7 } } });
     expect(snapshot.events.every(event => "reason" in event && event.reason === "local-report-grant-unproven")).toBe(true);
     expect(JSON.stringify(snapshot)).not.toContain(secret);
     expect(JSON.stringify(snapshot)).not.toContain("effective config");

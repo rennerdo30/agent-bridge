@@ -31,6 +31,7 @@ import { refreshStorePeerIdentities } from "../core/store-compatibility.js";
 import { guardRunnerErrors } from "./job-runner-errors.js";
 import { configurePathDisplay } from "../core/display-paths.js";
 import { deliverFinalResult, PERMANENT_DELIVERY_CODES } from "./final-result.js";
+import { deliveryFailure, type DeliveryEvidence } from "./delivery-evidence.js";
 
 /** Delivering a message to the session: tries for several minutes (the bridge may be changing hands, or no session hosts it). */
 const SEND_ATTEMPTS = 30;
@@ -153,6 +154,13 @@ export async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: Wi
   let closing = false;
 
   let extra: Partial<RunnerState> = { status: "running" };
+  let finalQueued = false;
+  const deliveryEvidence = (kind: DeliveryEvidence["kind"], stage: DeliveryEvidence["stage"], messageId: string, attempt = 1, error?: unknown) => {
+    extra.deliveryEvidence = { kind, stage, messageId, at: Date.now(), attempt, finalQueued, ...(error ? deliveryFailure(error) : {}) };
+    // The ordinary heartbeat retains this even if a later busy log tail rolls
+    // away. No extra writer/lease on a delivery hot path and no payload/proof.
+    try { log.debug("job delivery evidence", extra.deliveryEvidence); } catch { /* Evidence never changes delivery. */ }
+  };
   const save = (patch: Partial<RunnerState> = {}, required = false) => {
     extra = { ...extra, ...patch };
     try {
@@ -215,6 +223,9 @@ export async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: Wi
   const deliver = async (body: string, replyTo: string | null, note = false, key?: string, question = false, final = false): Promise<SendResult | null> => {
     // One key for all attempts: a send that timed out here may still be queued at a slow broker.
     const dedupeKey = key ?? randomUUID();
+    const kind = final ? "final" : question ? "question" : note ? "note" : "message";
+    const messageId = final && dedupeKey.startsWith(COMPLETION_DEDUPE_PREFIX) ? completionMessageId(`job:${job.id}`, dedupeKey.slice(COMPLETION_DEDUPE_PREFIX.length)) : completionMessageId(`send:${node.name}`, dedupeKey);
+    deliveryEvidence(kind, "sending", messageId);
     // AB-380: a body over the message limit can never be sent: once its full text is in a file, send a stub.
     body = quarantineMessage(home, { id: dedupeKey, body }).body;
     // deliverFinalResult retries a final result with bounded attempts; a permanent refusal starts the session fallback at once.
@@ -224,7 +235,9 @@ export async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: Wi
       // A question is marked so the broker can route it to the project main while the parent is offline (AB-249).
       const suffix = isPureAcknowledgement(body) ? ACK_CONVERSATION_SUFFIX : question ? QUESTION_CONVERSATION_SUFFIX : note ? NOTE_CONVERSATION_SUFFIX : "";
       return node.send({ to: owner, body, conversationId: `job-${job.id}${suffix}`, ...(replyTo ? { replyTo } : {}), dedupeKey }, { quiet: true });
-    }, log, owner, final ? FINAL_SEND_ATTEMPTS : SEND_ATTEMPTS, final ? PERMANENT_DELIVERY_CODES : undefined);
+    }, log, owner, final ? FINAL_SEND_ATTEMPTS : SEND_ATTEMPTS, final ? PERMANENT_DELIVERY_CODES : undefined,
+    (attempt, error) => deliveryEvidence(kind, final && PERMANENT_DELIVERY_CODES.has((error as { code?: string })?.code ?? "") ? "refused" : "retrying", messageId, attempt, error))
+      .then(result => { if (result) deliveryEvidence(kind, "stored", messageId); return result; });
   };
   const inOrder = inSendOrder(deliver);
   const post = (body: string, replyTo: string | null = null, note = false, key?: string): Promise<boolean> =>
@@ -373,6 +386,9 @@ export async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: Wi
    */
   const deliverFinal = async (report: string, status: "done" | "failed" | "cancelled" | "paused"): Promise<void> => {
     const final = { report, reportId: randomUUID(), delivered: false };
+    finalQueued = true;
+    const messageId = completionMessageId(`job:${job.id}`, final.reportId);
+    deliveryEvidence("final", "queued", messageId);
     const finishedAt = Date.now();
     await deliverFinalResult(final,
       (stored) => save({ status, ...stored, finishedAt }, true),
@@ -382,7 +398,14 @@ export async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: Wi
       },
       async (ms) => { await delay(ms); },
       shutdown.signal,
-      async (id) => (await node.sendState(completionMessageId(`job:${job.id}`, id))).state === "stored");
+      async (id) => {
+        deliveryEvidence("final", "receipt-probe", messageId);
+        try {
+          const stored = (await node.sendState(completionMessageId(`job:${job.id}`, id))).state === "stored";
+          deliveryEvidence("final", stored ? "stored" : "queued", messageId); return stored;
+        } catch (error) { deliveryEvidence("final", "receipt-failed", messageId, 1, error); throw error; }
+      });
+    if (!extra.delivered) save(); // Retain a terminal refusal before this runner exits, too.
   };
 
   let args = spec.args;
@@ -523,11 +546,12 @@ export async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: Wi
  * caller keeps what it sent (a finished report stays in the runner state for the session to collect).
  */
 export async function deliverWithRetry<T>(send: () => Promise<T>, log: Logger, owner: string, attempts = SEND_ATTEMPTS,
-  rethrow?: ReadonlySet<string>): Promise<T | null> {
+  rethrow?: ReadonlySet<string>, failed?: (attempt: number, error: unknown) => void): Promise<T | null> {
   for (let attempt = 1; attempt <= attempts; attempt++) {
     try {
       return await send();
     } catch (err) {
+      try { failed?.(attempt, err); } catch { /* Diagnostics never alter delivery or failure policy. */ }
       // The caller handles these refusals itself (a final result hands over to the session fallback).
       if (rethrow?.has((err as { code?: string } | null)?.code ?? "")) throw err;
       if ((err as { code?: string } | null)?.code === "too_large") {

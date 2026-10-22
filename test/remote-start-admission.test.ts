@@ -6,7 +6,12 @@ import { closeMetadataDbs } from "../src/core/metadata-db.js";
 import * as delegate from "../src/core/delegate.js";
 import * as identity from "../src/core/process-identity.js";
 import * as worktree from "../src/core/worktree.js";
-import { APP_VERSION } from "../src/core/constants.js";
+import { APP_VERSION, PROTOCOL_VERSION } from "../src/core/constants.js";
+import { Broker } from "../src/core/broker.js";
+import { BridgeClient } from "../src/core/client.js";
+import { MessageStore } from "../src/core/store.js";
+import { resolveDbPath, resolvePipePath } from "../src/core/paths.js";
+import { loadOrCreateToken } from "../src/core/token.js";
 import { refreshStorePeerIdentities } from "../src/core/store-compatibility.js";
 import { nullLogger } from "../src/core/logger.js";
 import { JobRunners } from "../src/mcp/job-host.js";
@@ -44,6 +49,36 @@ function neverQuery() {
   return { started: () => Boolean(resolve), release: async () => { resolve(new Map([[pid, `generation-${pid}`]])); await refreshStorePeerIdentities(home); } };
 }
 const host = { pid: null, peer: "detached-fixture", startedAt: Date.now() };
+
+it("retains admitted paired-host job authority when the local job registry has no copy", async () => {
+  vi.spyOn(JobRunners.prototype, "startAsync").mockResolvedValue(host);
+  await handle(request("1234abcd"));
+  const record = remote.jobForRegistration("1234abcd")!;
+  expect(record.supervisor).toBe(`${pair.id}/${peer.supervisor}`);
+  const token = loadOrCreateToken(home), pipe = resolvePipePath(home, {});
+  const store = new MessageStore(resolveDbPath(home), nullLogger), broker = new Broker(pipe, store, nullLogger, token, Date.now, join(home, "jobs.json"));
+  const clients: BridgeClient[] = [];
+  try {
+    await broker.listen(); (broker as any).remoteJobs = remote;
+    const reader = await BridgeClient.connect(pipe, nullLogger); clients.push(reader);
+    await reader.request("hello", { protocol: PROTOCOL_VERSION, token, peer: { id: "reader", name: "local-reader", agent: "codex", cwd: home,
+      pid: process.pid, agentPid: null, sessionId: "local-session", startedAt: Date.now(), autoWake: false } });
+    const runner = await BridgeClient.connect(pipe, nullLogger); clients.push(runner);
+    await runner.request("hello", { protocol: PROTOCOL_VERSION, token, peer: { id: "job:1234abcd", name: String(record.name), agent: "other", jobAgent: "codex",
+      jobOwner: String(record.supervisor), jobParent: String(record.owner), cwd: home, pid: process.pid, agentPid: null, sessionId: null, startedAt: Date.now(), autoWake: false } });
+    expect(existsSync(join(home, "jobs.json"))).toBe(false);
+    const sent = await runner.request("trackedSend", { messageId: "11111111-1111-4111-8111-111111111111", to: "local-reader", body: "Explicit local context from admitted remote-owned job" });
+    expect(sent.messages).toHaveLength(1);
+    expect((await reader.request("pending", {})).map(m => m.id)).toContain(sent.messages[0]!.id);
+    expect(store.jobRoutingGrant(sent.messages[0]!.id)).toBeNull();
+    await handle(request("abcdef12"));
+    for (const spoof of [{ id: "job:abcdef12", owner: String(record.supervisor) }, { id: "job:1234abcd", owner: "pair/other-session" }]) {
+      const impostor = await BridgeClient.connect(pipe, nullLogger); clients.push(impostor);
+      await expect(impostor.request("hello", { protocol: PROTOCOL_VERSION, token, peer: { id: spoof.id, name: String(record.name), agent: "other", jobAgent: "codex",
+        jobOwner: spoof.owner, jobParent: String(record.owner), cwd: home, pid: process.pid, agentPid: null, sessionId: null, startedAt: Date.now(), autoWake: false } })).rejects.toMatchObject({ code: "unauthorized" });
+    }
+  } finally { for (const client of clients) client.close(); await broker.close(); }
+});
 
 it("bounds eight never-resolving admissions below the network timeout and prevents every late launch", async () => {
   const query = neverQuery(); vi.useFakeTimers();

@@ -3006,14 +3006,20 @@ export class Broker {
     const retainedRequest = this.store.sendIntentOwner(id) !== undefined;
     this.assertSendOwner(sender, id, Boolean(stored));
     if (stored) this.assertStoredSend(sender, args, stored);
-    const own = sender.jobAgent ? this.storedJobs().find((j) => `job:${j.id}` === sender.id) : undefined;
+    const own = sender.jobAgent ? this.storedJobs().find((j) => `job:${j.id}` === sender.id) ?? this.remoteJobs?.jobForRegistration(sender.id.slice(4)) : undefined;
+    // A temporarily unavailable registry is not authority to downgrade a job
+    // report to ordinary name routing or retain a destination-less send intent.
+    if (!stored && sender.jobAgent && !own) throw new BridgeError("job_index_preparing", "Current job routing authority is unavailable; no send intent was stored. Retry the original report after recovery.");
     const supervisorMail = Boolean(own && (to === sender.jobParent || mastersFor(own).includes(to)));
     // Local job dispatch has no external effect before its storage transaction.
     // Commit request + exact grant + accepted copy together: a failed insert
     // must not leave a request-only intent which permanently prevents retry.
     // Existing orphan intents remain refused; ordinary/remote sends retain
     // their immutable destination admission and never acquire this exception.
-    const atomicJobRequest = !stored && !retainedRequest && !to.includes("/") && supervisorMail && Boolean(this.jobReportGrant(own!, sender));
+    const localJobReport = !to.includes("/") && supervisorMail;
+    if (!stored && !retainedRequest && localJobReport && !this.jobReportGrant(own!, sender))
+      throw new BridgeError("unauthorized", "Original local job report grant is unavailable; no send intent was stored and the report remains pending.");
+    const atomicJobRequest = !stored && !retainedRequest && localJobReport;
     const jobRegistration = atomicJobRequest ? conn.mailReady : undefined;
     if (!atomicJobRequest) await this.persistSendRequest(conn, sender, args, id);
     if (stored) return { messages: this.store.messagesById(id), deliveredTo: [], queuedFor: [],
