@@ -124,6 +124,10 @@ it("authorizes a child-origin receipt only in its original active child incarnat
   const receipt = () => parent.messageReceipt(sent.id, agentId);
   expect(await receipt()).toContainEqual({ recipient: job.name, readAt: null });
   await expect(parent.messageReceipt(sent.id)).rejects.toMatchObject({ code: "unauthorized" });
+  const parentMail = (await parent.send({ to: stranger.name, body: "Parent sender proof stays separate" })).messages[0]!;
+  expect(await parent.messageReceipt(parentMail.id)).toContainEqual({ recipient: stranger.name, readAt: null });
+  await expect(parent.messageReceipt(parentMail.id, agentId)).rejects.toMatchObject({ code: "unauthorized" });
+  await expect(parent.messageReceipt(parentMail.id, "")).rejects.toMatchObject({ code: "bad_request" });
   await parent.nativeChild({ agentId: "other-child", action: "start" });
   await expect(parent.messageReceipt(sent.id, "other-child")).rejects.toMatchObject({ code: "unauthorized" });
   await expect(stranger.messageReceipt(sent.id, agentId)).rejects.toMatchObject({ code: "unauthorized" });

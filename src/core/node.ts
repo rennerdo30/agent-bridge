@@ -916,7 +916,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   }
 
   messageReceipt(id: string, nativeChild?: string) {
-    return this.withClient((c) => c.request("messageReceipt", { id, ...(nativeChild ? { nativeChild } : {}) }));
+    return this.withClient((c) => c.request("messageReceipt", { id, ...(nativeChild !== undefined ? { nativeChild } : {}) }));
   }
 
   nativeChild(args: RequestMap["nativeChild"][0]) { return this.withClient(c => c.request("nativeChild", args)); }
