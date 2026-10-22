@@ -7,8 +7,8 @@
       "issue": "AB-410",
       "owner": "claude-claude-codex-comm",
       "added": "2026-10-16",
-      "recheckBy": "2026-10-21",
-      "seen": "AB325 lifecycle Windows Node 22 and 24 (runs 38854025643, 38855920781)"
+      "recheckBy": "2026-10-28",
+      "seen": "AB325 lifecycle Windows Node 22 and 24 (runs 38854025643, 38855920781). Rechecked 2026-10-22: Windows Node 24 known-flaky run 38882464624 still fails settlement; see docs/ab410-known-flaky-recheck-2026-10-22.md"
     },
     {
       "file": "test/daemon-lifecycle.test.ts",
@@ -27,15 +27,6 @@
       "added": "2026-10-16",
       "recheckBy": "2026-10-23",
       "seen": "Windows Node 24 shard 5/6 (main run 38852705600)"
-    },
-    {
-      "file": "test/daemon-lifecycle.test.ts",
-      "test": "standalone demand-start broker > UI definitive unavailable creation preserves explicit degraded compatibility only",
-      "issue": "AB-410",
-      "owner": "claude-claude-codex-comm",
-      "added": "2026-10-16",
-      "recheckBy": "2026-10-21",
-      "seen": "AB325 lifecycle Windows Node 22 and 24 (runs 38849251200, 38849984389, 38855920781)"
     },
     {
       "file": "test/daemon-receipt.test.ts",
@@ -61,8 +52,8 @@
       "issue": "AB-410",
       "owner": "claude-claude-codex-comm",
       "added": "2026-10-16",
-      "recheckBy": "2026-10-21",
-      "seen": "Windows Node 24 and 22 shard 3/6 (runs 38841134793, 38850550770)"
+      "recheckBy": "2026-10-25",
+      "seen": "Windows Node 24 and 22 shard 3/6 (runs 38841134793, 38850550770). Rechecked 2026-10-22: Windows Node 24 known-flaky main run 39681057277 fails the raw-read assertion; see docs/ab410-known-flaky-recheck-2026-10-22.md"
     },
     {
       "file": "test/dashboard-history-read.test.ts",
@@ -88,8 +79,8 @@
       "issue": "AB-410",
       "owner": "claude-claude-codex-comm",
       "added": "2026-10-16",
-      "recheckBy": "2026-10-21",
-      "seen": "Windows Node 22 and 24 shard 3/6 (runs 38857072165, 38858490705)"
+      "recheckBy": "2026-10-26",
+      "seen": "Windows Node 22 and 24 shard 3/6 (runs 38857072165, 38858490705). Rechecked 2026-10-22: Windows Node 24 known-flaky main run 39461554223 still fails expectFileAnswer; see docs/ab410-known-flaky-recheck-2026-10-22.md"
     },
     {
       "file": "test/handoff-runner.test.ts",
@@ -115,8 +106,8 @@
       "issue": "AB-410",
       "owner": "claude-claude-codex-comm",
       "added": "2026-10-16",
-      "recheckBy": "2026-10-21",
-      "seen": "Windows Node 24 shard 5/6 (run 38846199958)"
+      "recheckBy": "2026-10-27",
+      "seen": "Windows Node 24 shard 5/6 (run 38846199958). Rechecked 2026-10-22: Windows Node 24 known-flaky run 38877815893 fails the search-hit assertion; see docs/ab410-known-flaky-recheck-2026-10-22.md"
     },
     {
       "file": "test/history.test.ts",
@@ -142,8 +133,8 @@
       "issue": "AB-410",
       "owner": "claude-claude-codex-comm",
       "added": "2026-10-16",
-      "recheckBy": "2026-10-21",
-      "seen": "Windows Node 22 and 24 shard 4/6 (main run 38849169431, runs 38833198807, 38849984408)"
+      "recheckBy": "2026-10-24",
+      "seen": "Windows Node 22 and 24 shard 4/6 (main run 38849169431, runs 38833198807, 38849984408). Rechecked 2026-10-22: Windows Node 24 known-flaky main run 39681057277 and PR140 run 39697775445 time out at 15000ms; see docs/ab410-known-flaky-recheck-2026-10-22.md"
     },
     {
       "file": "test/job-recovery.test.ts",
@@ -164,15 +155,6 @@
       "seen": "Windows Node 24 shard 3/6 (main run 38852843323)"
     },
     {
-      "file": "test/job-terminal-handoff.test.ts",
-      "test": "retains a throwing handoff continuation's accepted queue across persistence and restore until explicit retry",
-      "issue": "AB-410",
-      "owner": "claude-claude-codex-comm",
-      "added": "2026-10-16",
-      "recheckBy": "2026-10-21",
-      "seen": "Windows Node 22 and 24 shard 5/6 (main run 38852705600, run 38854025601)"
-    },
-    {
       "file": "test/muse-job-contracts.test.ts",
       "test": "Muse legacy exec profile persistence > keeps the initial profile through continuation and reload, and replaces exact profiles with access",
       "issue": "AB-410",
@@ -191,15 +173,6 @@
       "seen": "Windows Node 22 shard 5/6 (runs 38846199958, 38850550770)"
     },
     {
-      "file": "test/project-group-takeover.test.ts",
-      "test": "observes a stored final and consumption receipts on a separate read-only connection before delivery confirmation",
-      "issue": "AB-410",
-      "owner": "claude-claude-codex-comm",
-      "added": "2026-10-16",
-      "recheckBy": "2026-10-21",
-      "seen": "Windows Node 24 shard 2/6 (main run 38843335834, run 38849984408)"
-    },
-    {
       "file": "test/siblings.test.ts",
       "test": "sibling job messaging > source-witnessed legacy supervisor assignment > invalidates the assignment on a durable root session change before any skipped import",
       "issue": "AB-410",
@@ -216,15 +189,6 @@
       "added": "2026-10-16",
       "recheckBy": "2026-10-23",
       "seen": "Windows Node 24 shard 4/6, Ubuntu Node 24 (main run 38856603889, run 38849251187); AB325 lifecycle macOS Node 24"
-    },
-    {
-      "file": "test/daemon-lifecycle.test.ts",
-      "test": "standalone demand-start broker > default UI sender hosts an embedded broker and HTTP data cannot opt into the daemon",
-      "issue": "AB-410",
-      "owner": "muse-claude-codex-comm",
-      "added": "2026-10-16",
-      "recheckBy": "2026-10-21",
-      "seen": "Windows Node 22 shard 5/6 (main run 38870273983): undici TimeoutError at daemon-lifecycle.test.ts:452; passed locally"
     },
     {
       "file": "test/broker-queue-expiry-contention.test.ts",
