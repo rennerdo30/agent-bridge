@@ -5,7 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import { migrateSqlite } from "./sqlite-migrations.js";
 import { nullLogger, type Logger } from "./logger.js";
 import { configureSqlite } from "./sqlite-policy.js";
-import { storageAdmissionRemaining, storageAdmissionTimeout } from "./storage-admission.js";
+import { admissionSqliteBusy, storageAdmissionRemaining, storageAdmissionTimeout } from "./storage-admission.js";
 export { SQLITE_BUSY_TIMEOUT_MS } from "./sqlite-policy.js";
 import { SQLITE_BUSY_TIMEOUT_MS } from "./sqlite-policy.js";
 import { openPreservedReader, preserveArchiveTarget } from "./storage-preservation.js";
@@ -91,7 +91,7 @@ export function openArchive(path: string, options: { migrate?: boolean; home?: s
     record.db = db; record.construction = "returned";
     archiveInitializations.set(db, record); // Capture the actual returned writer BEFORE checks or page SQL.
     admitted?.check();
-    db.exec(`PRAGMA busy_timeout = ${storageAdmissionTimeout(SQLITE_BUSY_TIMEOUT_MS)}`);
+    admissionSqliteBusy(db,SQLITE_BUSY_TIMEOUT_MS,true);
     if (options.migrate === false) {
       if (admitted?.created) db.exec(ARCHIVE_SCHEMA);
       else if (Number(db.prepare("PRAGMA user_version").get()!.user_version) !== ARCHIVE_STORE_VERSION)

@@ -24,6 +24,7 @@ import { startUi, type UiOptions } from "../src/cli/ui.js";
 import { readDashboardInfo } from "../src/cli/dashboard.js";
 import { deliveryFailure } from "../src/mcp/delivery-evidence.js";
 import { httpFailureEvidence } from "./http-failure-evidence.js";
+import { fixtureDaemonReadiness } from "./daemon-readiness.js";
 
 const cli = join(import.meta.dirname, "../plugins/codex/dist/cli.mjs");
 let env: TestEnv, nodes: BridgeNode[], children: ChildProcess[], owned: Map<number, string>;
@@ -847,14 +848,7 @@ describe("standalone demand-start broker", () => {
       await once(parent, "message");
       if (process.platform === "win32") scope = await startWindowsJobScope(nullLogger, parent.pid!);
       parent.send({ cli: parentCli });
-      let pid: number | undefined;
-      for (const deadline = Date.now() + 10_000; !pid && Date.now() < deadline;) {
-        try { pid = await remember(); }
-        catch (error) {
-          if (!["ENOENT", "ECONNREFUSED"].includes((error as NodeJS.ErrnoException).code ?? "")) throw error;
-          await new Promise(resolve => setTimeout(resolve, 100));
-        }
-      }
+      const pid = await fixtureDaemonReadiness(remember, Date.now() + 10_000);
       const observations = () => {
         try { return readFileSync(join(env.home, "logs", "agent-bridge.log"), "utf8").split("\n")
           .filter(line => line.includes("daemon creation observation"))

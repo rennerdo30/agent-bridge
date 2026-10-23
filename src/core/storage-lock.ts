@@ -176,7 +176,7 @@ export function storeHome(path: string): string {
  * transport. An absent compatibility declaration never proves a safe reader.
  * Declarations concern this local executable's storage contract, not mail ownership. */
 type Reader = { path: string; signature: string; pid: number; owner: LockOwner | null; createdAt: number; compatible: boolean };
-const unprovenReader = () => Object.assign(new Error("Mailbox reader compatibility is unproven"), { code: "STORE_READER_ACTIVE", readerCompatibility: "unproven" });
+const unprovenReader = () => Object.assign(new Error("Mailbox reader compatibility is unproven; owner-coordinated shutdown is required before sharing this data home. Original evidence is retained."), { code: "STORE_READER_ACTIVE", readerCompatibility: "unproven" });
 function readerSnapshot(home: string, check: () => number): Reader[] {
     check(); const dir = join(home, USERS_DIR), files = existsSync(dir) ? readdirSync(dir).sort() : []; check();
     if (files.length > 256) throw unprovenReader();

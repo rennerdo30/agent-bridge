@@ -13,6 +13,7 @@ import { BridgeError } from "./protocol.js";
 import { readRunLogsResponsive, type RunLogRecord } from "./run-history.js";
 import { safeFile } from "./transcripts/common.js";
 import { isSqliteBusy } from "./sqlite-policy.js";
+import { storageAdmissionRemaining, storageAdmissionTimeout } from "./storage-admission.js";
 
 const HEAD = "job-run-head-v1", HISTORY = "job-run-history-v1", STATE = "job-run-index-v1";
 /** Completion schema. A bump makes every older completion record unready. */
@@ -68,7 +69,7 @@ function statement(db: DatabaseSync, sql: string): StatementSync {
 function withBusyWait<T>(home: string, action: () => T): T {
   const db = metadataDb(home);
   if (db.isTransaction) return action(); // The write lock is held; the wait was chosen at BEGIN.
-  const wait = busyWait(home), timeout = Number(statement(db, "PRAGMA busy_timeout").get()!.timeout);
+  const wait = storageAdmissionTimeout(busyWait(home)), timeout = Number(statement(db, "PRAGMA busy_timeout").get()!.timeout);
   if (timeout === wait) return action();
   db.exec(`PRAGMA busy_timeout=${wait}`);
   try { return action(); } finally { db.exec(`PRAGMA busy_timeout=${timeout}`); }
@@ -99,8 +100,9 @@ function transaction<T>(home: string, action: () => T): T {
   const db = metadataDb(home);
   if (db.isTransaction) return action(); // Packing already owns the single transaction.
   return withBusyWait(home, () => {
+    storageAdmissionRemaining();
     db.exec("BEGIN IMMEDIATE");
-    try { const result = action(); db.exec("COMMIT"); return result; }
+    try { storageAdmissionRemaining(); const result = action(); storageAdmissionRemaining(); db.exec("COMMIT"); return result; }
     catch (error) { db.exec("ROLLBACK"); throw error; }
   });
 }

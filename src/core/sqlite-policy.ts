@@ -1,13 +1,14 @@
 import type { DatabaseSync } from "node:sqlite";
 import { setTimeout as delay } from "node:timers/promises";
-import { storageAdmissionTimeout } from "./storage-admission.js";
+import { admissionSqliteBusy } from "./storage-admission.js";
 
 export const SQLITE_BUSY_TIMEOUT_MS = 3_000;
 export const SQLITE_REQUEST_BUSY_MS = 10;
 
 /** Only bridge-owned writable databases change journal mode; external transcripts stay read-only. */
 export function configureSqlite(db: DatabaseSync, busyTimeoutMs = SQLITE_BUSY_TIMEOUT_MS): void {
-  db.exec(`PRAGMA busy_timeout = ${storageAdmissionTimeout(busyTimeoutMs)}; PRAGMA journal_mode = WAL;`);
+  admissionSqliteBusy(db, busyTimeoutMs);
+  db.exec("PRAGMA journal_mode = WAL;");
 }
 
 export function isSqliteBusy(err: unknown): boolean {

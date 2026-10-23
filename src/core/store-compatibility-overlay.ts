@@ -1,3 +1,4 @@
+import { admissionSqliteBusy } from "./storage-admission.js";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -51,7 +52,7 @@ export function attachStoreCompatibility(db: DatabaseSync, file: string, log: Lo
   try { overlay = new DatabaseSync(path); capture.overlay = overlay; capture.open = "returned"; }
   catch (error) { capture.open = "unknown"; throw error; }
   capture.initialize = "attempted";
-  try { migrateSqlite(overlay, path, existed, 1, [{ version: 1, sql: SCHEMA }], log); capture.initialize = "returned"; }
+  try { admissionSqliteBusy(overlay,3000,true); migrateSqlite(overlay, path, existed, 1, [{ version: 1, sql: SCHEMA }], log); capture.initialize = "returned"; }
   catch (error) { capture.initialize = "unknown"; throw error; }
   finally {
     capture.close = "attempted";

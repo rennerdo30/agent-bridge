@@ -5,12 +5,12 @@ import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { BridgeClient } from "../src/core/client.js";
-import { CONNECT_TIMEOUT_MS, PROTOCOL_VERSION } from "../src/core/constants.js";
+import { CONNECT_TIMEOUT_MS, MAX_FRAME_BYTES, PROTOCOL_VERSION } from "../src/core/constants.js";
 import { closeMetadataDbs } from "../src/core/metadata-db.js";
 import { nullLogger } from "../src/core/logger.js";
 import { BridgeNode } from "../src/core/node.js";
 import { guardPriorEndpoints, priorEndpoints } from "../src/core/prior-endpoints.js";
-import { BridgeError } from "../src/core/protocol.js";
+import { BridgeError, encodeFrame, FrameDecoder, type RequestFrame } from "../src/core/protocol.js";
 import { assertCompatibleMailboxReaders, storageLease } from "../src/core/storage-lock.js";
 import { deliveryFailure } from "../src/mcp/delivery-evidence.js";
 import * as processIdentity from "../src/core/process-identity.js";
@@ -40,8 +40,11 @@ vi.mock("node:fs", async original => {
 let home: string, file: string, original: Buffer, live: string | undefined;
 let inspections = 0, busy = 0;
 const sockets: { destroyed: boolean }[] = [];
+const wireRequests: RequestFrame[] = [];
+const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+const getuid = Object.getOwnPropertyDescriptor(process, "getuid");
 beforeEach(() => {
-  live = undefined; inspections = 0; busy = 0; sockets.length = 0;
+  live = undefined; inspections = 0; busy = 0; sockets.length = 0; wireRequests.length = 0;
   io.write.mockImplementation(io.actualWrite);
   io.read.mockImplementation(io.actualRead); io.stat.mockImplementation(io.actualStat);
   io.lstat.mockImplementation((path: string, ...args: any[]) => {
@@ -52,8 +55,25 @@ beforeEach(() => {
     return io.actualLstat(path, ...args);
   });
   io.connect.mockImplementation((path: string) => {
-    const socket = Object.assign(new EventEmitter(), { destroyed: false, destroy() { this.destroyed = true; } }); sockets.push(socket);
-    queueMicrotask(() => path === live ? socket.emit("connect") : socket.emit("error", Object.assign(new Error("fixture absent"), { code: "ENOENT" })));
+    const decoder = new FrameDecoder(MAX_FRAME_BYTES);
+    const socket = Object.assign(new EventEmitter(), {
+      destroyed: false,
+      setEncoding(encoding: string) { expect(encoding).toBe("utf8"); return this; },
+      end() { return this; },
+      destroy(this: EventEmitter & { destroyed: boolean }) { if (!this.destroyed) { this.destroyed = true; this.emit("close"); } return this; },
+      write(bytes: string) {
+        for (const frame of decoder.push(bytes)) {
+          if (frame.t !== "req") throw new Error("Fixture accepts request frames only");
+          wireRequests.push(frame);
+          const reply = encodeFrame({ t: "res", id: frame.id, ok: false, error: { code: "protocol_mismatch", message: "Fixture prior protocol", details: { brokerProtocol: 7 } } });
+          // Split the reply: exercise the real BridgeClient decoder/settlement,
+          // rather than returning a stubbed request rejection.
+          queueMicrotask(() => { if (!socket.destroyed) { socket.emit("data", reply.slice(0, 9)); socket.emit("data", reply.slice(9)); } });
+        }
+        return true;
+      },
+    }); sockets.push(socket);
+    queueMicrotask(() => { if (!socket.destroyed) path === live ? socket.emit("connect") : socket.emit("error", Object.assign(new Error("fixture absent"), { code: "ENOENT" })); });
     return socket;
   });
   home = mkdtempSync(join(tmpdir(), "ab-prior-inspection-")); file = join(home, "bridge.db");
@@ -68,23 +88,46 @@ beforeEach(() => {
     return prepare.call(this, sql);
   });
 });
-afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); closeMetadataDbs(); expect(io.fds.size).toBe(0); io.connect.mockReset(); io.lstat.mockReset(); rmSync(home, { recursive: true, force: true }); });
+afterEach(() => {
+  vi.useRealTimers(); vi.restoreAllMocks();
+  Object.defineProperty(process, "platform", platform);
+  if (getuid) Object.defineProperty(process, "getuid", getuid); else Reflect.deleteProperty(process, "getuid");
+  closeMetadataDbs(); expect(io.fds.size).toBe(0); expect(sockets.every(socket => socket.destroyed)).toBe(true);
+  io.connect.mockReset(); io.lstat.mockReset(); rmSync(home, { recursive: true, force: true });
+});
 const guard = (signal?: AbortSignal) => guardPriorEndpoints(home, "fixture-current", "fixture-only-token", nullLogger, signal);
 const unchanged = () => { expect(readFileSync(file).equals(original)).toBe(true); expect(readdirSync(home)).toEqual(["bridge.db"]); };
 
-it("rechecks prior endpoints after a suspended successful census before admitting storage", async () => {
+it.each(["linux", "darwin", "win32"] as const)("rechecks prior endpoints after a suspended successful census before admitting storage on %s", async target => {
+  Object.defineProperty(process, "platform", { ...platform, value: target });
+  if (!getuid) Object.defineProperty(process, "getuid", { configurable: true, value: () => 42 });
   const fs = await import("node:fs"), dir = join(home, ".storage-users"), pid = process.pid + 2_000_000;
   fs.mkdirSync(dir); fs.writeFileSync(join(dir, `${pid}-original`), JSON.stringify({ pid, nonce: "original", createdAt: Date.now(), mailboxProtocol: 7, mailboxSchema: 14 }));
   vi.spyOn(process, "kill").mockReturnValue(true);
   vi.spyOn(processIdentity, "identityStartedAfter").mockReturnValue(true);
-  let finish!: (identity: string) => void;
-  const query = vi.spyOn(processIdentity, "readProcessIdentity").mockImplementation(() => new Promise(resolve => { finish = resolve; }));
-  const effect = vi.fn(); const pending = guard().then(effect, error => error);
-  await vi.waitFor(() => expect(query).toHaveBeenCalledOnce());
-  live = priorEndpoints(home).find(endpoint => endpoint.includes("p7"))!;
-  finish(new Date(Date.now() + 10_000).toString());
-  expect(await pending).toMatchObject({ code: "protocol_mismatch" });
-  expect(effect).not.toHaveBeenCalled(); expect(readFileSync(file)).toEqual(original);
+  let finish: ((identity: string) => void) | undefined;
+  const stop = new AbortController();
+  const query = vi.spyOn(processIdentity, "readProcessIdentity").mockImplementation((_pid, signal) => new Promise((resolve, reject) => {
+    const aborted = () => { signal?.removeEventListener("abort", aborted); reject(signal!.reason); };
+    signal?.addEventListener("abort", aborted, { once: true });
+    finish = identity => { signal?.removeEventListener("abort", aborted); resolve(identity); };
+  }));
+  const effect = vi.fn(); const pending = guard(stop.signal).then(effect, error => error);
+  try {
+    await vi.waitFor(() => expect(query).toHaveBeenCalledOnce());
+    if (target !== "win32") expect(io.connect).not.toHaveBeenCalled();
+    expect(wireRequests).toEqual([]); // Endpoint is not published yet.
+    live = priorEndpoints(home).find(endpoint => endpoint.includes("p7"))!;
+    finish!(new Date(Date.now() + 10_000).toString());
+    const refusal = await pending;
+    expect(refusal).toMatchObject({ code: "protocol_mismatch" });
+    expect(deliveryFailure(refusal).protocol?.source).toBe("prior-endpoint");
+    expect(effect).not.toHaveBeenCalled(); expect(readFileSync(file)).toEqual(original);
+    expect(vi.isMockFunction(BridgeClient.connect)).toBe(false);
+    expect(wireRequests).toEqual(target === "win32" ? [] : [{ t: "req", id: 1, op: "auth", args: { protocol: PROTOCOL_VERSION, token: "fixture-only-token" } }]);
+  } finally {
+    stop.abort(); finish?.(""); await pending;
+  }
 });
 
 it("never repeats synchronous process creation queries at the actual store constructor boundary", async () => {
@@ -126,7 +169,10 @@ it.each(["success", "changed", "expired"])("keeps actual store construction insi
   });
   const pending = openMessageStore(target, nullLogger, "fixture-current", "fixture-only-token");
   if (phase === "success") {
-    const store = await pending; expect(store.file).toBe(target); store.close();
+    const store = await pending; expect(store.file).toBe(target);
+    for (const db of [(store as any).db, (store as any).archiveDb, store.history.storageDatabase])
+      expect(db.prepare("PRAGMA busy_timeout").get()!.timeout).toBe(3000);
+    store.close();
     expect(() => new MessageStore(target, nullLogger)).toThrow(); // Scoped proof is no longer available.
   }
   else await expect(pending).rejects.toMatchObject({ code: phase === "expired" ? "timeout" : "STORE_READER_ACTIVE" });
@@ -173,6 +219,27 @@ it("does not retry an effect after its construction callback reports failure", a
   const effect = vi.fn(() => { throw failure; });
   await expect(guardPriorEndpoints(home, "fixture-current", "fixture-only-token", nullLogger, undefined, effect)).rejects.toBe(failure);
   expect(effect).toHaveBeenCalledOnce(); unchanged();
+});
+
+it("checks the original deadline after owned policy cleanup and closes an unadmitted constructed store", async () => {
+  const { MessageStore, openMessageStore } = await import("../src/core/store.js");
+  const initial = new MessageStore(file + ".fresh", nullLogger); initial.close(); closeMetadataDbs();
+  const close = vi.spyOn(MessageStore.prototype, "close"), exec = DatabaseSync.prototype.exec;
+  let crossed = false;
+  vi.spyOn(DatabaseSync.prototype, "exec").mockImplementation(function(this: DatabaseSync, sql: string) {
+    const result = exec.call(this, sql);
+    if (!crossed && sql === "PRAGMA busy_timeout=3000") {
+      crossed = true; const later = Date.now() + CONNECT_TIMEOUT_MS + 1; vi.spyOn(Date, "now").mockReturnValue(later);
+    }
+    return result;
+  });
+  const outcome = await openMessageStore(file + ".fresh", nullLogger, "fixture-current", "fixture-only-token")
+    .then(store => { store.close(); return { admitted: true, error: undefined }; }, error => ({ admitted: false, error }));
+  expect(crossed).toBe(true); expect(outcome).toMatchObject({ admitted: false, error: { code: "timeout" } });
+  expect(close).toHaveBeenCalledOnce();
+  const rejected = close.mock.contexts[0] as MessageStore;
+  expect([(rejected as any).db, (rejected as any).archiveDb, rejected.history.storageDatabase].every(db => !db.isOpen)).toBe(true);
+  expect(readdirSync(join(home, ".storage-users"))).toEqual([]);
 });
 
 it.each(["deadline", "caller"])("preserves the original %s reason during census backoff", async phase => {

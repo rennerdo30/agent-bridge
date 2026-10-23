@@ -164,7 +164,11 @@ export async function guardPriorEndpoints<T = void>(home: string, current: strin
         if (!(census.code === "ENOENT" || census.code === "STORE_READER_ACTIVE" && census.readerCompatibility === "unproven") || Date.now() >= deadline)
           throw refused(home, "retained by an unproven storage reader");
       }
-      if (proof) return withMailboxReaderAdmission(proof, () => effect ? effect(remaining) : undefined as T);
+      if (proof) {
+        const value = withMailboxReaderAdmission(proof, () => effect ? effect(remaining) : undefined as T);
+        remaining(); // Owned policy cleanup cannot turn late proof into admission.
+        return value;
+      }
       try { await delay(Math.min(25 * 2 ** Math.min(observation, 4), remaining()), undefined, { signal: admission.signal }); }
       catch (error) { remaining(); throw error; }
     }

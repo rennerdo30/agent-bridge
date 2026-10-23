@@ -1,3 +1,4 @@
+import { admissionSqliteBusy } from "./storage-admission.js";
 import { guardPriorEndpoints } from "./prior-endpoints.js";
 import { existsSync, mkdirSync, realpathSync } from "node:fs";
 import { createHash } from "node:crypto";
@@ -477,6 +478,7 @@ export class MessageStore {
     try { this.db = new DatabaseSync(file); this.captureHandle("main", this.db); }
     catch (err) { this.release(); throw err; }
     try {
+      admissionSqliteBusy(this.db, SQLITE_BUSY_TIMEOUT_MS, true);
       if (file !== ":memory:") {
         const current = Number(this.db.prepare("PRAGMA user_version").get()!.user_version);
         if (!unlockUpgrade && current < SQLITE_STORE_VERSION)
@@ -1509,10 +1511,17 @@ export class MessageStore {
 /** Full asynchronous hosting admission, including constructor effects under the
  * same fresh reader proof/deadline. A completed earlier guard grants no authority. */
 export async function openMessageStore(file: string, log: Logger, endpoint: string, token: string, signal?: AbortSignal): Promise<MessageStore> {
+  signal?.throwIfAborted();
   if (file === ":memory:") return new MessageStore(file, log);
-  return guardPriorEndpoints(dirname(file), endpoint, token, log, signal, check => {
-    let store: MessageStore | undefined;
-    try { store = new MessageStore(file, log); check(); return store; }
-    catch (error) { store?.close(); throw error; }
-  }, file);
+  let store: MessageStore | undefined, admitted: (() => number) | undefined;
+  try {
+    const opened = await guardPriorEndpoints(dirname(file), endpoint, token, log, signal, check => {
+      admitted = check; store = new MessageStore(file, log); check(); return store;
+    }, file);
+    admitted?.(); signal?.throwIfAborted(); return opened;
+  } catch (error) {
+    try { store?.close(); }
+    catch (cleanup) { throw new AggregateError([error, cleanup], "Unadmitted store cleanup failed; original operation evidence is retained."); }
+    throw error;
+  }
 }

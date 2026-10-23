@@ -1,4 +1,4 @@
-import { storageAdmissionRemaining, storageAdmissionTimeout } from "./storage-admission.js";
+import { admissionSqliteBusy, storageAdmissionRemaining, storageAdmissionTimeout } from "./storage-admission.js";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -148,7 +148,7 @@ export function physicalMetadataPath(path: string): void {
 /** Observe an already admitted component without starting a competing migration. */
 export function existingMetadataDb(home: string): DatabaseSync | undefined {
  const file = join(resolve(home),"bridge.db"), cached = connections.get(handleKey(file));
- if (cached) { if (storageAdmissionRemaining() !== undefined) cached.exec("PRAGMA busy_timeout=0"); return escapeMetadataReference(cached); }
+ if (cached) { admissionSqliteBusy(cached); return escapeMetadataReference(cached); }
  if (!existsSync(file)) return undefined;
  physicalMetadataPath(file);
  const admission = observeExistingMetadataAdmission(file);
@@ -157,7 +157,7 @@ export function existingMetadataDb(home: string): DatabaseSync | undefined {
  try {
   if (!db.prepare("SELECT 1 FROM sqlite_master WHERE name='bridge_components'").get() ||
     Number(db.prepare("SELECT version FROM bridge_components WHERE name='metadata'").get()?.version ?? 0) !== VERSION) { legacyMetadataClose(db); return undefined; }
-  db.exec(`PRAGMA busy_timeout=${storageAdmissionTimeout(5000)}; PRAGMA synchronous=FULL;`); connections.set(handleKey(file),db); changeLifecycleRegistry(); return escapeMetadataReference(db);
+  admissionSqliteBusy(db,5000,true); db.exec("PRAGMA synchronous=FULL;"); connections.set(handleKey(file),db); changeLifecycleRegistry(); return escapeMetadataReference(db);
  } catch (error) { legacyMetadataClose(db); throw error; }
 }
 
@@ -190,7 +190,7 @@ export function metadataDb(home: string, offline?: OfflineMetadataAdmission): Da
  storageAdmissionRemaining();
  const file = join(resolve(home), "bridge.db");
  const cached = connections.get(handleKey(file));
- if (cached) { if (storageAdmissionRemaining() !== undefined) cached.exec("PRAGMA busy_timeout=0"); return escapeMetadataReference(cached); }
+ if (cached) { admissionSqliteBusy(cached); return escapeMetadataReference(cached); }
  physicalMetadataPath(file);
  mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
  const existed = existsSync(file);
@@ -203,7 +203,7 @@ export function metadataDb(home: string, offline?: OfflineMetadataAdmission): Da
   if (!Number.isSafeInteger(version()) || version() < 0) throw new Error("Metadata component version is unproven; originals retained for owner-coordinated offline recovery.");
   if (version() > 0 && version() < VERSION && (!offline || offline.kind !== "offline-isolated" || handleKey(physicalPath(resolve(offline.home))) !== handleKey(physicalPath(resolve(home)))))
     throw Object.assign(new Error(`Metadata component${version()} cached writers cannot be excluded automatically. Stop old readers through the owner and explicitly admit offline migration into an isolated home; originals remain unchanged.`), { code: "STORE_OFFLINE_REQUIRED" });
-  db.exec(`PRAGMA busy_timeout=${storageAdmissionTimeout(5000)}; PRAGMA synchronous=FULL;`);
+  admissionSqliteBusy(db,5000,true); db.exec("PRAGMA synchronous=FULL;");
   if (version() > VERSION) throw new Error("Metadata store is newer than this reader; retained unchanged.");
   if (version() < VERSION) {
    assertMetadataAdmission(home);
@@ -220,12 +220,14 @@ export function metadataDb(home: string, offline?: OfflineMetadataAdmission): Da
      if (existed) {
       const dir = join(home, ".migration-snapshots");
       physicalMetadataPath(dir);
+      storageAdmissionRemaining();
       mkdirSync(dir, { recursive: true, mode: 0o700 });
       const backup = join(dir, `metadata-v${VERSION}-${randomUUID()}.db`);
       snapshotMetadataTables(db,backup,["bridge_components","worktree_leases","worktree_lease_archive","bridge_metadata","bridge_read_receipts","bridge_imports","job_checklist","project_checklist"],"metadata",VERSION);
      }
+     storageAdmissionRemaining();
      db.exec("BEGIN IMMEDIATE");
-     try { db.exec(SCHEMA); db.exec("COMMIT"); }
+     try { storageAdmissionRemaining(); db.exec(SCHEMA); storageAdmissionRemaining(); db.exec("COMMIT"); }
      catch (error) { db.exec("ROLLBACK"); throw error; }
     }
    } finally { exclusive?.(); release(); }
