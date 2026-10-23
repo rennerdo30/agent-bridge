@@ -136,8 +136,9 @@ export class BridgeClient extends EventEmitter<BridgeClientEvents> {
   }
 
   /** Connect to an existing broker. Rejects with the socket error (ENOENT/ECONNREFUSED if nobody listens). */
-  static connect(pipePath: string, log: Logger, timeoutMs: number = CONNECT_TIMEOUT_MS, options: { readOnlyDirectory?: boolean } = {}): Promise<BridgeClient> {
+  static connect(pipePath: string, log: Logger, timeoutMs: number = CONNECT_TIMEOUT_MS, options: { readOnlyDirectory?: boolean; signal?: AbortSignal } = {}): Promise<BridgeClient> {
     return new Promise((resolve, reject) => {
+      options.signal?.throwIfAborted();
       // Never hand the token to an endpoint in a short-socket directory another user controls.
       ensurePrivateSocketDirectory(pipePath, process.platform, options.readOnlyDirectory ?? false);
       let socket = connect(pipePath);
@@ -145,14 +146,22 @@ export class BridgeClient extends EventEmitter<BridgeClientEvents> {
       let settled = false;
       const timer = setTimeout(() => {
         settled = true;
+        options.signal?.removeEventListener("abort", aborted);
         discovery?.abort();
         socket.destroy();
         reject(Object.assign(new Error("timed out connecting to broker"), { code: "ETIMEDOUT" }));
       }, timeoutMs);
+      const aborted = () => {
+        if (settled) return;
+        settled = true; clearTimeout(timer); options.signal?.removeEventListener("abort", aborted);
+        discovery?.abort(); socket.destroy(); reject(options.signal!.reason);
+      };
+      options.signal?.addEventListener("abort", aborted, { once: true });
       const connected = () => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
+        options.signal?.removeEventListener("abort", aborted);
         socket.removeAllListeners("error");
         resolve(new BridgeClient(socket, log));
       };
@@ -160,6 +169,8 @@ export class BridgeClient extends EventEmitter<BridgeClientEvents> {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
+        options.signal?.removeEventListener("abort", aborted);
+        discovery?.abort(); socket.destroy();
         reject(err);
       };
       socket.once("connect", connected);

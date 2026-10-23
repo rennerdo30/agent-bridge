@@ -537,6 +537,10 @@ describe("standalone demand-start broker", () => {
     expect((await fetch(new URL("/api/send", info!.url), { method: "POST", signal: AbortSignal.timeout(10_000), headers: { "x-agent-bridge": "1", "content-type": "application/json" }, body: '{"to":"ui-retained","body":"unauthorized"}' })).status).toBe(403);
     const send = dashboardSender(info!.url, cookie);
     const replies = await Promise.all(Array.from({ length: 5 }, (_, index) => send(`before-crash-${index}`)));
+    if (replies.some(reply => reply.status !== 200)) process.stderr.write("Daemon UI first-send diagnostics " + JSON.stringify({
+      stage: "first-five-sends", mobile, childExited: child.exitCode !== null || child.signalCode !== null,
+      responses: await Promise.all(replies.map(reply => httpFailureEvidence(reply))),
+    }) + "\n");
     expect(replies.map(reply => reply.status)).toEqual([200, 200, 200, 200, 200]);
     const accepted = await replies[0]!.json() as { id: string }, first = await remember(); expect(first).not.toBe(child.pid);
     const status = await client(); try { expect(await status.request("coreStatus", {})).toMatchObject({ mode: "daemon", pid: first }); } finally { status.close(); }

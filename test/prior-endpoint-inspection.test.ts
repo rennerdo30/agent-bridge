@@ -13,8 +13,9 @@ import { guardPriorEndpoints, priorEndpoints } from "../src/core/prior-endpoints
 import { BridgeError } from "../src/core/protocol.js";
 import { assertCompatibleMailboxReaders, storageLease } from "../src/core/storage-lock.js";
 import { deliveryFailure } from "../src/mcp/delivery-evidence.js";
+import * as processIdentity from "../src/core/process-identity.js";
 
-const io = vi.hoisted(() => ({ connect: vi.fn(), lstat: vi.fn(), write: vi.fn(), read: vi.fn(), stat: vi.fn(), actualLstat: undefined as any, actualWrite: undefined as any, actualRead: undefined as any, actualStat: undefined as any }));
+const io = vi.hoisted(() => ({ connect: vi.fn(), lstat: vi.fn(), write: vi.fn(), read: vi.fn(), stat: vi.fn(), fds: new Map<number, string>(), actualLstat: undefined as any, actualWrite: undefined as any, actualRead: undefined as any, actualStat: undefined as any }));
 vi.mock("node:timers/promises", async original => ({ ...await original<typeof import("node:timers/promises")>(),
   setTimeout: (ms: number, value: unknown, options?: { signal?: AbortSignal }) => new Promise((resolve, reject) => {
     const signal = options?.signal;
@@ -27,7 +28,14 @@ vi.mock("node:net", async original => ({ ...await original<typeof import("node:n
 vi.mock("node:fs", async original => {
   const actual = await original<typeof import("node:fs")>(); io.actualLstat = actual.lstatSync; io.actualWrite = actual.writeSync;
   io.actualRead = actual.readFileSync; io.actualStat = actual.statSync;
-  return { ...actual, lstatSync: io.lstat, writeSync: io.write, readFileSync: io.read, statSync: io.stat };
+  return { ...actual, lstatSync: io.lstat, writeSync: io.write, readFileSync: io.read, statSync: io.stat,
+    openSync: (...args: Parameters<typeof actual.openSync>) => { const fd = actual.openSync(...args); io.fds.set(fd, String(args[0])); return fd; },
+    closeSync: (fd: number) => { try { actual.closeSync(fd); } finally { io.fds.delete(fd); } },
+    readSync: (fd: number, buffer: Buffer, offset: number, length: number, position: number) => {
+      const path = io.fds.get(fd);
+      if (path?.includes(".storage-users")) return Buffer.from(io.read(path, "utf8")).copy(buffer, offset, position, position + length);
+      return actual.readSync(fd, buffer, offset, length, position);
+    } };
 });
 let home: string, file: string, original: Buffer, live: string | undefined;
 let inspections = 0, busy = 0;
@@ -36,12 +44,12 @@ beforeEach(() => {
   live = undefined; inspections = 0; busy = 0; sockets.length = 0;
   io.write.mockImplementation(io.actualWrite);
   io.read.mockImplementation(io.actualRead); io.stat.mockImplementation(io.actualStat);
-  io.lstat.mockImplementation((path: string) => {
+  io.lstat.mockImplementation((path: string, ...args: any[]) => {
     if (path === live || live && path === dirname(live)) return {
       isSocket: () => path === live, isDirectory: () => path !== live, isSymbolicLink: () => false,
       uid: process.getuid?.(), mode: 0o700,
     };
-    return io.actualLstat(path);
+    return io.actualLstat(path, ...args);
   });
   io.connect.mockImplementation((path: string) => {
     const socket = Object.assign(new EventEmitter(), { destroyed: false, destroy() { this.destroyed = true; } }); sockets.push(socket);
@@ -60,9 +68,93 @@ beforeEach(() => {
     return prepare.call(this, sql);
   });
 });
-afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); closeMetadataDbs(); io.connect.mockReset(); io.lstat.mockReset(); rmSync(home, { recursive: true, force: true }); });
+afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); closeMetadataDbs(); expect(io.fds.size).toBe(0); io.connect.mockReset(); io.lstat.mockReset(); rmSync(home, { recursive: true, force: true }); });
 const guard = (signal?: AbortSignal) => guardPriorEndpoints(home, "fixture-current", "fixture-only-token", nullLogger, signal);
 const unchanged = () => { expect(readFileSync(file).equals(original)).toBe(true); expect(readdirSync(home)).toEqual(["bridge.db"]); };
+
+it("refuses a late census retry before another pass or effect even when the reader has become compatible", async () => {
+  vi.useFakeTimers(); const release = storageLease(home), dir = join(home, ".storage-users"), lease = join(dir, readdirSync(dir)[0]!);
+  let ready = false, observations = 0;
+  io.read.mockImplementation((path: unknown, ...args: any[]) => {
+    if (path === lease) { observations++; if (!ready) return ""; }
+    return io.actualRead(path, ...args);
+  });
+  const effect = vi.fn(); let failure: unknown;
+  const admission = guard().then(effect, error => { failure = error; });
+  try {
+    await vi.waitFor(() => expect(observations).toBeGreaterThan(0));
+    const before = observations; ready = true; vi.setSystemTime(Date.now() + CONNECT_TIMEOUT_MS + 1);
+    await vi.runAllTimersAsync(); await admission;
+    expect(effect).not.toHaveBeenCalled(); expect(failure).toMatchObject({ code: "timeout" });
+    expect(observations).toBe(before); expect(readFileSync(file)).toEqual(original);
+  } finally { ready = true; await vi.runAllTimersAsync(); await admission; release(); }
+});
+
+it.each(["inspection", "endpoint", "census"])("refuses admission when a controlled %s stage returns after the aggregate deadline", async stage => {
+  vi.useFakeTimers(); const release = stage === "census" ? storageLease(home) : undefined;
+  let crossed = false;
+  const cross = () => { if (!crossed) { crossed = true; vi.setSystemTime(Date.now() + CONNECT_TIMEOUT_MS + 1); } };
+  if (stage === "inspection") {
+    const prepare = vi.mocked(DatabaseSync.prototype.prepare).getMockImplementation()!;
+    vi.spyOn(DatabaseSync.prototype, "prepare").mockImplementation(function(this: DatabaseSync, sql: string) {
+      if (sql === "PRAGMA user_version") cross(); return prepare.call(this, sql);
+    });
+  } else if (stage === "endpoint") {
+    const connect = io.connect.getMockImplementation()!, lstat = io.lstat.getMockImplementation()!;
+    io.connect.mockImplementation((...args: any[]) => { cross(); return connect(...args); });
+    io.lstat.mockImplementation((...args: any[]) => { cross(); return lstat(...args); });
+  } else {
+    io.read.mockImplementation((path: unknown, ...args: any[]) => {
+      if (String(path).includes(".storage-users")) cross(); return io.actualRead(path, ...args);
+    });
+  }
+  const close = vi.spyOn(DatabaseSync.prototype, "close"), effect = vi.fn(); let failure: unknown;
+  try {
+    await guard().then(effect, error => { failure = error; });
+    expect(crossed).toBe(true); expect(effect).not.toHaveBeenCalled(); expect(failure).toMatchObject({ code: "timeout" });
+    expect(close).toHaveBeenCalledOnce(); expect(sockets.every(socket => socket.destroyed)).toBe(true); expect(readFileSync(file)).toEqual(original);
+  } finally { release?.(); }
+});
+
+it.each(["success", "late", "cancel", "replacement"])("bounds the actual foreign reader identity query and fences its snapshot: %s", async phase => {
+  vi.useFakeTimers(); const fs = await import("node:fs"), dir = join(home, ".storage-users"); fs.mkdirSync(dir);
+  const pid = process.pid + 2_000_000, lease = join(dir, `${pid}-owned-fixture`);
+  fs.writeFileSync(lease, JSON.stringify({ pid, nonce: "original-incarnation", createdAt: Date.now(), mailboxProtocol: 7, mailboxSchema: 14 }));
+  const originalLease = readFileSync(lease), stop = new AbortController(), effect = vi.fn();
+  vi.spyOn(process, "kill").mockImplementation(() => true);
+  const sync = vi.spyOn(processIdentity, "processStartMs"), after = vi.spyOn(processIdentity, "identityStartedAfter").mockReturnValue(true);
+  let complete!: (identity: string) => void, querySignal: AbortSignal | undefined;
+  const query = vi.spyOn(processIdentity, "readProcessIdentity").mockImplementation((_pid, signal) => {
+    querySignal = signal;
+    return new Promise((resolve, reject) => {
+      const abort = () => { signal?.removeEventListener("abort", abort); reject(signal!.reason); };
+      signal?.addEventListener("abort", abort, { once: true });
+      complete = identity => { signal?.removeEventListener("abort", abort); resolve(identity); };
+    });
+  });
+  let failure: unknown; const admission = guard(stop.signal).then(effect, error => { failure = error; });
+  await vi.waitFor(() => expect(query).toHaveBeenCalledOnce());
+  expect(effect).not.toHaveBeenCalled(); expect(sync).not.toHaveBeenCalled(); expect(querySignal).toBeDefined();
+  if (phase === "cancel") stop.abort();
+  else {
+    if (phase === "late") vi.setSystemTime(Date.now() + CONNECT_TIMEOUT_MS + 1);
+    if (phase === "replacement") {
+      fs.writeFileSync(lease, JSON.stringify({ pid, nonce: "replacement-incarnation", createdAt: Date.now(), mailboxProtocol: 7, mailboxSchema: 14 }));
+      after.mockReturnValueOnce(true).mockReturnValue(false);
+      query.mockResolvedValueOnce(new Date(Date.now() - 10_000).toString());
+    }
+    complete(new Date(Date.now() + 10_000).toString());
+  }
+  await vi.runAllTimersAsync(); await admission;
+  if (phase === "success") { expect(effect).toHaveBeenCalledOnce(); expect(failure).toBeUndefined(); }
+  else {
+    expect(effect).not.toHaveBeenCalled();
+    expect(failure).toMatchObject(phase === "late" ? { code: "timeout" } : phase === "cancel" ? { name: "AbortError" } : { code: "protocol_mismatch" });
+  }
+  if (phase === "late" || phase === "cancel") expect(querySignal!.aborted).toBe(true);
+  if (phase !== "replacement") expect(readFileSync(lease)).toEqual(originalLease);
+  expect(readFileSync(file)).toEqual(original); expect(sync).not.toHaveBeenCalled();
+});
 
 it.each(["publication", "release"])("reinspects a suspended %s census before admitting effects, without latching a false protocol refusal", async phase => {
   vi.useFakeTimers(); const release = storageLease(home), dir = join(home, ".storage-users"), lease = join(dir, readdirSync(dir)[0]!);
@@ -128,8 +220,7 @@ it("distinguishes incomplete reader refusal from an endpoint version without adm
   const lease = join(dir, `${process.pid}-incomplete-publication`); fs.writeFileSync(lease, "");
   let refusal: unknown; const admission = guard().catch(error => { refusal = error; });
   await vi.runAllTimersAsync(); await admission;
-  expect(refusal).toMatchObject({ code: "protocol_mismatch" });
-  expect(deliveryFailure(refusal)).toEqual({ code: "protocol_mismatch", reason: "protocol-refusal", protocol: { source: "storage-reader" } });
+  expect(refusal).toMatchObject({ code: "timeout" });
   expect(Date.now() - began).toBeLessThanOrEqual(CONNECT_TIMEOUT_MS);
   expect(readFileSync(lease)).toEqual(Buffer.alloc(0)); expect(readFileSync(file)).toEqual(original);
 });

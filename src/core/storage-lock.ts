@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { closeSync, existsSync, fsyncSync, linkSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeSync } from "node:fs";
+import { closeSync, constants, existsSync, fstatSync, fsyncSync, linkSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, renameSync, rmSync, statSync, writeSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { processStartMs } from "./process-identity.js";
+import { identityStartedAfter, processStartMs, readProcessIdentity } from "./process-identity.js";
 import { ownerGone as bootOwnerGone } from "./boot-time.js";
 import { PROTOCOL_VERSION } from "./constants.js";
 import { SQLITE_STORE_VERSION } from "./store-version.js";
@@ -183,6 +183,58 @@ export function assertCompatibleMailboxReaders(home: string): void {
     throw Object.assign(new Error(`Mailbox reader compatibility is unproven (lease ${path}); owner-coordinated shutdown is required before sharing this data home.`),
       { code: "STORE_READER_ACTIVE", readerCompatibility: incompatible ? "incompatible" : "unproven" });
   }
+}
+
+/** Deadline-bound startup census. Never call the synchronous OS creation-time
+ * probes here. A second exact snapshot fences every awaited liveness result. */
+export async function assertCompatibleMailboxReadersAsync(home: string, signal: AbortSignal, check: () => number): Promise<void> {
+  type Reader = { path: string; signature: string; pid: number; owner: LockOwner | null; createdAt: number; compatible: boolean };
+  const unproven = () => Object.assign(new Error("Mailbox reader compatibility is unproven"), { code: "STORE_READER_ACTIVE", readerCompatibility: "unproven" });
+  const snapshot = (): Reader[] => {
+    check(); const dir = join(home, USERS_DIR), files = existsSync(dir) ? readdirSync(dir).sort() : []; check();
+    if (files.length > 256) throw unproven();
+    return files.map(file => {
+      check(); const path = join(dir, file), before = lstatSync(path, { bigint: true }); check();
+      if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1n || before.size > 4_096n) throw unproven();
+      const identity = (s: typeof before) => `${s.dev}:${s.ino}:${s.size}:${s.mtimeNs}:${s.ctimeNs}`;
+      const fd = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+      let raw: string;
+      try {
+        check(); if (identity(fstatSync(fd, { bigint: true })) !== identity(before)) throw unproven();
+        const bytes = Buffer.alloc(Number(before.size) + 1), length = readSync(fd, bytes, 0, bytes.length, 0); check();
+        if (length !== Number(before.size) || identity(fstatSync(fd, { bigint: true })) !== identity(before) || identity(lstatSync(path, { bigint: true })) !== identity(before)) throw unproven();
+        raw = bytes.subarray(0, length).toString("utf8");
+      } finally { closeSync(fd); }
+      check(); let owner: LockOwner | null = null;
+      try {
+        const value = JSON.parse(raw) as LockOwner;
+        if (value && Number.isSafeInteger(value.pid) && value.pid > 0 && typeof value.nonce === "string" && Number.isFinite(value.createdAt)) owner = value;
+      } catch { /* Incomplete is unproven, never compatible. */ }
+      const pid = Number(file.split("-")[0]);
+      return { path, signature: `${file}:${identity(before)}:${raw}`, pid, owner, createdAt: owner?.createdAt ?? Number(before.mtimeMs),
+        compatible: owner?.pid === pid && owner.mailboxProtocol === PROTOCOL_VERSION && owner.mailboxSchema === SQLITE_STORE_VERSION };
+    });
+  };
+  const before = snapshot();
+  let blocked: Reader | undefined;
+  for (const reader of before) {
+    check(); if (reader.compatible) continue;
+    let alive: boolean | undefined = reader.pid === process.pid ? true : undefined;
+    if (alive === undefined && Number.isSafeInteger(reader.pid) && reader.pid > 0) {
+      try {
+        process.kill(reader.pid, 0); check();
+        const identity = await readProcessIdentity(reader.pid, signal); check();
+        if (identity) alive = process.platform === "darwin" ? !(Number.isFinite(Date.parse(identity)) && Date.parse(identity) > reader.createdAt + START_SLACK_MS)
+          : !identityStartedAfter(identity, reader.createdAt + START_SLACK_MS);
+        check();
+      } catch (error) { check(); alive = (error as NodeJS.ErrnoException).code === "ESRCH" ? false : undefined; }
+    }
+    if (!Number.isSafeInteger(reader.pid) || reader.pid <= 0 || !bootOwnerGone({ alive, recordedAt: reader.createdAt })) { blocked = reader; break; }
+  }
+  const after = snapshot(); check();
+  if (before.length !== after.length || before.some((reader, i) => reader.signature !== after[i]!.signature)) throw unproven();
+  if (blocked) throw Object.assign(unproven(), { readerCompatibility: blocked.owner?.pid === blocked.pid && Number.isSafeInteger(blocked.owner.mailboxProtocol) && Number.isSafeInteger(blocked.owner.mailboxSchema) ? "incompatible" : "unproven" });
+  check();
 }
 
 /** Never expires a live process's lease by age. A lease is stale only when its process is gone or its PID

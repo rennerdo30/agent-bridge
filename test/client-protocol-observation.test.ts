@@ -9,6 +9,18 @@ import { makeEnv } from "./helpers.js";
 const connect = vi.hoisted(() => vi.fn());
 vi.mock("node:net", async original => ({ ...await original<typeof import("node:net")>(), connect }));
 
+it("aborts its actual pending socket without admitting a late connection or retaining a handle", async () => {
+  const env = makeEnv(), stop = new AbortController(), effect = vi.fn();
+  const socket = Object.assign(new EventEmitter(), { destroy: vi.fn(() => { socket.emit("close"); }) });
+  connect.mockReturnValue(socket);
+  try {
+    const pending = BridgeClient.connect(env.pipe, nullLogger, 300, { readOnlyDirectory: true, signal: stop.signal });
+    const settled = pending.then(effect, error => error); stop.abort();
+    expect(await settled).toMatchObject({ name: "AbortError" }); expect(socket.destroy).toHaveBeenCalledOnce();
+    socket.emit("connect"); expect(effect).not.toHaveBeenCalled();
+  } finally { await env.cleanup(); }
+});
+
 it("keeps real parsed refusal frames and connection generations distinct without sending mail", async () => {
   const env = makeEnv(), operations: string[] = [], observations: unknown[] = [];
   const log = { ...nullLogger, info: (event: string, data?: unknown) => { if (event === "client protocol refusal observation") observations.push(data); } };
