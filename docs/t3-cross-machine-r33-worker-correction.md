@@ -38,3 +38,35 @@ amendment and this correction's own frozen check head. Unknown actual-worker
 errors, Windows availability, backup completion and prior unproven runtime
 causes remain hosted review/CI gates. No refused/unknown result is admitted or
 automatically reexecuted by a diagnostic category.
+
+## Frozen correction result
+
+Exact tested correction **8b36cae5a1184fa3fd10f26e7ba170a5cfd59be3**, tree
+**ffaaf787d86b83f7bc5bb955fe77d26c9b239749**. No protected-body change from
+the approved1c source; the separate pin attribution remains a5a88546.
+
+The one parent-approved additional batch used a single external12000ms
+aggregate deadline: start2026-10-23T09:08:52.7165316Z,
+end09:08:57.7870717Z, **5071ms total**, no timeout/retry/extension.
+
+|Check|Own PID|Start/end UTC|Process elapsed / result|
+|---|---|---|---|
+|All15 bootstrap mocked cases|60452|09:08:52.7289528 /09:08:56.4634219|3734ms,exit0;15passed,0excluded|
+|NoEmit|68572|09:08:56.4905589 /09:08:57.7782112|1288ms,exit0|
+
+Raw streams each include full commit/tree/PID/start/end/exit headers. Receipt:
+`E:/AgentData/reports/ab458-r33-8b36cae5-correction.json`, plus
+`-mock.out/.err` and `-typecheck.out/.err` at the same prefix.
+No native Worker/build/provider was used. New early-thread-retirement and
+classification cases were not replayed against a modified historical tree;
+do not label this as a newly executed red/green pair. The earlier c862 qualified
+red evidence is separately retained, as are every unsuccessful harness attempt
+and the **NOT RECONSTRUCTED** original-batch aggregate.
+
+These checks validate the controlled identity schedule and safe classification,
+not the discarded native error or historical prepared-record mismatch. The CI
+workflow prerequisite is source-proved and the order assertion passes; actual
+built-worker and archive-profile acceptance still requires hosted execution.
+File-record fsync, directory publication durability and nonreserved activation
+timing remain explicit full-design review topics, not a claim of power-loss or
+complete lifecycle acceptance from these mocked tests.
