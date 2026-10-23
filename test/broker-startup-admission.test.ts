@@ -110,3 +110,17 @@ it("cancels the exact deferred producer turn when close precedes normal-serving 
   expect(f.reservation.activate).toHaveBeenCalledOnce(); expect(producers).not.toHaveBeenCalled();
   await f.broker.close(); await vi.runAllTimersAsync(); expect(producers).not.toHaveBeenCalled();
 });
+
+it("revokes borrowed mobile authority synchronously at abort before cleanup yields, retaining the existing disposer deadline", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] }); const f = fixture();
+  const get = vi.fn(), serviceClose = vi.fn();
+  Object.assign(f.broker, { server: f.server, questions: { store: { get }, close: serviceClose } });
+  const context = f.broker.mobileHostContext()!; expect(context.ready()).toBe(true);
+  const gate = deferred(); let late!: Promise<void>;
+  context.onDispose(() => late = gate.promise.then(() => { expect(() => context.ownerQuestions.store.get("held-question")).toThrow("source_unavailable"); }));
+  let settled = false; const close = (f.broker as any).abortStartup().then(() => { settled = true; });
+  expect(context.ready()).toBe(false); expect(() => context.ownerQuestions.store.get("held-question")).toThrow("source_unavailable");
+  await vi.advanceTimersByTimeAsync(4999); expect(settled).toBe(false); expect(serviceClose).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(1); await close; expect(serviceClose).toHaveBeenCalledOnce();
+  gate.release(); await late; expect(get).not.toHaveBeenCalled(); expect(context.ready()).toBe(false);
+});

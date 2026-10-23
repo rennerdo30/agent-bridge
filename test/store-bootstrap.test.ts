@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { copyFileSync, existsSync, lstatSync, readFileSync, readdirSync, renameSync, mkdirSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, lstatSync, readFileSync, readdirSync, renameSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -207,6 +207,63 @@ it("does not publish or certify a backup whose copied journal proof is incomplet
   expect(readFileSync(join(dir, name))).toEqual(original); inspectBootstrapJournal(env.home);
 });
 
+it("backs up an ordinary alternate mailbox before a concurrent move into its shared archive", async () => {
+  schemaMs = 0; const { MessageStore } = await import("../src/core/store.js"), snapshots = await import("../src/core/sqlite-maintenance.js");
+  opened = new MessageStore(join(env.home, "mail.db"), nullLogger);
+  opened.insert({ id: "accepted-alternate", recipient: "retained-owner", from: { id: "sender", name: "sender", agent: "codex" }, to: "retained-owner", conversationId: "retained", replyTo: null, hop: 0, body: "original alternate bytes", createdAt: 1, readAt: null });
+  const snapshot = snapshots.snapshotDatabase; let archived = false;
+  vi.spyOn(snapshots, "snapshotDatabase").mockImplementation((source, target) => {
+    snapshot(source, target);
+    if (source === join(env.home, "archive.db")) { opened!.purgeOlderThan(2); archived = true; }
+  });
+  const { createBackup, readBackup } = await import("../src/core/backups.js"), backup = createBackup(env.home, clock, false);
+  expect(archived).toBe(true); expect(readBackup(backup).files.map(file => file.path)).toContain("mail.db");
+  const bodies: unknown[] = [];
+  for (const name of ["mail.db", "archive.db"]) {
+    const file = join(backup, name); if (!existsSync(file)) continue;
+    const copy = new DatabaseSync(file, { readOnly: true });
+    try { bodies.push(...copy.prepare("SELECT body FROM messages WHERE id='accepted-alternate'").all().map(row => row.body)); } finally { copy.close(); }
+  }
+  expect(bodies).toContain("original alternate bytes");
+});
+
+it.each(["archive.db", "history.db", "bridge.db"])("refuses a full backup with required %s omitted from its checksum group", async name => {
+  schemaMs = 0; opened = await open(); const { createBackup, readBackup } = await import("../src/core/backups.js");
+  const backup = createBackup(env.home, clock, false), path = join(backup, "manifest.json"), manifest = JSON.parse(readFileSync(path, "utf8"));
+  manifest.files = manifest.files.filter((file: any) => file.path !== name);
+  writeFileSync(path, JSON.stringify(manifest));
+  if (name !== "bridge.db") rmSync(join(backup, name)); // Original home is untouched; test only the owned copy.
+  expect(() => readBackup(backup)).toThrow();
+  expect(opened.namespace).toMatch(/^[a-f0-9]{64}$/);
+});
+
+it("compares the selected alternate mailbox namespace with retained prepared evidence", async () => {
+  schemaMs = 0; opened = await openMessageStore(join(env.home, "mail.db"), nullLogger, "fixture-current", "fixture-only-token", undefined, start + 10000);
+  const { createBackup, readBackup } = await import("../src/core/backups.js"), backup = createBackup(env.home, clock, false);
+  const copied = new DatabaseSync(join(backup, "mail.db")); copied.exec("UPDATE mailbox_store SET namespace='foreign-namespace'"); copied.close();
+  // Recompute the ordinary file checksum, so the recipient namespace proof is
+  // tested independently of generic tamper detection.
+  const { createHash } = await import("node:crypto"), path = join(backup, "manifest.json"), manifest = JSON.parse(readFileSync(path, "utf8"));
+  const bytes = readFileSync(join(backup, "mail.db")), entry = manifest.files.find((file: any) => file.path === "mail.db");
+  entry.sha256 = createHash("sha256").update(bytes).digest("hex"); entry.bytes = bytes.length; writeFileSync(path, JSON.stringify(manifest));
+  expect(() => readBackup(backup)).toThrow();
+});
+
+it("refuses backup publication when the final rename cannot be made directory-durable and retains all captured bytes", async () => {
+  schemaMs = 0; opened = await open(); const { createBackup, listBackups } = await import("../src/core/backups.js");
+  const originals = readFileSync(env.db); let reached = false;
+  directoryIo.onSync = () => {
+    const root = join(env.home, "backups");
+    if (directoryIo.syncs.at(-1) === root && readdirSync(root).some(name => name.startsWith("snapshot-"))) {
+      reached = true; throw Object.assign(new Error("Controlled final publication failure"), { code: "ENOTSUP" });
+    }
+  };
+  expect(() => createBackup(env.home, clock, false)).toThrow(); expect(reached).toBe(true);
+  directoryIo.onSync = undefined;
+  expect(readFileSync(env.db)).toEqual(originals); expect(listBackups(env.home)).toEqual([]);
+  expect(readdirSync(join(env.home, "backups")).length).toBeGreaterThan(0);
+});
+
 it.each([1, 2, 3, 4])("refuses automatic component%s upgrade before effects but preserves originals under explicit isolated offline admission", async version => {
   schemaMs = 0; const legacy = new DatabaseSync(env.db);
   legacy.exec(`CREATE TABLE bridge_components(name TEXT PRIMARY KEY,version INTEGER); INSERT INTO bridge_components VALUES('metadata',${version}); CREATE TABLE accepted_original(body BLOB); INSERT INTO accepted_original VALUES(x'00ff01');`); legacy.close();
@@ -234,6 +291,36 @@ it("refuses a current component with no provenance row without minting ordinary 
   db.exec("CREATE TABLE bridge_components(name TEXT PRIMARY KEY,version INTEGER); INSERT INTO bridge_components VALUES('metadata',5); CREATE TABLE accepted_original(body BLOB); INSERT INTO accepted_original VALUES(x'00ff01');"); db.close();
   const bytes = readFileSync(env.db); expect(() => metadataDb(env.home)).toThrow(/preparation/i);
   expect(readFileSync(env.db)).toEqual(bytes); expect(existsSync(join(env.home, ".store-bootstrap.expected.json"))).toBe(false);
+});
+
+it("keeps version-zero capability census read-only without phantom writable lifecycle admissions", async () => {
+  const raw = new DatabaseSync(env.db); raw.exec("CREATE TABLE accepted_original(body BLOB); INSERT INTO accepted_original VALUES(x'00ff01');"); raw.close();
+  const api = await import("../src/core/metadata-db.js"), bytes = readFileSync(env.db);
+  const before = api.observeMetadataClosePrerequisites(performance.now() + 2000);
+  expect(api.existingMetadataDb(env.home)).toBeUndefined(); expect(readFileSync(env.db)).toEqual(bytes);
+  const after = api.observeMetadataClosePrerequisites(performance.now() + 2000);
+  expect(after.admissionGeneration).toBe(before.admissionGeneration);
+  expect(after.outcomes.legacyCloseReturns).toBe(before.outcomes.legacyCloseReturns);
+  expect(after.outcomes.registeredHandles).toBe(before.outcomes.registeredHandles);
+  const current = api.metadataDb(env.home), admitted = api.observeMetadataClosePrerequisites(performance.now() + 2000);
+  expect(admitted.admissionGeneration).toBe(before.admissionGeneration + 1);
+  expect(admitted.outcomes.legacyCloseReturns).toBe(before.outcomes.legacyCloseReturns);
+  expect(current.prepare("SELECT body FROM accepted_original").get()!.body).toEqual(new Uint8Array([0,255,1]));
+});
+
+it("refuses a future mailbox schema before metadata publication changes its bytes", async () => {
+  const db = new DatabaseSync(env.db); db.exec("CREATE TABLE future_accepted(body BLOB); INSERT INTO future_accepted VALUES(x'00ff01'); PRAGMA user_version=999;"); db.close();
+  const bytes = readFileSync(env.db), { MessageStore } = await import("../src/core/store.js");
+  expect(() => new MessageStore(env.db, nullLogger)).toThrow(/newer/i); expect(readFileSync(env.db)).toEqual(bytes);
+  expect(existsSync(join(env.home, ".migration-snapshots"))).toBe(false);
+});
+
+it("preserves a proven existing provenance row byte-for-byte through explicit component upgrade and retry", () => {
+  const original = metadataDb(env.home), row = original.prepare("SELECT value,updated_at FROM bridge_metadata WHERE domain='store-bootstrap' AND key='provenance'").get();
+  original.exec("UPDATE bridge_components SET version=1 WHERE name='metadata'"); closeMetadataDbs();
+  const admitted = metadataDb(env.home, { kind: "offline-isolated", home: env.home });
+  expect(admitted.prepare("SELECT value,updated_at FROM bridge_metadata WHERE domain='store-bootstrap' AND key='provenance'").get()).toEqual(row);
+  closeMetadataDbs(); expect(metadataDb(env.home).prepare("SELECT value,updated_at FROM bridge_metadata WHERE domain='store-bootstrap' AND key='provenance'").get()).toEqual(row);
 });
 
 it("retains a partially published anchor across restart and never reexecutes it as fresh or ordinary", async () => {

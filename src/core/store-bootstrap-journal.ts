@@ -288,6 +288,17 @@ function currentProvenance(home: string): Provenance {
 export function initializeBootstrapProvenance(db: DatabaseSync, home: string, previousVersion: number): void {
   home = physicalPath(resolve(home));
   if (!db.isTransaction || !Number.isSafeInteger(previousVersion) || previousVersion < 0 || previousVersion >= 5 || physicalPath(resolve(db.location("main")!)) !== physicalPath(resolve(join(home, DB_FILE_NAME)))) throw bootstrapUnknown();
+  const retained = db.prepare("SELECT value FROM bridge_metadata WHERE domain='store-bootstrap' AND key='provenance'").get()?.value;
+  if (retained !== undefined) {
+    // A retry/component upgrade is not absence permission. Preserve the exact
+    // existing value/timestamp/generation after validating its original proof.
+    if (!text(retained, 16384)) throw bootstrapUnknown();
+    const proven = parseProvenance(JSON.parse(retained)); validateProvenanceIdentity(home, proven);
+    if (proven.kind === "cold") {
+      const anchor = optionalAnchor(home); if (!anchor || !sameBootstrapIdentity(coldProof(anchor), coldProof(proven))) throw bootstrapUnknown();
+    } else if (optionalAnchor(home) || exists(join(home, ".store-bootstrap"))) throw bootstrapUnknown();
+    return;
+  }
   const value = currentProvenance(home);
   db.prepare("INSERT INTO bridge_metadata(domain,key,value,updated_at) VALUES('store-bootstrap','provenance',?,?)").run(JSON.stringify(value), Date.now());
 }

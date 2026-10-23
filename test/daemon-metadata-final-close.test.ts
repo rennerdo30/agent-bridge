@@ -24,6 +24,9 @@ vi.mock("../src/core/storage-lock.js", async importOriginal => {
 });
 
 let api: typeof import("../src/core/metadata-db.js"), home: string, file: string, db: DatabaseSync;
+let setupLeaseReturns: number;
+const ownedReferences = new Map<string, DatabaseSync>();
+function ownMetadata(path: string): DatabaseSync { const reference = api.metadataDb(path); ownedReferences.set(path, reference); return reference; }
 const ownedHomes: string[] = [];
 const independent: DatabaseSync[] = [];
 const unregisteredNative: DatabaseSync[] = [];
@@ -63,18 +66,22 @@ beforeEach(async () => {
  vi.resetModules(); leaseFixture.onRelease = undefined; leaseFixture.held.clear();
  api = await import("../src/core/metadata-db.js");
  home = realpathSync.native(mkdtempSync(join(tmpdir(), "ab-metadata-observe-"))); file = join(home, "bridge.db");
- established(home); ownedHomes.push(home); db = api.metadataDb(home);
+ established(home); ownedHomes.push(home); db = ownMetadata(home);
  // FIXTURE policy: the observer itself MUST NOT lower this or upgrade FULL.
  db.exec("PRAGMA busy_timeout=25");
+ setupLeaseReturns = observe().outcomes.leaseCallbackReturns; // Completed canonical setup migration is outside each later operation window.
 });
 afterEach(async () => {
  leaseFixture.onRelease = undefined; for (const release of leaseFixture.held) release(); leaseFixture.held.clear(); vi.restoreAllMocks();
  for (const handle of unregisteredNative.splice(0)) if (handle.isOpen) handle.close();
  for (const reader of independent.splice(0)) { if (reader.isTransaction) reader.exec("ROLLBACK"); reader.close(); }
  for (const path of ownedHomes.splice(0)) {
-  const handle = api.existingMetadataDb(path);
+  // Cleanup holds exact fixture-owned native references. Do not ask an
+  // authorizing opener to re-inspect a deliberately hot/linked database.
+  const handle = ownedReferences.get(path);
   if (handle?.isOpen) { if (handle.isTransaction) handle.exec("ROLLBACK"); api.closeMetadataDb(path); }
  }
+ ownedReferences.clear();
  await rm(home, { recursive: true, force: true });
 });
 
@@ -102,7 +109,7 @@ describe("metadata close prerequisites: observations only; canonical issuer UNWI
  });
  it("preflights a second real transaction without rollback, close or partial retirement", () => {
   const secondHome = join(home, "second"); established(secondHome); ownedHomes.push(secondHome);
-  const second = api.metadataDb(secondHome); second.exec("PRAGMA busy_timeout=25; BEGIN IMMEDIATE; INSERT INTO fixture_mail VALUES('pending',X'ff22');");
+  const second = ownMetadata(secondHome); second.exec("PRAGMA busy_timeout=25; BEGIN IMMEDIATE; INSERT INTO fixture_mail VALUES('pending',X'ff22');");
   const secondClose = vi.spyOn(second, "close"), secondExec = vi.spyOn(second, "exec"), unchanged = noEffects();
   const result = observe(); retained(result); unchanged(); expect(result.blockers).toContain("transaction_active");
   expect(result.outcomes.registeredHandles).toBe(2); expect(secondClose).not.toHaveBeenCalled(); expect(secondExec).not.toHaveBeenCalled();
@@ -110,7 +117,7 @@ describe("metadata close prerequisites: observations only; canonical issuer UNWI
  });
  it("keeps two actual aliased-file handles distinct and refuses their unproved identities", () => {
   const aliasHome = join(home, "alias"); mkdirSync(aliasHome); linkSync(file, join(aliasHome, "bridge.db")); ownedHomes.push(aliasHome);
-  const alias = api.metadataDb(aliasHome); expect(alias).not.toBe(db); alias.exec("PRAGMA busy_timeout=25; BEGIN IMMEDIATE");
+  const alias = ownMetadata(aliasHome); expect(alias).not.toBe(db); alias.exec("PRAGMA busy_timeout=25; BEGIN IMMEDIATE");
   const close = vi.spyOn(alias, "close"), exec = vi.spyOn(alias, "exec"), unchanged = noEffects();
   const result = observe(); retained(result); unchanged(); expect(result.outcomes.registeredHandles).toBe(2);
   expect(result.blockers).toContain("identity_unknown"); expect(result.blockers).toContain("transaction_active");
@@ -206,7 +213,7 @@ describe("metadata close prerequisites: observations only; canonical issuer UNWI
  });
  it("never backfills a cold absent-before-open admission", () => {
   const coldHome = join(home, "cold"); mkdirSync(coldHome); ownedHomes.push(coldHome);
-  const cold = api.metadataDb(coldHome); cold.exec("PRAGMA busy_timeout=25; CREATE TABLE cold_mail(body BLOB); INSERT INTO cold_mail VALUES(X'ff0022')");
+  const cold = ownMetadata(coldHome); cold.exec("PRAGMA busy_timeout=25; CREATE TABLE cold_mail(body BLOB); INSERT INTO cold_mail VALUES(X'ff0022')");
   const close = vi.spyOn(cold, "close"), result = observe(); retained(result);
   expect(result.blockers).toContain("identity_unknown"); expect(close).not.toHaveBeenCalled(); expect(api.metadataDb(coldHome)).toBe(cold);
   expect(cold.prepare("SELECT body FROM cold_mail").get()!.body).toEqual(new Uint8Array([255, 0, 34]));
@@ -227,7 +234,7 @@ describe("metadata close prerequisites: observations only; canonical issuer UNWI
   leaseFixture.onRelease = () => { releases++; during = observe(); }; // Actual storage lease is still held inside its original finally.
   api.saveMetadataValue(home, "fixture", "accepted", { bytes: "preserved" }); leaseFixture.onRelease = undefined;
   expect(during!.blockers).toContain("lease_active"); expect(during!.blockers).toContain("lease_unknown"); retained(during!);
-  const result = observe(); retained(result); expect(result.outcomes.leaseCallbackReturns).toBe(1);
+  const result = observe(); retained(result); expect(result.outcomes.leaseCallbackReturns - setupLeaseReturns).toBe(1);
   expect(result.blockers).toContain("lease_unknown"); expect(close).not.toHaveBeenCalled();
   expect(releases).toBe(1); // Observation did not call the real release callback recursively.
   expect(api.metadataValue(home, "fixture", "accepted")).toEqual({ bytes: "preserved" });
@@ -236,7 +243,7 @@ describe("metadata close prerequisites: observations only; canonical issuer UNWI
   leaseFixture.onRelease = () => { throw Error("SIMULATED release failure before actual callback"); };
   expect(() => api.saveMetadataValue(home, "fixture", "accepted", { bytes: "preserved" })).toThrow("SIMULATED release failure");
   const unchanged = noEffects(), result = observe(); retained(result); unchanged();
-  expect(result.blockers).toContain("lease_unknown"); expect(result.outcomes.leaseCallbackReturns).toBe(0);
+  expect(result.blockers).toContain("lease_unknown"); expect(result.outcomes.leaseCallbackReturns - setupLeaseReturns).toBe(0);
   expect(leaseFixture.held.size).toBe(1); expect(result.outcomes.retainedLeaseFailures).toBe(1);
   expect(api.metadataValue(home, "fixture", "accepted")).toEqual({ bytes: "preserved" });
   // The fixture releases its own actual storage lease in afterEach. Synthetic
@@ -250,7 +257,7 @@ describe("metadata close prerequisites: observations only; canonical issuer UNWI
   expect(api.metadataDb(home)).toBe(db); expect(db.prepare("SELECT body FROM fixture_mail").get()!.body).toEqual(new Uint8Array([0, 255, 1]));
  });
  it("never reuses actual admitted-handle IDs after ordinary fixture close/reopen", () => {
-  const first = observe(); api.closeMetadataDb(home); db = api.metadataDb(home); db.exec("PRAGMA busy_timeout=25");
+  const first = observe(); api.closeMetadataDb(home); db = ownMetadata(home); db.exec("PRAGMA busy_timeout=25");
   const result = observe(); retained(result); expect(result.admissionGeneration).toBeGreaterThan(first.admissionGeneration);
   expect(result.membershipDigest).not.toBe(first.membershipDigest); expect(result.outcomes.legacyCloseReturns).toBe(1);
   expect(result.outcomes.unattempted).toBe(1); expect(result.blockers).toContain("consumer_unknown");
@@ -287,15 +294,24 @@ describe("metadata close prerequisites: observations only; canonical issuer UNWI
  });
  it("retains the actual129th init/close-failed native reference and a distinct130th attempt beyond the manifest", () => {
   for (let index = 0; index < 127; index++) {
-   const path = join(home, `owned-${index}`); established(path); ownedHomes.push(path); api.metadataDb(path);
+   const path = join(home, `owned-${index}`); established(path); ownedHomes.push(path); ownMetadata(path);
   }
   const baseline = observe(); expect(baseline.outcomes.registeredHandles).toBe(128);
   const failedHome = join(home, "overflow-failed"), failedFile = join(failedHome, "bridge.db"); established(failedHome);
   const actualExec = DatabaseSync.prototype.exec, actualClose = DatabaseSync.prototype.close;
   const preflightClosed: DatabaseSync[] = [];
+  const actualPrepare = DatabaseSync.prototype.prepare, queries = new WeakMap<DatabaseSync, string[]>();
+  const preparedQueries = vi.spyOn(DatabaseSync.prototype, "prepare").mockImplementation(function(this: DatabaseSync, sql: string) {
+   if (this.location("main") === failedFile) { const seen = queries.get(this) ?? []; seen.push(sql); queries.set(this, seen); }
+   return actualPrepare.call(this, sql);
+  });
+  const preflightRoles = () => preflightClosed.map(reference => queries.get(reference)?.some(sql => sql.includes("domain='store-bootstrap'")) ? "provenance" : "component-compatibility");
   const exec = vi.spyOn(DatabaseSync.prototype, "exec").mockImplementation(function(this: DatabaseSync, sql: string) {
    const result = actualExec.call(this, sql);
-   if (this.location("main") === failedFile) {
+   // This exact initialization statement runs only on the actual captured RW
+   // opener, after its normal busy policy. No read-only proof inspection owns
+   // this simulated init/close failure.
+   if (this.location("main") === failedFile && sql === "PRAGMA synchronous=FULL;") {
     unregisteredNative.push(this);
     throw Error("SIMULATED init failure after actual ordinary SQL on overflow native handle");
    }
@@ -310,21 +326,24 @@ describe("metadata close prerequisites: observations only; canonical issuer UNWI
    return actualClose.call(this);
   });
   expect(() => api.metadataDb(failedHome)).toThrow("SIMULATED overflow close failure");
-  expect(preflightClosed).toHaveLength(1); expect(preflightClosed[0]).toBeInstanceOf(DatabaseSync); expect(preflightClosed[0]!.isOpen).toBe(false);
+  expect(preflightRoles()).toEqual(["provenance", "component-compatibility"]);
+  expect(preflightClosed.every(reference => !reference.isOpen)).toBe(true);
   const first = unregisteredNative[0]!; expect(first).toBeInstanceOf(DatabaseSync); expect(first.isOpen).toBe(true);
   // Vitest computes deep-equality hints even for a passing not.toBe identity
   // check. Assert only the primitive identity result, never inspect accessors
   // on these deliberately closed native preflight handles.
   expect(Object.is(first, preflightClosed[0])).toBe(false);
-  exec.mockClear(); close.mockClear(); const prepare = vi.spyOn(DatabaseSync.prototype, "prepare"), result = observe(); retained(result);
+  exec.mockClear(); close.mockClear(); preparedQueries.mockClear(); const prepare = preparedQueries, result = observe(); retained(result);
   expect(result.blockers).toContain("bound"); expect(result.outcomes.registeredHandles).toBe(129);
   expect(result.outcomes.retainedHandleFailures).toBe(1); expect(result.outcomes.observedHandles).toBe(0);
   expect(result.admissionGeneration).toBe(baseline.admissionGeneration + 1); expect(result.membershipDigest).toBeNull();
   expect(exec).not.toHaveBeenCalled(); expect(close).not.toHaveBeenCalled(); expect(prepare).not.toHaveBeenCalled();
   expect(() => api.metadataDb(failedHome)).toThrow("SIMULATED overflow close failure");
-  expect(preflightClosed).toHaveLength(2); expect(Object.is(preflightClosed[1], preflightClosed[0])).toBe(false); expect(preflightClosed[1]!.isOpen).toBe(false);
+  expect(preflightRoles()).toEqual(["provenance", "component-compatibility", "provenance", "component-compatibility"]);
+  expect(preflightClosed.every(reference => !reference.isOpen)).toBe(true);
+  expect(Object.is(preflightClosed[2], preflightClosed[0])).toBe(false);
   expect(Object.is(unregisteredNative[1], first)).toBe(false); expect(unregisteredNative[1]!.isOpen).toBe(true);
-  expect(Object.is(unregisteredNative[1], preflightClosed[1])).toBe(false);
+  expect(Object.is(unregisteredNative[1], preflightClosed[2])).toBe(false);
   exec.mockClear(); close.mockClear(); prepare.mockClear(); const later = observe(); retained(later);
   expect(later.outcomes.registeredHandles).toBe(130); expect(later.outcomes.retainedHandleFailures).toBe(2);
   expect(later.admissionGeneration).toBe(result.admissionGeneration + 1); expect(later.membershipDigest).toBeNull();
@@ -341,7 +360,7 @@ describe("metadata close prerequisites: observations only; canonical issuer UNWI
   const unchanged = noEffects(), result = observe(); retained(result); unchanged();
   expect(result.blockers).toContain("bound"); expect(result.blockers).toContain("lease_unknown");
   expect(result.outcomes.retainedLeaseFailures).toBe(129); expect(leaseFixture.held.size).toBe(129);
-  expect(result.outcomes.leaseCallbackReturns).toBe(0); expect(result.membershipDigest).toBeNull();
+  expect(result.outcomes.leaseCallbackReturns - setupLeaseReturns).toBe(0); expect(result.membershipDigest).toBeNull();
   expect(api.metadataValue(home, "overflow", "128")).toEqual({ accepted: 128 });
   // afterEach releases only these fixture-owned actual callbacks outside the
   // observer. This does not prove exact lifecycle lease/owner retirement.

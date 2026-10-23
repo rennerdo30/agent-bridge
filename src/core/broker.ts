@@ -858,11 +858,15 @@ export class Broker {
 
   /** Undo a failed listen(): background services, timers and the bound server; the store stays open for its owner. */
   private async abortStartup(): Promise<void> {
+    // Revoke borrowed mobile authority synchronously, before any owned cleanup
+    // await. Start its existing bounded disposer clock at the same boundary.
+    this.mobileRetiring = true;
+    const mobile = this.mobileResources ? this.disposeMobileResources().catch(() => this.mobileDisposalDiagnostic("mobile_disposal_failed")) : undefined;
     await this.cancelServingMaintenance();
     this.healthMonitor.close();
     if (this.purgeTimer) clearInterval(this.purgeTimer);
     this.purgeTimer = null;
-    if (this.mobileResources) await this.disposeMobileResources().catch(() => this.mobileDisposalDiagnostic("mobile_disposal_failed"));
+    await mobile;
     this.questions?.close(); this.questions = null;
     const jobs = this.jobsPath ? stopJobRunBackfill(dirname(this.jobsPath)) : undefined;
     const historyOwner = this.historyBackground, archiveOwner = this.jobArchiveBackground, networkOwner = this.network;

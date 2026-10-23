@@ -152,7 +152,7 @@ export function existingMetadataDb(home: string): DatabaseSync | undefined {
  // A legacy component is observable by the capability census through its old
  // read-only path, never exported as an admitted writable handle. Explicit
  // offline migration must still be able to run that census before upgrading.
- try { assertMetadataUpgradeBoundary(home); }
+ try { if (assertMetadataUpgradeBoundary(home) !== VERSION) return undefined; }
  catch (error) { if ((error as NodeJS.ErrnoException).code === "STORE_OFFLINE_REQUIRED") return undefined; throw error; }
  const file = join(resolve(home),"bridge.db"), cached = connections.get(handleKey(file));
  if (cached) { admissionSqliteBusy(cached); return escapeMetadataReference(cached); }
@@ -195,8 +195,8 @@ export function assertMetadataAdmission(home: string): void {
  * All readers stopped; the named home is explicitly isolated from old releases. */
 export interface OfflineMetadataAdmission { kind: "offline-isolated"; home: string }
 /** Read-only preflight before any writable opener or schema/backup publication. */
-export function assertMetadataUpgradeBoundary(home: string, offline?: OfflineMetadataAdmission): void {
- const file = join(resolve(home), "bridge.db"); if (!existsSync(file)) return;
+export function assertMetadataUpgradeBoundary(home: string, offline?: OfflineMetadataAdmission): number {
+ const file = join(resolve(home), "bridge.db"); if (!existsSync(file)) return 0;
  const inspection = new DatabaseSync(file, { readOnly: true, timeout: 0 });
  try {
   const version = inspection.prepare("SELECT 1 FROM sqlite_master WHERE name='bridge_components'").get()
@@ -204,6 +204,7 @@ export function assertMetadataUpgradeBoundary(home: string, offline?: OfflineMet
   if (version > 0 && version < VERSION && (!offline || offline.kind !== "offline-isolated" || handleKey(physicalPath(resolve(offline.home))) !== handleKey(physicalPath(resolve(home)))))
    throw Object.assign(new Error(`Metadata component${version} cached writers cannot be excluded automatically. Owner-coordinated offline migration into an explicitly isolated home is required; originals retained.`), { code: "STORE_OFFLINE_REQUIRED" });
   if (!Number.isSafeInteger(version) || version < 0 || version > VERSION) throw new Error("Metadata component is unproven or newer; originals retained.");
+  return version;
  } finally { inspection.close(); }
 }
 export function metadataDb(home: string, offline?: OfflineMetadataAdmission): DatabaseSync {
