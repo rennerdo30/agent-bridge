@@ -301,7 +301,10 @@ export class JobRunners implements JobHost {
   }
 
   assertTurnAdmission(job: Job): void {
-    if (job.remote) { this.remote.assertTurnAdmission(job); return; }
+    // The operation cache can commit before the registry's remote projection.
+    // Missing projection must not let an accepted unknown operation lose its turn.
+    this.remote.assertTurnAdmission(job);
+    if (job.remote) return;
     // Strict read: never infer absence from the convenience reader's catch/null.
     if (hasUnsettledRunnerRetention(readRunnerStateRecord(this.home, job.id))) throw new RunnerRetentionUnsettled("invalid-evidence");
     assertRunnerArchiveAdmission(this.home, job.id);

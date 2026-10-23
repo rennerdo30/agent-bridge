@@ -6,6 +6,7 @@ import { RemoteJobs } from "../src/network/remote-jobs.js";
 import { NetworkService, networkHelloSchema } from "../src/network/link.js";
 import { REMOTE_RUNNER_LEDGER_CAPABILITY, REMOTE_JOB_CAPABILITY, REMOTE_JOB_USAGE_CAPABILITY, unsupportedRunnerLedger } from "../src/network/remote-job-protocol.js";
 import { RemoteJobHost } from "../src/mcp/remote-job-host.js";
+import { JobRunners } from "../src/mcp/job-host.js";
 import { nullLogger } from "../src/core/logger.js";
 import { makeEnv, type TestEnv } from "./helpers.js";
 
@@ -73,6 +74,12 @@ it("retains the exact unconfirmed spawn and later cancel across requester restar
   const retained = JSON.parse(readFileSync(file, "utf8"));
   expect(retained.operations[0]).toEqual(original.operations[0]); expect(retained.operations[1].request).toMatchObject({ op: "control", control: { type: "cancel" } });
   expect(retained.snapshot).toMatchObject({ state: null, alive: true });
+  // The remote cache can commit before the parent registry stores `remote`.
+  // Losing that projection must not let a registry claim consume new input.
+  delete job.remote;
+  const runners = new JobRunners(node, env.home, "unused-cli", nullLogger);
+  expect(() => runners.assertTurnAdmission(job)).toThrow(/runner-ledger/);
+  expect(JSON.parse(readFileSync(file, "utf8")).operations).toEqual(retained.operations);
 });
 it("sends cancellation during a still-owned in-flight spawn while a restarted unknown spawn remains blocked", async () => {
   env = makeEnv(); let settle!: (snapshot: any) => void;

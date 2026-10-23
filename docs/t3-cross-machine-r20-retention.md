@@ -140,6 +140,8 @@ identical on base. Working results and exact frozen receipts are distinguished.
 | Startup live-reader re-verification (Ubuntu/Mac/Windows) | Real early state-read ordering regression; check moved to actual guarded writer | Original re-verification count/effect order retained; valid late reader now explicitly advertises metadata2 |
 | `conversations.test` no-project idle writes | Confounded fixture metric: `total_changes()` includes checked/cursor/mirror work subject to tick deadlines | Observe actual resolver calls and scoped project writes over five idle intervals; exact cause of CI's 25→23 change remains unproven; changed native fixture is CI-only |
 | Background re-election Windows timeout | No production cause proven | Add bounded allowlisted stage/state diagnostics, preserve 8s limit and retry/join assertions; CI-only |
+| 193 lifecycle Linux120162616937 / Mac120162617306: 25 component1 refusals each | One scratch initializer in `daemon-metadata-final-close` hard-coded component1; all fail in shared setup before observation assertions | Proven-absent scratch file now uses canonical current metadata version, preserving original BLOB/no-effects/lifecycle-count assertions. No offline override; native/hot-journal/overflow lifecycle cases stay CI-only |
+| Accepted unknown remote operation whose registry `remote` projection was not persisted | Real pre-claim admission gap: operation cache was checked only for projected remote jobs | Always consult exact job-ID operation evidence before local/remote branch; missing projection cannot release the next turn; no reexecution or new owner |
 | Previous ten-runner takeover, fairness, quiet hooks, HTTP startup | Runtime causes remain unproven by this patch | No timeout, provider count, expected result, ownership gate or native acceptance relaxed |
 
 All13 protected method pins, the UI hash, normalizer and retention guard are
@@ -154,3 +156,25 @@ That failed receipt remains retained; it is not production red evidence. The
 fake-CLI integration case stays intact and CI-only. Corrected local selection
 includes only its in-process request-argument case. A subsequent docs-only
 commit records this qualification; its own exact head is validated separately.
+
+The 193 follow-up audit found no production component1 initializer: the canonical
+metadata schema writes `METADATA_STORE_VERSION` (2), and mid-startup presence,
+journal and checklist consumers enter through that initializer. Independent
+checklist/import component markers and metadata-file lease version2 are separate
+formats, not metadata authority. Deliberate component1 fixtures remain in prior
+endpoint refusal and archive/offline migration tests, which preserve original
+bytes, reject automatic admission and exercise explicit isolated admission.
+A fresh-home regression opens and reopens actual production metadata without
+offline admission or a migration snapshot. The observation fixture deliberately
+avoids an extra production open/close in setup: that would contaminate the
+native-reference counts it tests; it instead asserts the file is absent and uses
+the canonical exported component version before the one measured admission.
+
+Qualified additional red receipts on unchanged 193 production: the actual
+component1 observation setup fails (wrapper10512/PID51112, exit1), and the
+persisted unconfirmed remote spawn/cancel with missing registry projection
+admits an unsafe next turn (wrapper72844/PID14416, exit1). Both runs were bounded
+60s with subprocess launches blocked. Their final green evidence is recorded at
+the subsequent exact frozen head; no local lifecycle suite was run. The
+known-flaky expiry recheck belongs to the parent's separate task; this batch
+does not edit its JSON/evidence or refresh dates.

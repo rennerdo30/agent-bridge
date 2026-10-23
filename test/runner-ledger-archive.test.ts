@@ -1,4 +1,4 @@
-import { copyFileSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, expect, it, vi } from "vitest";
@@ -17,6 +17,18 @@ import { makeEnv, type TestEnv } from "./helpers.js";
 vi.mock("../src/core/metadata-snapshot.js", async original => ({ ...await original<typeof import("../src/core/metadata-snapshot.js")>() }));
 let env: TestEnv;
 afterEach(async () => { vi.restoreAllMocks(); if (env) await env.cleanup(); });
+it("initializes a proven fresh home directly at the current metadata component without offline admission", () => {
+  env = makeEnv();
+  expect(existsSync(join(env.home, "bridge.db"))).toBe(false);
+  const db = metadataDb(env.home);
+  expect(db.prepare("SELECT version FROM bridge_components WHERE name='metadata'").get()?.version).toBe(METADATA_STORE_VERSION);
+  db.prepare("INSERT INTO bridge_metadata VALUES(?,?,?,?)").run("fixture", "accepted", "exact original bytes", 1);
+  closeMetadataDb(env.home);
+  const before = readFileSync(join(env.home, "bridge.db"));
+  expect(metadataDb(env.home).prepare("SELECT value FROM bridge_metadata WHERE domain='fixture'").get()?.value).toBe("exact original bytes");
+  expect(readFileSync(join(env.home, "bridge.db"))).toEqual(before);
+  expect(existsSync(join(env.home, ".migration-snapshots"))).toBe(false);
+});
 function fixture() {
   env = makeEnv();
   const spec = { owner: "original-supervisor", job: { id: "ledger-job", name: "codex-job-ledger", agent: "codex", startedAt: 10, supervisor: "original-session", rootSession: "root" } };
