@@ -190,6 +190,16 @@ it.each(["missing", "partial", "replaced", "detached"])("R37 refuses %s external
   expect(readFileSync(kind === "detached" ? witness : `${witness}.retained`).equals(bytes)).toBe(true);
 });
 
+it.each(["malformed", "oversized"])("R37 refuses a %s publication descriptor without weakening the fixed format2 signature contract", async kind => {
+  schemaMs = 0; opened = new MessageStore(env.db, nullLogger);
+  const { createBackup, readBackup } = await import("../src/core/backups.js"), backup = createBackup(env.home, clock, false), path = join(backup, "publication.json");
+  const marker = JSON.parse(readFileSync(path, "utf8"));
+  if (kind === "malformed") marker.groupSignature = marker.groupSignature.slice(0, 4);
+  else marker.padding = "x".repeat(1024);
+  writeFileSync(path, JSON.stringify(marker));
+  expect(() => readBackup(backup)).toThrow(/publication/);
+});
+
 it.each(["unregistered", "private-registered", "partial-catalog"])("R37 refuses %s selection without opening unknown or private discovery bytes", async kind => {
   schemaMs = 0; opened = new MessageStore(env.db, nullLogger);
   const { createBackup } = await import("../src/core/backups.js");

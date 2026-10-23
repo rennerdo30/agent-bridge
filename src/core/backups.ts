@@ -22,6 +22,9 @@ const BACKUP_PREFIX = "snapshot-";
 const USER_DATABASES = [DB_FILE_NAME, ARCHIVE_DB_NAME, "history.db", "store-compatibility.db", "owner-questions.db"] as const;
 
 const GROUP_DIR = ".groups", GROUP_MAX = 256 * 1024;
+// Fixed v2 descriptor: two SHA256 hex strings and exactly five signed decimal
+// native-stat strings, each at most64 ASCII bytes. No extension/padding fields.
+const PUBLICATION_MAX = Buffer.byteLength(JSON.stringify({ version: 2, manifest: "0".repeat(64), group: "0".repeat(64), groupSignature: Array(5).fill("0".repeat(64)) }) + "\n");
 function witnessLocation(path: string): { root: string; name: string; file: string } {
   path = resolve(path); const name = basename(path);
   if (!/^snapshot-\d{13,}-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(name)) throw new Error("Unsupported backup snapshot identity");
@@ -35,7 +38,11 @@ function readGroupWitness(path: string) {
   if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1n || before.size < 2n || before.size > BigInt(GROUP_MAX)) throw new Error("Unproven backup expected group");
   const fd = openSync(location.file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
   try {
-    const signature = (s: typeof before) => [s.dev, s.ino, s.size, s.mtimeNs, s.ctimeNs].map(String);
+    const signature = (s: typeof before) => {
+      const values = [s.dev, s.ino, s.size, s.mtimeNs, s.ctimeNs].map(String);
+      if (values.some(value => value.length > 64 || !/^-?\d+$/.test(value))) throw new Error("Unproven backup witness signature");
+      return values;
+    };
     const bound = signature(before), initial = fstatSync(fd, { bigint: true });
     if (!sameBootstrapIdentity(bound, signature(initial))) throw new Error("Changed backup witness");
     const bytes = Buffer.alloc(Number(before.size)); if (readSync(fd, bytes, 0, bytes.length, 0) !== bytes.length) throw new Error("Incomplete backup witness");
@@ -371,11 +378,10 @@ export function readBackup(path: string): BackupManifest {
   }
   if (bootstrap) {
     const marker = join(path, PUBLICATION_NAME), state = lstatSync(marker);
-    // Format2 adds the external group's digest and exact five-part file
-    // signature; the former 256-byte v1 marker bound cannot contain it.
-    if (!state.isFile() || state.isSymbolicLink() || state.nlink !== 1 || state.size > 1024) throw new Error("Unproven backup publication");
+    if (!state.isFile() || state.isSymbolicLink() || state.nlink !== 1 || state.size > PUBLICATION_MAX) throw new Error("Unproven backup publication");
     const publication: unknown = JSON.parse(readFileSync(marker, "utf8"));
-    if (!isRecord(publication) || publication.version !== 2 || publication.manifest !== manifestDigest || !witness || publication.group !== witness.digest || !sameBootstrapIdentity(publication.groupSignature, witness.signature)) throw new Error("Unproven backup publication");
+    if (!isRecord(publication) || Object.keys(publication).length !== 4 || !["version", "manifest", "group", "groupSignature"].every(key => Object.hasOwn(publication, key)) ||
+        publication.version !== 2 || publication.manifest !== manifestDigest || !witness || publication.group !== witness.digest || !sameBootstrapIdentity(publication.groupSignature, witness.signature)) throw new Error("Unproven backup publication");
     const checksummedDatabases = [...seen].filter(name => bootstrap.databases.includes(name)).sort();
     if (!sameBootstrapIdentity(checksummedDatabases, bootstrap.databases.slice().sort())) throw new Error("Incomplete full backup database group");
     for (const file of bootstrap.evidence) if (!seen.has(file.path)) throw new Error("incomplete backup preservation evidence");
