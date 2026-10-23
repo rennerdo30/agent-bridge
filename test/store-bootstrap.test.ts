@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { copyFileSync, existsSync, readFileSync, readdirSync, renameSync, mkdirSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, lstatSync, readFileSync, readdirSync, renameSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -12,7 +12,7 @@ import { makeEnv, type TestEnv } from "./helpers.js";
 
 const wire = vi.hoisted(() => ({ starts: 0, before: undefined as undefined | (() => Promise<void>),
   after: undefined as undefined | (() => Promise<void>), wrong: false, workers: [] as any[], stage: "idle", kernelThread: 0, error: undefined as unknown, exitedBeforeMessage: false, wrongThread: false }));
-const directoryIo = vi.hoisted(() => ({ next: 2_000_000_000, handles: new Map<number, string>(), files: new Map<number, string>(), failure: "", syncs: [] as string[], onSync: undefined as undefined | (() => void), mutateRead: undefined as undefined | ((path: string) => void) }));
+const directoryIo = vi.hoisted(() => ({ next: 2_000_000_000, handles: new Map<number, string>(), files: new Map<number, string>(), failure: "", syncs: [] as string[], onSync: undefined as undefined | (() => void), mutateRead: undefined as undefined | ((path: string) => void), onCopy: undefined as undefined | ((source: string, target: string) => void) }));
 // Explicit simulated directory-durability capability, never evidence that a
 // Windows filesystem supports directory fsync. Ordinary file IO stays real.
 vi.mock("node:fs", async original => {
@@ -31,6 +31,7 @@ vi.mock("node:fs", async original => {
       const count = actual.readSync(fd, buffer, offset, length, position), path = directoryIo.files.get(fd);
       if (path) directoryIo.mutateRead?.(path); return count;
     },
+    copyFileSync: (...args: Parameters<typeof actual.copyFileSync>) => { actual.copyFileSync(...args); directoryIo.onCopy?.(String(args[0]), String(args[1])); },
   };
 });
 vi.mock("node:worker_threads", async original => {
@@ -62,7 +63,9 @@ vi.mock("node:worker_threads", async original => {
         const failure = error as { code?: unknown; stack?: unknown };
         console.error("Mock cold-bootstrap failure", { code: typeof failure?.code === "string" && /^[A-Z_]{1,40}$/.test(failure.code) ? failure.code : "unclassified",
           source: typeof failure?.stack === "string" ? [...failure.stack.matchAll(/src[\\/]core[\\/]([a-z-]+\.ts:\d+:\d+)/g)].slice(0, 4).map(match => match[1]) : [] });
-        this.running = false; this.emit("message", { attempt: plan.record.attempt, state: "failed" }); this.finish(1);
+        const { bootstrapKernelFailure } = await import("../src/core/store-bootstrap-journal.js");
+        const safe = bootstrapKernelFailure(error, "reader-admission") as any;
+        this.running = false; this.emit("message", { attempt: plan.record.attempt, state: "failed", bootstrapStage: safe.bootstrapStage, bootstrapFailure: safe.bootstrapFailure }); this.finish(1);
       }
     }
     terminate() { this.terminated = true; if (!this.running) this.finish(1); return this.exited; }
@@ -82,7 +85,7 @@ let env: TestEnv, opened: MessageStore | undefined, clock: number, start: number
 let pendingDiagnostic: ReturnType<typeof setTimeout>, fixtureNumber = 0;
 const deferred = () => { let release!: () => void; const promise = new Promise<void>(done => { release = done; }); return { promise, release }; };
 beforeEach(() => {
-  directoryIo.failure = ""; directoryIo.syncs = []; directoryIo.onSync = undefined; directoryIo.mutateRead = undefined;
+  directoryIo.failure = ""; directoryIo.syncs = []; directoryIo.onSync = undefined; directoryIo.mutateRead = undefined; directoryIo.onCopy = undefined;
   const number = ++fixtureNumber; wire.stage = "setup";
   pendingDiagnostic = setTimeout(() => console.error("Mock cold-bootstrap pending", { fixture: number, stage: wire.stage }), 1000);
   env = makeEnv(); schemaMs = 2400; ddl = 0; wire.starts = 0; wire.workers = []; wire.before = undefined; wire.after = undefined; wire.wrong = false; wire.error = undefined; wire.exitedBeforeMessage = false; wire.wrongThread = false;
@@ -178,6 +181,75 @@ it("refuses a parent-directory publication failure before journal or schema effe
   const failure = await open().then(value => { opened = value; return undefined; }, error => error);
   expect(failure).toMatchObject({ code: "STORE_BOOTSTRAP_UNSETTLED" });
   expect(ddl).toBe(0); expect(existsSync(env.db)).toBe(false); expect(existsSync(join(env.home, ".store-bootstrap"))).toBe(false);
+});
+
+it("preserves the exact cold anchor, journal, namespace and generation in a full backup but refuses full restore before any maintenance effect", async () => {
+  schemaMs = 0; opened = await open();
+  const namespace = opened.namespace, { createBackup, readBackup, restoreBackup } = await import("../src/core/backups.js");
+  const backup = createBackup(env.home, clock, false), manifest = readBackup(backup);
+  expect(manifest.bootstrap?.namespace).toBe(namespace); expect(manifest.bootstrap?.metadata.value?.kind).toBe("cold");
+  const proofPaths = [".store-bootstrap.expected.json", ...readdirSync(join(env.home, ".store-bootstrap")).map(name => `.store-bootstrap/${name}`)];
+  for (const path of proofPaths) expect(readFileSync(join(backup, path))).toEqual(readFileSync(join(env.home, path)));
+  const originals = ["bridge.db", "archive.db", "history.db", ...proofPaths].map(path => ({ path, ino: lstatSync(join(env.home, path), { bigint: true }).ino, bytes: readFileSync(join(env.home, path)) }));
+  const rootNames = readdirSync(env.home), backupNames = readdirSync(join(env.home, "backups"));
+  expect(() => restoreBackup(env.home, backup, true)).toThrow(/owner-coordinated isolated offline restore-generation/i);
+  expect(readdirSync(env.home)).toEqual(rootNames); expect(readdirSync(join(env.home, "backups"))).toEqual(backupNames);
+  for (const original of originals) { expect(lstatSync(join(env.home, original.path), { bigint: true }).ino).toBe(original.ino); expect(readFileSync(join(env.home, original.path))).toEqual(original.bytes); }
+  expect(opened.namespace).toBe(namespace);
+});
+
+it("does not publish or certify a backup whose copied journal proof is incomplete, and retains every original byte", async () => {
+  schemaMs = 0; opened = await open(); const { createBackup, listBackups } = await import("../src/core/backups.js");
+  const dir = join(env.home, ".store-bootstrap"), name = readdirSync(dir).find(name => name.endsWith(".prepared.json"))!, original = readFileSync(join(dir, name));
+  directoryIo.onCopy = (source, target) => { if (source === join(dir, name)) writeFileSync(target, "{incomplete copied evidence"); };
+  expect(() => createBackup(env.home, clock, false)).toThrow(/preparation/i);
+  expect(listBackups(env.home)).toEqual([]); expect(readdirSync(join(env.home, "backups")).some(name => name.startsWith(".pending-"))).toBe(true);
+  expect(readFileSync(join(dir, name))).toEqual(original); inspectBootstrapJournal(env.home);
+});
+
+it.each([1, 2, 3, 4])("refuses automatic component%s upgrade before effects but preserves originals under explicit isolated offline admission", async version => {
+  schemaMs = 0; const legacy = new DatabaseSync(env.db);
+  legacy.exec(`CREATE TABLE bridge_components(name TEXT PRIMARY KEY,version INTEGER); INSERT INTO bridge_components VALUES('metadata',${version}); CREATE TABLE accepted_original(body BLOB); INSERT INTO accepted_original VALUES(x'00ff01');`); legacy.close();
+  const bytes = readFileSync(env.db);
+  expect(() => metadataDb(env.home)).toThrow(/owner-coordinated offline migration/i); expect(readFileSync(env.db)).toEqual(bytes);
+  expect(existsSync(join(env.home, ".store-bootstrap"))).toBe(false); expect(existsSync(join(env.home, ".migration-snapshots"))).toBe(false);
+  const admitted = metadataDb(env.home, { kind: "offline-isolated", home: env.home });
+  expect(admitted.prepare("SELECT body FROM accepted_original").get()!.body).toEqual(new Uint8Array([0,255,1]));
+  expect(admitted.prepare("SELECT version FROM bridge_components WHERE name='metadata'").get()!.version).toBe(5);
+  expect(JSON.parse(String(admitted.prepare("SELECT value FROM bridge_metadata WHERE domain='store-bootstrap' AND key='provenance'").get()!.value)).kind).toBe("ordinary");
+  const snapshots = readdirSync(join(env.home, ".migration-snapshots")).filter(name => name.endsWith(".db")); expect(snapshots.length).toBeGreaterThan(0);
+});
+
+it("never treats current component missing provenance as ordinary or rebuilds a removed external anchor", async () => {
+  schemaMs = 0; opened = await open(); opened.close(); opened = undefined;
+  const anchor = join(env.home, ".store-bootstrap.expected.json"), bytes = readFileSync(env.db);
+  renameSync(anchor, join(env.home, "retained-original-anchor"));
+  expect(() => metadataDb(env.home)).toThrow(/preparation/i);
+  await expect(open()).rejects.toMatchObject({ code: "STORE_BOOTSTRAP_UNSETTLED" });
+  expect(readFileSync(env.db)).toEqual(bytes); expect(wire.starts).toBe(1); expect(existsSync(anchor)).toBe(false);
+});
+
+it("refuses a current component with no provenance row without minting ordinary authority", () => {
+  const db = new DatabaseSync(env.db);
+  db.exec("CREATE TABLE bridge_components(name TEXT PRIMARY KEY,version INTEGER); INSERT INTO bridge_components VALUES('metadata',5); CREATE TABLE accepted_original(body BLOB); INSERT INTO accepted_original VALUES(x'00ff01');"); db.close();
+  const bytes = readFileSync(env.db); expect(() => metadataDb(env.home)).toThrow(/preparation/i);
+  expect(readFileSync(env.db)).toEqual(bytes); expect(existsSync(join(env.home, ".store-bootstrap.expected.json"))).toBe(false);
+});
+
+it("retains a partially published anchor across restart and never reexecutes it as fresh or ordinary", async () => {
+  schemaMs = 0; const anchor = join(env.home, ".store-bootstrap.expected.json");
+  directoryIo.onSync = () => { if (existsSync(anchor)) throw new Error("Controlled post-anchor publication failure"); };
+  await expect(open()).rejects.toMatchObject({ code: "STORE_BOOTSTRAP_UNSETTLED" });
+  const bytes = readFileSync(anchor); directoryIo.onSync = undefined;
+  await expect(open()).rejects.toMatchObject({ code: "STORE_BOOTSTRAP_UNSETTLED" });
+  expect(readFileSync(anchor)).toEqual(bytes); expect(wire.starts).toBe(1); expect(ddl).toBe(0); expect(existsSync(env.db)).toBe(false);
+});
+
+it("preserves a bounded supported-directory failure stage across the actual fake-worker IPC", async () => {
+  schemaMs = 0; directoryIo.failure = "all";
+  const failure = await open().then(value => { opened = value; return undefined; }, error => error);
+  expect(failure).toMatchObject({ code: "STORE_BOOTSTRAP_UNSETTLED", bootstrapStage: "directory-publication", bootstrapFailure: "unsupported-or-unproven" });
+  expect(ddl).toBe(0); expect(JSON.stringify(failure)).not.toContain(env.home);
 });
 
 it.each(["absent", "replaced"])("retains expected whole-journal identity through final construction: %s", async mode => {

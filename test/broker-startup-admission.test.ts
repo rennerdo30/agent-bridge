@@ -8,6 +8,21 @@ import { PROTOCOL_VERSION } from "../src/core/constants.js";
 import { makeEnv, type TestEnv } from "./helpers.js";
 
 const io = vi.hoisted(() => ({ servers: [] as any[] }));
+const directories = vi.hoisted(() => ({ next: 2_000_000_000, handles: new Map<number, string>() }));
+// Only the directory durability transport is simulated. Mailbox, metadata,
+// registration, ownership and transaction paths below remain production code.
+vi.mock("node:fs", async original => {
+  const actual = await original<typeof import("node:fs")>();
+  return { ...actual, constants: { ...actual.constants, O_DIRECTORY: actual.constants.O_DIRECTORY || 0x10000 },
+    openSync: (...args: Parameters<typeof actual.openSync>) => {
+      if (actual.existsSync(args[0]) && actual.lstatSync(args[0]).isDirectory()) { const fd = directories.next++; directories.handles.set(fd, String(args[0])); return fd; }
+      return actual.openSync(...args);
+    },
+    fstatSync: (fd: number, options?: any) => directories.handles.has(fd) ? actual.lstatSync(directories.handles.get(fd)!, options) : actual.fstatSync(fd, options),
+    fsyncSync: (fd: number) => { if (!directories.handles.has(fd)) actual.fsyncSync(fd); },
+    closeSync: (fd: number) => { if (!directories.handles.delete(fd)) actual.closeSync(fd); },
+  };
+});
 vi.mock("node:net", async original => {
   const actual = await original<typeof import("node:net")>();
   return { ...actual, createServer: (accept?: (...args: any[]) => void) => {
@@ -21,7 +36,7 @@ const deferred = () => { let release!: () => void; const promise = new Promise<v
 let store: MessageStore | undefined;
 let env: TestEnv | undefined;
 const brokers: Broker[] = [];
-afterEach(async () => { for (const broker of brokers.splice(0)) await broker.close(); store?.close(); store = undefined; vi.restoreAllMocks(); vi.useRealTimers(); io.servers = []; await env?.cleanup(); env = undefined; });
+afterEach(async () => { for (const broker of brokers.splice(0)) await broker.close(); store?.close(); store = undefined; vi.restoreAllMocks(); vi.useRealTimers(); io.servers = []; await env?.cleanup(); env = undefined; expect(directories.handles.size).toBe(0); });
 function fixture(file = ":memory:") {
   store = new MessageStore(file, nullLogger); const broker = new Broker("fixture-startup", store, nullLogger, "fixture-token");
   brokers.push(broker);
@@ -86,4 +101,12 @@ it("does not schedule actual file-store archive maintenance while TCP is suspend
   f.expire(); await Promise.resolve(); const lateCalls = backups.mock.calls.length;
   gate.release(); const failure = await pending;
   expect(earlyCalls).toBe(0); expect(timer).toBeNull(); expect(lateCalls).toBe(0); expect(failure).toMatchObject({ code: "timeout" });
+});
+
+it("cancels the exact deferred producer turn when close precedes normal-serving admission", async () => {
+  vi.useFakeTimers({ toFake: ["setImmediate", "clearImmediate"] }); const f = fixture();
+  const producers = vi.spyOn(f.broker as any, "startServingMaintenance");
+  await f.broker.listen(f.reservation as any, f.check, f.controller.signal);
+  expect(f.reservation.activate).toHaveBeenCalledOnce(); expect(producers).not.toHaveBeenCalled();
+  await f.broker.close(); await vi.runAllTimersAsync(); expect(producers).not.toHaveBeenCalled();
 });

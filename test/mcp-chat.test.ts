@@ -10,6 +10,7 @@ import { resolvePipePath } from "../src/core/paths.js";
 import { pidAlive } from "../src/core/delegate.js";
 import { codexHost } from "./helpers.js";
 import { captureFixtureBroker } from "./fixture-teardown.js";
+import { OwnedFixtureRpcs } from "./owned-fixture-rpcs.js";
 
 const SERVER = join(import.meta.dirname, "..", "plugins", "claude", "dist", "server.mjs");
 const TEST_TIMEOUT_MS = 60_000;
@@ -57,7 +58,9 @@ describe.skipIf(!existsSync(SERVER)).each(["claude", "codex"] as const)("dashboa
   let transport: StdioClientTransport;
   let ui: Awaited<ReturnType<typeof startUi>> | undefined;
   let responses: unknown[];
+  let ownedRpcs: OwnedFixtureRpcs;
   beforeEach(async () => {
+    ownedRpcs = new OwnedFixtureRpcs();
     ui = undefined;
     responses = [];
     home = mkdtempSync(join(tmpdir(), "ab-mcp-chat-"));
@@ -98,6 +101,10 @@ describe.skipIf(!existsSync(SERVER)).each(["claude", "codex"] as const)("dashboa
     ui = undefined;
     await attempt("close fixture client", () => client?.close());
     await attempt("close fixture transport", () => transport?.close());
+    await attempt("settle exact owned fixture RPCs", async () => {
+      const rejected = await ownedRpcs.settle(CLEANUP_TIMEOUT_MS);
+      if (rejected.length) throw new AggregateError(rejected, "Owned fixture RPCs rejected; original failures retained");
+    });
     await attempt("verify fixture server exited", async () => { if (pid) await waitFor(() => !pidAlive(pid)); });
     // The server can finish starting a fixture child during client.close().
     // With that producer exited, include its final app-server request records.
@@ -141,7 +148,7 @@ describe.skipIf(!existsSync(SERVER)).each(["claude", "codex"] as const)("dashboa
     }
   };
   const call = async (name: string, args = {}) => {
-    const result = await client.callTool({ name, arguments: args });
+    const result = await ownedRpcs.own(client.callTool({ name, arguments: args }));
     // Polls need only their latest public projection; avoid an unbounded failure artifact.
     if (name === "peers") responses = responses.filter((entry: any) => entry.name !== "peers");
     responses.push({ name, args, result });
@@ -199,10 +206,10 @@ describe.skipIf(!existsSync(SERVER)).each(["claude", "codex"] as const)("dashboa
 
   it("keeps one ask call blocked until its Codex run finishes and returns its identity (AB-74)", async () => {
     let settled = false;
-    const answer = client.callTool({ name: "ask_codex", arguments: { prompt: "wait for completion", title: "Blocking relay", cwd: home } }).then((r) => {
+    const answer = ownedRpcs.own(client.callTool({ name: "ask_codex", arguments: { prompt: "wait for completion", title: "Blocking relay", cwd: home } }).then((r) => {
       settled = true;
       return r;
-    });
+    }));
     await waitFor(() => requests().some((r) => r.method === "turn/start"));
     const peers = await call("peers");
     const job = /codex-ask-[\da-f]+/.exec(peers)![0];
@@ -221,7 +228,7 @@ describe.skipIf(!existsSync(SERVER)).each(["claude", "codex"] as const)("dashboa
   }, TEST_TIMEOUT_MS);
 
   it("returns the same job and session on a cancelled ask without starting a replacement (AB-74)", async () => {
-    const answer = client.callTool({ name: "ask_codex", arguments: { prompt: "wait for cancellation", title: "Cancelled relay", cwd: home } });
+    const answer = ownedRpcs.own(client.callTool({ name: "ask_codex", arguments: { prompt: "wait for cancellation", title: "Cancelled relay", cwd: home } }));
     await waitFor(() => requests().some((r) => r.method === "turn/start"));
     const job = /codex-ask-[\da-f]+/.exec(await call("peers"))![0];
     await call("cancel_subagent", { job });

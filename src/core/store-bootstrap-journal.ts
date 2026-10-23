@@ -53,6 +53,18 @@ export function bootstrapWorkerFailure(error: unknown): Error {
   const failure = typeof code === "string" && code.length <= 64 && Object.hasOwn(categories, code) ? categories[code]! : "unclassified";
   return Object.assign(bootstrapUnknown(), { bootstrapStage: "worker-start-or-module-error", bootstrapFailure: failure });
 }
+const KERNEL_STAGES = ["reader-admission", "anchor-publication", "preparing-publication", "metadata-initialization", "store-initialization", "owned-close", "prepared-publication", "directory-publication"];
+const KERNEL_FAILURES = ["unsupported", "unsupported-or-unproven", "revoked", "sqlite-busy", "io-denied", "unsettled", "unclassified"];
+/** Both IPC fields are fixed allowlists. Never forward native text/cause/paths. */
+export function bootstrapKernelFailure(error: unknown, stage: string): Error {
+  const own = (key: string) => { try { return typeof error === "object" && error !== null ? Object.getOwnPropertyDescriptor(error, key)?.value : undefined; } catch { return undefined; } };
+  const suppliedStage = own("bootstrapStage"), suppliedReason = own("bootstrapFailure"), code = own("code");
+  const phase = typeof suppliedStage === "string" && KERNEL_STAGES.includes(suppliedStage) ? suppliedStage : KERNEL_STAGES.includes(stage) ? stage : "reader-admission";
+  const reason = typeof suppliedReason === "string" && KERNEL_FAILURES.includes(suppliedReason) ? suppliedReason :
+    code === "ABORT_ERR" ? "revoked" : code === "SQLITE_BUSY" || code === "SQLITE_LOCKED" ? "sqlite-busy" :
+    code === "EACCES" || code === "EPERM" ? "io-denied" : code === "STORE_BOOTSTRAP_UNSETTLED" ? "unsettled" : "unclassified";
+  return Object.assign(bootstrapUnknown(), { bootstrapStage: phase, bootstrapFailure: reason });
+}
 export function bootstrapFileIdentity(file: string) {
   const stat = lstatSync(file, { bigint: true });
   if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1n || stat.ino <= 0n) throw bootstrapUnknown();
@@ -160,6 +172,7 @@ export function inspectBootstrapJournal(home: string): void {
   const dir = join(home, ".store-bootstrap"); let names: string[];
   const stored = storedProvenance(home), anchor = optionalAnchor(home);
   if (!anchor) {
+    if (!exists(join(home, DB_FILE_NAME)) && (exists(join(home, "archive.db")) || exists(join(home, "history.db")))) throw bootstrapUnknown();
     if (stored.value?.kind === "cold" || exists(dir) || stored.version >= 5 && !stored.value) throw bootstrapUnknown();
     if (stored.value) validateProvenanceIdentity(home, stored.value);
     return;
@@ -294,4 +307,62 @@ export function captureBootstrapWitness(home: string): BootstrapWitness {
 }
 export function assertBootstrapWitness(expected: BootstrapWitness | undefined): void {
   if (expected && !sameBootstrapIdentity(captureBootstrapWitness(expected.home), expected)) throw bootstrapUnknown();
+}
+
+/** Preservation evidence is not a transferable opener/restore grant: copied
+ * files have different identities. The original namespace and proof bytes are
+ * retained for a separately admitted offline generation transition. */
+export interface BootstrapPreservation {
+  metadata: { version: number; value?: Provenance };
+  namespace: unknown;
+  evidence: { path: string; digest: string }[];
+  databases: string[];
+}
+function preservationMetadata(home: string): Pick<BootstrapPreservation, "metadata" | "namespace"> {
+  const metadata = storedProvenance(home), file = join(home, DB_FILE_NAME);
+  if (!exists(file)) return { metadata, namespace: null };
+  const db = new DatabaseSync(file, { readOnly: true, timeout: 0 });
+  try { return { metadata, namespace: db.prepare("SELECT 1 FROM sqlite_master WHERE name='mailbox_store'").get() ? db.prepare("SELECT namespace FROM mailbox_store WHERE id=1").get()?.namespace ?? null : null }; }
+  finally { db.close(); }
+}
+export function captureBootstrapPreservation(home: string): BootstrapPreservation {
+  home = physicalPath(resolve(home)); inspectBootstrapJournal(home);
+  const metadata = preservationMetadata(home), anchor = optionalAnchor(home);
+  const evidence: BootstrapPreservation["evidence"] = [], databases: string[] = [DB_FILE_NAME];
+  if (anchor) {
+    const witness = captureBootstrapWitness(home);
+    const name = anchor.record.file.slice(home.length + 1);
+    if (!/^[\w.-]+\.db$/.test(name)) throw bootstrapUnknown();
+    if (!databases.includes(name)) databases.push(name);
+    evidence.push({ path: ".store-bootstrap.expected.json", digest: witness.anchor.digest });
+    for (const record of witness.records) evidence.push({ path: `.store-bootstrap/${record.record.attempt}.${record.record.state}.json`, digest: record.digest });
+  }
+  return { ...metadata, evidence, databases };
+}
+export function verifyBootstrapPreservationCopy(home: string, expected: BootstrapPreservation): void {
+  // Do not compare the copy's inode to the original: that is precisely why this
+  // is preservation verification and full restoration is currently refused.
+  if (!sameBootstrapIdentity(preservationMetadata(home), { metadata: expected.metadata, namespace: expected.namespace })) throw bootstrapUnknown();
+  for (const file of expected.evidence) if (readRawEvidence(join(home, file.path)).digest !== file.digest) throw bootstrapUnknown();
+  for (const name of expected.databases) {
+    if (name !== DB_FILE_NAME || expected.metadata.version > 0 || expected.namespace !== null) if (!exists(join(home, name))) throw bootstrapUnknown();
+  }
+  if (expected.metadata.value?.kind === "cold") {
+    const attempt = expected.metadata.value.attempt;
+    const paths = [".store-bootstrap.expected.json", ...["preparing", "prepared", "exited"].map(state => `.store-bootstrap/${attempt}.${state}.json`)];
+    if (!sameBootstrapIdentity(expected.evidence.map(item => item.path).sort(), paths.sort())) throw bootstrapUnknown();
+  } else if (expected.evidence.length) throw bootstrapUnknown();
+}
+export function assertUnboundFullRestore(home: string): void {
+  const refusal = () => Object.assign(new Error("Full restore of provenance-bound or ambiguous storage is unavailable. No files were displaced. Preserve the backup and originals; owner-coordinated isolated offline restore-generation recovery is required."), { code: "STORE_RESTORE_GENERATION_REQUIRED" });
+  if (exists(anchorPath(home)) || exists(join(home, ".store-bootstrap"))) throw refusal();
+  const file = join(home, DB_FILE_NAME);
+  if (!exists(file)) { if (exists(join(home, "archive.db")) || exists(join(home, "history.db"))) throw refusal(); return; }
+  // Old or missing provenance does not prove unbound ownership. Only a database
+  // with no bridge/mailbox authority at all retains the legacy raw restore path.
+  let db: DatabaseSync | undefined;
+  try {
+    db = new DatabaseSync(file, { readOnly: true, timeout: 0 });
+    if (db.prepare("SELECT 1 FROM sqlite_master WHERE name IN ('bridge_components','bridge_metadata','messages','mailbox_store') LIMIT 1").get()) throw refusal();
+  } catch { throw refusal(); } finally { db?.close(); }
 }

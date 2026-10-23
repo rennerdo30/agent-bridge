@@ -80,9 +80,11 @@ async function hosts(hosted = false) {
       return result;
     } };
   (network as any).links.set(sourceIdentity.id, link);
+  // Transport fixture is not a started TLS authority. Complete real local
+  // broker admission before attaching its paired wire boundary.
+  await broker.listen();
   broker.network = network;
   let remote = new RemoteJobs(network, runnerHome, nullLogger, async () => {}); broker.remoteJobs = remote;
-  await broker.listen();
   cleanups.push(async () => { remote.close(); broker.network = null; await broker.close(); await sourceRouter.close(); });
   const job = "1234abcd", owner = `${sourceIdentity.name}/${supervisor.name}`;
   const peer = { id: supervisor.id, name: supervisor.name, supervisor: supervisor.sessionId! };
@@ -131,9 +133,9 @@ async function hosts(hosted = false) {
       remote.close(); broker.network = null; await broker.close();
       store = new MessageStore(join(runnerHome, "bridge.db"), nullLogger);
       broker = new Broker(pipe, store, nullLogger, token, Date.now, join(runnerHome, "jobs.json")) as any;
-      network = makeNetwork(); (network as any).links.set(sourceIdentity.id, link); broker.network = network;
+      network = makeNetwork(); (network as any).links.set(sourceIdentity.id, link);
+      await broker.listen(); broker.network = network;
       remote = new RemoteJobs(network, runnerHome, nullLogger, async () => {}); broker.remoteJobs = remote;
-      await broker.listen();
     },
   };
 }

@@ -31,14 +31,14 @@ const deadline = () => performance.now() + 2000; // One original write-phase dea
 function established(path: string): void {
  mkdirSync(path, { recursive: true });
  // This helper owns a fresh scratch file, not a historical component-1 store.
- // Mint the current component from the canonical version before establishing
- // the pre-open identity needed by these non-authorizing observations. An extra
+ // Leave this fresh scaffold at version zero: the one canonical metadata open
+ // below must mint the current component and ordinary provenance. An extra
  // production open/close here would contaminate the lifecycle counts under test.
  expect(existsSync(join(path, "bridge.db"))).toBe(false);
  const created = new DatabaseSync(join(path, "bridge.db"));
  created.exec(`CREATE TABLE bridge_components(name TEXT PRIMARY KEY, version INTEGER NOT NULL); CREATE TABLE bridge_metadata(domain TEXT,key TEXT,value TEXT,updated_at INTEGER,PRIMARY KEY(domain,key));`);
- created.prepare("INSERT INTO bridge_components VALUES('metadata',?)").run(api.METADATA_STORE_VERSION);
- expect(created.prepare("SELECT version FROM bridge_components WHERE name='metadata'").get()!.version).toBe(api.METADATA_STORE_VERSION);
+ created.prepare("INSERT INTO bridge_components VALUES('metadata',?)").run(0);
+ expect(created.prepare("SELECT version FROM bridge_components WHERE name='metadata'").get()!.version).toBe(0);
  created.exec("CREATE TABLE fixture_mail(id TEXT PRIMARY KEY,body BLOB); INSERT INTO fixture_mail VALUES('accepted',X'00ff01');");
  created.close();
 }

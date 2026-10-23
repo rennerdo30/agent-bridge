@@ -149,6 +149,7 @@ export function physicalMetadataPath(path: string): void {
 /** Observe an already admitted component without starting a competing migration. */
 export function existingMetadataDb(home: string): DatabaseSync | undefined {
  assertBootstrapAccess(home);
+ assertMetadataUpgradeBoundary(home);
  const file = join(resolve(home),"bridge.db"), cached = connections.get(handleKey(file));
  if (cached) { admissionSqliteBusy(cached); return escapeMetadataReference(cached); }
  if (!existsSync(file)) return undefined;
@@ -204,10 +205,10 @@ export function assertMetadataUpgradeBoundary(home: string, offline?: OfflineMet
 export function metadataDb(home: string, offline?: OfflineMetadataAdmission): DatabaseSync {
  assertBootstrapAccess(home);
  storageAdmissionRemaining();
+ assertMetadataUpgradeBoundary(home, offline);
  const file = join(resolve(home), "bridge.db");
  const cached = connections.get(handleKey(file));
  if (cached) { admissionSqliteBusy(cached); return escapeMetadataReference(cached); }
- assertMetadataUpgradeBoundary(home, offline);
  physicalMetadataPath(file);
  mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
  const existed = existsSync(file);

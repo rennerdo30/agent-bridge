@@ -10,7 +10,7 @@ import { ownProcessIdentity } from "./process-identity.js";
 import { physicalPath } from "./project-identity.js";
 import { maintenanceLock } from "./storage-lock.js";
 import type { Logger } from "./logger.js";
-import { appendBootstrapRecord, bootstrapFiles, bootstrapFileIdentity, bootstrapHomeIdentity, bootstrapUnknown, bootstrapWorkerFailure, captureBootstrapWitness, inspectBootstrapJournal, readBootstrapPair, sameBootstrapIdentity, type BootstrapRecord, type BootstrapEvidence, type BootstrapWitness } from "./store-bootstrap-journal.js";
+import { appendBootstrapRecord, bootstrapFiles, bootstrapFileIdentity, bootstrapHomeIdentity, bootstrapKernelFailure, bootstrapUnknown, bootstrapWorkerFailure, captureBootstrapWitness, inspectBootstrapJournal, readBootstrapPair, sameBootstrapIdentity, type BootstrapRecord, type BootstrapEvidence, type BootstrapWitness } from "./store-bootstrap-journal.js";
 
 export interface ColdBootstrapPlan { record: BootstrapRecord; endpoint: string; token: string; deadline: number; revoked: SharedArrayBuffer }
 const pending = new Set<string>();
@@ -21,8 +21,9 @@ export const coldStoreFiles = bootstrapFiles;
 export function needsColdPreparation(file: string): boolean {
   const files = coldStoreFiles(file), present = files.map(path => existsSync(path));
   if (present.every(value => !value)) return true;
-  if (!present[0]) throw bootstrapUnknown();
-  const db = new DatabaseSync(file, { readOnly: true, timeout: 0 });
+  const canonical = join(dirname(file), "bridge.db");
+  if (!present[0] && !existsSync(canonical)) throw bootstrapUnknown();
+  const db = new DatabaseSync(present[0] ? file : canonical, { readOnly: true, timeout: 0 });
   let version: number, metadata: number;
   try {
     version = Number(db.prepare("PRAGMA user_version").get()!.user_version);
@@ -31,6 +32,7 @@ export function needsColdPreparation(file: string): boolean {
   } finally { db.close(); }
   const hasArchive = existsSync(join(dirname(file), "archive.db")), hasHistory = existsSync(join(dirname(file), "history.db"));
   if (version === 0 && metadata === 5 && !hasArchive && !hasHistory) return true;
+  if (!present[0]) throw bootstrapUnknown();
   if (version === 14 && (!hasArchive || !hasHistory)) throw bootstrapUnknown();
   return false; // Existing populated/legacy stores retain the ordinary migration/refusal contract.
 }
@@ -92,6 +94,7 @@ export async function prepareColdStore(file: string, endpoint: string, token: st
         rejectWait = reject;
         worker!.on("message", message => {
           if (cancelled) return;
+          if (message?.attempt === record.attempt && message?.state === "failed") { cancelled = bootstrapKernelFailure(message, "reader-admission"); stop(); return; }
           if (message?.attempt !== record.attempt || message?.state !== "prepared") { stop(); return; }
           try {
             const mismatch = (reason: string) => Object.assign(bootstrapUnknown(), { bootstrapStage: "prepared-record-validation", bootstrapFailure: reason });
