@@ -13,6 +13,7 @@ import { BridgeError } from "./protocol.js";
 import { assertCompatibleMailboxReadersAsync, withMailboxReaderAdmission } from "./storage-lock.js";
 import { isSqliteBusy, retrySqlite } from "./sqlite-policy.js";
 import { ownProcessIdentity } from "./process-identity.js";
+import { AdmissionObservation } from "./admission-observation.js";
 
 const PROBE_MS = 300;
 /** Only historical endpoints derived from this data home; never discovery/config scanning. */
@@ -46,8 +47,9 @@ function refused(endpoint: string, reason: string): BridgeError {
 export async function guardPriorEndpoints<T = void>(home: string, current: string, token: string, log: Logger, signal?: AbortSignal, effect?: (check: () => number) => T, file = join(home, DB_FILE_NAME)): Promise<T> {
   signal?.throwIfAborted();
   const deadline = Date.now() + CONNECT_TIMEOUT_MS;
+  const observation = new AdmissionObservation();
   const admission = new AbortController();
-  const expired = () => new BridgeError("timeout", "Prior endpoint admission exceeded its aggregate budget; startup was not admitted. No storage or registration effects were allowed.");
+  const expired = () => new BridgeError("timeout", "Prior endpoint admission exceeded its aggregate budget; startup was not admitted. Original data is retained for owned recovery; no downgrade or process replacement was attempted.", { admission: observation.snapshot() });
   const remaining = () => {
     signal?.throwIfAborted();
     const left = deadline - Date.now();
@@ -63,7 +65,7 @@ export async function guardPriorEndpoints<T = void>(home: string, current: strin
     if (existsSync(file)) {
       let inspectionState: { version: number; metadata: number };
       try {
-        inspectionState = await retrySqlite(() => {
+        inspectionState = await observation.wait("inspection", () => retrySqlite(() => {
           remaining();
           // Each failed attempt releases its own read-only handle before yielding.
           // Never wait synchronously on a writer or infer compatibility from busy.
@@ -77,7 +79,7 @@ export async function guardPriorEndpoints<T = void>(home: string, current: strin
             return { version, metadata };
           }
           finally { inspection.close(); }
-        }, remaining(), admission.signal);
+        }, remaining(), admission.signal));
       } catch (error) {
         remaining();
         if (isSqliteBusy(error)) throw new BridgeError("timeout", "Prior mailbox schema inspection remained busy; startup was not admitted. Retry after the active writer settles.");
@@ -91,7 +93,7 @@ export async function guardPriorEndpoints<T = void>(home: string, current: strin
     // lease. Prepare it asynchronously inside the same budget, never by a cold
     // synchronous query nested in the constructor.
     if (effect) {
-      const identity = await ownProcessIdentity(admission.signal, remaining); remaining();
+      const identity = await observation.wait("identity", () => ownProcessIdentity(admission.signal, remaining)); remaining();
       if (!identity) throw new BridgeError("internal", "Own process identity is unproven; storage admission was refused without construction.");
     }
     const probeEndpoints = async () => {
@@ -147,12 +149,12 @@ export async function guardPriorEndpoints<T = void>(home: string, current: strin
       }
       remaining();
     };
-    for (let observation = 0; ; observation++) {
-      await probeEndpoints();
+    for (let attempt = 0; ; attempt++) {
+      await observation.wait("endpoints", probeEndpoints);
       let proof: Awaited<ReturnType<typeof assertCompatibleMailboxReadersAsync>> | undefined;
       try {
-        proof = await assertCompatibleMailboxReadersAsync(home, admission.signal, remaining); remaining();
-        await probeEndpoints(); remaining(); proof.assert(home);
+        proof = await observation.wait("readers", () => assertCompatibleMailboxReadersAsync(home, admission.signal, remaining)); remaining();
+        await observation.wait("endpoints", probeEndpoints); remaining(); proof.assert(home);
       }
       catch (error) {
         proof = undefined; remaining();
@@ -165,11 +167,11 @@ export async function guardPriorEndpoints<T = void>(home: string, current: strin
           throw refused(home, "retained by an unproven storage reader");
       }
       if (proof) {
-        const value = withMailboxReaderAdmission(proof, () => effect ? effect(remaining) : undefined as T);
+        const value = observation.scope(() => observation.measure("effect", () => withMailboxReaderAdmission(proof!, () => effect ? effect(remaining) : undefined as T)));
         remaining(); // Owned policy cleanup cannot turn late proof into admission.
         return value;
       }
-      try { await delay(Math.min(25 * 2 ** Math.min(observation, 4), remaining()), undefined, { signal: admission.signal }); }
+      try { await delay(Math.min(25 * 2 ** Math.min(attempt, 4), remaining()), undefined, { signal: admission.signal }); }
       catch (error) { remaining(); throw error; }
     }
   } finally { clearTimeout(timer); signal?.removeEventListener("abort", cancelled); }

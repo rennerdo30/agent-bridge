@@ -73,12 +73,20 @@ export function hookPublicationEvents(home: string, pid: number | undefined) {
   if (!Number.isSafeInteger(pid) || !pid || pid < 1) return [];
   return (boundedText(join(home, LOG_DIR_NAME, LOG_FILE_NAME), 128 * 1024, true) ?? "").split("\n").flatMap(line => {
     if (line.length > 8192) return [];
-    const match = /^(\d{4}-\d\d-\d\dT[\d:.]+Z)\s+\w+\s+\[[^\]]+\] pid=(\d+) (hook event|hook deferred slow work|hook handler failed|request rejected|broker refused this peer)(?: (\{.*\}))?$/.exec(line);
+    const match = /^(\d{4}-\d\d-\d\dT[\d:.]+Z)\s+\w+\s+\[[^\]]+\] pid=(\d+) (hook event|hook deferred slow work|hook handler failed|hook publication incomplete|request rejected|broker refused this peer)(?: (\{.*\}))?$/.exec(line);
     if (!match || Number(match[2]) !== pid || match[1]!.length > 32 || !Number.isFinite(Date.parse(match[1]!))) return [];
     let fields: any;
     try { fields = JSON.parse(match[4] ?? "{}"); } catch { return []; }
     return [{ at: match[1], stage: match[3], hook: ["SessionStart", "UserPromptSubmit", "PostToolUse", "Stop", "SessionEnd"].includes(fields?.event) ? fields.event : undefined,
       operation: ["hello", "updatePeer"].includes(fields?.op) ? fields.op : undefined,
+      ...(match[3] === "hook publication incomplete" ? {
+        phase: ["prepare", "launch-inspection", "session-update", "learn-cwd", "connect", "refresh", "response"].includes(fields?.stage) ? fields.stage : "unknown",
+        reason: ["deadline", "cancelled", "headless", "superseded", "error", "incomplete"].includes(fields?.reason) ? fields.reason : "unknown",
+        sessionUpdate: ["not-started", "pending", "returned", "failed"].includes(fields?.sessionUpdate) ? fields.sessionUpdate : "unknown",
+        localSession: ["missing", "expected", "other"].includes(fields?.localSession) ? fields.localSession : "unknown",
+        connected: fields?.connected === true,
+        elapsedMs: Number.isSafeInteger(fields?.elapsedMs) && fields.elapsedMs >= 0 ? Math.min(60_000, fields.elapsedMs) : undefined,
+      } : {}),
       failure: deliveryFailure({ code: fields?.code, message: fields?.message ?? fields?.err }) }];
   }).slice(-16);
 }

@@ -98,6 +98,31 @@ afterEach(() => {
 const guard = (signal?: AbortSignal) => guardPriorEndpoints(home, "fixture-current", "fixture-only-token", nullLogger, signal);
 const unchanged = () => { expect(readFileSync(file).equals(original)).toBe(true); expect(readdirSync(home)).toEqual(["bridge.db"]); };
 
+it("retains bounded phase evidence when identity plus actual fresh schema work exhausts admission", async () => {
+  const { openMessageStore } = await import("../src/core/store.js"), migrations = await import("../src/core/sqlite-migrations.js");
+  const fs = await import("node:fs"), fresh = join(home, "owned-fresh"); fs.mkdirSync(fresh);
+  let clock = Date.now(); const start = clock;
+  vi.spyOn(Date, "now").mockImplementation(() => clock);
+  vi.spyOn(processIdentity, "ownProcessIdentity").mockImplementation(async () => { clock += 1750; return "bounded-fixture"; });
+  const migrate = migrations.migrateSqlite;
+  vi.spyOn(migrations, "migrateSqlite").mockImplementation((...args) => {
+    migrate(...args); if (args[1] === join(fresh, "bridge.db")) clock += 300;
+  });
+  const error = await openMessageStore(join(fresh, "bridge.db"), nullLogger, "fixture-current", "fixture-only-token").then(() => undefined, failure => failure);
+  expect(error).toMatchObject({ code: "timeout", details: { admission: {
+    elapsedMs: 2050, phases: expect.arrayContaining([
+      { phase: "identity", calls: 1, ms: 1750, pending: 0 },
+      { phase: "main-schema", calls: 1, ms: 300, pending: 0 },
+    ]) } } });
+  expect(clock - start).toBe(2050); expect(JSON.stringify(error.details)).not.toContain(fresh);
+  // Native schema effects already returned; this evidence cannot claim a clean
+  // no-effects refusal or admit a handle after the original deadline.
+  const retained = new DatabaseSync(join(fresh, "bridge.db"), { readOnly: true });
+  try { expect(retained.prepare("PRAGMA user_version").get()!.user_version).toBe(14); }
+  finally { retained.close(); }
+  expect(readFileSync(file)).toEqual(original);
+});
+
 it.each(["linux", "darwin", "win32"] as const)("rechecks prior endpoints after a suspended successful census before admitting storage on %s", async target => {
   Object.defineProperty(process, "platform", { ...platform, value: target });
   if (!getuid) Object.defineProperty(process, "getuid", { configurable: true, value: () => 42 });

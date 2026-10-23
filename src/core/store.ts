@@ -1,4 +1,5 @@
 import { admissionSqliteBusy } from "./storage-admission.js";
+import { observeAdmissionPhase } from "./admission-observation.js";
 import { guardPriorEndpoints } from "./prior-endpoints.js";
 import { existsSync, mkdirSync, realpathSync } from "node:fs";
 import { createHash } from "node:crypto";
@@ -457,7 +458,7 @@ export class MessageStore {
     // legacy process which opens SQLite before binding its older endpoint.
     let unlockUpgrade: (() => void) | undefined;
     if (file !== ":memory:") {
-      assertCompatibleMailboxReaders(dirname(file));
+      observeAdmissionPhase("constructor-readers", () => assertCompatibleMailboxReaders(dirname(file)));
       let version = 0;
       if (existed) {
         const inspection = new DatabaseSync(file, { readOnly: true });
@@ -467,15 +468,15 @@ export class MessageStore {
       }
       if (version === 2 || version === 3) throw Object.assign(new Error("Pre-lease schema2/3 requires owner-coordinated shutdown and explicit offline migration into an isolated home; automatic shared-home migration is refused."), { code: "STORE_OFFLINE_REQUIRED" });
       if (version < SQLITE_STORE_VERSION) {
-        try { unlockUpgrade = maintenanceLock(dirname(file), false, true); }
+        try { unlockUpgrade = observeAdmissionPhase("leases", () => maintenanceLock(dirname(file), false, true)); }
         catch (cause) { throw Object.assign(new Error("Mailbox migration exclusion is unavailable; owner-coordinated shutdown is required before sharing this data home.", { cause }), { code: "STORE_READER_ACTIVE" }); }
       }
     }
-    try { this.release = file === ":memory:" ? () => {} : storageLease(dirname(file), unlockUpgrade); }
+    try { this.release = file === ":memory:" ? () => {} : observeAdmissionPhase("leases", () => storageLease(dirname(file), unlockUpgrade)); }
     catch (error) { unlockUpgrade?.(); throw error; }
     this.lifecycleConstruction.lease = this.release;
     try {
-    try { this.db = new DatabaseSync(file); this.captureHandle("main", this.db); }
+    try { this.db = observeAdmissionPhase("main-open", () => new DatabaseSync(file)); this.captureHandle("main", this.db); }
     catch (err) { this.release(); throw err; }
     try {
       admissionSqliteBusy(this.db, SQLITE_BUSY_TIMEOUT_MS, true);
@@ -483,18 +484,18 @@ export class MessageStore {
         const current = Number(this.db.prepare("PRAGMA user_version").get()!.user_version);
         if (!unlockUpgrade && current < SQLITE_STORE_VERSION)
           throw Object.assign(new Error("Mailbox changed after inspection; migration exclusion is unavailable. Owner-coordinated shutdown is required."), { code: "STORE_READER_ACTIVE" });
-        assertCompatibleMailboxReaders(dirname(file));
+        observeAdmissionPhase("constructor-readers", () => assertCompatibleMailboxReaders(dirname(file)));
       }
       let deferred = false;
-      try { migrateMessageSchema(this.db, file, existed, log); }
+      try { observeAdmissionPhase("main-schema", () => migrateMessageSchema(this.db, file, existed, log)); }
       catch (error) {
         const version = Number(this.db.prepare("PRAGMA user_version").get()!.user_version);
         if ((error as NodeJS.ErrnoException).code !== "STORE_UPGRADE_DEFERRED" || version < 4) throw error;
         deferred = true;
         log.info("hosting broker on compatible existing schema while upgrade waits for retained readers", { file, version, target: SQLITE_STORE_VERSION });
       }
-      if (file !== ":memory:") attachStoreCompatibility(this.db, file, log, deferred);
-      configureSqlite(this.db);
+      if (file !== ":memory:") observeAdmissionPhase("overlay", () => attachStoreCompatibility(this.db, file, log, deferred));
+      observeAdmissionPhase("main-configure", () => configureSqlite(this.db));
       ensureMessageQuarantine(this.db);
       this.ownershipReady = Number(this.statement(this.db, "PRAGMA user_version").get()!.user_version) >= SQLITE_STORE_VERSION;
     } catch (err) {
@@ -503,7 +504,7 @@ export class MessageStore {
       throw err;
     }
     } finally { unlockUpgrade?.(); }
-    try { this.archiveDb = openArchive(archiveDbPath(file)); this.captureHandle("archive", this.archiveDb); }
+    try { this.archiveDb = observeAdmissionPhase("archive", () => openArchive(archiveDbPath(file))); this.captureHandle("archive", this.archiveDb); }
     catch (err) { this.closeCapturedHandle(this.db); this.release(); throw err; }
     // Legacy archived rows stay readable in their original table. Relocation
     // starts in bounded chunks only after the broker listener is available.
@@ -513,7 +514,7 @@ export class MessageStore {
     this.historyFile = historyDbPath(file);
     let historyDb: DatabaseSync | undefined;
     try {
-      this.historyDb = historyDb = file === ":memory:" ? this.db : openHistoryStore(this.historyFile);
+      this.historyDb = historyDb = file === ":memory:" ? this.db : observeAdmissionPhase("history", () => openHistoryStore(this.historyFile));
       this.captureHandle("history", this.historyDb);
       this.history = new HistoryIndex(this.historyDb, this.home, undefined, this.db,
         file === ":memory:" ? undefined : (peer) => this.historyPeerSink?.(peer as PeerInfo));

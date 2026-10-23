@@ -17,8 +17,10 @@ it("bounds hook publication and approval stage evidence to allowlisted facts wit
     writeFileSync(join(env.home, LOG_DIR_NAME, LOG_FILE_NAME),
       `${at} ERROR [server] pid=${process.pid} hook handler failed ${JSON.stringify({ event: "SessionStart", err: "PRIVATE_ERROR_TOKEN", sessionId: "PRIVATE_SESSION" })}\n` +
       `${at} ERROR [server] pid=${process.pid + 1} hook handler failed {"event":"SessionStart"}\n` +
+      `${at} WARN [server] pid=${process.pid} hook publication incomplete ${JSON.stringify({ event: "SessionStart", stage: "launch-inspection", reason: "deadline", sessionUpdate: "not-started", localSession: "missing", connected: true, elapsedMs: 1500, sessionId: "PRIVATE_SESSION", body: "PRIVATE_BODY" })}\n` +
       `${at} WARN [network] pid=${process.pid} remote approval answer refused ${JSON.stringify({ stage: "executor-lookup", idPresent: true, jobPresent: false, ownerPresent: false, body: "PRIVATE_PROMPT" })}\n`);
-    expect(hookPublicationEvents(env.home, process.pid)).toMatchObject([{ stage: "hook handler failed", hook: "SessionStart" }]);
+    expect(hookPublicationEvents(env.home, process.pid)).toMatchObject([{ stage: "hook handler failed", hook: "SessionStart" },
+      { stage: "hook publication incomplete", hook: "SessionStart", phase: "launch-inspection", reason: "deadline", sessionUpdate: "not-started", localSession: "missing", connected: true, elapsedMs: 1500 }]);
     const snapshot = jobWaitSnapshot(env.home, []);
     expect(snapshot.events).toMatchObject([{ event: "remote approval answer refused", stage: "executor-lookup", idPresent: true, jobPresent: false }]);
     expect(JSON.stringify([snapshot, hookPublicationEvents(env.home, process.pid)])).not.toContain("PRIVATE_");
