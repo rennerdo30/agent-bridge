@@ -328,52 +328,82 @@ export interface BootstrapPreservation {
   namespace: unknown;
   evidence: { path: string; digest: string }[];
   databases: string[];
+  mailboxes: { path: string; namespace: string }[];
+  sources: Record<string, Identity>;
 }
-function preservationMetadata(home: string): Pick<BootstrapPreservation, "metadata" | "namespace"> {
-  const metadata = storedProvenance(home), file = join(home, DB_FILE_NAME);
-  if (!exists(file)) return { metadata, namespace: null };
-  const db = new DatabaseSync(file, { readOnly: true, timeout: 0 });
-  try { return { metadata, namespace: db.prepare("SELECT 1 FROM sqlite_master WHERE name='mailbox_store'").get() ? db.prepare("SELECT namespace FROM mailbox_store WHERE id=1").get()?.namespace ?? null : null }; }
-  finally { db.close(); }
+const GROUP_DATABASES = [DB_FILE_NAME, "archive.db", "history.db", "store-compatibility.db", "owner-questions.db"];
+/** Root-level mailbox discovery reads schema/namespace only, never arbitrary
+ * application rows. Unknown, linked or over-budget database candidates refuse. */
+function preservationGroup(home: string) {
+  const candidates = readdirSync(home).filter(name => /^[\w.-]+\.db$/.test(name)).sort();
+  if (candidates.length > 64) throw bootstrapUnknown();
+  const databases: string[] = [], mailboxes: BootstrapPreservation["mailboxes"] = [], sources: Record<string, Identity> = {};
+  for (const name of candidates) {
+    const path = join(home, name), before = bootstrapFileIdentity(path);
+    const db = new DatabaseSync(path, { readOnly: true, timeout: 0 });
+    try {
+      const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('messages','mailbox_store')").all().map(row => row.name);
+      const mailbox = name !== "archive.db" && (tables.includes("messages") || tables.includes("mailbox_store"));
+      if (mailbox) {
+        if (!tables.includes("messages") || !tables.includes("mailbox_store")) throw bootstrapUnknown();
+        const namespace = db.prepare("SELECT namespace FROM mailbox_store WHERE id=1").get()?.namespace;
+        if (!digest(namespace)) throw bootstrapUnknown();
+        mailboxes.push({ path: name, namespace });
+      }
+      if (mailbox || GROUP_DATABASES.includes(name)) { databases.push(name); sources[name] = before; }
+    } finally { db.close(); }
+    if (!sameBootstrapIdentity(before, bootstrapFileIdentity(path))) throw bootstrapUnknown();
+  }
+  if (mailboxes.length && ![DB_FILE_NAME, "archive.db", "history.db"].every(name => databases.includes(name))) throw bootstrapUnknown();
+  return { databases, mailboxes, sources };
 }
 export function captureBootstrapPreservation(home: string): BootstrapPreservation {
   home = physicalPath(resolve(home)); inspectBootstrapJournal(home);
-  const metadata = preservationMetadata(home), anchor = optionalAnchor(home);
-  const evidence: BootstrapPreservation["evidence"] = [], databases: string[] = [DB_FILE_NAME];
+  const metadata = storedProvenance(home), group = preservationGroup(home), anchor = optionalAnchor(home);
+  const evidence: BootstrapPreservation["evidence"] = [];
   if (anchor) {
     const witness = captureBootstrapWitness(home);
-    const name = anchor.record.file.slice(home.length + 1);
-    if (!/^[\w.-]+\.db$/.test(name)) throw bootstrapUnknown();
-    if (!databases.includes(name)) databases.push(name);
     evidence.push({ path: ".store-bootstrap.expected.json", digest: witness.anchor.digest });
     for (const record of witness.records) evidence.push({ path: `.store-bootstrap/${record.record.attempt}.${record.record.state}.json`, digest: record.digest });
   }
-  return { ...metadata, evidence, databases };
+  const selected = anchor?.record.file.slice(home.length + 1) ?? DB_FILE_NAME;
+  return { metadata, namespace: group.mailboxes.find(mailbox => mailbox.path === selected)?.namespace ?? null, evidence, ...group };
 }
 export function verifyBootstrapPreservationCopy(home: string, expected: BootstrapPreservation): void {
   // Do not compare the copy's inode to the original: that is precisely why this
   // is preservation verification and full restoration is currently refused.
-  if (!sameBootstrapIdentity(preservationMetadata(home), { metadata: expected.metadata, namespace: expected.namespace })) throw bootstrapUnknown();
+  const group = preservationGroup(home);
+  if (!sameBootstrapIdentity(storedProvenance(home), expected.metadata) ||
+      !sameBootstrapIdentity(group.databases, expected.databases) || !sameBootstrapIdentity(group.mailboxes, expected.mailboxes) ||
+      !sameBootstrapIdentity(Object.keys(expected.sources).sort(), expected.databases.slice().sort()) ||
+      !Object.values(expected.sources).every(identity)) throw bootstrapUnknown();
   for (const file of expected.evidence) if (readRawEvidence(join(home, file.path)).digest !== file.digest) throw bootstrapUnknown();
-  for (const name of expected.databases) {
-    if (name !== DB_FILE_NAME || expected.metadata.version > 0 || expected.namespace !== null) if (!exists(join(home, name))) throw bootstrapUnknown();
-  }
   if (expected.metadata.value?.kind === "cold") {
     const attempt = expected.metadata.value.attempt;
     const paths = [".store-bootstrap.expected.json", ...["preparing", "prepared", "exited"].map(state => `.store-bootstrap/${attempt}.${state}.json`)];
     if (!sameBootstrapIdentity(expected.evidence.map(item => item.path).sort(), paths.sort())) throw bootstrapUnknown();
+    const prepared = readBootstrapRecord(join(home, `.store-bootstrap/${attempt}.prepared.json`));
+    const main = prepared.file.slice(prepared.home.length + 1), required = Object.keys(prepared.files ?? {}).map(path => path.slice(prepared.home.length + 1));
+    if (!sameBootstrapIdentity(required.slice().sort(), [...new Set([main, DB_FILE_NAME, "archive.db", "history.db"])].sort()) ||
+        required.some(name => !/^[\w.-]+\.db$/.test(name) || !expected.databases.includes(name)) ||
+        Object.entries(prepared.files ?? {}).some(([path, id]) => !sameBootstrapIdentity(expected.sources[path.slice(prepared.home.length + 1)], id)) ||
+        expected.namespace !== prepared.namespace || group.mailboxes.find(mailbox => mailbox.path === main)?.namespace !== prepared.namespace) throw bootstrapUnknown();
   } else if (expected.evidence.length) throw bootstrapUnknown();
+  else if (expected.namespace !== (group.mailboxes.find(mailbox => mailbox.path === DB_FILE_NAME)?.namespace ?? null)) throw bootstrapUnknown();
 }
 export function assertUnboundFullRestore(home: string): void {
   const refusal = () => Object.assign(new Error("Full restore of provenance-bound or ambiguous storage is unavailable. No files were displaced. Preserve the backup and originals; owner-coordinated isolated offline restore-generation recovery is required."), { code: "STORE_RESTORE_GENERATION_REQUIRED" });
   if (exists(anchorPath(home)) || exists(join(home, ".store-bootstrap"))) throw refusal();
-  const file = join(home, DB_FILE_NAME);
-  if (!exists(file)) { if (exists(join(home, "archive.db")) || exists(join(home, "history.db"))) throw refusal(); return; }
+  if (!exists(home)) return;
+  const names = readdirSync(home).filter(name => /^[\w.-]+\.db$/.test(name));
+  if (names.length > 64 || names.includes("archive.db") || names.includes("history.db")) throw refusal();
   // Old or missing provenance does not prove unbound ownership. Only a database
   // with no bridge/mailbox authority at all retains the legacy raw restore path.
-  let db: DatabaseSync | undefined;
-  try {
-    db = new DatabaseSync(file, { readOnly: true, timeout: 0 });
-    if (db.prepare("SELECT 1 FROM sqlite_master WHERE name IN ('bridge_components','bridge_metadata','messages','mailbox_store') LIMIT 1").get()) throw refusal();
-  } catch { throw refusal(); } finally { db?.close(); }
+  for (const name of names) {
+    let db: DatabaseSync | undefined;
+    try {
+      bootstrapFileIdentity(join(home, name)); db = new DatabaseSync(join(home, name), { readOnly: true, timeout: 0 });
+      if (db.prepare("SELECT 1 FROM sqlite_master WHERE name IN ('bridge_components','bridge_metadata','messages','mailbox_store') LIMIT 1").get()) throw refusal();
+    } catch { throw refusal(); } finally { db?.close(); }
+  }
 }

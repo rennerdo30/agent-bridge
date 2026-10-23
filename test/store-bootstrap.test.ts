@@ -11,7 +11,8 @@ import { inspectBootstrapJournal, readBootstrapEvidence } from "../src/core/stor
 import { makeEnv, type TestEnv } from "./helpers.js";
 
 const wire = vi.hoisted(() => ({ starts: 0, before: undefined as undefined | (() => Promise<void>),
-  after: undefined as undefined | (() => Promise<void>), wrong: false, workers: [] as any[], stage: "idle", kernelThread: 0, error: undefined as unknown, exitedBeforeMessage: false, wrongThread: false }));
+  after: undefined as undefined | (() => Promise<void>), wrong: false, workers: [] as any[], stage: "idle", kernelThread: 0, error: undefined as unknown, exitedBeforeMessage: false, wrongThread: false,
+  beforeMaintenance: undefined as undefined | (() => void) }));
 const directoryIo = vi.hoisted(() => ({ next: 2_000_000_000, handles: new Map<number, string>(), files: new Map<number, string>(), failure: "", syncs: [] as string[], onSync: undefined as undefined | (() => void), mutateRead: undefined as undefined | ((path: string) => void), onCopy: undefined as undefined | ((source: string, target: string) => void) }));
 // Explicit simulated directory-durability capability, never evidence that a
 // Windows filesystem supports directory fsync. Ordinary file IO stays real.
@@ -71,6 +72,13 @@ vi.mock("node:worker_threads", async original => {
     terminate() { this.terminated = true; if (!this.running) this.finish(1); return this.exited; }
   } };
 });
+vi.mock("../src/core/storage-lock.js", async original => {
+  const actual = await original<typeof import("../src/core/storage-lock.js")>();
+  return { ...actual, maintenanceLock: (...args: Parameters<typeof actual.maintenanceLock>) => {
+    const before = wire.beforeMaintenance; wire.beforeMaintenance = undefined; before?.();
+    return actual.maintenanceLock(...args);
+  } };
+});
 vi.mock("node:net", async original => {
   const actual = await original<typeof import("node:net")>(), { EventEmitter } = await import("node:events");
   return { ...actual, connect: () => {
@@ -86,7 +94,7 @@ let pendingDiagnostic: ReturnType<typeof setTimeout>, fixtureNumber = 0;
 const deferred = () => { let release!: () => void; const promise = new Promise<void>(done => { release = done; }); return { promise, release }; };
 beforeEach(() => {
   directoryIo.failure = ""; directoryIo.syncs = []; directoryIo.onSync = undefined; directoryIo.mutateRead = undefined; directoryIo.onCopy = undefined;
-  const number = ++fixtureNumber; wire.stage = "setup";
+  const number = ++fixtureNumber; wire.stage = "setup"; wire.beforeMaintenance = undefined;
   pendingDiagnostic = setTimeout(() => console.error("Mock cold-bootstrap pending", { fixture: number, stage: wire.stage }), 1000);
   env = makeEnv(); schemaMs = 2400; ddl = 0; wire.starts = 0; wire.workers = []; wire.before = undefined; wire.after = undefined; wire.wrong = false; wire.error = undefined; wire.exitedBeforeMessage = false; wire.wrongThread = false;
   start = clock = Date.now(); vi.spyOn(Date, "now").mockImplementation(() => clock); vi.spyOn(performance, "now").mockImplementation(() => clock - start);
@@ -207,7 +215,7 @@ it("does not publish or certify a backup whose copied journal proof is incomplet
   expect(readFileSync(join(dir, name))).toEqual(original); inspectBootstrapJournal(env.home);
 });
 
-it("backs up an ordinary alternate mailbox before a concurrent move into its shared archive", async () => {
+it.each(["sync", "background"])("backs up an ordinary alternate mailbox before a concurrent move into its shared archive: %s", async mode => {
   schemaMs = 0; const { MessageStore } = await import("../src/core/store.js"), snapshots = await import("../src/core/sqlite-maintenance.js");
   opened = new MessageStore(join(env.home, "mail.db"), nullLogger);
   opened.insert({ id: "accepted-alternate", recipient: "retained-owner", from: { id: "sender", name: "sender", agent: "codex" }, to: "retained-owner", conversationId: "retained", replyTo: null, hop: 0, body: "original alternate bytes", createdAt: 1, readAt: null });
@@ -216,7 +224,14 @@ it("backs up an ordinary alternate mailbox before a concurrent move into its sha
     snapshot(source, target);
     if (source === join(env.home, "archive.db")) { opened!.purgeOlderThan(2); archived = true; }
   });
-  const { createBackup, readBackup } = await import("../src/core/backups.js"), backup = createBackup(env.home, clock, false);
+  const sqlite = await import("node:sqlite"), incremental = sqlite.backup;
+  vi.spyOn(sqlite, "backup").mockImplementation(async (...args) => {
+    const result = await incremental(...args);
+    if (String(args[1]).endsWith("archive.db")) { opened!.purgeOlderThan(2); archived = true; }
+    return result;
+  });
+  const { createBackup, readBackup, backupIfDueBackground } = await import("../src/core/backups.js");
+  const backup = mode === "sync" ? createBackup(env.home, clock, false) : (await backupIfDueBackground(env.home, { checkpoint() {} }, clock))!;
   expect(archived).toBe(true); expect(readBackup(backup).files.map(file => file.path)).toContain("mail.db");
   const bodies: unknown[] = [];
   for (const name of ["mail.db", "archive.db"]) {
@@ -227,11 +242,31 @@ it("backs up an ordinary alternate mailbox before a concurrent move into its sha
   expect(bodies).toContain("original alternate bytes");
 });
 
+it("rechecks restore authority under the real maintenance lock before closing or displacing a newly bound store", async () => {
+  const source = makeEnv();
+  try {
+    for (const home of [source.home, env.home]) {
+      const raw = new DatabaseSync(join(home, "bridge.db")); raw.exec("CREATE TABLE originals(body BLOB); INSERT INTO originals VALUES(x'00ff01')"); raw.close();
+    }
+    const { createBackup, restoreBackup } = await import("../src/core/backups.js"), backup = createBackup(source.home, clock, false);
+    let accepted: Buffer | undefined, current: DatabaseSync | undefined;
+    wire.beforeMaintenance = () => {
+      current = metadataDb(env.home); current.exec("INSERT INTO originals VALUES(x'11ff22')"); accepted = readFileSync(env.db);
+    };
+    expect(() => restoreBackup(env.home, backup, true)).toThrow(/restore-generation|authority changed/i);
+    expect(current?.isOpen).toBe(true); expect(readFileSync(env.db)).toEqual(accepted);
+    expect(current!.prepare("SELECT hex(body) AS body FROM originals").all()).toEqual([{ body: "00FF01" }, { body: "11FF22" }]);
+    expect(existsSync(join(env.home, "backups"))).toBe(false);
+  } finally { await source.cleanup(); }
+});
+
 it.each(["archive.db", "history.db", "bridge.db"])("refuses a full backup with required %s omitted from its checksum group", async name => {
   schemaMs = 0; opened = await open(); const { createBackup, readBackup } = await import("../src/core/backups.js");
   const backup = createBackup(env.home, clock, false), path = join(backup, "manifest.json"), manifest = JSON.parse(readFileSync(path, "utf8"));
   manifest.files = manifest.files.filter((file: any) => file.path !== name);
   writeFileSync(path, JSON.stringify(manifest));
+  const { createHash } = await import("node:crypto");
+  if (existsSync(join(backup, "publication.json"))) writeFileSync(join(backup, "publication.json"), JSON.stringify({ version: 1, manifest: createHash("sha256").update(readFileSync(path)).digest("hex") }));
   if (name !== "bridge.db") rmSync(join(backup, name)); // Original home is untouched; test only the owned copy.
   expect(() => readBackup(backup)).toThrow();
   expect(opened.namespace).toMatch(/^[a-f0-9]{64}$/);
@@ -246,6 +281,7 @@ it("compares the selected alternate mailbox namespace with retained prepared evi
   const { createHash } = await import("node:crypto"), path = join(backup, "manifest.json"), manifest = JSON.parse(readFileSync(path, "utf8"));
   const bytes = readFileSync(join(backup, "mail.db")), entry = manifest.files.find((file: any) => file.path === "mail.db");
   entry.sha256 = createHash("sha256").update(bytes).digest("hex"); entry.bytes = bytes.length; writeFileSync(path, JSON.stringify(manifest));
+  if (existsSync(join(backup, "publication.json"))) writeFileSync(join(backup, "publication.json"), JSON.stringify({ version: 1, manifest: createHash("sha256").update(readFileSync(path)).digest("hex") }));
   expect(() => readBackup(backup)).toThrow();
 });
 

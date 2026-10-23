@@ -471,7 +471,7 @@ export class MessageStore {
       }
       // A refusal must precede canonical metadata initialization as well as
       // mailbox DDL: metadata shares this exact database file.
-      if (version > SQLITE_STORE_VERSION) throw new Error("Message store schema is newer than this reader; original database retained unchanged.");
+      if (version > SQLITE_STORE_VERSION) throw new Error(`unsupported SQLite store version: ${version}; newer schema retained unchanged.`);
       if (version === 2 || version === 3) throw Object.assign(new Error("Pre-lease schema2/3 requires owner-coordinated shutdown and explicit offline migration into an isolated home; automatic shared-home migration is refused."), { code: "STORE_OFFLINE_REQUIRED" });
       metadataDb(dirname(file));
       if (version < SQLITE_STORE_VERSION) {
