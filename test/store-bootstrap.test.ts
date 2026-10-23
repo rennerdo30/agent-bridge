@@ -3,7 +3,7 @@ import { copyFileSync, existsSync, lstatSync, readFileSync, readdirSync, renameS
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { openMessageStore, type MessageStore } from "../src/core/store.js";
+import { openMessageStore, MessageStore } from "../src/core/store.js";
 import { closeMetadataDbs, metadataDb } from "../src/core/metadata-db.js";
 import { nullLogger } from "../src/core/logger.js";
 import * as migrations from "../src/core/sqlite-migrations.js";
@@ -12,7 +12,7 @@ import { makeEnv, type TestEnv } from "./helpers.js";
 
 const wire = vi.hoisted(() => ({ starts: 0, before: undefined as undefined | (() => Promise<void>),
   after: undefined as undefined | (() => Promise<void>), wrong: false, workers: [] as any[], stage: "idle", kernelThread: 0, error: undefined as unknown, exitedBeforeMessage: false, wrongThread: false,
-  beforeMaintenance: undefined as undefined | (() => void) }));
+  beforeMaintenance: undefined as undefined | (() => void), afterIncremental: undefined as undefined | ((target: string) => void) }));
 const directoryIo = vi.hoisted(() => ({ next: 2_000_000_000, handles: new Map<number, string>(), files: new Map<number, string>(), failure: "", syncs: [] as string[], onSync: undefined as undefined | (() => void), mutateRead: undefined as undefined | ((path: string) => void), onCopy: undefined as undefined | ((source: string, target: string) => void) }));
 // Explicit simulated directory-durability capability, never evidence that a
 // Windows filesystem supports directory fsync. Ordinary file IO stays real.
@@ -79,6 +79,12 @@ vi.mock("../src/core/storage-lock.js", async original => {
     return actual.maintenanceLock(...args);
   } };
 });
+vi.mock("node:sqlite", async original => {
+  const actual = await original<typeof import("node:sqlite")>();
+  return { ...actual, backup: async (...args: Parameters<typeof actual.backup>) => {
+    const result = await actual.backup(...args); wire.afterIncremental?.(String(args[1])); return result;
+  } };
+});
 vi.mock("node:net", async original => {
   const actual = await original<typeof import("node:net")>(), { EventEmitter } = await import("node:events");
   return { ...actual, connect: () => {
@@ -94,7 +100,7 @@ let pendingDiagnostic: ReturnType<typeof setTimeout>, fixtureNumber = 0;
 const deferred = () => { let release!: () => void; const promise = new Promise<void>(done => { release = done; }); return { promise, release }; };
 beforeEach(() => {
   directoryIo.failure = ""; directoryIo.syncs = []; directoryIo.onSync = undefined; directoryIo.mutateRead = undefined; directoryIo.onCopy = undefined;
-  const number = ++fixtureNumber; wire.stage = "setup"; wire.beforeMaintenance = undefined;
+  const number = ++fixtureNumber; wire.stage = "setup"; wire.beforeMaintenance = undefined; wire.afterIncremental = undefined;
   pendingDiagnostic = setTimeout(() => console.error("Mock cold-bootstrap pending", { fixture: number, stage: wire.stage }), 1000);
   env = makeEnv(); schemaMs = 2400; ddl = 0; wire.starts = 0; wire.workers = []; wire.before = undefined; wire.after = undefined; wire.wrong = false; wire.error = undefined; wire.exitedBeforeMessage = false; wire.wrongThread = false;
   start = clock = Date.now(); vi.spyOn(Date, "now").mockImplementation(() => clock); vi.spyOn(performance, "now").mockImplementation(() => clock - start);
@@ -224,12 +230,7 @@ it.each(["sync", "background"])("backs up an ordinary alternate mailbox before a
     snapshot(source, target);
     if (source === join(env.home, "archive.db")) { opened!.purgeOlderThan(2); archived = true; }
   });
-  const sqlite = await import("node:sqlite"), incremental = sqlite.backup;
-  vi.spyOn(sqlite, "backup").mockImplementation(async (...args) => {
-    const result = await incremental(...args);
-    if (String(args[1]).endsWith("archive.db")) { opened!.purgeOlderThan(2); archived = true; }
-    return result;
-  });
+  wire.afterIncremental = target => { if (target.endsWith("archive.db")) { opened!.purgeOlderThan(2); archived = true; } };
   const { createBackup, readBackup, backupIfDueBackground } = await import("../src/core/backups.js");
   const backup = mode === "sync" ? createBackup(env.home, clock, false) : (await backupIfDueBackground(env.home, { checkpoint() {} }, clock))!;
   expect(archived).toBe(true); expect(readBackup(backup).files.map(file => file.path)).toContain("mail.db");
