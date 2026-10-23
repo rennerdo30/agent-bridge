@@ -57,7 +57,11 @@ export const DEFAULT_FOLLOW_UP = "Continue where you stopped and finish the task
 
 /** A delegated run's result, plus the folder it worked in (a worktree, for example). */
 export type RunResult = DelegateResult & { workdir?: string; worktree?: Worktree; status?: "done" | "failed" | "cancelled" };
-export interface HostedAdmission { signal: AbortSignal; isCurrent(): boolean }
+export interface HostedAdmission {
+  signal: AbortSignal; isCurrent(): boolean;
+  /** Synchronous notification immediately before the actual start/spec effect. Not admission authority. */
+  onStart?(): void;
+}
 /**
  * Runs a subagent turn; `job` is the job it belongs to (its name labels the run in the dashboard).
  * `hosted`, when given, first tries to start the turn in a detached job runner (see job-host.ts) instead.

@@ -615,7 +615,8 @@ rl.on("line", (line) => {
     const { local } = await paired();
     const release = join(repo, "approval-release"); const marker = join(repo, "approval-marker");
     const job = await held(local, { access: "edit", prompt: `marker=${marker} release=${release} approve=yes` });
-    await waitFor(() => listPendingApprovals(localHome).length === 1);
+    diagnosticJobs.add(job.id);
+    await waitFor(() => listPendingApprovals(localHome).length === 1, 30_000, "approval-requester-queue");
     const approval = listPendingApprovals(localHome)[0]!;
     expect(approval).toMatchObject({ owner: "codex-supervisor", job: `mac/${job.name}`, tool: "Bash", command: "fake build" });
     const outcome = await answerPendingApproval(localHome, approval.id, { decision: "allow", reason: "supervisor approved" });
@@ -623,11 +624,11 @@ rl.on("line", (line) => {
       requesterPending: listPendingApprovals(localHome).some(a => a.id === approval.id), executorPending: listPendingApprovals(remoteHome).some(a => a.id === approval.id),
       requester: jobWaitSnapshot(localHome, [job.id]), executor: jobWaitSnapshot(remoteHome, [job.id]) }));
     expect(outcome).toBe("answered");
-    await waitFor(() => listPendingApprovals(localHome).length === 0 && listPendingApprovals(remoteHome).length === 0);
+    await waitFor(() => listPendingApprovals(localHome).length === 0 && listPendingApprovals(remoteHome).length === 0, 30_000, "approval-both-queues-cleared");
     expect(await answerPendingApproval(localHome, approval.id, { decision: "allow" })).toBe("expired");
-    await call(local, "cancel_subagent", { job: job.name });
-    await waitFor(() => readRunnerState(remoteHome, job.id)?.status === "cancelled");
-    await waitFor(() => !pidAlive(readRunnerState(remoteHome, job.id)!.pid));
+    stage("approval-cancel-rpc"); await call(local, "cancel_subagent", { job: job.name }); stage("settled:approval-cancel-rpc");
+    await waitFor(() => readRunnerState(remoteHome, job.id)?.status === "cancelled", 30_000, "approval-cancel-executor-state");
+    await waitFor(() => !pidAlive(readRunnerState(remoteHome, job.id)!.pid), 30_000, "approval-cancel-original-pid-exit");
   }, TEST_TIMEOUT_MS);
 
   it("cancels a job while the remote spawn is still starting", async () => {

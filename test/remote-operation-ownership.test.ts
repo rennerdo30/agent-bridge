@@ -83,6 +83,17 @@ function fixture() {
 }
 const message = (body: string): RunnerControl => ({ type: "message", body, cid: randomUUID() });
 
+it("does not replay a confirmed original cancel when its aborted spawn response settles later", async () => {
+  const f = fixture(), spawn = deferred(), cancel = deferred(); f.responses.push(spawn, cancel);
+  f.start(); f.job.controller.abort(); f.host.send(f.job, { type: "cancel" });
+  cancel.resolve(snapshot("cancelled"));
+  await vi.waitFor(() => expect(f.read().operations[1].state).toBe("confirmed"));
+  const original = f.read().operations[1]; spawn.resolve(snapshot()); await f.settled();
+  expect(f.remoteJob).toHaveBeenCalledTimes(2);
+  expect(f.read().operations).toHaveLength(2); expect(f.read().operations[1]).toEqual(original);
+  expect(f.read().snapshot.state.status).toBe("cancelled");
+});
+
 it.each(["message", "settings", "title", "effort", "attach", "pause"])("owns suspended post-spawn %s and overlapping C2/cancel without duplicate dispatch or stale settlement", async kind => {
   const f = fixture(); f.start(); await f.settled();
   const c1: RunnerControl = kind === "message" ? message("Exact C1 input") : kind === "settings" ? { type: "settings", settings: { model: "fixture-model" } } :

@@ -1,5 +1,10 @@
 # Post-R23 CI residual correction
 
+Historical200 correction: R24 AB-45843014 subsequently found that its entire
+spawn wait delayed cancellation until after launch. The correction/evidence in
+`t3-cross-machine-r25-cancellation.md` supersedes that cancellation behavior;
+the original red/green receipts and unresolved runtime matrix below are kept.
+
 Base: `003199e383794a628de54f6a6fa6ec2d34d988c2`, tree
 `7977ed99b3e09a206a103f7d849dace5ec5c75d3`. R23 AB-45843008 is clean
 for that frozen source, not acceptance of this later correction. Parent owns

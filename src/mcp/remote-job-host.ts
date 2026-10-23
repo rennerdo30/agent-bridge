@@ -160,7 +160,13 @@ export class RemoteJobHost {
     const operation = this.track(job, request);
     this.dispatch(job, request, operation, () => {
       if (job.pausePending) this.send(job, { type: "pause", reason: job.pauseReason });
-      else if (job.controller.signal.aborted) this.send(job, { type: "cancel" });
+      else if (job.controller.signal.aborted) {
+        // This is automatic completion of the ORIGINAL spawn, not a new
+        // explicit cancel. Its already retained cancel must never be replayed
+        // when that RPC (including its receipt) settled before this response.
+        const retained = this.read(job)?.operations?.some(op => op.turn === job.startedAt && op.request.op === "control" && op.request.control.type === "cancel");
+        if (!retained) this.send(job, { type: "cancel" });
+      }
     });
     return { pid: null, peer: `${host}/${job.name}`, startedAt: Date.now() };
   }

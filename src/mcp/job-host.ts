@@ -214,7 +214,7 @@ export class JobRunners implements JobHost {
       }
       await delay(0, undefined, { signal }); // yield before the bounded stable archive census
       if (admission && !admission.isCurrent()) throw new Error("Runner admission cancelled");
-      try { return this.start(job, spec); }
+      try { signal.throwIfAborted(); admission?.onStart?.(); return this.start(job, spec); }
       catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "STORE_UPGRADE_DEFERRED") throw error;
         job.progress = `queued: ${(error as Error).message}`;

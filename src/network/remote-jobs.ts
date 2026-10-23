@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { existsSync, realpathSync, statSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { loadConfig } from "../core/config.js";
@@ -7,7 +7,7 @@ import { checkUsagePreflight, usageAdmissionText, usageSubmissionReceipt } from 
 import { usageProbeFor } from "../mcp/targets.js";
 import { REMOTE_RUNNER_LEDGER_CAPABILITY, unsupportedRunnerLedger, REMOTE_JOB_USAGE_CAPABILITY } from "./remote-job-protocol.js";
 import { bundledCli } from "../core/delegate.js";
-import { isRecord, readJsonStore, writeJsonStore } from "../core/json-store.js";
+import { isRecord, JSON_STORE_VERSION, readJsonStore, writeJsonStore } from "../core/json-store.js";
 import type { Logger } from "../core/logger.js";
 import type { BridgeNode } from "../core/node.js";
 import { BridgeError, type PeerInfo } from "../core/protocol.js";
@@ -22,6 +22,9 @@ import type { Job, RunnerControl, RunnerState } from "../mcp/jobs.js";
 import { hasUnsettledRunnerRetention } from "../mcp/runner-delivery-retention.js";
 import { verifyOwnedRunnerRetention } from "../mcp/runner-ledger-recovery.js";
 import { deliveryFailure } from "../mcp/delivery-evidence.js";
+import { metadataDb } from "../core/metadata-db.js";
+import { assertRemoteOperationAdmission, readRemoteOperationEvidence } from "../core/remote-operation-evidence.js";
+import { runnerLedgerNamespace } from "../core/runner-store.js";
 import type { NetworkService, RemoteDestination } from "./link.js";
 import type { NetworkPair } from "./pairing.js";
 import { MAX_REMOTE_JOBS, REMOTE_JOB_ANTIGRAVITY_OPTIONS_CAPABILITY, REMOTE_JOB_CAPABILITY, REMOTE_JOB_CANCELLED_CAPABILITY, REMOTE_JOB_FRAME, REMOTE_JOB_RATE_LIMIT, REMOTE_JOB_RATE_WINDOW_MS, REMOTE_JOB_REQUEST_TIMEOUT_MS, REMOTE_JOB_SPAWN_LIMIT, remoteJobRequestSchema, remoteJobWireSchema, remoteJobSnapshotSchema, remoteSnapshotForPeer, type RemoteJobRequest } from "./remote-job-protocol.js";
@@ -37,7 +40,11 @@ type StoredRemoteRecord = Omit<RemoteRecord, "job"> & { job: Omit<Job, "controll
 const REMOTE_JOBS_FILE = "remote-jobs.json";
 interface Pending { host: string; resolve: (value: RemoteJobSnapshot) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }
 interface MirrorIntent { options: RunFeedOptions; snapshot: RemoteJobSnapshot; controller?: AbortController; task?: Promise<void> }
-interface StartingOperation { pair: string; peer: string; supervisor: string; route: RemoteSupervisorRoute; settled: Promise<void>; release: () => void; record?: RemoteRecord }
+interface StartingOperation {
+  pair: string; peer: string; supervisor: string; route: RemoteSupervisorRoute; settled: Promise<void>; release: () => void; record?: RemoteRecord;
+  controller: AbortController; turn: number; incarnation: string; request: Extract<RemoteJobRequest, { op: "spawn" }>;
+  cancelRequested?: boolean; cancelEvidence?: boolean; effectAttempted?: boolean; result?: RemoteJobSnapshot;
+}
 
 /** Canonical containment rejects traversal, sibling-prefix paths and symlink/junction escapes. */
 export function allowedRemoteDirectory(directory: string, roots: string[]): string {
@@ -213,28 +220,45 @@ export class RemoteJobs {
       if (frame.request.op !== "spawn" && starting) {
         // Root/worktree/usage admission awaits precede even the provisional
         // record. A concurrent control must not become an Unknown job refusal
-        // and poison the requester's exact retained operation. Wait only for
-        // this authenticated original spawn; never retry/reexecute that spawn.
+        // and poison the requester's exact retained operation. Cancellation
+        // interrupts this original admission; other operations wait for it.
         if (starting.pair !== pair.id || starting.peer !== frame.peer.id || starting.supervisor !== frame.peer.supervisor ||
             JSON.stringify(starting.route) !== JSON.stringify(returnRoute)) throw new Error("Remote job belongs to another supervisor.");
+        if (frame.request.op === "control" && frame.request.control.type === "cancel") this.cancelAdmission(starting, frame.request);
         await starting.settled;
         if (this.closed) throw new Error("Remote jobs link closed before operation admission.");
-        if (!starting.record || this.records.get(frame.request.job) !== starting.record || this.starting.has(frame.request.job))
-          throw new Error("Original remote spawn did not retain its admitted generation; operation remains unconfirmed.");
+        if (!this.network.peerSupports(pair.id, REMOTE_RUNNER_LEDGER_CAPABILITY)) throw unsupportedRunnerLedger();
         if (JSON.stringify(this.returnRoute(pair, frame.peer)) !== JSON.stringify(returnRoute))
           throw new Error("Remote job belongs to the original authenticated supervisor binding.");
+        if (frame.request.op === "control" && frame.request.control.type === "cancel" && starting.cancelRequested && starting.result) {
+          await this.network.sendExtension(pair.id, REMOTE_JOB_FRAME, { kind: "response", rid: frame.rid,
+            value: remoteSnapshotForPeer(starting.result, this.network.peerSupports(pair.id, REMOTE_JOB_CANCELLED_CAPABILITY)) });
+          return;
+        }
+        if (!starting.record || this.records.get(frame.request.job) !== starting.record || this.starting.has(frame.request.job))
+          throw new Error("Original remote spawn did not retain its admitted generation; operation remains unconfirmed.");
       }
       let reservation: StartingOperation | undefined;
       if (frame.request.op === "spawn") {
         let release!: () => void;
         const settled = new Promise<void>(resolve => { release = resolve; });
-        reservation = { pair: pair.id, peer: frame.peer.id, supervisor: frame.peer.supervisor, route: returnRoute, settled, release };
+        reservation = { pair: pair.id, peer: frame.peer.id, supervisor: frame.peer.supervisor, route: JSON.parse(JSON.stringify(returnRoute)), settled, release,
+          controller: new AbortController(), turn: Date.now(), incarnation: randomUUID(), request: JSON.parse(JSON.stringify(frame.request)) };
         this.starting.set(frame.request.job, reservation);
       }
       let value: RemoteJobSnapshot;
       try {
-        value = await this.handle(pair, frame.peer, frame.request, returnRoute);
-        if (reservation) reservation.record = this.records.get(frame.request.job);
+        try { value = await this.handle(pair, frame.peer, frame.request, returnRoute, reservation); }
+        catch (error) {
+          // Only this live admission can prove cancellation before the actual
+          // publication/launch boundary. An attempted effect stays unknown.
+          if (!reservation?.cancelEvidence || reservation.effectAttempted || this.closed ||
+              !this.network.peerSupports(pair.id, REMOTE_RUNNER_LEDGER_CAPABILITY) ||
+              JSON.stringify(this.returnRoute(pair, frame.peer)) !== JSON.stringify(returnRoute)) throw error;
+          value = { state: { pid: 0, peer: `${reservation.request.target}-job-${frame.request.job}`, status: "cancelled", updatedAt: Date.now(), delivered: false },
+            alive: false, approvals: [], usageTurn: reservation.request.usageTurn };
+        }
+        if (reservation) { reservation.record = this.records.get(frame.request.job); reservation.result = value; }
       }
       finally {
         if (reservation && this.starting.get(frame.request.job) === reservation) this.starting.delete(frame.request.job);
@@ -247,7 +271,32 @@ export class RemoteJobs {
     }
   }
 
-  private async handle(pair: NetworkPair, peer: { id: string; name: string; supervisor: string }, request: RemoteJobRequest, returnRoute?: RemoteSupervisorRoute): Promise<RemoteJobSnapshot> {
+  /** Capture before accepting cancellation. The existing strict cache fence is
+   * also read by prior v2 writers at preclaim/spec publication; no new optional
+   * field may be the sole barrier against a restarted or older writer. */
+  private cancelAdmission(starting: StartingOperation, request: Extract<RemoteJobRequest, { op: "control" }>): void {
+    if (starting.cancelRequested) return;
+    if (!starting.effectAttempted) {
+      metadataDb(this.home);
+      const file = join(this.home, "remote-job-states", `${request.job}.json`), previous = readRemoteOperationEvidence(this.home, request.job);
+      if (previous?.operations?.length) throw new Error("Original remote operation evidence requires recovery before cancellation admission");
+      const proof = { version: 1, namespace: runnerLedgerNamespace(this.home, true), incarnation: starting.incarnation, turn: starting.turn,
+        pair: starting.pair, peer: starting.peer, supervisor: starting.supervisor, route: starting.route, spawn: starting.request, cancel: request };
+      const operations = [starting.request, request].map((item, index) => ({
+        id: createHash("sha256").update(JSON.stringify([proof, index])).digest("hex"), turn: starting.turn, request: item, state: "blocked" as const }));
+      const retained = { ...previous, fetchedAt: Date.now(), snapshot: { state: null, alive: true, approvals: [] }, operations, admissionCancellation: proof };
+      if (Buffer.byteLength(JSON.stringify({ ...retained, version: JSON_STORE_VERSION }, null, 2) + "\n") > 8 * 1024 * 1024)
+        throw new Error("Remote cancellation evidence capacity reached; original caller must retain its unconfirmed operation");
+      writeJsonStore(file, retained, previous);
+      starting.cancelEvidence = true;
+    }
+    starting.cancelRequested = true;
+    const pending = this.pendingStarts.get(request.job);
+    if (pending?.controller === starting.controller) pending.cancelRequested = true;
+    starting.controller.abort(new Error("Remote job not_started: cancelled before detached runner startup"));
+  }
+
+  private async handle(pair: NetworkPair, peer: { id: string; name: string; supervisor: string }, request: RemoteJobRequest, returnRoute?: RemoteSupervisorRoute, starting?: StartingOperation): Promise<RemoteJobSnapshot> {
     if (!this.network.peerSupports(pair.id, REMOTE_RUNNER_LEDGER_CAPABILITY)) throw unsupportedRunnerLedger();
     let record = this.records.get(request.job);
     if (record && (record.pair !== pair.id || record.peer !== peer.supervisor)) throw new Error("Remote job belongs to another supervisor.");
@@ -256,6 +305,12 @@ export class RemoteJobs {
         recipientKey(record.returnRoute.destination.frontend, record.returnRoute.destination.native) !== recipientKey(returnRoute.destination.frontend, returnRoute.destination.native)))
       throw new Error("Remote job belongs to the original authenticated supervisor binding.");
     if (request.op === "spawn") {
+      assertRemoteOperationAdmission(this.home, request.job);
+      const current = () => {
+        starting?.controller.signal.throwIfAborted();
+        if (this.closed || starting && this.starting.get(request.job) !== starting || !this.network.peerSupports(pair.id, REMOTE_RUNNER_LEDGER_CAPABILITY))
+          throw new Error("Remote job startup lost its original admission");
+      };
       if (record && hasUnsettledRunnerRetention(readRunnerState(this.home, record.job.id))) {
         if (this.snapshot(record).alive) throw new Error("Remote job is already running; its original evidence remains owned.");
         try { await this.runners?.recoverRetention(record.job, record.job.controller.signal, () => !this.closed && this.records.get(record!.job.id) === record); }
@@ -276,6 +331,7 @@ export class RemoteJobs {
       let args: DelegateArgs = { ...request.args, ...(request.target === "codex" ? { native_subagents: request.args.native_subagents ?? cfg.codexSubagents } : {}) };
       let cwd = allowedRemoteDirectory(args.cwd!, policy.allowRoots);
       for (const directory of await gitDirsOutside(cwd, this.log) ?? []) allowedRemoteDirectory(directory, policy.allowRoots);
+      current();
       let worktree: Worktree | null = null;
       if (record) {
         const state = this.snapshot(record).state;
@@ -290,18 +346,21 @@ export class RemoteJobs {
       // Only this executor's authenticated account may decide a remote refusal.
       const usage = !record && args.worktree ? { type: "allow", reason: "unknown" } as const
         : await checkUsagePreflight(usageProbeFor(request.target, cfg, { home: this.home, cwd, log: this.log }, args.model));
+      current();
       if (!record && args.worktree && usage.type !== "block") {
         const repo = allowedRemoteDirectory(await git(["rev-parse", "--show-toplevel"], cwd, this.log), policy.allowRoots);
+        current();
         if (existsSync(join(repo, "worktrees"))) allowedRemoteDirectory(join(repo, "worktrees"), policy.allowRoots);
         // Managed checkouts remain under an allowed root, including their git metadata.
         worktree = await createWorktree({ cwd, home: repo, worktreeRoot: cfg.worktreeRoot, base: args.base, jobId: request.job, log: this.log });
+        current();
         cwd = allowedRemoteDirectory(worktree.cwd, policy.allowRoots);
         args = { ...args, cwd, worktree: false, _worktree: worktree };
       }
       const owner = record?.owner ?? `${pair.name}/${peer.name}`;
       const job: Job = { id: request.job, name: `${request.target}-job-${request.job}`, agent: request.target,
         model: args.model ?? null, prompt: args.prompt, args: { ...args }, owner, supervisor: `${pair.id}/${peer.supervisor}`,
-        startedAt: Date.now(), controller: new AbortController(), queue: [], status: "running", progress: null,
+        startedAt: starting?.turn ?? Date.now(), controller: starting?.controller ?? new AbortController(), queue: [], status: "running", progress: null,
         sessionId: args.session_id ?? null, workdir: cwd, worktree, usageRunId: randomUUID(), usagePendingControls: request.usageControls };
       job.providerUsage = { runId: job.usageRunId, turnStartedAt: job.startedAt, decision: usage, warningReported: false,
         ...(usage.type === "block" ? { retainedControls: job.usagePendingControls } : {}) };
@@ -327,6 +386,7 @@ export class RemoteJobs {
           signal: admission.controller.signal,
           isCurrent: () => !this.closed && this.records.get(job.id) === staged && this.pendingStarts.get(job.id) === admission &&
             staged.job === job && staged.owner === owner && staged.peer === peer.supervisor && staged.pair === pair.id && this.network.peerSupports(pair.id, REMOTE_RUNNER_LEDGER_CAPABILITY),
+          onStart: () => { if (starting) starting.effectAttempted = true; },
         });
         if (!host) throw new Error("Remote job runner is unavailable; update the remote broker's bundled CLI.");
         job.host = host;
@@ -522,6 +582,7 @@ export class RemoteJobs {
     this.unsubscribeLink?.();
     this.closed = true;
     for (const starting of this.starting.values()) starting.release();
+    for (const starting of this.starting.values()) starting.controller.abort(new Error("Remote job startup closed"));
     for (const intent of this.mirrorIntents.values()) intent.controller?.abort(new Error("Remote mirror broker closed"));
     this.mirrorIntents.clear();
     this.mirrorTurns.clear(); this.mirrorStates.clear();

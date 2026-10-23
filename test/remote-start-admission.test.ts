@@ -21,13 +21,14 @@ import { RemoteJobs } from "../src/network/remote-jobs.js";
 import { DEFAULT_NETWORK_CONFIG } from "../src/network/config.js";
 import { until } from "./helpers.js";
 import { fixtureRemotePeer } from "./owned-mail.js";
-import { publishRunnerSpec, runnerLedgerNamespace } from "../src/core/runner-store.js";
+import { publishRunnerSpec, readOriginalRunnerSpec, runnerLedgerNamespace } from "../src/core/runner-store.js";
 import { projectRunnerInputs, runnerLedgerPrincipal } from "../src/mcp/runner-delivery-retention.js";
 import { completionMessageId } from "../src/core/completion.js";
 import { randomUUID } from "node:crypto";
 import { RemoteJobHost } from "../src/mcp/remote-job-host.js";
 import type { Job } from "../src/mcp/jobs.js";
 import { remoteJobWireSchema, type RemoteJobRequest } from "../src/network/remote-job-protocol.js";
+import * as jsonStore from "../src/core/json-store.js";
 vi.mock("../src/core/usage.js", async original => ({ ...await original<typeof import("../src/core/usage.js")>(), checkUsagePreflight: async () => ({ type: "allow", reason: "fixture: provider probes outside storage admission contract" }) }));
 
 let home: string, remote: RemoteJobs;
@@ -94,10 +95,140 @@ function neverQuery() {
 }
 const host = { pid: null, peer: "detached-fixture", startedAt: Date.now() };
 
+it.each(["reader", "pre-record", "duplicate", "foreign", "restart", "held-control", "failed-retention"])("wire cancellation aborts original suspended admission before publication and cannot launch after release: %s", async phase => {
+  remote.close(); metadataDb(home);
+  const paired = { id: randomUUID(), name: "paired", fingerprint: "a".repeat(64) };
+  const advertised = fixtureRemotePeer(home, paired, { ...peer, sessionId: peer.supervisor });
+  let receive!: (payload: any, pair: any) => Promise<void>;
+  const responses = new Map<string, (response: any) => void>();
+  remote = new RemoteJobs({ peerSupports: () => true, peers: () => [advertised],
+    registerExtension: (_type: string, _cap: string, handler: typeof receive) => { receive = handler; },
+    sendExtension: async (_host: string, _type: string, raw: unknown) => {
+      const frame = remoteJobWireSchema.parse(raw); expect(frame.kind).toBe("response"); responses.get(frame.rid)!(frame);
+    } } as any, home, nullLogger, control);
+  const wire = (request: RemoteJobRequest, sender = peer) => new Promise<any>((resolve, reject) => {
+    const rid = randomUUID(); responses.set(rid, resolve); void receive({ kind: "request", rid, peer: sender, request }, paired).catch(reject);
+  });
+  let releasePreflight!: () => void;
+  const query = phase === "pre-record" ? undefined : neverQuery();
+  if (!query) vi.mocked(worktree.gitDirsOutside).mockImplementationOnce(() => new Promise(resolve => { releasePreflight = () => resolve([]); }));
+  const actualStart = JobRunners.prototype.start;
+  const launch = vi.spyOn(JobRunners.prototype, "start").mockImplementation((job, spec) => {
+    publishRunnerSpec(home, job.id, { ...spec, home, job: { ...job, controller: undefined } }); return host;
+  });
+  const spawned = wire(request("1234abcd", "Exact original cancelled-before-start context"));
+  let cancelled: Promise<any> | undefined, duplicate: Promise<any> | undefined, held: Promise<any> | undefined;
+  try {
+    await until(query?.started ?? (() => Boolean(releasePreflight)));
+    const admission = query ? (remote as any).pendingStarts.get("1234abcd") : (remote as any).starting.get("1234abcd"); expect(admission).toBeTruthy();
+    if (phase === "foreign") {
+      const rejected = await wire({ op: "control", job: "1234abcd", control: { type: "cancel" } }, { ...peer, supervisor: "foreign-session" });
+      expect(rejected.error).toContain("another supervisor"); expect(admission.controller.signal.aborted).toBe(false);
+      expect(existsSync(join(home, "remote-job-states", "1234abcd.json"))).toBe(false);
+    }
+    if (phase === "held-control") held = wire({ op: "control", job: "1234abcd", control: { type: "message", cid: randomUUID(), body: "Exact queued original C2 must not execute" } });
+    if (phase === "failed-retention") {
+      const write = jsonStore.writeJsonStore;
+      vi.spyOn(jsonStore, "writeJsonStore").mockImplementation((file, value, previous) => {
+        if (value.admissionCancellation) throw new Error("controlled evidence storage unavailable");
+        return write(file, value, previous);
+      });
+    }
+    cancelled = wire({ op: "control", job: "1234abcd", control: { type: "cancel" } });
+    await Promise.resolve(); await Promise.resolve();
+    if (phase === "failed-retention") {
+      expect((await cancelled).error).toBe("controlled evidence storage unavailable"); expect(admission.controller.signal.aborted).toBe(false);
+      expect(existsSync(join(home, "remote-job-states", "1234abcd.json"))).toBe(false);
+      remote.close(); await query!.release(); expect((await spawned).value).toBeUndefined();
+      expect(launch).not.toHaveBeenCalled(); expect(control).not.toHaveBeenCalled(); return;
+    }
+    expect(admission.controller.signal.aborted).toBe(true);
+    const file = join(home, "remote-job-states", "1234abcd.json"), bytes = readFileSync(file), evidence = JSON.parse(bytes.toString());
+    expect(evidence.operations.map((operation: any) => operation.state)).toEqual(["blocked", "blocked"]);
+    expect(evidence.admissionCancellation).toMatchObject({ pair: paired.id, peer: peer.id, supervisor: peer.supervisor,
+      spawn: request("1234abcd", "Exact original cancelled-before-start context"), cancel: { op: "control", job: "1234abcd", control: { type: "cancel" } },
+      route: { destination: { hostId: paired.id, hostFingerprint: paired.fingerprint, native: advertised.nativeOwner } } });
+    if (phase === "duplicate") {
+      duplicate = wire({ op: "control", job: "1234abcd", control: { type: "cancel" } });
+      await Promise.resolve(); expect(readFileSync(file)).toEqual(bytes);
+    }
+    if (query) await query.release(); else releasePreflight();
+    const replies = await Promise.all([spawned, cancelled, ...(duplicate ? [duplicate] : [])]);
+    if (held) expect((await held).error).toContain("Original remote spawn did not retain its admitted generation");
+    expect(replies.map(reply => reply.value)).toEqual(Array(replies.length).fill(expect.objectContaining({ alive: false, state: expect.objectContaining({ peer: "codex-job-1234abcd", status: "cancelled" }) })));
+    expect(launch).not.toHaveBeenCalled(); expect(readOriginalRunnerSpec(home, "1234abcd")).toBeNull();
+    expect(existsSync(join(home, "jobs", "1234abcd.spec.json"))).toBe(false);
+    expect(control).not.toHaveBeenCalled(); expect((remote as any).pendingStarts.size).toBe(0); expect((remote as any).starting.size).toBe(0);
+    // The unchanged v2 preclaim/publication fence understands blocked evidence,
+    // even without interpreting the additive audit proof. Never reopen/reset it.
+    expect(() => publishRunnerSpec(home, "1234abcd", { owner: "replacement", job: { id: "1234abcd" } })).toThrow(/invalid-evidence/);
+    const attempted: Job = { id: "1234abcd", name: "codex-job-1234abcd", agent: "codex", startedAt: evidence.admissionCancellation.turn,
+      controller: new AbortController(), model: null, prompt: "must not replay retained cancellation", progress: null, status: "running", sessionId: null, workdir: home, worktree: null, queue: [] };
+    expect(() => actualStart.call((remote as any).runners, attempted, { target: "codex", args: { prompt: attempted.prompt, title: "Refused restart", cwd: home } } as any)).toThrow();
+    expect(readFileSync(file)).toEqual(bytes);
+    if (phase === "restart") {
+      remote.close();
+      remote = new RemoteJobs({ peerSupports: () => true, peers: () => [advertised], registerExtension: (_type: string, _cap: string, handler: typeof receive) => { receive = handler; },
+        sendExtension: async (_host: string, _type: string, raw: any) => { const frame = remoteJobWireSchema.parse(raw); responses.get(frame.rid)!(frame); } } as any, home, nullLogger, control);
+      const retry = await wire(request("1234abcd", "must not reexecute")); expect(retry.error).toMatch(/invalid-evidence/);
+      expect(launch).not.toHaveBeenCalled(); expect(readFileSync(file)).toEqual(bytes);
+    }
+  } finally { remote.close(); if (query) await query.release(); else releasePreflight?.(); await Promise.allSettled([spawned, ...(cancelled ? [cancelled] : []), ...(duplicate ? [duplicate] : []), ...(held ? [held] : [])]); }
+});
+
+it.each(["success", "failed-control"])("wire cancellation after actual publication reaches only the original late host once and preserves original responses: %s", async outcome => {
+  remote.close();
+  const paired = { id: randomUUID(), name: "paired", fingerprint: "a".repeat(64) }, advertised = fixtureRemotePeer(home, paired, { ...peer, sessionId: peer.supervisor });
+  let receive!: (payload: any, pair: any) => Promise<void>, release!: () => void;
+  const replies = new Map<string, (response: any) => void>();
+  remote = new RemoteJobs({ peerSupports: () => true, peers: () => [advertised], registerExtension: (_type: string, _cap: string, handler: typeof receive) => { receive = handler; },
+    sendExtension: async (_host: string, _type: string, raw: any) => { const frame = remoteJobWireSchema.parse(raw); replies.get(frame.rid)!(frame); } } as any, home, nullLogger,
+    async (record, command, origin) => {
+      await control(record, command);
+      expect(origin).toEqual({ kind: "remote-job-control", operation: record.id, owner: `native:${advertised.nativeOwner}`,
+        source: { kind: "remote", hostId: paired.id, hostFingerprint: paired.fingerprint } });
+      if (outcome === "failed-control") throw new Error("controlled accepted-host control failure");
+      writeRunnerState(home, record.id, { pid: 0, peer: record.name, status: "cancelled", updatedAt: Date.now(), delivered: false });
+    });
+  const wire = (request: RemoteJobRequest) => new Promise<any>((resolve, reject) => {
+    const rid = randomUUID(); replies.set(rid, resolve); void receive({ kind: "request", rid, peer, request }, paired).catch(reject);
+  });
+  const actualStart = JobRunners.prototype.startAsync;
+  vi.spyOn(JobRunners.prototype, "startAsync").mockImplementation(async function (this: JobRunners, ...args) {
+    const started = await actualStart.apply(this, args);
+    await new Promise<void>(resolve => { release = resolve; }); return started;
+  });
+  const launch = vi.spyOn(JobRunners.prototype, "start").mockImplementation((job, spec) => {
+    publishRunnerSpec(home, job.id, { ...spec, home, job: { ...job, controller: undefined } }); return host;
+  });
+  vi.spyOn(JobRunners.prototype, "alive").mockImplementation((_job, state) => state?.status !== "cancelled");
+  const spawned = wire(request("1234abcd", "Exact original already published context"));
+  let cancel: Promise<any> | undefined, duplicate: Promise<any> | undefined;
+  try {
+    await until(() => Boolean(release)); expect((remote as any).starting.get("1234abcd").effectAttempted).toBe(true);
+    const original = readOriginalRunnerSpec(home, "1234abcd"); expect(original).toBeTruthy();
+    cancel = wire({ op: "control", job: "1234abcd", control: { type: "cancel" } });
+    duplicate = wire({ op: "control", job: "1234abcd", control: { type: "cancel" } });
+    await Promise.resolve(); expect((remote as any).pendingStarts.get("1234abcd").controller.signal.aborted).toBe(true);
+    expect(control).not.toHaveBeenCalled(); expect(existsSync(join(home, "remote-job-states", "1234abcd.json"))).toBe(false);
+    release(); const results = await Promise.all([spawned, cancel, duplicate]);
+    if (outcome === "success") expect(results.map(result => result.value.state.status)).toEqual(["cancelled", "cancelled", "cancelled"]);
+    else {
+      expect(results.every(result => result.value === undefined && typeof result.error === "string")).toBe(true);
+      expect(readRunnerState(home, "1234abcd")).toBeNull();
+      const record = JSON.parse(readFileSync(join(home, "remote-jobs.json"), "utf8")).jobs[0];
+      expect(record.job).toMatchObject({ id: "1234abcd", prompt: "Exact original already published context", host });
+    }
+    expect(control).toHaveBeenCalledExactlyOnceWith({ owner: "paired/sender", name: "codex-job-1234abcd", id: "1234abcd" }, { type: "cancel" });
+    expect(launch).toHaveBeenCalledOnce(); expect(readOriginalRunnerSpec(home, "1234abcd")).toEqual(original);
+    expect((remote as any).pendingStarts.size).toBe(0); expect((remote as any).starting.size).toBe(0);
+  } finally { release?.(); remote.close(); await Promise.allSettled([spawned, ...(cancel ? [cancel] : []), ...(duplicate ? [duplicate] : [])]); }
+});
+
 it.each([
-  ["cancel", "success"], ["message", "success"], ["settings", "success"], ["pause", "success"],
+  ["message", "success"], ["settings", "success"], ["pause", "success"],
   ["title", "success"], ["effort", "success"], ["attach", "success"],
-  ["cancel", "failed-start"], ["cancel", "closed"], ["cancel", "replaced"], ["cancel", "capability"],
+  ["message", "failed-start"], ["cancel", "closed"], ["cancel", "replaced"], ["cancel", "capability"],
 ])("owns early wire %s across suspended pre-record spawn admission: %s", async (kind, outcome) => {
   remote.close();
   const paired = { id: randomUUID(), name: "paired", fingerprint: "a".repeat(64) };
@@ -151,11 +282,11 @@ it.each([
     expect(() => new RemoteJobHost({ remoteJob } as any, source, nullLogger).assertTurnAdmission(job)).toThrow();
     await Promise.resolve(); await Promise.resolve(); expect(control).not.toHaveBeenCalled();
     if (outcome === "closed") remote.close();
+    if (outcome === "replaced") currentPeer = fixtureRemotePeer(home, paired, { ...peer, sessionId: "replacement-session" });
+    if (outcome === "capability") compatible = false;
     releasePreflight();
-    if (outcome !== "failed-start" && outcome !== "closed") {
+    if (outcome === "success") {
       await until(() => Boolean(releaseHost));
-      if (outcome === "replaced") currentPeer = fixtureRemotePeer(home, paired, { ...peer, sessionId: "replacement-session" });
-      if (outcome === "capability") compatible = false;
       releaseHost();
     }
     if (outcome !== "success") {

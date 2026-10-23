@@ -53,6 +53,11 @@ it("reports actual retained admission/registration facts while bounding and excl
     writeFileSync(join(env.home, "jobs.json"), JSON.stringify({ jobs: [{ id, status: "cancelled", prompt: secret, deliveryOwner: secret,
       args: { host: "paired", prompt: secret }, deliveryHistory: [{ body: secret, senderOwner: secret }], reportRouting: {}, host: null }] }));
     writeFileSync(join(env.home, "remote-jobs.json"), JSON.stringify({ jobs: [{ pair: secret, peer: secret, owner: secret, job: { id, status: "running", supervisor: secret } }] }));
+    mkdirSync(join(env.home, "remote-job-states"));
+    writeFileSync(join(env.home, "remote-job-states", `${id}.json`), JSON.stringify({ snapshot: { state: null, alive: true },
+      admissionCancellation: { owner: secret, spawn: { prompt: secret } }, operations: Array.from({ length: 12 }, (_, i) => ({
+        id: i === 11 ? secret : "a".repeat(64), turn: i === 11 ? secret : 123, state: i === 11 ? secret : "pending",
+        request: { op: i === 11 ? secret : "control", control: { type: i === 11 ? secret : "cancel", body: secret }, args: { prompt: secret } } })) }));
     writeRunnerState(env.home, id, { pid: process.pid, peer: `codex-job-${id}`, status: "running", updatedAt: Date.now(), identity: secret,
       sessionId: secret, progress: "queued: waiting for machine startup admission", report: secret,
       deliveryEvidence: { kind: "note", stage: "retrying", messageId: "11111111-1111-4111-8111-111111111111", at: Date.now(), attempt: 7,
@@ -68,6 +73,10 @@ it("reports actual retained admission/registration facts while bounding and excl
       remote: { pairedOrigin: true, peerOrigin: true, ownerRecorded: true }, runner: { identityRecorded: true, session: true, progress: "queued: waiting for machine startup admission",
         delivery: { kind: "note", finalQueued: true, reason: "unretained-destination", attempt: 7 } } });
     expect(snapshot.events.every(event => "reason" in event && event.reason === "local-report-grant-unproven")).toBe(true);
+    expect(snapshot.jobs[0]?.cache).toMatchObject({ operationCount: 12, admissionCancelRecorded: true });
+    expect(snapshot.jobs[0]?.cache?.operations).toHaveLength(8);
+    expect(snapshot.jobs[0]?.cache?.operations?.[0]).toMatchObject({ turn: 123, state: "pending", op: "control", control: "cancel" });
+    expect(snapshot.jobs[0]?.cache?.operations?.[7]).toMatchObject({ state: "unknown", op: "unknown" });
     expect(JSON.stringify(snapshot)).not.toContain(secret);
     expect(JSON.stringify(snapshot)).not.toContain("effective config");
   } finally { await env.cleanup(); }
