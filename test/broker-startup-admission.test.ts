@@ -111,6 +111,35 @@ it("cancels the exact deferred producer turn when close precedes normal-serving 
   await f.broker.close(); await vi.runAllTimersAsync(); expect(producers).not.toHaveBeenCalled();
 });
 
+it("settles required activation before optional purge failure, records its diagnostic and closes each retained service resource", async () => {
+  vi.useFakeTimers({ toFake: ["setImmediate", "clearImmediate"] }); const f = fixture();
+  const beforeTtl = process.env.AGENT_BRIDGE_MESSAGE_TTL_MS; process.env.AGENT_BRIDGE_MESSAGE_TTL_MS = "1";
+  try {
+    const failure = new Error("controlled optional purge failure"), warnings = vi.spyOn(nullLogger, "warn");
+    const purge = vi.spyOn(store!, "schedulePurgeOlderThan").mockImplementation(() => { throw failure; });
+    const maintenance = vi.spyOn(f.broker as any, "startServingMaintenance"), backupsClose = vi.spyOn(store!, "closeBackups");
+    const healthClose = vi.spyOn((f.broker as any).healthMonitor, "close");
+    const clearInterval = vi.spyOn(globalThis, "clearInterval");
+    await f.broker.listen(f.reservation as any, f.check, f.controller.signal);
+    expect(f.reservation.activate).toHaveBeenCalledOnce(); expect(f.server.listening).toBe(true);
+    expect(maintenance).not.toHaveBeenCalled(); expect(purge).not.toHaveBeenCalled();
+    const serving = (f.broker as any).servingMaintenance;
+    expect(serving).not.toBeNull();
+    await vi.runOnlyPendingTimersAsync(); await serving.settled; // Exact owned turn, not an arbitrary flush/sleep.
+    expect(maintenance).toHaveBeenCalledOnce(); expect(purge).toHaveBeenCalledOnce();
+    expect(warnings).toHaveBeenCalledWith("purge failed", { err: failure });
+    expect(f.server.listening).toBe(true); expect((f.broker as any).networkAuthorityDeferred).toBe(false);
+    expect((f.broker as any).servingMaintenance).toBeNull();
+    const purgeTimer = (f.broker as any).purgeTimer; expect(purgeTimer).not.toBeNull();
+    await f.broker.close();
+    expect(backupsClose).toHaveBeenCalledOnce(); expect(healthClose).toHaveBeenCalledOnce(); expect(clearInterval).toHaveBeenCalledWith(purgeTimer);
+    expect(f.server.listening).toBe(false); expect((f.broker as any).server).toBeNull();
+    expect((f.broker as any).historyBackground).toBeNull(); expect((f.broker as any).jobArchiveBackground).toBeNull(); expect((f.broker as any).network).toBeNull();
+  } finally {
+    if (beforeTtl === undefined) delete process.env.AGENT_BRIDGE_MESSAGE_TTL_MS; else process.env.AGENT_BRIDGE_MESSAGE_TTL_MS = beforeTtl;
+  }
+});
+
 it("revokes borrowed mobile authority synchronously at abort before cleanup yields, retaining the existing disposer deadline", async () => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] }); const f = fixture();
   const get = vi.fn(), serviceClose = vi.fn();

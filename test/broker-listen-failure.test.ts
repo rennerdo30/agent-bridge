@@ -31,15 +31,24 @@ it("keeps a broker whose optional startup step throws (handoff replay) and still
   } finally { await broker.close(); }
 });
 
-it("rejects listen() and releases the pipe when a required startup step throws", async () => {
+it("rejects listen() and releases the pipe when required native-child recovery throws", async () => {
   const store = new MessageStore(env.db, nullLogger);
   const broker = new Broker(env.pipe, store, nullLogger, "t");
-  (broker as unknown as { purge: () => void }).purge = () => { throw new Error("purge exploded"); };
+  const boundServers: { listening: boolean }[] = [];
+  // Parent-approved R36 contract: purge/archive are optional post-activation
+  // maintenance. Required recovery really runs while the endpoint is tentative;
+  // an injected failure here must settle only AFTER exact owned cleanup.
+  const startup = broker as unknown as { nativeChildren: { recover: () => Promise<void> }; server: { listening: boolean } | null; servingMaintenance: unknown; purgeTimer: unknown };
+  startup.nativeChildren.recover = async () => {
+    if (startup.server) boundServers.push(startup.server);
+    throw new Error("recovery exploded");
+  };
   try {
-    expect(await settle(broker.listen(), 3000)).toBe("rejected: purge exploded");
-    await new Promise((r) => setTimeout(r, 50));
+    expect(await settle(broker.listen(), 3000)).toBe("rejected: recovery exploded");
+    expect(boundServers).toHaveLength(1); expect(boundServers[0]!.listening).toBe(false);
+    expect(startup.server).toBeNull(); expect(startup.servingMaintenance).toBeNull(); expect(startup.purgeTimer).toBeNull();
     expect(unhandled).toEqual([]);
-    // The endpoint is free again, so election can retry.
+    // No arbitrary sleep: listen rejection itself proves the endpoint is free.
     await expect(BridgeClient.connect(env.pipe, nullLogger, 300)).rejects.toThrow();
   } finally { store.close(); }
 });

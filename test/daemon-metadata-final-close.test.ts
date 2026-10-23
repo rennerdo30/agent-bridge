@@ -1,4 +1,4 @@
-import { existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -115,13 +115,23 @@ describe("metadata close prerequisites: observations only; canonical issuer UNWI
   expect(result.outcomes.registeredHandles).toBe(2); expect(secondClose).not.toHaveBeenCalled(); expect(secondExec).not.toHaveBeenCalled();
   expect(second.isTransaction).toBe(true); expect(second.prepare("SELECT body FROM fixture_mail WHERE id='pending'").get()!.body).toEqual(new Uint8Array([255, 34]));
  });
- it("keeps two actual aliased-file handles distinct and refuses their unproved identities", () => {
-  const aliasHome = join(home, "alias"); mkdirSync(aliasHome); linkSync(file, join(aliasHome, "bridge.db")); ownedHomes.push(aliasHome);
-  const alias = ownMetadata(aliasHome); expect(alias).not.toBe(db); alias.exec("PRAGMA busy_timeout=25; BEGIN IMMEDIATE");
-  const close = vi.spyOn(alias, "close"), exec = vi.spyOn(alias, "exec"), unchanged = noEffects();
-  const result = observe(); retained(result); unchanged(); expect(result.outcomes.registeredHandles).toBe(2);
-  expect(result.blockers).toContain("identity_unknown"); expect(result.blockers).toContain("transaction_active");
-  expect(alias.isTransaction).toBe(true); expect(close).not.toHaveBeenCalled(); expect(exec).not.toHaveBeenCalled();
+ it("refuses a new hardlinked authorizing opener while retaining the exact already owned native reference", () => {
+  const aliasHome = join(home, "alias"), aliasFile = join(aliasHome, "bridge.db"); mkdirSync(aliasHome); linkSync(file, aliasFile); ownedHomes.push(aliasHome);
+  const original = readFileSync(file);
+  expect(lstatSync(file, { bigint: true }).ino).toBe(lstatSync(aliasFile, { bigint: true }).ino);
+  expect(lstatSync(file).nlink).toBe(2);
+  // Parent-approved R36 contract: admitting a second RW alias was historical
+  // acceptance. The strict opener now refuses BEFORE SQLite, not after giving
+  // an unsafe handle to this test. The separate legitimate two-handle and
+  // actual129/130 capture/close-failure tests retain their exact assertions.
+  const prepare = vi.spyOn(DatabaseSync.prototype, "prepare"), unchanged = noEffects();
+  expect(() => api.metadataDb(aliasHome)).toThrow(expect.objectContaining({ code: "STORE_BOOTSTRAP_UNSETTLED" }));
+  expect(() => api.metadataDb(home)).toThrow(expect.objectContaining({ code: "STORE_BOOTSTRAP_UNSETTLED" }));
+  expect(prepare).not.toHaveBeenCalled();
+  const result = observe(); retained(result); unchanged(); expect(result.outcomes.registeredHandles).toBe(1);
+  expect(result.blockers).toContain("identity_unknown"); expect(Object.is(ownedReferences.get(home), db)).toBe(true);
+  expect(ownedReferences.has(aliasHome)).toBe(false); expect(db.isOpen).toBe(true);
+  expect(readFileSync(file)).toEqual(original); expect(readFileSync(aliasFile)).toEqual(original);
  });
  it("a genuinely closed native handle makes transaction state unavailable without redefining its accessor", () => {
   db.close(); // Actual raw borrower close, outside the observer; its native identity stays registered.
@@ -197,10 +207,13 @@ describe("metadata close prerequisites: observations only; canonical issuer UNWI
   expect(journal.length).toBeGreaterThan(512); expect(journal.subarray(0, 8).toString("hex")).toBe("d9d505f920a163d7");
   expect(journal.readUInt32BE(16)).toBeGreaterThan(0); expect(journal.readUInt32BE(24)).toBeGreaterThanOrEqual(512);
   expect(main.equals(originalMain)).toBe(false); // Actual uncommitted database spill, not only an inert journal file.
-  const unchanged = noEffects(), result = observe(); retained(result); unchanged();
+  const authorizing = vi.spyOn(api, "metadataDb"), unchanged = noEffects(), result = observe(); retained(result); unchanged();
   expect(result.blockers).toContain("nonrecovering_read_unproved"); expect(result.blockers).toContain("schema_unknown");
   expect(result.blockers).toContain("durability_unknown"); expect(result.schemaDigest).toBeNull();
-  expect(api.metadataDb(home)).toBe(db); expect(db.isOpen).toBe(true); expect(db.isTransaction).toBe(false);
+  // No new authorizing open/SQL may recover this genuine hot journal. Observe
+  // only the exact native reference retained before the owned child exited.
+  expect(authorizing).not.toHaveBeenCalled(); expect(Object.is(ownedReferences.get(home), db)).toBe(true);
+  expect(db.isOpen).toBe(true); expect(db.isTransaction).toBe(false);
   expect(readFileSync(file)).toEqual(main); expect(readFileSync(journalFile)).toEqual(journal);
   // Do NOT call statement.get() or inspect rows. It is retained but its safe use
   // is UNPROVED in this hot state. Teardown uses native close only, then fixture
@@ -209,7 +222,9 @@ describe("metadata close prerequisites: observations only; canonical issuer UNWI
  it("retains actual changed linkage while current admission identity remains UNPROVED", () => {
   linkSync(file, join(home, "same-file-alias.db")); const before = readFileSync(file), unchanged = noEffects();
   const result = observe(); retained(result); unchanged(); expect(result.blockers).toContain("identity_unknown");
-  expect(api.metadataDb(home)).toBe(db); expect(readFileSync(file)).toEqual(before);
+  expect(() => api.metadataDb(home)).toThrow(expect.objectContaining({ code: "STORE_BOOTSTRAP_UNSETTLED" }));
+  unchanged(); expect(Object.is(ownedReferences.get(home), db)).toBe(true); expect(db.isOpen).toBe(true);
+  expect(readFileSync(file)).toEqual(before);
  });
  it("never backfills a cold absent-before-open admission", () => {
   const coldHome = join(home, "cold"); mkdirSync(coldHome); ownedHomes.push(coldHome);
