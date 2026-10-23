@@ -4,9 +4,9 @@ import { MAX_CODEX_SUBAGENTS, MAX_BODY_CHARS, MAX_JOB_TIMEOUT_SEC } from "../cor
 import { BridgeError, CODING_AGENTS } from "../core/protocol.js";
 import { NETWORK_NAME_PATTERN } from "./constants.js";
 
-export const REMOTE_RUNNER_LEDGER_CAPABILITY = "remote-runner-ledger-v1";
+export const REMOTE_RUNNER_LEDGER_CAPABILITY = "remote-runner-ledger-v2";
 export function unsupportedRunnerLedger(unknownAccepted = false): BridgeError {
-  return new BridgeError("protocol_mismatch", "Remote broker update needed: runner-ledger-v1 contract is unavailable; owner-coordinated compatible host upgrade is required. Pending operations remain unconfirmed; no fallback or automatic reexecution.", { runnerLedgerUnsupported: true, unknownAccepted });
+  return new BridgeError("protocol_mismatch", "Remote broker update needed: runner-ledger-v2 contract is unavailable; owner-coordinated compatible host upgrade is required. Pending operations remain unconfirmed; no fallback or automatic reexecution.", { runnerLedgerUnsupported: true, unknownAccepted });
 }
 export const REMOTE_JOB_CAPABILITY = "remote-jobs-v1";
 export const REMOTE_JOB_CANCELLED_CAPABILITY = "remote-jobs-cancelled-v1";

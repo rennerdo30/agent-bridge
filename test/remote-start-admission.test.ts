@@ -1,3 +1,4 @@
+import { metadataDb, METADATA_STORE_VERSION } from "../src/core/metadata-db.js";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -20,6 +21,10 @@ import { RemoteJobs } from "../src/network/remote-jobs.js";
 import { DEFAULT_NETWORK_CONFIG } from "../src/network/config.js";
 import { until } from "./helpers.js";
 import { fixtureRemotePeer } from "./owned-mail.js";
+import { publishRunnerSpec, runnerLedgerNamespace } from "../src/core/runner-store.js";
+import { projectRunnerInputs, runnerLedgerPrincipal } from "../src/mcp/runner-delivery-retention.js";
+import { completionMessageId } from "../src/core/completion.js";
+import { randomUUID } from "node:crypto";
 vi.mock("../src/core/usage.js", async original => ({ ...await original<typeof import("../src/core/usage.js")>(), checkUsagePreflight: async () => ({ type: "allow", reason: "fixture: provider probes outside storage admission contract" }) }));
 
 let home: string, remote: RemoteJobs;
@@ -40,10 +45,46 @@ beforeEach(() => {
 afterEach(() => { closeMetadataDbs(); remote.close(); vi.useRealTimers(); vi.restoreAllMocks(); rmSync(home, { recursive: true, force: true }); });
 function request(id: string, prompt = "retained prompt") { return { op: "spawn", job: id, target: "codex", args: { cwd: home, prompt, title: "Queued" } } as const; }
 function handle(request: unknown) { return (remote as any).handle(pair, peer, request) as Promise<any>; }
+it.each(["input", "note"])("observes a proven live %s ledger as running without recovering it or exposing a staged final", async kind => {
+  let state: any, alive = true;
+  vi.spyOn(JobRunners.prototype, "alive").mockImplementation(() => alive);
+  const recover = vi.spyOn(JobRunners.prototype, "recoverRetention").mockRejectedValue(new Error("controlled dead-generation retention pending"));
+  vi.spyOn(JobRunners.prototype, "startAsync").mockImplementation(async (job, spec) => {
+    const original = { ...spec, home, job: { ...job, controller: undefined, allowedServers: undefined } };
+    publishRunnerSpec(home, job.id, original);
+    const generation = randomUUID(), namespace = runnerLedgerNamespace(home, true), dedupeKey = randomUUID();
+    const messageId = completionMessageId(`send:${job.name}`, dedupeKey);
+    const item = { messageId, record: JSON.stringify({ version: 1, kind: "accepted-runner-delivery", authority: "evidence-only-no-replay", generation, namespace,
+      job: job.id, messageId, dedupeKey, senderName: job.name, intendedSender: { kind: "job", agent: job.agent, id: `job:${job.id}` },
+      body: "Original live note", wireBody: "Original live note", to: spec.owner, note: true, question: false, final: false, conversationId: `job-${job.id}:note`,
+      supervisor: job.supervisor ?? null, parentJob: job.parentJob ?? null, rootSession: job.rootSession ?? null }) };
+    state = { pid: process.pid, peer: job.name, status: "done", updatedAt: Date.now(), report: "Staged final must not escape", reportId: randomUUID(), delivered: false,
+      deliveryLedger: { version: 1, job: job.id, generation, namespace, principal: runnerLedgerPrincipal(original), entries: kind === "note" ? [item] : [] },
+      ...(kind === "input" ? { retainedRunnerInputs: projectRunnerInputs(generation, [{ batch: randomUUID(), generation, phase: "provider-admitted", bodies: ["Original live input"],
+        controls: [{ cid: "original-cid", body: "Original live input" }], admission: { startedAt: job.startedAt, sessionId: null } }]) } : {}) };
+    writeRunnerState(home, job.id, state); return host;
+  });
+  const result = await handle(request("1234abcd"));
+  expect(result).toMatchObject({ alive: true, state: { status: "running", delivered: false } });
+  expect(result.state.report).toBeUndefined(); expect(result.state.reportId).toBeUndefined();
+  expect((await handle({ op: "state", job: "1234abcd" })).state.status).toBe("running");
+  expect(recover).not.toHaveBeenCalled(); expect(readRunnerState(home, "1234abcd")).toMatchObject(state);
+  const db = metadataDb(home), raw = String(db.prepare("SELECT value FROM bridge_metadata WHERE domain='job-state' AND key='1234abcd'").get()!.value);
+  for (const field of ["principal", "namespace", "generation"]) {
+    const corrupt = JSON.parse(raw); corrupt.deliveryLedger[field] = "unproven-replacement";
+    db.prepare("UPDATE bridge_metadata SET value=? WHERE domain='job-state' AND key='1234abcd'").run(JSON.stringify(corrupt));
+    await expect(handle({ op: "state", job: "1234abcd" })).rejects.toMatchObject({ code: "RUNNER_RETENTION_UNSETTLED", reason: "invalid-evidence" });
+    expect(recover).not.toHaveBeenCalled();
+    db.prepare("UPDATE bridge_metadata SET value=? WHERE domain='job-state' AND key='1234abcd'").run(raw);
+  }
+  alive = false;
+  await expect(handle({ op: "state", job: "1234abcd" })).rejects.toThrow(/retention is unsettled/);
+  expect(recover).toHaveBeenCalledOnce(); expect(readRunnerState(home, "1234abcd")).toMatchObject(state);
+});
 function neverQuery() {
   const pid = ++nextPid; mkdirSync(join(home, "storage-capabilities"));
   writeFileSync(join(home, "storage-capabilities", `${pid}.json`), JSON.stringify({ schemaVersion: 1, pid, name: "current-reader", version: APP_VERSION,
-    explicit: true, json: 4, sqlite: 9, metadata: 2, processIdentity: `generation-${pid}` }));
+    explicit: true, json: 4, sqlite: 9, metadata: METADATA_STORE_VERSION, processIdentity: `generation-${pid}` }));
   let resolve!: (ids: Map<number, string>) => void;
   vi.spyOn(identity, "readProcessIdentities").mockImplementation(() => new Promise(ready => { resolve = ready; }));
   return { started: () => Boolean(resolve), release: async () => { resolve(new Map([[pid, `generation-${pid}`]])); await refreshStorePeerIdentities(home); } };

@@ -10,7 +10,8 @@ import { readHistoryJson } from "./run-history.js";
 import { storageLease } from "./storage-lock.js";
 import { legacyStorePeers, refreshStorePeerIdentities } from "./store-compatibility.js";
 import { inspectRunnerArchives, inspectRunnerFileArchives, proveRunnerRetained, runnerEvidenceNamespace } from "./runner-retention-index.js";
-import { hasUnsettledRunnerRetention, RunnerRetentionUnsettled } from "../mcp/runner-delivery-retention.js";
+import { hasUnsettledRunnerRetention, runnerInputBatches, runnerInputRecord, RunnerRetentionUnsettled, type RunnerInputIntent } from "../mcp/runner-delivery-retention.js";
+import { assertRemoteOperationAdmission } from "./remote-operation-evidence.js";
 
 /**
  * Job runner specs and states (AB-208). They used to be one `jobs/<id>.json` and `jobs/<id>.spec.json` per job,
@@ -238,11 +239,29 @@ export function writeRunnerStateRecord(home: string, id: string, state: Record<s
     }
     // Evidence is archived in the SAME transaction before an active ledger item
     // disappears. A future path mutation cannot erase its sole original bytes.
-    const priorInput = old?.retainedRunnerInputs as { phase?: string } | undefined, nextInput = value.retainedRunnerInputs as { phase?: string } | undefined;
+    const priorInput = old?.retainedRunnerInputs as RunnerInputIntent | undefined, nextInput = value.retainedRunnerInputs as RunnerInputIntent | undefined;
+    const priorInputs = runnerInputBatches(priorInput), nextInputs = runnerInputBatches(nextInput);
+    if (priorInput && !priorInput.batches && (!nextInput || nextInput.batches || runnerInputRecord(priorInput) !== runnerInputRecord(nextInput)))
+      throw new RunnerRetentionUnsettled("invalid-evidence");
+    if (priorInput?.batches) {
+      if (!nextInput?.batches || nextInput.generation !== priorInput.generation || nextInputs.length < priorInputs.length) throw new RunnerRetentionUnsettled("invalid-evidence");
+      for (let i = 0; i < priorInputs.length; i++) {
+        const a = priorInputs[i]!, b = nextInputs[i]!;
+        const transitions = { pending: ["pending", "admitted", "evidence"], admitted: ["admitted", "provider-admitted", "evidence"],
+          "provider-admitted": ["provider-admitted", "consumed", "evidence"], consumed: ["consumed"], evidence: ["evidence"] };
+        if (runnerInputRecord(a) !== runnerInputRecord(b) || !transitions[a.phase].includes(b.phase) ||
+            a.admission && JSON.stringify(a.admission) !== JSON.stringify(b.admission) || a.result && JSON.stringify(a.result) !== JSON.stringify(b.result))
+          throw new RunnerRetentionUnsettled("invalid-evidence");
+      }
+      if (nextInputs.slice(priorInputs.length).some(b => b.phase !== "pending" || b.admission || b.result)) throw new RunnerRetentionUnsettled("invalid-evidence");
+    }
+    const completedInputs = priorInputs.some(a => !["evidence", "consumed"].includes(a.phase) &&
+      nextInputs.some(b => runnerInputRecord(a) === runnerInputRecord(b) && ["evidence", "consumed"].includes(b.phase)));
     if (Array.isArray(before) && before.some(entry => !Array.isArray(after) || !after.some(next => next.messageId === entry.messageId)) ||
-        priorInput && !["evidence", "consumed"].includes(priorInput.phase ?? "") && ["evidence", "consumed"].includes(nextInput?.phase ?? "")) {
+        completedInputs) {
       const key = archive(db, STATE_ARCHIVE, id, old);
-      proveRunnerRetained(db, id, old, value, key);
+      const completionKey = completedInputs ? archive(db, STATE_ARCHIVE, id, value) : undefined;
+      proveRunnerRetained(db, id, old, value, key, completionKey);
     }
     put(db, STATE, id, value);
   });
@@ -256,6 +275,7 @@ export function runnerLedgerNamespace(home: string, create = false): string {
 }
 /** Read-only bounded archive proof census at synchronous effect boundaries. */
 export function assertRunnerArchiveAdmission(home: string, id: string): void {
+  assertRemoteOperationAdmission(home, id);
   inspectRunnerFileArchives(home, id);
   const db = rows(home);
   if (!db) throw new RunnerRetentionUnsettled("invalid-evidence");
@@ -294,6 +314,7 @@ export function readOriginalRunnerSpec(home: string, id: string): Record<string,
  */
 export function publishRunnerSpec(home: string, id: string, spec: Record<string, unknown>): string {
   if (!validId(id)) throw new Error(`Invalid job id: ${id}`);
+  assertRemoteOperationAdmission(home, id);
   inspectRunnerFileArchives(home, id);
   const statePath = runnerStatePath(home, id), specPath = runnerSpecPath(home, id);
   const db = rows(home);

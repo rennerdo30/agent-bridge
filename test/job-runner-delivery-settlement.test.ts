@@ -11,8 +11,8 @@ import { makeEnv, type TestEnv } from "./helpers.js";
 import * as oversize from "../src/core/oversize.js";
 import * as asyncFs from "node:fs/promises";
 import * as runnerStore from "../src/mcp/job-host.js";
-import { metadataDb } from "../src/core/metadata-db.js";
-import { publishRunnerSpec, readPendingRunnerSpec, readOriginalRunnerSpec, writeRunnerStateRecord } from "../src/core/runner-store.js";
+import { closeMetadataDb, metadataDb } from "../src/core/metadata-db.js";
+import { assertRunnerArchiveAdmission, publishRunnerSpec, readPendingRunnerSpec, readOriginalRunnerSpec, writeRunnerStateRecord } from "../src/core/runner-store.js";
 
 const mocks = vi.hoisted(() => ({ delegate: vi.fn(), node: null as any }));
 vi.mock("node:fs/promises", async original => ({ ...await original<typeof import("node:fs/promises")>() }));
@@ -27,6 +27,8 @@ vi.mock("../src/core/node.js", async () => {
     sendState = vi.fn().mockResolvedValue({ state: "missing" });
     stop = vi.fn(async () => {});
     start = vi.fn(async () => {});
+    updateJob = vi.fn(async () => {});
+    markRead = vi.fn();
     constructor(options: { name: string }) { super(); this.name = options.name; mocks.node = this; }
   } };
 });
@@ -40,6 +42,108 @@ function spec(): RunnerSpec {
   publishRunnerSpec(env.home, config.job.id, { ...config });
   return config;
 }
+
+it("completes exact archived input proofs through multiple suspended overlapping control batches", async () => {
+  env = makeEnv(); vi.useFakeTimers(); const config = spec();
+  writeFileSync(join(env.home, "jobs.json"), JSON.stringify({ version: 4, jobs: [{ ...config.job, status: "running", args: config.args }] }));
+  const releases: (() => void)[] = [], turns: any[] = [];
+  mocks.delegate.mockImplementation(async (ctx, _target, args, _signal, _progress, _background, job) => {
+    turns.push({ ctx, job, args });
+    await new Promise<void>(resolve => { releases.push(resolve); });
+    return { status: "done", text: `Exact result ${turns.length}`, sessionId: job.sessionId };
+  });
+  const running = runOwnedJobRunner(config, nullLogger, null);
+  const control = async (n: number) => {
+    mocks.node.emit("message", { id: `mail-${n}`, from: { name: "supervisor" }, conversationId: `jobctl-${config.job.id}`,
+      createdAt: Date.now(), body: JSON.stringify({ type: "message", cid: `control-${n}`, body: `Exact continuation ${n}` }) });
+    await vi.waitFor(() => expect(mocks.node.markRead).toHaveBeenCalledWith([`mail-${n}`]));
+  };
+  try {
+    await vi.waitFor(() => expect(turns).toHaveLength(1));
+    for (let n = 1; n <= 3; n++) {
+      await control(n);
+      const accepted = readRunnerState(env.home, config.job.id)!.retainedRunnerInputs!;
+      if (n > 1) expect(accepted.batches!.find(b => b.controls.some(c => c.cid === `control-${n - 1}`)))
+        .toMatchObject({ phase: "provider-admitted", bodies: [`Exact continuation ${n - 1}`] });
+      expect(accepted.batches!.find(b => b.controls.some(c => c.cid === `control-${n}`)))
+        .toMatchObject({ phase: "pending", bodies: [`Exact continuation ${n}`] });
+      // Complete an actual accepted note while Cn is queued and C(n-1) is
+      // suspended in the provider: this archives the production input evidence.
+      turns[n - 1].ctx.jobs.fromSubagent(turns[n - 1].job, `Exact overlap note ${n}`, null, false, true);
+      await vi.waitFor(() => expect(readRunnerState(env.home, config.job.id)?.deliveryLedger?.entries).toHaveLength(0));
+      releases[n - 1]!();
+      await vi.waitFor(() => expect(turns).toHaveLength(n + 1));
+      if (n > 1) {
+        const completed = readRunnerState(env.home, config.job.id)!.retainedRunnerInputs!.batches!.find(b => b.controls[0]?.cid === `control-${n - 1}`)!;
+        expect(completed).toMatchObject({ phase: "consumed", result: { reportId: expect.any(String), report: expect.stringContaining(`Exact result ${n}`) } });
+        const proofs = metadataDb(env.home).prepare("SELECT value FROM bridge_metadata WHERE domain='runner-retention-proof'").all();
+        expect(proofs.some(row => JSON.parse(String(row.value)).messageId === `input:${completed.batch}`)).toBe(true);
+      }
+    }
+    releases[3]!(); expect(await running).toBe(0);
+    expect(mocks.delegate).toHaveBeenCalledTimes(4);
+    expect(mocks.node.markRead.mock.calls).toEqual([[['mail-1']], [['mail-2']], [['mail-3']]]);
+    expect(mocks.node.send.mock.calls.filter(([m]: any) => m.body.includes("Exact result 4"))).toHaveLength(1);
+    expect(() => assertRunnerArchiveAdmission(env.home, config.job.id)).not.toThrow();
+    const state = readRunnerState(env.home, config.job.id)!;
+    expect(state).toMatchObject({ delivered: true, deliveryLedger: { entries: [] }, retainedRunnerInputs: { phase: "consumed" } });
+    const db = metadataDb(env.home), originals = db.prepare("SELECT value FROM bridge_metadata WHERE domain='job-state-archive'").all();
+    for (let n = 1; n <= 3; n++) expect(originals.some(row => String(row.value).includes(`Exact continuation ${n}`))).toBe(true);
+    closeMetadataDb(env.home);
+    expect(() => assertRunnerArchiveAdmission(env.home, config.job.id)).not.toThrow();
+  } finally { for (const release of releases) release(); await vi.advanceTimersByTimeAsync(400_000); await running; vi.clearAllTimers(); }
+});
+
+it("retains queued and executing batch identities on cancellation and recovers the dead generation without another turn", async () => {
+  env = makeEnv(); vi.useFakeTimers(); const config = spec();
+  writeFileSync(join(env.home, "jobs.json"), JSON.stringify({ version: 4, jobs: [{ ...config.job, status: "running", args: config.args }] }));
+  let release!: () => void;
+  mocks.delegate.mockImplementation(async (_ctx, _target, _args, _signal, _progress, _background, job) => {
+    if (mocks.delegate.mock.calls.length === 2) await new Promise<void>(resolve => { release = resolve; });
+    else job.queue.push("First continuation");
+    return { status: "done", text: "Original completed context", sessionId: job.sessionId };
+  });
+  const previous = process.listeners("SIGTERM");
+  const running = runOwnedJobRunner(config, nullLogger, null);
+  try {
+    await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+    mocks.node.emit("message", { id: "late-control", from: { name: "supervisor" }, conversationId: `jobctl-${config.job.id}`, createdAt: Date.now(),
+      body: JSON.stringify({ type: "message", cid: "late-cid", body: "Unconsumed exact late input" }) });
+    await vi.waitFor(() => expect(mocks.node.markRead).toHaveBeenCalledWith(["late-control"]));
+    const accepted = readRunnerState(env.home, config.job.id)!.retainedRunnerInputs!.batches!;
+    expect(accepted.map(b => b.phase)).toEqual(["provider-admitted", "pending"]);
+    const stop = process.listeners("SIGTERM").find(listener => !previous.includes(listener))!; stop("SIGTERM");
+    release(); expect(await running).toBe(1);
+    const pending = readRunnerState(env.home, config.job.id)!;
+    expect(pending.delivered).toBe(false); expect(pending.retainedRunnerInputs!.batches!.map(b => [b.batch, b.bodies, b.controls])).toEqual(accepted.map(b => [b.batch, b.bodies, b.controls]));
+    expect(() => publishRunnerSpec(env.home, config.job.id, { owner: "replacement" })).toThrow(/unsettled/);
+    writeRunnerStateRecord(env.home, config.job.id, { ...pending, pid: 2147483647, identity: "owned-dead-generation" });
+    const host = new runnerStore.JobRunners({} as any, env.home, "unused-cli", nullLogger);
+    const recovery = host.recoverRetention({ ...config.job, controller: new AbortController(), allowedServers: new Set(), queue: [] } as any);
+    await vi.runAllTimersAsync(); await recovery;
+    expect(mocks.delegate).toHaveBeenCalledTimes(2);
+    const recovered = readRunnerState(env.home, config.job.id)!;
+    expect(recovered.retainedRunnerInputs!.batches!.map(b => [b.batch, b.bodies, b.controls])).toEqual(accepted.map(b => [b.batch, b.bodies, b.controls]));
+    expect(recovered.retainedRunnerInputs!.batches!.map(b => b.phase)).toEqual(["consumed", "evidence"]);
+    expect(recovered).toMatchObject({ delivered: false, reportId: pending.reportId, report: pending.report });
+    expect(() => assertRunnerArchiveAdmission(env.home, config.job.id)).not.toThrow();
+  } finally { release?.(); await vi.advanceTimersByTimeAsync(400_000); await running; vi.clearAllTimers(); }
+});
+
+it("holds exact accepted evidence on a malformed send response without a false receipt or final dispatch", async () => {
+  env = makeEnv(); vi.useFakeTimers(); const config = spec();
+  mocks.delegate.mockImplementation(async (ctx, _target, _args, _signal, _progress, _background, job) => {
+    ctx.jobs.fromSubagent(job, "Original malformed-response note", null, false, true);
+    return { status: "done", text: "Unsettled dependent final", sessionId: job.sessionId };
+  });
+  const running = runOwnedJobRunner(config, nullLogger, null);
+  mocks.node.send.mockResolvedValue({ deliveredTo: ["supervisor"], queuedFor: [] });
+  expect(await running).toBe(1);
+  expect(mocks.node.send).toHaveBeenCalledOnce();
+  const state = readRunnerState(env.home, config.job.id)!;
+  expect(state).toMatchObject({ delivered: false, deliveryRetentionFailure: "invalid-evidence" });
+  expect(JSON.parse(state.deliveryLedger!.entries[0]!.record)).toMatchObject({ body: "Original malformed-response note", to: "supervisor", dedupeKey: mocks.node.send.mock.calls[0][0].dedupeKey });
+});
 
 it.each([false, true])("captures all accepted successors and holds %s continuation input behind suspended failed retention", async continuation => {
   env = makeEnv(); vi.useFakeTimers(); const config = spec();

@@ -618,7 +618,11 @@ rl.on("line", (line) => {
     await waitFor(() => listPendingApprovals(localHome).length === 1);
     const approval = listPendingApprovals(localHome)[0]!;
     expect(approval).toMatchObject({ owner: "codex-supervisor", job: `mac/${job.name}`, tool: "Bash", command: "fake build" });
-    expect(await answerPendingApproval(localHome, approval.id, { decision: "allow", reason: "supervisor approved" })).toBe("answered");
+    const outcome = await answerPendingApproval(localHome, approval.id, { decision: "allow", reason: "supervisor approved" });
+    if (outcome !== "answered") console.error("Remote approval stage diagnostics: " + JSON.stringify({ outcome, deadlinePassed: Date.now() >= approval.deadline,
+      requesterPending: listPendingApprovals(localHome).some(a => a.id === approval.id), executorPending: listPendingApprovals(remoteHome).some(a => a.id === approval.id),
+      requester: jobWaitSnapshot(localHome, [job.id]), executor: jobWaitSnapshot(remoteHome, [job.id]) }));
+    expect(outcome).toBe("answered");
     await waitFor(() => listPendingApprovals(localHome).length === 0 && listPendingApprovals(remoteHome).length === 0);
     expect(await answerPendingApproval(localHome, approval.id, { decision: "allow" })).toBe("expired");
     await call(local, "cancel_subagent", { job: job.name });

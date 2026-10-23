@@ -3,19 +3,16 @@ import type { DatabaseSync } from "node:sqlite";
 import { closeSync, constants, fstatSync, lstatSync, openSync, opendirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { physicalMetadataPath } from "./metadata-db.js";
-import { hasUnsettledRunnerRetention, RunnerRetentionUnsettled } from "../mcp/runner-delivery-retention.js";
+import { hasUnsettledRunnerRetention, runnerInputBatches, runnerInputRecord, RunnerRetentionUnsettled } from "../mcp/runner-delivery-retention.js";
 
 const PROOFS = "runner-retention-proof", INDEX = "runner-retention-index", ARCHIVE = "job-state-archive";
 const digest = (text: string) => createHash("sha256").update(text).digest("hex");
 const fail = () => new RunnerRetentionUnsettled("invalid-evidence");
 const budget = () => Object.assign(new RunnerRetentionUnsettled("invalid-evidence"), { recovery: "archive-inspection-budget", message: "Runner archive recovery inspection reached its bounded budget; new turns remain blocked. Owner-coordinated offline evidence inspection is required." });
 function parse(raw: string): any { try { return JSON.parse(raw); } catch { throw fail(); } }
-function inputItem(state: any): {messageId: string; record: string} | undefined {
-  const input = state.retainedRunnerInputs;
-  if (!input) return undefined;
-  if (typeof input.generation !== "string" || !Array.isArray(input.bodies) || input.bodies.length > 128 || !input.bodies.every((v: unknown) => typeof v === "string") ||
-      !Array.isArray(input.controls) || input.controls.length > 128 || !input.controls.every((v: any) => typeof v?.cid === "string" && typeof v.body === "string")) throw fail();
-  return { messageId: `input:${input.generation}`, record: JSON.stringify([input.generation, input.bodies, input.controls]) };
+function inputItems(state: any) {
+  return runnerInputBatches(state.retainedRunnerInputs).map(input => ({ input,
+    messageId: `input:${input.batch ?? input.generation}`, record: runnerInputRecord(input) }));
 }
 /** Older file projections are evidence too. Do not let a reset/import marker
  * hide unprojected pending records. This census never moves or rewrites files. */
@@ -68,19 +65,22 @@ function itemKey(job: string, ledger: any, item: any): string {
   return `${job}/${digest(JSON.stringify([ledger.namespace, ledger.principal, ledger.generation, item.messageId, digest(item.record)]))}`;
 }
 /** Authoritative append-only retained proof, in the same transaction as its full original archive. */
-export function proveRunnerRetained(db: DatabaseSync, job: string, before: any, after: any, sourceKey: string): void {
+export function proveRunnerRetained(db: DatabaseSync, job: string, before: any, after: any, sourceKey: string, completionSourceKey?: string): void {
   const ledger = before.deliveryLedger, next = after.deliveryLedger;
   if (!Array.isArray(ledger?.entries)) return;
   const source = value(db, ARCHIVE, sourceKey);
   if (typeof source !== "string") throw fail();
   const removed = ledger.entries.filter((item: any) => !next?.entries?.some((entry: any) => entry.messageId === item.messageId));
-  const input = inputItem(before);
-  if (input && !["evidence", "consumed"].includes(before.retainedRunnerInputs.phase) && ["evidence", "consumed"].includes(after.retainedRunnerInputs?.phase)) removed.push(input);
+  const nextInputs = inputItems(after);
+  const completed = inputItems(before).filter(item => !["evidence", "consumed"].includes(item.input.phase) &&
+    nextInputs.some(next => next.record === item.record && ["evidence", "consumed"].includes(next.input.phase)));
+  removed.push(...completed);
   for (const item of removed) {
     const key = itemKey(job, ledger, item);
     if (ledger.namespace !== runnerEvidenceNamespace(db, false)) throw fail();
     insert(db, PROOFS, key, { version: 1, state: "retained-evidence-only", job, incarnation: ledger.generation, namespace: ledger.namespace,
-      principal: ledger.principal, messageId: item.messageId, content: digest(item.record), sourceKey, sourceDigest: digest(source) });
+      principal: ledger.principal, messageId: item.messageId, content: digest(item.record), sourceKey, sourceDigest: digest(source),
+      ...(completed.includes(item as typeof completed[number]) && completionSourceKey ? { completionSourceKey, completionDigest: digest(String(value(db, ARCHIVE, completionSourceKey))) } : {}) });
   }
 }
 /** One stable transaction, capped over originals AND referenced proof sources.
@@ -109,9 +109,15 @@ export function inspectRunnerArchives(db: DatabaseSync, job: string): void {
     const original = source(proof.sourceKey);
     if (original.digest !== proof.sourceDigest || original.data.deliveryLedger?.namespace !== ledger.namespace ||
         original.data.deliveryLedger?.generation !== ledger.generation || original.data.deliveryLedger?.principal !== ledger.principal) return false;
-    const input = inputItem(original.data);
+    if (proof.completionSourceKey !== undefined) {
+      if (typeof proof.completionSourceKey !== "string" || !proof.completionSourceKey.startsWith(`${job}/`)) return false;
+      const completion = source(proof.completionSourceKey);
+      if (completion.digest !== proof.completionDigest || completion.data.deliveryLedger?.namespace !== ledger.namespace ||
+          completion.data.deliveryLedger?.generation !== ledger.generation || completion.data.deliveryLedger?.principal !== ledger.principal ||
+          !inputItems(completion.data).some(input => input.messageId === item.messageId && input.record === item.record && ["consumed", "evidence"].includes(input.input.phase))) return false;
+    }
     return original.data.deliveryLedger?.entries?.some((entry: any) => entry.messageId === item.messageId && entry.record === item.record) ||
-      input?.messageId === item.messageId && input?.record === item.record;
+      inputItems(original.data).some(input => input.messageId === item.messageId && input.record === item.record);
   };
   const rows = db.prepare("SELECT key FROM bridge_metadata WHERE domain=? AND key>=? AND key<? ORDER BY key").iterate(ARCHIVE, `${job}/`, `${job}/~`);
   for (const row of rows) {
@@ -127,7 +133,7 @@ export function inspectRunnerArchives(db: DatabaseSync, job: string): void {
     if ((ledger?.entries?.length ?? 0) + (pending?.length ?? 0) > 258) throw budget();
     const all = [...ledger?.entries ?? [], ...pending ?? []];
     for (const item of all) { timely(); if (!verified(ledger, item)) throw fail(); }
-    if (state.retainedRunnerInputs && !["evidence", "consumed"].includes(state.retainedRunnerInputs.phase) && !verified(ledger, inputItem(state))) throw fail();
+    for (const input of inputItems(state)) if (!["evidence", "consumed"].includes(input.input.phase) && !verified(ledger, input)) throw fail();
     if (state.deliveryRetentionFailure && !all.length && !state.retainedRunnerInputs) throw fail();
     // Derived only: loss or staleness never replaces validation of the originals.
     insert(db, INDEX, `${job}/${digest(String(row.key))}`, { version: 1, sourceKey: row.key, sourceDigest: loaded.digest, records: all.length });

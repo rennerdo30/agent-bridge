@@ -20,7 +20,7 @@ export function priorEndpoints(home: string, platform: NodeJS.Platform = process
     if (/^[de]:/i.test(path)) { homes.add(path.replace(/^[de]:/i, "E:")); homes.add(path.replace(/^[de]:/i, "D:")); }
   }
   const endpoints = new Set<string>();
-  for (const path of homes) for (const protocol of [undefined, 2, 3, 4, 5, 6]) {
+  for (const path of homes) for (const protocol of [undefined, 2, 3, 4, 5, 6, 7]) {
     const suffix = protocol === undefined ? "" : `-p${protocol}`;
     if (platform === "win32") {
       const hash = createHash("sha256").update(path.toLowerCase()).digest("hex").slice(0, 12);
@@ -64,7 +64,7 @@ export async function guardPriorEndpoints(home: string, current: string, token: 
     }
     signal?.throwIfAborted();
     if (inspectionState.version === 2 || inspectionState.version === 3) throw refused(home, "a pre-lease schema2/3 store requiring explicit offline migration into an isolated home");
-    if (inspectionState.metadata === 1) throw refused(home, "a component1 metadata store whose cached inactive writers require explicit owner-coordinated offline migration into an isolated home");
+    if (inspectionState.metadata === 1 || inspectionState.metadata === 2) throw refused(home, `a component${inspectionState.metadata} metadata store whose cached inactive writers require explicit owner-coordinated offline migration into an isolated home`);
   }
   for (const endpoint of priorEndpoints(home)) {
     signal?.throwIfAborted();

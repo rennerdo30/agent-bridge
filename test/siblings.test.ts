@@ -26,7 +26,7 @@ import { SiblingLink } from "../src/mcp/siblings.js";
 import type { ServerContext } from "../src/mcp/server.js";
 import { makeEnv, until, type TestEnv } from "./helpers.js";
 import { retainFixtureJob } from "./owned-mail.js";
-import { jobWaitSnapshot } from "./job-wait-diagnostics.js";
+import { hookPublicationEvents, jobWaitSnapshot } from "./job-wait-diagnostics.js";
 
 const MAX_HOPS = 3;
 const SERVER = join(import.meta.dirname, "..", "plugins", "claude", "dist", "server.mjs");
@@ -624,8 +624,10 @@ describe("sibling job messaging", () => {
         // Failure-only sanitized evidence, using the original poll's last reply.
         // No extra RPC, sleep, notification drain or identity substitution.
         try { console.error("Quiet observer publication diagnostics: " + JSON.stringify({ agent, hookError: started.isError === true,
+          emptyResponse: Array.isArray(started.content) && started.content.some((block: any) => block.type === "text" && typeof block.text === "string" && block.text.slice(0, 4096).trim() === "{}"),
           peerSeen: Boolean(publication), session: publication?.sessionId === `observer-${agent}` ? "expected" : publication?.sessionId ? "other" : "missing",
           peerPid: publication && Number.isSafeInteger(publication.pid) && publication.pid > 0 ? publication.pid : undefined,
+          hookEvents: hookPublicationEvents(env.home, publication?.pid),
           admission: jobWaitSnapshot(env.home, [a.job.id, b.job.id]) })); } catch { /* Original failure wins. */ }
         throw error;
       }

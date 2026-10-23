@@ -298,7 +298,7 @@ it("retains a runner's submitted continuation through late refusal and an explic
   vi.spyOn(BridgeNode.prototype, "stop").mockResolvedValue();
   vi.spyOn(BridgeNode.prototype, "updateJob").mockResolvedValue();
   vi.spyOn(BridgeNode.prototype, "markRead").mockImplementation(() => {});
-  vi.spyOn(BridgeNode.prototype, "send").mockResolvedValue({ deliveredTo: ["owner"], queuedFor: [] } as any);
+  vi.spyOn(BridgeNode.prototype, "send").mockResolvedValue({ messages: [{ id: "stored" }], deliveredTo: ["owner"], queuedFor: [] } as any);
   vi.spyOn(startup, "acquireStartup").mockResolvedValue(() => {});
   vi.spyOn(worktree, "gitDirsOutside").mockResolvedValue([]);
   const check = vi.spyOn(usage, "checkUsagePreflight").mockResolvedValue(block);
@@ -435,7 +435,7 @@ it("retains an internal batch when preparation throws before any admission or us
   vi.spyOn(BridgeNode.prototype, "stop").mockResolvedValue();
   vi.spyOn(BridgeNode.prototype, "updateJob").mockResolvedValue();
   vi.spyOn(BridgeNode.prototype, "markRead").mockImplementation(() => {});
-  vi.spyOn(BridgeNode.prototype, "send").mockResolvedValue({ deliveredTo: ["owner"], queuedFor: [] } as any);
+  vi.spyOn(BridgeNode.prototype, "send").mockResolvedValue({ messages: [{ id: "stored" }], deliveredTo: ["owner"], queuedFor: [] } as any);
   const check = vi.spyOn(usage, "checkUsagePreflight");
   const native = vi.spyOn(DELEGATION_TARGETS.codex, "run");
   let state: RunnerState = { pid: process.pid, peer: "fixture-runner", updatedAt: Date.now(), status: "running" };

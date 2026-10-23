@@ -5,7 +5,36 @@ import { readOriginalRunnerSpec, readRunnerStateRecord, runnerLedgerNamespace, r
 import { ACK_CONVERSATION_SUFFIX, QUESTION_CONVERSATION_SUFFIX } from "../core/protocol.js";
 import { isPureAcknowledgement } from "../core/job-messaging.js";
 import { NOTE_CONVERSATION_SUFFIX, type RunnerState } from "./jobs.js";
-import { retainRunnerDelivery, runnerLedgerPrincipal, RunnerRetentionUnsettled, type PendingRunnerRetention } from "./runner-delivery-retention.js";
+import { projectRunnerInputs, runnerInputBatches, retainRunnerDelivery, runnerLedgerPrincipal, RunnerRetentionUnsettled, type PendingRunnerRetention } from "./runner-delivery-retention.js";
+
+/** Read-only provenance check for a live observation. Never settles evidence,
+ * repairs a generation or authorizes another provider turn. */
+export function verifyOwnedRunnerRetention(home: string, id: string, state: RunnerState, expected: Record<string, unknown>): void {
+  try {
+    const spec = readOriginalRunnerSpec(home, id), principal = spec?.job as Record<string, unknown> | undefined, ledger = state.deliveryLedger;
+    if (!spec || !principal || principal.id !== id || principal.id !== expected.id || principal.name !== expected.name || principal.agent !== expected.agent ||
+        principal.startedAt !== expected.startedAt || typeof state.peer !== "string" || !state.peer || !ledger || ledger.version !== 1 || ledger.job !== id ||
+        ledger.principal !== runnerLedgerPrincipal(spec) || ledger.namespace !== runnerLedgerNamespace(home) || typeof ledger.generation !== "string" || !ledger.generation ||
+        !Array.isArray(ledger.entries) || ledger.entries.length > 129 || state.pendingDeliveryRetention !== undefined && !Array.isArray(state.pendingDeliveryRetention)) throw 0;
+    let bytes = 0;
+    const ids = new Set<string>();
+    for (const item of ledger.entries) {
+      if (typeof item?.record !== "string" || typeof item.messageId !== "string" || ids.has(item.messageId) || (bytes += Buffer.byteLength(item.record)) > 8 * 1024 * 1024) throw 0;
+      ids.add(item.messageId); const record = JSON.parse(item.record);
+      const expectedId = record.final && typeof record.dedupeKey === "string" && record.dedupeKey.startsWith(COMPLETION_DEDUPE_PREFIX)
+        ? completionMessageId(`job:${id}`, record.dedupeKey.slice(COMPLETION_DEDUPE_PREFIX.length)) : completionMessageId(`send:${record.senderName}`, record.dedupeKey);
+      const suffix = isPureAcknowledgement(record.wireBody) ? ACK_CONVERSATION_SUFFIX : record.question ? QUESTION_CONVERSATION_SUFFIX : record.note ? NOTE_CONVERSATION_SUFFIX : "";
+      if (record.version !== 1 || !["accepted-runner-delivery", "refused-runner-delivery"].includes(record.kind) || record.job !== id ||
+          record.generation !== ledger.generation || record.namespace !== ledger.namespace || record.messageId !== item.messageId || expectedId !== item.messageId ||
+          record.authority !== "evidence-only-no-replay" || record.intendedSender?.kind !== "job" || record.intendedSender?.id !== `job:${id}` || record.intendedSender?.agent !== principal.agent ||
+          record.supervisor !== (principal.supervisor ?? null) || record.parentJob !== (principal.parentJob ?? null) || record.rootSession !== (principal.rootSession ?? null) ||
+          typeof record.body !== "string" || typeof record.wireBody !== "string" || typeof record.to !== "string" || !record.to || record.conversationId !== `job-${id}${suffix}`) throw 0;
+    }
+    if ((state.pendingDeliveryRetention?.length ?? 0) > 129 || state.pendingDeliveryRetention?.some(item => !ledger.entries.some(e => e.messageId === item.messageId && e.record === item.record))) throw 0;
+    if (runnerInputBatches(state.retainedRunnerInputs).some(b => b.generation !== ledger.generation) ||
+        !ledger.entries.length && !state.retainedRunnerInputs && state.deliveryRetentionFailure) throw 0;
+  } catch { throw new RunnerRetentionUnsettled("invalid-evidence"); }
+}
 
 /** Evidence-only recovery; never consumes a spec, selects a recipient or dispatches an envelope. */
 export async function recoverRunnerLedger(home: string, id: string, signal: AbortSignal, current: () => boolean = () => true): Promise<void> {
@@ -57,15 +86,20 @@ export async function recoverRunnerLedger(home: string, id: string, signal: Abor
       });
     }, signal, wait);
   }
-  const input = (state as unknown as RunnerState).retainedRunnerInputs;
-  if (input && !["evidence", "consumed"].includes(input.phase)) {
+  const originalInput = (state as unknown as RunnerState).retainedRunnerInputs;
+  for (const input of runnerInputBatches(originalInput).filter(b => !["evidence", "consumed"].includes(b.phase))) {
     if (input.generation !== ledger?.generation || !Array.isArray(input.bodies) || input.bodies.length > 128 || !input.bodies.every(body => typeof body === "string") ||
       !Array.isArray(input.controls) || input.controls.length > 128 || !input.controls.every(control => typeof control.cid === "string" && typeof control.body === "string") ||
       Buffer.byteLength(JSON.stringify(input)) > 8 * 1024 * 1024) throw new RunnerRetentionUnsettled("invalid-evidence");
     const text = JSON.stringify({ version: 1, kind: "runner-input-intent", authority: "evidence-only-no-replay", job: id,
       namespace, principal: ledger.principal, input });
-    await retainRunnerDelivery(() => quarantineTextAsync(home, completionMessageId(`runner-input:${id}`, input.generation), text,
-      () => commit({ retainedRunnerInputs: { ...input, phase: "evidence" } })).then(() => {}), signal, wait);
+    await retainRunnerDelivery(() => quarantineTextAsync(home, completionMessageId(`runner-input:${id}`, input.batch ?? input.generation), text,
+      () => {
+        const currentInput = (state as unknown as RunnerState).retainedRunnerInputs;
+        commit({ retainedRunnerInputs: originalInput?.batches
+          ? projectRunnerInputs(input.generation, runnerInputBatches(currentInput).map(b => b.batch === input.batch ? { ...b, phase: "evidence" } : b))
+          : { ...input, phase: "evidence" } });
+      }).then(() => {}), signal, wait);
   }
   commit({ deliveryRetentionFailure: undefined });
 }

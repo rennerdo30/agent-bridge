@@ -1,3 +1,4 @@
+import { METADATA_STORE_VERSION } from "../src/core/metadata-db.js";
 import { spawn, type ChildProcess } from "node:child_process";
 import { copyFileSync, readFileSync, renameSync, writeFileSync, existsSync } from "node:fs";
 import { closeMetadataDb } from "../src/core/metadata-db.js";
@@ -123,7 +124,7 @@ it("retains the earliest released 0.29 schema for inspection without granting su
   try {
     expect(store.byId(message.id)).toBeNull(); expect(() => store.insert(message)).toThrow(/ownership storage upgrade/);
   } finally { store.close(); }
-  recordStorePeer(env.home, { pid: process.pid, name: "exclusive-current-reader", version: APP_VERSION, storeCapabilities: { json: 4, sqlite: SQLITE_STORE_VERSION, metadata: 2 } });
+  recordStorePeer(env.home, { pid: process.pid, name: "exclusive-current-reader", version: APP_VERSION, storeCapabilities: { json: 4, sqlite: SQLITE_STORE_VERSION, metadata: METADATA_STORE_VERSION } });
   store = new MessageStore(env.db, nullLogger);
   try {
     expect(store.frontendOwnership).toBe(true);
@@ -156,7 +157,7 @@ it.each([6, 7, 8])("hosts schema %i without an upgrade, persists supplemental me
   } finally { store.close(); }
   store = new MessageStore(env.db, nullLogger);
   try { expect(store.broadcastRecipients(Date.now(), new Set()).queued).toContain("offline-peer"); } finally { store.close(); }
-  recordStorePeer(env.home, { pid: process.pid, name: "reloaded-session", version: APP_VERSION, storeCapabilities: { json: 4, sqlite: SQLITE_STORE_VERSION, metadata: 2 } });
+  recordStorePeer(env.home, { pid: process.pid, name: "reloaded-session", version: APP_VERSION, storeCapabilities: { json: 4, sqlite: SQLITE_STORE_VERSION, metadata: METADATA_STORE_VERSION } });
   store = new MessageStore(env.db, nullLogger);
   try {
     expect(store.broadcastNames()).toContain("offline-peer");

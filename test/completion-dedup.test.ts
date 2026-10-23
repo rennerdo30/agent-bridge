@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BridgeNode } from "../src/core/node.js";
 import { completionMessageId, COMPLETION_DEDUPE_PREFIX } from "../src/core/completion.js";
 import { nullLogger } from "../src/core/logger.js";
@@ -7,19 +7,31 @@ import { loadOrCreateToken } from "../src/core/token.js";
 import { JobManager, jobReport, type Run, type RunnerState } from "../src/mcp/jobs.js";
 import { makeEnv, type TestEnv } from "./helpers.js";
 import { retainFixtureRunner } from "./owned-mail.js";
+import { LocalCoordinator } from "../src/mcp/local-coordinator.js";
 
 let env: TestEnv;
 beforeEach(() => { env = makeEnv(); });
 afterEach(async () => { await env.cleanup(); });
 
 describe("completion delivery under delayed acknowledgements", () => {
+  it("refuses unknown initial runner state before any provider or hosted admission", () => {
+    const manager = new JobManager(new LocalCoordinator("owner", "original-session"), nullLogger, `${env.home}/jobs.json`);
+    manager.runners = { state: () => { throw new Error("temporary state failure"); }, alive: () => false, send() {}, kill() {} };
+    const hosted = vi.fn(), native = vi.fn();
+    const run = Object.assign(native, { hosted }) as unknown as Run;
+    try {
+      expect(() => manager.start("codex", null, "task", run)).toThrow("temporary state failure");
+      expect(native).not.toHaveBeenCalled(); expect(hosted).not.toHaveBeenCalled();
+    } finally { manager.setDormant(true); }
+  });
   it("contains a runner-state failure in the socket message callback and retries on later mail", async () => {
     const owner = env.node("owner"); await owner.start();
     const manager = new JobManager(owner, nullLogger);
-    let fail = true;
-    manager.runners = { state: (job) => { if (fail) throw new Error("temporary state failure"); return { pid: process.pid, peer: job.name, status: "done", delivered: true, updatedAt: Date.now() }; }, alive: () => false, send: () => {}, kill: () => {} };
+    let fail = false, callbackStage = false;
+    manager.runners = { state: (job) => { if (fail) throw new Error("temporary state failure"); return callbackStage ? { pid: process.pid, peer: job.name, status: "done", delivered: true, updatedAt: Date.now() } : null; }, alive: () => false, send: () => {}, kill: () => {} };
     const run = Object.assign(async () => new Promise<never>(() => {}), { hosted: () => ({ pid: process.pid, peer: "runner", startedAt: Date.now() }) }) as Run;
     const job = manager.start("codex", null, "task", run);
+    callbackStage = true; fail = true; // Inject at the socket callback, after valid initial admission.
     const note = { id: randomUUID(), from: { id: `job:${job.id}`, name: job.name, agent: job.agent }, recipient: owner.name, to: owner.name, body: "state changed", conversationId: `job-${job.id}:note`, replyTo: null, hop: 0, createdAt: Date.now(), readAt: null };
     try {
       expect(() => owner.deliverLocal(note)).not.toThrow();

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { join } from "node:path";
-import { readJsonStore, writeJsonStore } from "../core/json-store.js";
+import { writeJsonStore } from "../core/json-store.js";
+import { readRemoteOperationEvidence, type RemoteOperationCache as Cached } from "../core/remote-operation-evidence.js";
 import type { BridgeNode } from "../core/node.js";
 import type { Logger } from "../core/logger.js";
 import type { CodingAgent } from "../core/protocol.js";
@@ -9,24 +10,21 @@ import { REMOTE_JOB_POLL_MS, remoteSpawnArgsSchema, unsupportedRunnerLedger, typ
 import type { DelegateArgs } from "./delegate-run.js";
 import type { Job, JobHostInfo, RunnerControl, RunnerState } from "./jobs.js";
 
-interface PendingOperation { id: string; turn: number; request: RemoteJobRequest; state: "pending" | "confirmed" | "blocked" | "refused" }
-interface Cached { fetchedAt: number; snapshot: RemoteJobSnapshot; operations?: PendingOperation[] }
 
 /** Runner facade on the requesting PC. A remote PID is metadata, never a local process handle. */
 export class RemoteJobHost {
   private readonly busy = new Set<string>();
-  private readonly cache = new Map<string, Cached>();
   /** The turn each job's pause was sent for (job id -> "id:startedAt"). */
   private readonly pauseSent = new Map<string, string>();
   constructor(private readonly node: BridgeNode, private readonly home: string, private readonly log: Logger) {}
   private path(job: Job): string { return join(this.home, "remote-job-states", `${job.id}.json`); }
   private read(job: Job): Cached | null {
-    return this.cache.get(job.id) ?? readJsonStore(this.path(job)) as Cached | null;
+    return readRemoteOperationEvidence(this.home, job.id);
   }
   assertTurnAdmission(job: Job): void { if (this.blocked(job)) throw unsupportedRunnerLedger(true); }
-  private blocked(job: Job): boolean { return Boolean(this.read(job)?.operations?.some(op => op.state === "blocked" || op.state === "pending" && op.request.op === "spawn" && !this.busy.has(job.id))); }
+  private blocked(job: Job): boolean { return Boolean(this.read(job)?.operations?.some(op => op.state === "blocked" || op.state === "pending" && !this.busy.has(job.id))); }
   private write(job: Job, data: Cached): void {
-    writeJsonStore(this.path(job), { ...data }, readJsonStore(this.path(job))); this.cache.set(job.id, data);
+    writeJsonStore(this.path(job), { ...data }, this.read(job));
   }
   private track(job: Job, request: RemoteJobRequest): string {
     const cached = this.read(job) ?? { fetchedAt: Date.now(), snapshot: { state: null, alive: true, approvals: [] } };
@@ -58,8 +56,8 @@ export class RemoteJobHost {
     }
     // The turn ended (or its runner is gone): its pause bookkeeping is no longer needed.
     if (!snapshot.alive || snapshot.state && snapshot.state.status !== "running" && snapshot.state.status !== "paused") this.pauseSent.delete(job.id);
-    const operations = this.read(job)?.operations?.map(op => op.id === completed ? { ...op, state: refused ? "refused" as const : "confirmed" as const } : op);
-    this.write(job, { fetchedAt: Date.now(), snapshot, ...(operations ? { operations } : {}) });
+    const operations = this.read(job)?.operations?.map(op => op.id === completed ? { ...op, state: refused ? "refused" as const : "confirmed" as const } : op) ?? [];
+    this.write(job, { fetchedAt: Date.now(), snapshot, operations });
   }
   start(job: Job, host: string, target: CodingAgent, args: DelegateArgs): JobHostInfo {
     if (this.blocked(job)) throw new Error("Original remote operation remains unconfirmed; owner-coordinated recovery is required before another spawn/continuation");

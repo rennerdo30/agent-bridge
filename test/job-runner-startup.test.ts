@@ -1,3 +1,4 @@
+import { METADATA_STORE_VERSION } from "../src/core/metadata-db.js";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
@@ -81,7 +82,7 @@ it("reverifies a live reader published between readiness and the first actual st
     // The parent is a real live foreign process. Its newly published capability
     // has not been verified in this runner's cache when the real writer checks it.
     writeFileSync(join(directory, `${process.ppid}.json`), JSON.stringify({ schemaVersion: 1,
-      pid: process.ppid, name: "concurrent-runner", version: APP_VERSION, explicit: true, json: 4, sqlite: SQLITE_STORE_VERSION, metadata: 2 }));
+      pid: process.ppid, name: "concurrent-runner", version: APP_VERSION, explicit: true, json: 4, sqlite: SQLITE_STORE_VERSION, metadata: METADATA_STORE_VERSION }));
     expect(mocks.delegate).not.toHaveBeenCalled();
   });
   mocks.delegate.mockResolvedValue({ text: "continued", sessionId: "native-context", isError: false });

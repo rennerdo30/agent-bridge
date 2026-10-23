@@ -4,6 +4,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { BridgeClient } from "../src/core/client.js";
 import type { PeerInfo } from "../src/core/protocol.js";
 import { SQLITE_STORE_VERSION } from "../src/core/store-version.js";
+import { METADATA_STORE_VERSION } from "../src/core/metadata-db.js";
 import { makeEnv, until, type TestEnv } from "./helpers.js";
 
 let env: TestEnv;
@@ -27,7 +28,7 @@ it("keeps capability authority internal while legacy-visible peers and events ca
   expect((await observer.peers()).every(peer => peer.storeCapabilities === undefined)).toBe(true);
   expect(capabilityRecord()).toBe(before);
   const broker = (observer as any).broker;
-  expect(broker.localPeers().find((peer: PeerInfo) => peer.name === "owner").storeCapabilities).toEqual({ json: 4, sqlite: SQLITE_STORE_VERSION, jobArchive: 1 });
+  expect(broker.localPeers().find((peer: PeerInfo) => peer.name === "owner").storeCapabilities).toEqual({ json: 4, sqlite: SQLITE_STORE_VERSION, metadata: METADATA_STORE_VERSION, jobArchive: 1 });
   await owner.relocate(env.home, "renamed-owner");
   const renamed = JSON.parse(capabilityRecord());
   expect(renamed.name).toBe("renamed-owner");

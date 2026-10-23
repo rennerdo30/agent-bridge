@@ -3,12 +3,27 @@ import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 import { LOG_DIR_NAME, LOG_FILE_NAME } from "../src/core/constants.js";
 import { writeRunnerState } from "../src/mcp/job-host.js";
-import { jobWaitSnapshot } from "./job-wait-diagnostics.js";
+import { hookPublicationEvents, jobWaitSnapshot } from "./job-wait-diagnostics.js";
 import { makeEnv } from "./helpers.js";
 import { metadataFileLease } from "../src/core/metadata-file-lease.js";
 import { nullLogger } from "../src/core/logger.js";
 import { deliveryFailure, finalDeliverySettlementSchema } from "../src/mcp/delivery-evidence.js";
 import { deliverWithRetry, inSendOrder } from "../src/mcp/job-runner.js";
+
+it("bounds hook publication and approval stage evidence to allowlisted facts without private input", async () => {
+  const env = makeEnv(), at = new Date().toISOString();
+  try {
+    mkdirSync(join(env.home, LOG_DIR_NAME), { recursive: true });
+    writeFileSync(join(env.home, LOG_DIR_NAME, LOG_FILE_NAME),
+      `${at} ERROR [server] pid=${process.pid} hook handler failed ${JSON.stringify({ event: "SessionStart", err: "PRIVATE_ERROR_TOKEN", sessionId: "PRIVATE_SESSION" })}\n` +
+      `${at} ERROR [server] pid=${process.pid + 1} hook handler failed {"event":"SessionStart"}\n` +
+      `${at} WARN [network] pid=${process.pid} remote approval answer refused ${JSON.stringify({ stage: "executor-lookup", idPresent: true, jobPresent: false, ownerPresent: false, body: "PRIVATE_PROMPT" })}\n`);
+    expect(hookPublicationEvents(env.home, process.pid)).toMatchObject([{ stage: "hook handler failed", hook: "SessionStart" }]);
+    const snapshot = jobWaitSnapshot(env.home, []);
+    expect(snapshot.events).toMatchObject([{ event: "remote approval answer refused", stage: "executor-lookup", idPresent: true, jobPresent: false }]);
+    expect(JSON.stringify([snapshot, hookPublicationEvents(env.home, process.pid)])).not.toContain("PRIVATE_");
+  } finally { await env.cleanup(); }
+});
 
 it("retains exact final settlement and protocol admission families without private errors", async () => {
   const env = makeEnv(), id = "a1b2c3d4", messageId = "11111111-1111-4111-8111-111111111111", at = Date.now();

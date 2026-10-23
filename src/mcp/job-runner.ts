@@ -33,7 +33,7 @@ import { guardRunnerErrors } from "./job-runner-errors.js";
 import { configurePathDisplay } from "../core/display-paths.js";
 import { compatibleDeliveryHandover, deliverFinalResult, permanentDeliveryRefusal, PERMANENT_DELIVERY_CODES } from "./final-result.js";
 import { deliveryFailure, type DeliveryEvidence } from "./delivery-evidence.js";
-import { hasUnsettledRunnerRetention, retainRunnerDelivery, runnerLedgerPrincipal, RunnerRetentionUnsettled, RUNNER_LEDGER_MAX_BYTES, RUNNER_LEDGER_MAX_ITEMS, type PendingRunnerRetention, type RunnerDeliveryLedger } from "./runner-delivery-retention.js";
+import { hasUnsettledRunnerRetention, projectRunnerInputs, runnerInputBatches, retainRunnerDelivery, runnerLedgerPrincipal, RunnerRetentionUnsettled, RUNNER_LEDGER_MAX_BYTES, RUNNER_LEDGER_MAX_ITEMS, type PendingRunnerRetention, type RunnerDeliveryLedger, type RunnerInputBatch } from "./runner-delivery-retention.js";
 
 /** Delivering a message to the session: tries for several minutes (the bridge may be changing hands, or no session hosts it). */
 const SEND_ATTEMPTS = 30;
@@ -212,6 +212,22 @@ export async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: Wi
       if (required) throw err;
     }
   };
+  const inputs = () => runnerInputBatches(extra.retainedRunnerInputs);
+  const saveInputs = (batches: RunnerInputBatch[], patch: Partial<RunnerState> = {}) => {
+    const retainedRunnerInputs = projectRunnerInputs(ledger.generation, batches);
+    if (batches.length > 128 || Buffer.byteLength(JSON.stringify(retainedRunnerInputs)) > RUNNER_LEDGER_MAX_BYTES)
+      throw new Error("Runner input backpressure; original control remains unread in its owned mailbox");
+    save({ ...patch, retainedRunnerInputs }, true);
+  };
+  // Some in-process providers enqueue directly. Capture that owned queue before
+  // admitting it too; real wire controls capture each immutable batch at ACK.
+  const captureQueuedInputs = () => {
+    const batches = inputs(), pending = batches.filter(b => b.phase === "pending");
+    if (JSON.stringify(pending.flatMap(b => b.bodies)) === JSON.stringify(job.queue) &&
+        JSON.stringify(pending.flatMap(b => b.controls)) === JSON.stringify(job.usageQueuedControls ?? [])) return;
+    if (pending.length) throw new RunnerRetentionUnsettled("invalid-evidence");
+    saveInputs([...batches, { batch: randomUUID(), generation: ledger.generation, phase: "pending", bodies: [...job.queue], controls: [...job.usageQueuedControls ?? []] }]);
+  };
 
   const node = new BridgeNode({
     pipePath: resolvePipePath(home),
@@ -330,6 +346,7 @@ export async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: Wi
         return null;
       })
       .then(async result => {
+        if (result !== null && (!result || !Array.isArray(result.messages))) throw new RunnerRetentionUnsettled("invalid-evidence");
         if (result?.messages.length) { complete(item); deliveryEvidence(kind, "stored", messageId); }
         else if (ledger.entries.some(entry => entry.messageId === messageId)) { if (final) complete(item); else await retain(item); }
         return result;
@@ -419,7 +436,9 @@ export async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: Wi
       // Queued input is accepted only after its exact CID/body is owned in the
       // current generation. A retry of this control reuses the seen CID and
       // repeats confirmation, never appends/executes a second provider turn.
-      save(job.queue.length ? { retainedRunnerInputs: { generation: ledger.generation, phase: "pending", bodies: [...job.queue], controls: [...job.usageQueuedControls ?? []] } } : {}, true);
+      if (!job.live && !inputs().some(b => b.controls.some(control => control.cid === c.cid))) {
+        saveInputs([...inputs(), { batch: randomUUID(), generation: ledger.generation, phase: "pending", bodies: [c.body], controls: [{ cid: c.cid, body: c.body }] }]);
+      } else save({}, true);
     } else if (c.type === "title") {
       job.args = { ...job.args, title: c.title };
       job.retitle?.(c.title);
@@ -505,8 +524,8 @@ export async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: Wi
     const finishedAt = Date.now();
     // Keep the existing bounded persistence retries below if this first write
     // cannot acquire storage. The in-memory final also retains its original ID.
-    save({ status, ...final, finishedAt, ...(extra.retainedRunnerInputs?.phase === "provider-admitted"
-      ? { retainedRunnerInputs: { ...extra.retainedRunnerInputs, phase: "consumed" } } : {}) }, true);
+    save({ status, ...final, finishedAt }, true);
+    if (inputs().some(b => !["consumed", "evidence"].includes(b.phase))) throw new RunnerRetentionUnsettled("shutdown");
     // Receipt probes and session fallback must not overtake an accepted note.
     // Unlike ordinary send errors, a failed retention remains a queue barrier.
     const prepared = prepare(report, null, false, `${COMPLETION_DEDUPE_PREFIX}${final.reportId}`, false, true);
@@ -540,11 +559,12 @@ export async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: Wi
     for (;;) {
       turnReportId = undefined;
       await inOrder.drain();
-      if (extra.retainedRunnerInputs?.phase === "admitted") {
+      const executing = inputs().filter(b => b.phase === "admitted").map(b => b.batch);
+      if (executing.length) {
         if (shutdown.signal.aborted || job.controller.signal.aborted) throw new RunnerRetentionUnsettled("shutdown");
         // Admission is not proof of provider completion. A crash at/after this
         // boundary retains the original input as unconfirmed, never replays it.
-        save({ retainedRunnerInputs: { ...extra.retainedRunnerInputs, phase: "provider-admitted" } }, true);
+        saveInputs(inputs().map(b => executing.includes(b.batch) ? { ...b, phase: "provider-admitted", admission: { startedAt: job.startedAt, sessionId: job.sessionId } } : b));
       }
       let status: "done" | "failed" | "cancelled" | "paused" = "failed";
       let text = "";
@@ -644,8 +664,10 @@ export async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: Wi
         break;
       }
       const report = jobReport(job, status, Math.round((Date.now() - job.startedAt) / 1000), text, cause, home);
-      if (extra.retainedRunnerInputs?.phase === "provider-admitted") save({ status, report, reportId: turnReportId ??= randomUUID(), delivered: false,
-        retainedRunnerInputs: { ...extra.retainedRunnerInputs, phase: "consumed" } }, true);
+      if (executing.length) {
+        const result = { status, report, reportId: turnReportId ??= randomUUID() };
+        saveInputs(inputs().map(b => executing.includes(b.batch) ? { ...b, phase: "consumed", result } : b), { ...result, delivered: false });
+      }
       log.info("job turn finished", { status, sessionId: job.sessionId, cause });
       // The supervisor's JobManager emits the finish/fail notification when it settles this
       // result. A detached notifier here would remain inside this runner's owned job scope.
@@ -653,18 +675,22 @@ export async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: Wi
       if (job.queue.length && job.sessionId && !job.controller.signal.aborted && !usageRefused(job) && !job.usagePendingControls?.length) {
         // Persist the still-unconsumed input and result before waiting. Neither
         // a suspended predecessor nor cancellation may consume this turn intent.
-        save({ retainedRunnerInputs: { generation: ledger.generation, phase: "pending", bodies: [...job.queue], controls: [...job.usageQueuedControls ?? []] },
-          status, report, reportId: turnReportId ??= randomUUID(), delivered: false, finishedAt: Date.now() }, true);
+        captureQueuedInputs();
+        save({ status, report, reportId: turnReportId ??= randomUUID(), delivered: false, finishedAt: Date.now() }, true);
         await inOrder.drain();
         if (job.controller.signal.aborted || shutdown.signal.aborted || job.pausePending) throw new RunnerRetentionUnsettled("shutdown");
-        save({ retainedRunnerInputs: { ...extra.retainedRunnerInputs!, phase: "admitted" } }, true);
+        const selected = inputs().filter(b => b.phase === "pending"), selectedIds = selected.map(b => b.batch);
+        saveInputs(inputs().map(b => selectedIds.includes(b.batch) ? { ...b, phase: "admitted" } : b));
         await post(`${report}\n\n${QUEUED_FOLLOW_UP_NOTE}`);
         await inOrder.drain();
         if (job.controller.signal.aborted || shutdown.signal.aborted || job.pausePending) throw new RunnerRetentionUnsettled("shutdown");
-        const queued = job.queue.splice(0).join("\n\n");
-        job.usagePendingControls = job.usageQueuedControls;
-        job.usageQueuedControls = [];
-        args = resumeArgs(spec.base, job.name, queued, job.sessionId, job.workdir, job.worktree, job.args);
+        const queued = selected.flatMap(b => b.bodies);
+        if (JSON.stringify(job.queue.slice(0, queued.length)) !== JSON.stringify(queued)) throw new RunnerRetentionUnsettled("invalid-evidence");
+        job.queue.splice(0, queued.length);
+        job.usagePendingControls = selected.flatMap(b => b.controls);
+        const cids = new Set(job.usagePendingControls.map(c => c.cid));
+        job.usageQueuedControls = job.usageQueuedControls?.filter(c => !cids.has(c.cid)) ?? [];
+        args = resumeArgs(spec.base, job.name, queued.join("\n\n"), job.sessionId, job.workdir, job.worktree, job.args);
         if (args.model !== undefined) job.model = args.model;
         job.startedAt = Date.now();
         job.progress = null;

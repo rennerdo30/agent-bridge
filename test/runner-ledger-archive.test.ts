@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -7,7 +8,7 @@ import { maintenanceLock, storageLease } from "../src/core/storage-lock.js";
 import { snapshotMetadataTables } from "../src/core/metadata-snapshot.js";
 import * as snapshots from "../src/core/metadata-snapshot.js";
 import { assertRunnerArchiveAdmission, publishRunnerSpec, readOriginalRunnerSpec, readRunnerStateRecord, runnerLedgerNamespace, writeRunnerStateRecord } from "../src/core/runner-store.js";
-import { runnerLedgerPrincipal } from "../src/mcp/runner-delivery-retention.js";
+import { projectRunnerInputs, runnerLedgerPrincipal } from "../src/mcp/runner-delivery-retention.js";
 import { JobRunners } from "../src/mcp/job-host.js";
 import { JobManager } from "../src/mcp/jobs.js";
 import { LocalCoordinator } from "../src/mcp/local-coordinator.js";
@@ -101,24 +102,24 @@ it("restores namespace, original spec/archive and proof/index in one consistent 
   expect(runnerLedgerNamespace(env.home)).toBe(f.ledger.namespace);
   expect(() => assertRunnerArchiveAdmission(env.home, f.spec.job.id)).not.toThrow();
 });
-it.each([{ version: 0, evidence: "pre-component" }, { version: 1, evidence: "shipping" }, { version: 1, evidence: "b206" }])("upgrades $evidence metadata component $version additively after interrupted backup, with old reader exclusion", ({ version, evidence }) => {
+it.each([{ version: 0, evidence: "pre-component" }, { version: 1, evidence: "shipping" }, { version: 1, evidence: "b206" }, { version: 2, evidence: "80e" }])("upgrades $evidence metadata component $version additively after interrupted backup, with old reader exclusion", ({ version, evidence }) => {
   env = makeEnv(); const db = metadataDb(env.home);
   const original = JSON.stringify({ pid: 0, status: "done", report: "original archived bytes", originalProof: "do-not-reclassify",
-    ...(evidence === "b206" ? { pendingDeliveryRetention: [{ messageId: "old-uuid", record: "original archived bytes" }] } : {}) });
+    ...(["b206", "80e"].includes(evidence) ? { pendingDeliveryRetention: [{ messageId: "old-uuid", record: "original archived bytes" }] } : {}) });
   db.prepare("INSERT INTO bridge_metadata VALUES(?,?,?,?)").run("job-state-archive", "legacy/old", original, 1);
   db.prepare("UPDATE bridge_components SET version=? WHERE name='metadata'").run(version);
   closeMetadataDb(env.home);
-  if (version === 1) {
+  if (version === 1 || version === 2) {
     const originalBytes = readFileSync(join(env.home, "bridge.db"));
-    expect(() => metadataDb(env.home)).toThrow(/component1 cached writers/);
+    expect(() => metadataDb(env.home)).toThrow(new RegExp(`component${version} cached writers`));
     expect(readFileSync(join(env.home, "bridge.db"))).toEqual(originalBytes);
-    expect(() => metadataDb(env.home, { kind: "offline-isolated", home: join(env.home, "other") })).toThrow(/component1 cached writers/);
+    expect(() => metadataDb(env.home, { kind: "offline-isolated", home: join(env.home, "other") })).toThrow(new RegExp(`component${version} cached writers`));
   }
   const release = storageLease(env.home);
   const dir = join(env.home, ".storage-users"), leases = readdirSync(dir);
   expect(leases).toHaveLength(1);
   const lease = join(dir, leases[0]!); const owner = JSON.parse(readFileSync(lease, "utf8"));
-  writeFileSync(lease, JSON.stringify({ ...owner, mailboxProtocol: 6 }));
+  writeFileSync(lease, JSON.stringify({ ...owner, mailboxProtocol: 7 }));
   expect(() => metadataDb(env.home, { kind: "offline-isolated", home: env.home })).toThrow(/storage is in use/);
   const retained = new DatabaseSync(join(env.home, "bridge.db"), { readOnly: true });
   expect(retained.prepare("SELECT version FROM bridge_components WHERE name='metadata'").get()?.version).toBe(version); retained.close();
@@ -128,22 +129,22 @@ it.each([{ version: 0, evidence: "pre-component" }, { version: 1, evidence: "shi
   const upgraded = metadataDb(env.home, { kind: "offline-isolated", home: env.home });
   expect(upgraded.prepare("SELECT version FROM bridge_components WHERE name='metadata'").get()?.version).toBe(METADATA_STORE_VERSION);
   expect(upgraded.prepare("SELECT value FROM bridge_metadata WHERE domain='job-state-archive'").get()?.value).toBe(original);
-  if (evidence === "b206") expect(() => assertRunnerArchiveAdmission(env.home, "legacy")).toThrow(/unsettled/);
+  if (["b206", "80e"].includes(evidence)) expect(() => assertRunnerArchiveAdmission(env.home, "legacy")).toThrow(/unsettled/);
   else expect(() => assertRunnerArchiveAdmission(env.home, "legacy")).not.toThrow();
   closeMetadataDb(env.home);
   expect(metadataDb(env.home).prepare("SELECT value FROM bridge_metadata WHERE domain='job-state-archive'").get()?.value).toBe(original);
   const exclusive = maintenanceLock(env.home); exclusive();
   // The fixture home is owned; no real process or installed store participates.
 });
-it("keeps component1 and every original row when migration aborts after its verified backup, then retries idempotently", () => {
+it.each([1, 2])("keeps component%s and every original row when migration aborts after its verified backup, then retries idempotently", version => {
   env = makeEnv(); const db = metadataDb(env.home);
   db.prepare("INSERT INTO bridge_metadata VALUES(?,?,?,?)").run("job-state", "old", JSON.stringify({ pid: 0, status: "done", report: "unique shipping bytes" }), 1);
   const original = db.prepare("SELECT * FROM bridge_metadata ORDER BY domain,key").all();
-  db.exec("UPDATE bridge_components SET version=1 WHERE name='metadata'; CREATE TRIGGER interrupt_metadata BEFORE UPDATE ON bridge_components WHEN NEW.name='metadata' AND NEW.version=2 BEGIN SELECT RAISE(ABORT,'controlled DDL interruption'); END");
+  db.exec(`UPDATE bridge_components SET version=${version} WHERE name='metadata'; CREATE TRIGGER interrupt_metadata BEFORE UPDATE ON bridge_components WHEN NEW.name='metadata' AND NEW.version=${METADATA_STORE_VERSION} BEGIN SELECT RAISE(ABORT,'controlled DDL interruption'); END`);
   closeMetadataDb(env.home);
   expect(() => metadataDb(env.home, { kind: "offline-isolated", home: env.home })).toThrow("controlled DDL interruption");
   const check = new DatabaseSync(join(env.home, "bridge.db"));
-  expect(check.prepare("SELECT version FROM bridge_components WHERE name='metadata'").get()?.version).toBe(1);
+  expect(check.prepare("SELECT version FROM bridge_components WHERE name='metadata'").get()?.version).toBe(version);
   expect(check.prepare("SELECT * FROM bridge_metadata ORDER BY domain,key").all()).toEqual(original);
   const backups = readdirSync(join(env.home, ".migration-snapshots")).filter(file => file.endsWith(".db"));
   expect(backups).toHaveLength(1);
@@ -173,4 +174,32 @@ it.each(["incomplete", "budget"])("fails closed on %s archive evidence before pu
   if (mode === "budget") { let clock = 0; vi.spyOn(performance, "now").mockImplementation(() => clock += 100); }
   expect(() => publishRunnerSpec(env.home, f.spec.job.id, { owner: "replacement" })).toThrow(/unsettled|bounded budget/);
   expect(f.db.prepare("SELECT * FROM bridge_metadata ORDER BY domain,key").all()).toEqual(before);
+});
+
+it("rolls back exact executing-input completion archives and proof together, then rejects a changed completion source", () => {
+  const f = fixture();
+  const batch = { batch: randomUUID(), generation: f.ledger.generation, phase: "provider-admitted" as const, bodies: ["Exact accepted continuation"],
+    controls: [{ cid: "original-control", body: "Exact accepted continuation" }], admission: { startedAt: 10, sessionId: "original-session" } };
+  const original = { ...f.state, deliveryLedger: { ...f.ledger, entries: [] }, pendingDeliveryRetention: [],
+    retainedRunnerInputs: projectRunnerInputs(batch.generation, [batch]) };
+  writeRunnerStateRecord(env.home, f.spec.job.id, original);
+  const before = f.db.prepare("SELECT * FROM bridge_metadata ORDER BY domain,key").all();
+  const result = { reportId: randomUUID(), report: "Exact admitted C1 result", status: "done" };
+  const completed = { ...original, retainedRunnerInputs: projectRunnerInputs(batch.generation, [{ ...batch, phase: "consumed", result }]) };
+  f.db.exec("CREATE TRIGGER interrupt_input_proof BEFORE INSERT ON bridge_metadata WHEN NEW.domain='runner-retention-proof' BEGIN SELECT RAISE(ABORT,'controlled input proof interruption'); END");
+  expect(() => writeRunnerStateRecord(env.home, f.spec.job.id, completed)).toThrow("controlled input proof interruption");
+  expect(f.db.prepare("SELECT * FROM bridge_metadata ORDER BY domain,key").all()).toEqual(before);
+  f.db.exec("DROP TRIGGER interrupt_input_proof");
+  writeRunnerStateRecord(env.home, f.spec.job.id, completed);
+  expect(() => assertRunnerArchiveAdmission(env.home, f.spec.job.id)).not.toThrow();
+  const proof = f.db.prepare("SELECT value FROM bridge_metadata WHERE domain='runner-retention-proof'").all()
+    .map(row => JSON.parse(String(row.value))).find(row => row.messageId === `input:${batch.batch}`)!;
+  expect(proof.completionSourceKey).toEqual(expect.any(String));
+  const completion = String(f.db.prepare("SELECT value FROM bridge_metadata WHERE domain='job-state-archive' AND key=?").get(proof.completionSourceKey)!.value);
+  const altered = JSON.parse(completion); altered.retainedRunnerInputs.batches[0].result.report = "Wrong completion context";
+  f.db.prepare("UPDATE bridge_metadata SET value=? WHERE domain='job-state-archive' AND key=?").run(JSON.stringify(altered), proof.completionSourceKey);
+  expect(() => assertRunnerArchiveAdmission(env.home, f.spec.job.id)).toThrow(/unsettled/);
+  f.db.prepare("UPDATE bridge_metadata SET value=? WHERE domain='job-state-archive' AND key=?").run(completion, proof.completionSourceKey);
+  closeMetadataDb(env.home);
+  expect(() => assertRunnerArchiveAdmission(env.home, f.spec.job.id)).not.toThrow();
 });

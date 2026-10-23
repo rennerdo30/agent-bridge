@@ -8,7 +8,7 @@ import { maintenanceLock, storageLease } from "./storage-lock.js";
 import { physicalPath } from "./project-identity.js";
 import { snapshotMetadataTables } from "./metadata-snapshot.js";
 
-export const METADATA_STORE_VERSION = 2;
+export const METADATA_STORE_VERSION = 3;
 const VERSION = METADATA_STORE_VERSION;
 const connections = new Map<string, DatabaseSync>();
 type MetadataAdmissionIdentity = { home: string; file: string };
@@ -199,8 +199,8 @@ export function metadataDb(home: string, offline?: OfflineMetadataAdmission): Da
   const version = () => db.prepare("SELECT 1 FROM sqlite_master WHERE name='bridge_components'").get()
    ? Number(db.prepare("SELECT version FROM bridge_components WHERE name='metadata'").get()?.version ?? 0) : 0;
   if (!Number.isSafeInteger(version()) || version() < 0) throw new Error("Metadata component version is unproven; originals retained for owner-coordinated offline recovery.");
-  if (version() === 1 && (!offline || offline.kind !== "offline-isolated" || handleKey(physicalPath(resolve(offline.home))) !== handleKey(physicalPath(resolve(home)))))
-    throw Object.assign(new Error("Metadata component1 cached writers cannot be excluded automatically. Stop old readers through the owner and explicitly admit offline migration into an isolated home; originals remain unchanged."), { code: "STORE_OFFLINE_REQUIRED" });
+  if (version() > 0 && version() < VERSION && (!offline || offline.kind !== "offline-isolated" || handleKey(physicalPath(resolve(offline.home))) !== handleKey(physicalPath(resolve(home)))))
+    throw Object.assign(new Error(`Metadata component${version()} cached writers cannot be excluded automatically. Stop old readers through the owner and explicitly admit offline migration into an isolated home; originals remain unchanged.`), { code: "STORE_OFFLINE_REQUIRED" });
   db.exec("PRAGMA busy_timeout=5000; PRAGMA synchronous=FULL;");
   if (version() > VERSION) throw new Error("Metadata store is newer than this reader; retained unchanged.");
   if (version() < VERSION) {

@@ -20,6 +20,8 @@ import { JobRunners, readRunnerState } from "../mcp/job-host.js";
 import { changedJobArgs, JOB_SETTING_KEYS, parseJobSettings, type JobSettings } from "../mcp/job-settings.js";
 import type { Job, RunnerControl, RunnerState } from "../mcp/jobs.js";
 import { hasUnsettledRunnerRetention } from "../mcp/runner-delivery-retention.js";
+import { verifyOwnedRunnerRetention } from "../mcp/runner-ledger-recovery.js";
+import { deliveryFailure } from "../mcp/delivery-evidence.js";
 import type { NetworkService, RemoteDestination } from "./link.js";
 import type { NetworkPair } from "./pairing.js";
 import { MAX_REMOTE_JOBS, REMOTE_JOB_ANTIGRAVITY_OPTIONS_CAPABILITY, REMOTE_JOB_CAPABILITY, REMOTE_JOB_CANCELLED_CAPABILITY, REMOTE_JOB_FRAME, REMOTE_JOB_RATE_LIMIT, REMOTE_JOB_RATE_WINDOW_MS, REMOTE_JOB_REQUEST_TIMEOUT_MS, REMOTE_JOB_SPAWN_LIMIT, remoteJobRequestSchema, remoteJobWireSchema, remoteJobSnapshotSchema, remoteSnapshotForPeer, type RemoteJobRequest } from "./remote-job-protocol.js";
@@ -227,6 +229,7 @@ export class RemoteJobs {
       throw new Error("Remote job belongs to the original authenticated supervisor binding.");
     if (request.op === "spawn") {
       if (record && hasUnsettledRunnerRetention(readRunnerState(this.home, record.job.id))) {
+        if (this.snapshot(record).alive) throw new Error("Remote job is already running; its original evidence remains owned.");
         try { await this.runners?.recoverRetention(record.job, record.job.controller.signal, () => !this.closed && this.records.get(record!.job.id) === record); }
           catch { throw new Error("Remote runner retention is unsettled; original generation requires owned evidence recovery"); }
         throw new Error("Remote runner retention is unsettled; original generation must settle before continuation.");
@@ -339,10 +342,15 @@ export class RemoteJobs {
         }
         this.log.info("remote job control", { job: record.job.name, control: request.control.type, host: pair.name });
       } else if (request.op === "approval") {
-        if (!listPendingApprovals(this.home).some((a) => a.id === request.id && a.job === record!.job.name && a.owner === record!.owner)) throw new Error("Remote approval expired or belongs to another job.");
+        const approvals = listPendingApprovals(this.home);
+        if (!approvals.some((a) => a.id === request.id && a.job === record!.job.name && a.owner === record!.owner)) {
+          this.log.warn("remote approval answer refused", { job: record!.job.name, stage: "executor-lookup", idPresent: approvals.some(a => a.id === request.id),
+            jobPresent: approvals.some(a => a.id === request.id && a.job === record!.job.name), ownerPresent: approvals.some(a => a.id === request.id && a.owner === record!.owner) });
+          throw new Error("Remote approval expired or belongs to another job.");
+        }
         // The real decider: a supervisor on the paired PC, not this PC's dashboard (AB-402: never a reusable grant here).
         const outcome = await answerPendingApproval(this.home, request.id, { decision: request.decision, reason: request.reason, source: "remote supervisor" });
-        if (outcome !== "answered") throw new Error(`Remote approval ${outcome}.`);
+        if (outcome !== "answered") { this.log.warn("remote approval answer refused", { job: record!.job.name, stage: "executor-relay", outcome }); throw new Error(`Remote approval ${outcome}.`); }
       }
     }
     const snapshot = this.snapshot(record!);
@@ -367,8 +375,17 @@ export class RemoteJobs {
 
   private snapshot(record: RemoteRecord): RemoteJobSnapshot {
     if (record.usageRefusal) return { state: record.usageRefusal, alive: false, approvals: [], usageTurn: record.usageTurn };
-    const state = readRunnerState(this.home, record.job.id);
+    let state = readRunnerState(this.home, record.job.id);
     const alive = this.runners?.alive(record.job, state) ?? Boolean(state && state.status === "running");
+    if (alive && state && hasUnsettledRunnerRetention(state)) {
+      verifyOwnedRunnerRetention(this.home, record.job.id, state, record.job as unknown as Record<string, unknown>);
+      // A live owned ledger is work in progress, not a dead unknown generation.
+      // Even a staged terminal result must not escape as done/delivered while
+      // earlier evidence is unsettled. Old snapshot readers also see running.
+      state = { pid: state.pid, peer: state.peer, updatedAt: state.updatedAt, status: "running", delivered: false,
+        sessionId: state.sessionId, workdir: state.workdir, worktree: state.worktree, asking: state.asking, live: state.live,
+        providerUsage: state.providerUsage, usageSubmission: state.usageSubmission, progress: state.progress };
+    }
     return { state, alive, approvals: listPendingApprovals(this.home).filter((a) => a.job === record.job.name && a.owner === record.owner), usageTurn: record.usageTurn };
   }
 
@@ -422,11 +439,11 @@ export class RemoteJobs {
       try {
         // AB-417: the remote bridge may be older than the marker guard, so its question text gets the guard here too.
         const close = await publishApproval(this.home, { ...approval, command: markerSafe(approval.command), owner, job: `${host}/${approval.job}` }, async (body) => {
-          if (Date.now() >= approval.deadline) return false;
+          if (Date.now() >= approval.deadline) { this.log.warn("remote approval answer refused", { job: `${host}/${approval.job}`, stage: "requester-deadline" }); return false; }
           try {
             await this.request(host, peer, { op: "approval", job: request.job, id: approval.id, decision: body.startsWith("allow") ? "allow" : "deny", reason: body.includes(":") ? body.slice(body.indexOf(":") + 1).trim() : undefined }, supervisor);
             return true;
-          } catch { return false; }
+          } catch (error) { this.log.warn("remote approval answer refused", { job: `${host}/${approval.job}`, stage: "requester-rpc", failure: deliveryFailure(error) }); return false; }
         });
         if (this.closed) close(); else this.approvals.set(id, close);
       } finally { this.publishingApprovals.delete(id); }
