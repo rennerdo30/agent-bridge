@@ -146,4 +146,11 @@ All13 protected method pins, the UI hash, normalizer and retention guard are
 unchanged; no pin amendment is requested. No provider, daemon, TLS fixture, full
 local suite, build, install, release, Bridge call or further agent was run.
 Exact frozen validation/push receipts are external:
-`E:/AgentData/reports/ab458-pr141-<head>-r20-validation.json` and `-r20-push.json`.
+`E:/AgentData/reports/ab458-pr141-<head>-r20-validation*.json` and `-r20-push.json`.
+The first freeze `284d852c` recorded 83 passes and one local-selection error:
+the legacy Muse wire-profile test intentionally executes a fake CLI script,
+which the subprocess guard blocked (three attempts, no process launched).
+That failed receipt remains retained; it is not production red evidence. The
+fake-CLI integration case stays intact and CI-only. Corrected local selection
+includes only its in-process request-argument case. A subsequent docs-only
+commit records this qualification; its own exact head is validated separately.
