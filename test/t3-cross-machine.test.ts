@@ -1331,7 +1331,7 @@ it.each([2, 3, 4, 5, 6, 7])("new clients refuse a protocol%s endpoint without gr
   cleanup.push(() => node.stop()); cleanup.push(() => closeMetadataDb(dir));
   await node.setSessionId("new-client-session");
   await expect(node.start()).rejects.toThrow(`protocol ${oldProtocol}`);
-  expect(operations).toEqual(["auth"]); expect(auth[0].protocol).toBe(7); expect(auth[0].canHost).toBeUndefined();
+  expect(operations).toEqual(["auth"]); expect(auth[0].protocol).toBe(PROTOCOL_VERSION); expect(auth[0].canHost).toBeUndefined();
   expect(server.listening).toBe(true); await close();
   await expect(node.ensureConnected()).rejects.toThrow(`protocol ${oldProtocol}`); expect(launch).not.toHaveBeenCalled();
 });
