@@ -10,11 +10,11 @@ import { ownProcessIdentity } from "./process-identity.js";
 import { physicalPath } from "./project-identity.js";
 import { maintenanceLock } from "./storage-lock.js";
 import type { Logger } from "./logger.js";
-import { appendBootstrapRecord, bootstrapFileIdentity, bootstrapHomeIdentity, bootstrapUnknown, bootstrapWorkerFailure, inspectBootstrapJournal, readBootstrapPair, sameBootstrapIdentity, type BootstrapRecord, type BootstrapEvidence } from "./store-bootstrap-journal.js";
+import { appendBootstrapRecord, bootstrapFiles, bootstrapFileIdentity, bootstrapHomeIdentity, bootstrapUnknown, bootstrapWorkerFailure, captureBootstrapWitness, inspectBootstrapJournal, readBootstrapPair, sameBootstrapIdentity, type BootstrapRecord, type BootstrapEvidence, type BootstrapWitness } from "./store-bootstrap-journal.js";
 
 export interface ColdBootstrapPlan { record: BootstrapRecord; endpoint: string; token: string; deadline: number; revoked: SharedArrayBuffer }
 const pending = new Set<string>();
-export const coldStoreFiles = (file: string) => [file, join(dirname(file), "archive.db"), join(dirname(file), "history.db")];
+export const coldStoreFiles = bootstrapFiles;
 /** Read-only eligibility, not a new migration policy. Fully initialized current
  * homes are opened normally; a partially initialized current home without its
  * complete evidence cannot masquerade as fresh. */
@@ -29,8 +29,9 @@ export function needsColdPreparation(file: string): boolean {
     metadata = db.prepare("SELECT 1 FROM sqlite_master WHERE name='bridge_components'").get()
       ? Number(db.prepare("SELECT version FROM bridge_components WHERE name='metadata'").get()?.version ?? 0) : 0;
   } finally { db.close(); }
-  if (version === 0 && metadata === 4 && !present[1] && !present[2]) return true;
-  if (version === 14 && (!present[1] || !present[2])) throw bootstrapUnknown();
+  const hasArchive = existsSync(join(dirname(file), "archive.db")), hasHistory = existsSync(join(dirname(file), "history.db"));
+  if (version === 0 && metadata === 5 && !hasArchive && !hasHistory) return true;
+  if (version === 14 && (!hasArchive || !hasHistory)) throw bootstrapUnknown();
   return false; // Existing populated/legacy stores retain the ordinary migration/refusal contract.
 }
 export function checkBootstrapOriginal(record: BootstrapRecord): void {
@@ -47,7 +48,7 @@ function workerEntry(): URL {
   const root = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
   return pathToFileURL(join(root, "plugins/codex/dist/store-bootstrap-worker.mjs"));
 }
-export async function prepareColdStore(file: string, endpoint: string, token: string, log: Logger, signal: AbortSignal | undefined, deadline: number): Promise<void> {
+export async function prepareColdStore(file: string, endpoint: string, token: string, log: Logger, signal: AbortSignal | undefined, deadline: number): Promise<BootstrapWitness | undefined> {
   const home = physicalPath(realpathSync.native(resolve(dirname(file)))); file = join(home, process.platform === "win32" ? basename(file).toLowerCase() : basename(file));
   const pendingKey = process.platform === "win32" ? file.toLowerCase() : file;
   const check = () => { signal?.throwIfAborted(); if (!Number.isFinite(deadline) || Date.now() >= deadline) throw bootstrapUnknown(); };
@@ -58,7 +59,7 @@ export async function prepareColdStore(file: string, endpoint: string, token: st
       check(); bootstrapHomeIdentity(home); inspectBootstrapJournal(home);
       if (!needsColdPreparation(file)) return undefined;
       return { version: 1 as const, attempt: randomUUID(), state: "preparing" as const, home, homeIdentity: bootstrapHomeIdentity(home), file,
-        contract: "protocol9-metadata4-schema14-cold-v2" as const,
+        contract: "protocol10-metadata5-schema14-anchor-v1" as const,
         original: Object.fromEntries(coldStoreFiles(file).map(path => [path, existsSync(path) ? bootstrapFileIdentity(path) : null])),
         pid: process.pid, processIdentity: "" };
     }, file, deadline);
@@ -117,7 +118,7 @@ export async function prepareColdStore(file: string, endpoint: string, token: st
       phase = "exit-evidence-finalization";
       // Exit IPC is not a proof transfer. This new guard owns only the durable
       // exact-exit record; the final opener obtains yet another fresh proof.
-      await guardPriorEndpoints(home, endpoint, token, log, signal, remaining => {
+      return await guardPriorEndpoints(home, endpoint, token, log, signal, remaining => {
         const release = maintenanceLock(home, false, true);
         try {
           remaining(); check();
@@ -125,7 +126,7 @@ export async function prepareColdStore(file: string, endpoint: string, token: st
           if (!sameBootstrapIdentity(current, originalPair)) throw bootstrapUnknown();
           for (const [path, id] of Object.entries(current.prepared.record.files!)) if (!sameBootstrapIdentity(bootstrapFileIdentity(path), id)) throw bootstrapUnknown();
           appendBootstrapRecord({ ...current.prepared.record, state: "exited", preparedDigest: current.prepared.digest }, () => { remaining(); check(); }); remaining(); check();
-          inspectBootstrapJournal(home); remaining(); check();
+          const witness = captureBootstrapWitness(home); remaining(); check(); return witness;
         } finally { release(); }
       }, file, deadline);
     } finally {

@@ -7,10 +7,10 @@ import { metadataFileLease } from "./metadata-file-lease.js";
 import { assertStoreUpgrade, liveStorePeers, metadataRelease } from "./store-compatibility.js";
 import { maintenanceLock, storageLease } from "./storage-lock.js";
 import { physicalPath } from "./project-identity.js";
-import { assertBootstrapAccess } from "./store-bootstrap-journal.js";
+import { assertBootstrapAccess, initializeBootstrapProvenance, syncBootstrapHomeChain } from "./store-bootstrap-journal.js";
 import { snapshotMetadataTables } from "./metadata-snapshot.js";
 
-export const METADATA_STORE_VERSION = 4;
+export const METADATA_STORE_VERSION = 5;
 const VERSION = METADATA_STORE_VERSION;
 const connections = new Map<string, DatabaseSync>();
 type MetadataAdmissionIdentity = { home: string; file: string };
@@ -211,6 +211,7 @@ export function metadataDb(home: string, offline?: OfflineMetadataAdmission): Da
  physicalMetadataPath(file);
  mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
  const existed = existsSync(file);
+ if (!existed) syncBootstrapHomeChain(home, () => { storageAdmissionRemaining(); });
  const admission = observeExistingMetadataAdmission(file);
  const db = new DatabaseSync(file, { timeout: storageAdmissionTimeout(5_000) });
  recordMetadataAdmission(db, file, admission);
@@ -234,6 +235,7 @@ export function metadataDb(home: string, offline?: OfflineMetadataAdmission): Da
     catch (error) { throw Object.assign(error as Error, { code: "STORE_UPGRADE_DEFERRED" }); }
     assertMetadataAdmission(home);
     if (version() < VERSION) {
+     syncBootstrapHomeChain(home, () => { storageAdmissionRemaining(); });
      if (existed) {
       const dir = join(home, ".migration-snapshots");
       physicalMetadataPath(dir);
@@ -244,7 +246,7 @@ export function metadataDb(home: string, offline?: OfflineMetadataAdmission): Da
      }
      storageAdmissionRemaining();
      db.exec("BEGIN IMMEDIATE");
-     try { storageAdmissionRemaining(); db.exec(SCHEMA); storageAdmissionRemaining(); db.exec("COMMIT"); }
+     try { storageAdmissionRemaining(); const previous = version(); db.exec(SCHEMA); storageAdmissionRemaining(); initializeBootstrapProvenance(db,home,previous); storageAdmissionRemaining(); db.exec("COMMIT"); }
      catch (error) { db.exec("ROLLBACK"); throw error; }
     }
    } finally { exclusive?.(); release(); }

@@ -1,18 +1,18 @@
 import { isMainThread, parentPort, threadId, workerData } from "node:worker_threads";
 import { join } from "node:path";
 import { MessageStore } from "./store.js";
-import { closeMetadataDbs } from "./metadata-db.js";
+import { closeMetadataDbs, metadataDb } from "./metadata-db.js";
 import { nullLogger } from "./logger.js";
 import { maintenanceLock, withMaintenanceExclusion } from "./storage-lock.js";
 import { guardBootstrapPreparation } from "./prior-endpoints.js";
 import { processIdentity } from "./process-identity.js";
 import { checkBootstrapOriginal, coldStoreFiles, needsColdPreparation, type ColdBootstrapPlan } from "./store-bootstrap.js";
-import { appendBootstrapRecord, bootstrapFileIdentity, bootstrapHomeIdentity, bootstrapUnknown, inspectBootstrapJournal, readBootstrapEvidence, sameBootstrapIdentity, withBootstrapInitializer, type BootstrapRecord } from "./store-bootstrap-journal.js";
+import { appendBootstrapRecord, bindColdBootstrapMetadata, bootstrapFileIdentity, bootstrapHomeIdentity, bootstrapUnknown, inspectBootstrapJournal, publishBootstrapAnchor, readBootstrapEvidence, sameBootstrapIdentity, withBootstrapInitializer, type BootstrapRecord } from "./store-bootstrap-journal.js";
 
 /** Actual initializer kernel; tests invoke it only behind an explicit fake
  * Worker transport. There is no broker, provider, listener or service launch. */
 export async function runColdStoreBootstrap(plan: ColdBootstrapPlan): Promise<BootstrapRecord> {
-  const { deadline } = plan, revoked = new Int32Array(plan.revoked), record = { ...plan.record, workerThread: threadId };
+  const { deadline } = plan, revoked = new Int32Array(plan.revoked); let record = { ...plan.record, workerThread: threadId };
   if (record.state !== "preparing" || record.pid !== process.pid || plan.record.workerThread !== undefined || threadId <= 0 || !Number.isFinite(deadline) || revoked.length !== 1) throw bootstrapUnknown();
   const controller = new AbortController(), timer = setTimeout(() => controller.abort(), Math.max(0, deadline - Date.now()));
   let release: (() => void) | undefined, store: MessageStore | undefined;
@@ -24,9 +24,11 @@ export async function runColdStoreBootstrap(plan: ColdBootstrapPlan): Promise<Bo
       return withMaintenanceExclusion(release, check, () => {
         checkBootstrapOriginal(record); check();
         if (!needsColdPreparation(record.file)) throw bootstrapUnknown();
+        record = publishBootstrapAnchor(record, check) as typeof record;
         appendBootstrapRecord(record, check); check(); // Immutable pending evidence BEFORE any schema/metadata effect.
         const initial = readBootstrapEvidence(join(record.home, ".store-bootstrap", `${record.attempt}.preparing.json`));
         const namespace = withBootstrapInitializer(record, check, () => {
+          const metadata = metadataDb(record.home); check(); bindColdBootstrapMetadata(metadata, record.home, check); check();
           store = new MessageStore(record.file, nullLogger); check();
           const namespace = store.namespace; check();
           store.closeBootstrapPreparation(); store = undefined; closeMetadataDbs(); check(); return namespace;

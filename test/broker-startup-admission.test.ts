@@ -6,7 +6,6 @@ import { NativeChildren } from "../src/core/native-children.js";
 import { nullLogger } from "../src/core/logger.js";
 import { PROTOCOL_VERSION } from "../src/core/constants.js";
 import { makeEnv, type TestEnv } from "./helpers.js";
-import { join } from "node:path";
 
 const io = vi.hoisted(() => ({ servers: [] as any[] }));
 vi.mock("node:net", async original => {
@@ -68,13 +67,13 @@ it("activates a compatible direct listener only after its entire preparation and
   expect(accepted).toHaveBeenCalledExactlyOnceWith(socket);
 });
 
-it("rejects protocol8 authentication before granting authority while protocol9 authenticates without mailbox effects", () => {
+it("rejects protocol9 authentication before granting authority while protocol10 authenticates without mailbox effects", () => {
   const f = fixture(), connection = { authed: false };
   const insert = vi.spyOn(store!, "insert"), insertOnce = vi.spyOn(store!, "insertOnce");
   const auth = (f.broker as any).handlers.auth;
-  expect(() => auth(connection, { protocol: 8, token: "fixture-token" })).toThrow(/protocol/i);
+  expect(() => auth(connection, { protocol: 9, token: "fixture-token" })).toThrow(/protocol/i);
   expect(connection.authed).toBe(false); expect(insert).not.toHaveBeenCalled(); expect(insertOnce).not.toHaveBeenCalled();
-  expect(PROTOCOL_VERSION).toBe(9); auth(connection, { protocol: 9, token: "fixture-token" });
+  expect(PROTOCOL_VERSION).toBe(10); auth(connection, { protocol: 10, token: "fixture-token" });
   expect(connection.authed).toBe(true); expect(insert).not.toHaveBeenCalled(); expect(insertOnce).not.toHaveBeenCalled();
 });
 

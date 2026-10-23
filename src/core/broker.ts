@@ -457,6 +457,7 @@ export class Broker {
   private networkAuthorityDeferred = false;
   private startupAuthorityRevoked = false;
   private readonly startupTransports = new Set<Server>();
+  private servingMaintenance: { cancel: () => void; settled: Promise<void> } | null = null;
   private readonly handlers: { [O in Exclude<Op, "modeSend">]: Handler<O> };
   private jobsSnapshot: { active: JsonSnapshot; archive: string; records: Record<string, unknown>[] } | null = null;
   private jobsForDispatch: Record<string, unknown>[] | null = null;
@@ -846,6 +847,7 @@ export class Broker {
           }
         } catch { /* Unproved canonical home/endpoint binding is lifecycle unsupported, never repaired. */ }
       }
+      this.scheduleServingMaintenance();
     } catch (error) {
       revoke();
       try { await Promise.all([cleanup, transportCleanup]); retainedStartupOwners.delete(this); }
@@ -856,6 +858,7 @@ export class Broker {
 
   /** Undo a failed listen(): background services, timers and the bound server; the store stays open for its owner. */
   private async abortStartup(): Promise<void> {
+    await this.cancelServingMaintenance();
     this.healthMonitor.close();
     if (this.purgeTimer) clearInterval(this.purgeTimer);
     this.purgeTimer = null;
@@ -881,25 +884,6 @@ export class Broker {
   private async startServices(optional: (what: string, step: () => void) => void, check: () => void = () => {}, signal?: AbortSignal): Promise<void> {
         check();
         await this.nativeChildren.recover(check); check();
-        if (this.jobsPath) void startBrokerJobRunIndex(dirname(this.jobsPath), check).catch(error => this.log.warn("job run index preparing", { err: String(error) }));
-        if (this.jobsPath && this.store.file !== ":memory:") optional("job archive worker", () => { this.jobArchiveBackground = new JobArchiveBackground(this.jobsPath!, this.log); });
-        optional("backups", () => this.store.startBackups());
-        check(); this.healthMonitor.start();
-        optional("handoff replay", () => this.applyHandoffs());
-        check(); this.purgeTimer = setInterval(() => this.purge(), PURGE_INTERVAL_MS);
-        this.purgeTimer.unref();
-        // Config toggles pause the monitor and later resume its durable cursors.
-        // The environment kill switch intentionally disables even the worker.
-        if (this.store.file !== ":memory:" && !["false", "0"].includes(process.env.AGENT_BRIDGE_HISTORY_INGEST ?? "")) optional("history worker", () => {
-          const history = new HistoryBackground(this.store.file, this.log);
-          this.historyBackground = history;
-          this.store.historyPeerSink = (peer) => this.historyBackground?.rememberPeer(peer);
-          this.store.historyMessageSink = () => this.historyBackground?.messageArrived();
-          void history.reconcileAsks().catch(error => this.log.debug("startup ask reconciliation deferred", { error: String(error) }));
-        });
-        check(); this.purge(); check();
-        this.log.info("broker listening", { pipe: this.pipePath });
-        if (this.store.file !== ":memory:" && existsSync(join(dirname(this.store.file),QUESTIONS_FILE))) optional("owner questions", () => { this.ownerQuestions(); });
         // Another broker may have enabled or changed pairing since this session started.
         check(); if (this.networking) this.networking.config = readNetworkConfig(this.networking.home, this.networking.config);
         if (this.networking?.config.enabled) {
@@ -929,6 +913,51 @@ export class Broker {
             this.log.warn("networking could not start; local broker remains available", { message: (err as Error).message });
           }
         }
+  }
+
+  private scheduleServingMaintenance(): void {
+    if (this.servingMaintenance || this.closing || this.startupAuthorityRevoked || this.networkAuthorityDeferred) return;
+    let finish!: () => void;
+    const settled = new Promise<void>(resolve => { finish = resolve; });
+    const serving = () => !this.closing && !this.startupAuthorityRevoked && !this.networkAuthorityDeferred;
+    const current = () => this.servingMaintenance === task && serving();
+    const task = { settled, cancel: () => { clearImmediate(timer); if (this.servingMaintenance === task) this.servingMaintenance = null; finish(); } };
+    const timer = setImmediate(() => {
+      try {
+        if (!current()) return;
+        const check = () => { if (!serving()) throw new DOMException("Serving maintenance revoked", "AbortError"); };
+        const optional = (what: string, effect: () => void) => { check(); try { effect(); check(); } catch (error) { check(); this.log.warn(`broker maintenance: ${what} failed`, { error: String(error) }); } };
+        this.startServingMaintenance(optional, check);
+      } catch (error) { this.log.warn("serving maintenance deferred; exact resources remain owned", { error: String(error) }); }
+      finally { if (this.servingMaintenance === task) this.servingMaintenance = null; finish(); }
+    });
+    this.servingMaintenance = task;
+  }
+
+  private async cancelServingMaintenance(): Promise<void> {
+    const task = this.servingMaintenance; task?.cancel(); await task?.settled;
+  }
+
+  private startServingMaintenance(optional: (what: string, step: () => void) => void, check: () => void): void {
+        if (this.jobsPath) void startBrokerJobRunIndex(dirname(this.jobsPath), check).catch(error => this.log.warn("job run index preparing", { err: String(error) }));
+        if (this.jobsPath && this.store.file !== ":memory:") optional("job archive worker", () => { this.jobArchiveBackground = new JobArchiveBackground(this.jobsPath!, this.log); });
+        optional("backups", () => this.store.startBackups());
+        check(); this.healthMonitor.start();
+        optional("handoff replay", () => this.applyHandoffs());
+        check(); this.purgeTimer = setInterval(() => this.purge(), PURGE_INTERVAL_MS);
+        this.purgeTimer.unref();
+        // Config toggles pause the monitor and later resume its durable cursors.
+        // The environment kill switch intentionally disables even the worker.
+        if (this.store.file !== ":memory:" && !["false", "0"].includes(process.env.AGENT_BRIDGE_HISTORY_INGEST ?? "")) optional("history worker", () => {
+          const history = new HistoryBackground(this.store.file, this.log);
+          this.historyBackground = history;
+          this.store.historyPeerSink = (peer) => this.historyBackground?.rememberPeer(peer);
+          this.store.historyMessageSink = () => this.historyBackground?.messageArrived();
+          void history.reconcileAsks().catch(error => this.log.debug("startup ask reconciliation deferred", { error: String(error) }));
+        });
+        check(); this.purge(); check();
+        this.log.info("broker listening", { pipe: this.pipePath });
+        if (this.store.file !== ":memory:" && existsSync(join(dirname(this.store.file),QUESTIONS_FILE))) optional("owner questions", () => { this.ownerQuestions(); });
   }
 
   /**
@@ -1004,6 +1033,7 @@ export class Broker {
   async close(): Promise<void> {
     this.healthMonitor.close();
     this.closing = true;
+    await this.cancelServingMaintenance();
     if (this.livenessTimer) { clearInterval(this.livenessTimer); this.livenessTimer = null; }
     if (this.idle?.timer) { clearTimeout(this.idle.timer); this.idle.timer = null; }
     if (this.mobileResources) await this.disposeMobileResources().catch(() => this.mobileDisposalDiagnostic("mobile_disposal_failed"));

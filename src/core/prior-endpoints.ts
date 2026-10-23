@@ -23,7 +23,7 @@ export function priorEndpoints(home: string, platform: NodeJS.Platform = process
     if (/^[de]:/i.test(path)) { homes.add(path.replace(/^[de]:/i, "E:")); homes.add(path.replace(/^[de]:/i, "D:")); }
   }
   const endpoints = new Set<string>();
-  for (const path of homes) for (const protocol of [undefined, 2, 3, 4, 5, 6, 7, 8]) {
+  for (const path of homes) for (const protocol of [undefined, 2, 3, 4, 5, 6, 7, 8, 9]) {
     const suffix = protocol === undefined ? "" : `-p${protocol}`;
     if (platform === "win32") {
       const hash = createHash("sha256").update(path.toLowerCase()).digest("hex").slice(0, 12);
@@ -98,7 +98,7 @@ async function guardStorage<T>(home: string, current: string, token: string, log
       }
       remaining();
       if (inspectionState.version === 2 || inspectionState.version === 3) throw refused(home, "a pre-lease schema2/3 store requiring explicit offline migration into an isolated home");
-      if ([1, 2, 3].includes(inspectionState.metadata)) throw refused(home, `a component${inspectionState.metadata} metadata store whose cached inactive writers require explicit owner-coordinated offline migration into an isolated home`);
+      if ([1, 2, 3, 4].includes(inspectionState.metadata)) throw refused(home, `a component${inspectionState.metadata} metadata store whose cached inactive writers require explicit owner-coordinated offline migration into an isolated home`);
     }
     // Construction may need this process's identity for a metadata/migration
     // lease. Prepare it asynchronously inside the same budget, never by a cold

@@ -1,22 +1,43 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { closeSync, constants, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readSync, readdirSync, writeFileSync, type BigIntStats } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { z } from "zod";
+import { DatabaseSync } from "node:sqlite";
+import { DB_FILE_NAME } from "./constants.js";
 import { physicalPath } from "./project-identity.js";
 import { isDeepStrictEqual } from "node:util";
 
-const identitySchema = z.object({ dev: z.string().regex(/^\d+$/), ino: z.string().regex(/^[1-9]\d*$/) }).strict();
-const signatureSchema = z.object({ dev: z.string(), ino: z.string(), size: z.string(), mtime: z.string(), ctime: z.string() }).strict();
-const recordSchema = z.object({ version: z.literal(1), attempt: z.uuid(), state: z.enum(["preparing", "prepared", "exited"]),
-  contract: z.literal("protocol9-metadata4-schema14-cold-v2"),
-  home: z.string().min(1).max(4096), homeIdentity: identitySchema, file: z.string().min(1).max(4096),
-  original: z.record(z.string(), identitySchema.nullable()), files: z.record(z.string(), identitySchema).optional(),
-  pid: z.number().int().positive(), processIdentity: z.string().min(1).max(256), preparedDigest: z.string().regex(/^[a-f0-9]{64}$/).optional(),
-  workerThread: z.number().int().positive().optional(),
-  preparingDigest: z.string().regex(/^[a-f0-9]{64}$/).optional(), preparingSignature: signatureSchema.optional(),
-  namespace: z.string().regex(/^[a-f0-9]{64}$/).optional() }).strict();
-export type BootstrapRecord = z.infer<typeof recordSchema>;
-export type BootstrapEvidence = { record: BootstrapRecord; digest: string; signature: z.infer<typeof signatureSchema> };
+// This module is reachable from the standalone low-level lease helpers. Keep
+// validation bounded and dependency-free; do not import runtime schema packages.
+const CONTRACT = "protocol10-metadata5-schema14-anchor-v1";
+type Identity = { dev: string; ino: string };
+type Signature = Identity & { size: string; mtime: string; ctime: string };
+export type BootstrapRecord = { version: 1; contract: typeof CONTRACT; attempt: string; state: "preparing" | "prepared" | "exited";
+  home: string; homeIdentity: Identity; file: string; original: Record<string, Identity | null>; files?: Record<string, Identity>;
+  pid: number; processIdentity: string; workerThread?: number; namespace?: string; preparedDigest?: string;
+  preparingDigest?: string; preparingSignature?: Signature; anchorDigest?: string; anchorSignature?: Signature; journalIdentity?: Identity };
+export type BootstrapEvidence = { record: BootstrapRecord; digest: string; signature: Signature };
+type Anchor = { version: 1; contract: typeof CONTRACT; attempt: string; home: string; homeIdentity: Identity; file: string;
+  original: Record<string, Identity | null>; journalIdentity: Identity };
+type AnchorEvidence = { record: Anchor; digest: string; signature: Signature };
+type Provenance = { version: 1; contract: typeof CONTRACT; homeIdentity: Identity; metadataIdentity: Identity; generation: string } &
+  ({ kind: "ordinary" } | { kind: "cold"; anchorDigest: string; anchorSignature: Signature; journalIdentity: Identity; attempt: string });
+export type BootstrapWitness = { home: string; anchor: AnchorEvidence; records: BootstrapEvidence[] };
+const object = (v: unknown): v is Record<string, any> => typeof v === "object" && v !== null && !Array.isArray(v);
+const strict = (v: Record<string, any>, keys: string[]) => Object.keys(v).every(key => keys.includes(key));
+const text = (v: unknown, max = 4096): v is string => typeof v === "string" && v.length > 0 && v.length <= max;
+const uuid = (v: unknown) => typeof v === "string" && /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(v);
+const digest = (v: unknown) => typeof v === "string" && /^[a-f0-9]{64}$/.test(v);
+const identity = (v: unknown): v is Identity => object(v) && strict(v, ["dev", "ino"]) && text(v.dev, 64) && /^\d+$/.test(v.dev) && text(v.ino, 64) && /^[1-9]\d*$/.test(v.ino);
+const validSignature = (v: unknown): v is Signature => object(v) && strict(v, ["dev", "ino", "size", "mtime", "ctime"]) && identity({ dev: v.dev, ino: v.ino }) && [v.size, v.mtime, v.ctime].every(n => text(n, 64) && /^-?\d+$/.test(n));
+const identities = (v: unknown, nullable: boolean) => object(v) && Object.keys(v).length <= 4 && Object.entries(v).every(([path, id]) => text(path) && (nullable && id === null || identity(id)));
+function parseRecord(v: unknown): BootstrapRecord {
+  if (!object(v) || !strict(v, ["version", "contract", "attempt", "state", "home", "homeIdentity", "file", "original", "files", "pid", "processIdentity", "workerThread", "namespace", "preparedDigest", "preparingDigest", "preparingSignature", "anchorDigest", "anchorSignature", "journalIdentity"]) ||
+    v.version !== 1 || v.contract !== CONTRACT || !uuid(v.attempt) || !["preparing", "prepared", "exited"].includes(v.state) || !text(v.home) || !text(v.file) || !identity(v.homeIdentity) || !identities(v.original, true) ||
+    !Number.isSafeInteger(v.pid) || v.pid <= 0 || !text(v.processIdentity, 256) || (v.workerThread !== undefined && (!Number.isSafeInteger(v.workerThread) || v.workerThread <= 0)) ||
+    (v.files !== undefined && !identities(v.files, false)) || [v.namespace, v.preparedDigest, v.preparingDigest, v.anchorDigest].some(d => d !== undefined && !digest(d)) ||
+    [v.preparingSignature, v.anchorSignature].some(s => s !== undefined && !validSignature(s)) || v.journalIdentity !== undefined && !identity(v.journalIdentity)) throw bootstrapUnknown();
+  return v as BootstrapRecord;
+}
 let initializer: { home: string; evidence: BootstrapEvidence; check: () => void } | undefined;
 export const bootstrapUnknown = () => Object.assign(new Error("Cold-store preparation is incomplete or unproven; original records are retained. Owner-coordinated isolated recovery is required; no automatic reexecution."), { code: "STORE_BOOTSTRAP_UNSETTLED" });
 /** Diagnostic only. Do not expose a native import error's message, paths, stack
@@ -49,7 +70,7 @@ export function bootstrapHomeIdentity(home: string) {
 export const sameBootstrapIdentity = (a: unknown, b: unknown) => isDeepStrictEqual(a, b);
 export const bootstrapDigest = (record: BootstrapRecord) => createHash("sha256").update(JSON.stringify(record)).digest("hex");
 const signature = (stat: BigIntStats) => ({ dev: String(stat.dev), ino: String(stat.ino), size: String(stat.size), mtime: String(stat.mtimeNs), ctime: String(stat.ctimeNs) });
-export function readBootstrapEvidence(path: string): BootstrapEvidence {
+function readRawEvidence(path: string): { bytes: Buffer; digest: string; signature: Signature } {
   let fd: number | undefined;
   try {
     const before = bootstrapFileIdentity(path); fd = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
@@ -58,11 +79,14 @@ export function readBootstrapEvidence(path: string): BootstrapEvidence {
     const initial = signature(stat);
     if (!sameBootstrapIdentity(initial, signature(lstatSync(path, { bigint: true })))) throw bootstrapUnknown();
     const bytes = Buffer.alloc(Number(stat.size)); if (readSync(fd, bytes, 0, bytes.length, 0) !== bytes.length) throw bootstrapUnknown();
-    const parsed = recordSchema.safeParse(JSON.parse(bytes.toString("utf8")));
-    if (!parsed.success || !parsed.data.workerThread || !sameBootstrapIdentity(initial, signature(fstatSync(fd, { bigint: true }))) ||
+    if (!sameBootstrapIdentity(initial, signature(fstatSync(fd, { bigint: true }))) ||
         !sameBootstrapIdentity(initial, signature(lstatSync(path, { bigint: true })))) throw bootstrapUnknown();
-    return { record: parsed.data, signature: initial, digest: createHash("sha256").update(bytes).digest("hex") };
+    return { bytes, signature: initial, digest: createHash("sha256").update(bytes).digest("hex") };
   } catch { throw bootstrapUnknown(); } finally { if (fd !== undefined) closeSync(fd); }
+}
+export function readBootstrapEvidence(path: string): BootstrapEvidence {
+  try { const { bytes, ...proof } = readRawEvidence(path), record = parseRecord(JSON.parse(bytes.toString("utf8"))); if (!record.workerThread) throw bootstrapUnknown(); return { record, ...proof }; }
+  catch { throw bootstrapUnknown(); }
 }
 export const readBootstrapRecord = (path: string) => readBootstrapEvidence(path).record;
 export function syncBootstrapDirectory(path: string): void {
@@ -82,7 +106,7 @@ export function syncBootstrapDirectory(path: string): void {
 }
 export function appendBootstrapRecord(record: BootstrapRecord, check: () => void): void {
   check();
-  recordSchema.parse(record);
+  parseRecord(record); assertRecordAnchor(record);
   const contents = JSON.stringify(record) + "\n";
   if (Buffer.byteLength(contents) > 16384) throw bootstrapUnknown();
   if (physicalPath(resolve(record.home)) !== record.home || dirname(record.file) !== record.home ||
@@ -97,12 +121,13 @@ export function appendBootstrapRecord(record: BootstrapRecord, check: () => void
 export function readBootstrapPair(home: string, attempt: string): { initial: BootstrapEvidence; prepared: BootstrapEvidence } {
   const dir = join(home, ".store-bootstrap"), initial = readBootstrapEvidence(join(dir, `${attempt}.preparing.json`)), prepared = readBootstrapEvidence(join(dir, `${attempt}.prepared.json`));
   const a = initial.record, b = prepared.record;
+  assertRecordAnchor(a); assertRecordAnchor(b);
   if (a.home !== home || b.home !== home || a.attempt !== attempt || b.attempt !== attempt || a.state !== "preparing" || b.state !== "prepared" ||
       a.files || a.namespace || a.preparedDigest || a.preparingDigest || a.preparingSignature || !b.files || !b.namespace || b.preparedDigest ||
       b.preparingDigest !== initial.digest || !sameBootstrapIdentity(b.preparingSignature, initial.signature) ||
       b.file !== a.file || b.pid !== a.pid || b.workerThread !== a.workerThread || b.processIdentity !== a.processIdentity ||
       !sameBootstrapIdentity(a.homeIdentity, bootstrapHomeIdentity(home)) || !sameBootstrapIdentity(b.homeIdentity, a.homeIdentity) || !sameBootstrapIdentity(b.original, a.original)) throw bootstrapUnknown();
-  const expected = [a.file, join(home, "archive.db"), join(home, "history.db")].sort();
+  const expected = bootstrapFiles(a.file).sort();
   if (dirname(a.file) !== home || JSON.stringify(Object.keys(a.original).sort()) !== JSON.stringify(expected) || JSON.stringify(Object.keys(b.files).sort()) !== JSON.stringify(expected)) throw bootstrapUnknown();
   for (const [file, original] of Object.entries(a.original)) if (original && !sameBootstrapIdentity(original, b.files[file])) throw bootstrapUnknown();
   return { initial, prepared };
@@ -122,6 +147,7 @@ export function assertBootstrapAccess(home: string): void {
     initializer.check(); const record = initializer.evidence.record;
     const current = readBootstrapEvidence(join(home, ".store-bootstrap", `${record.attempt}.preparing.json`));
     if (!sameBootstrapIdentity(current, initializer.evidence)) throw bootstrapUnknown();
+    assertRecordAnchor(current.record);
     const names = readdirSync(join(home, ".store-bootstrap"));
     if (names.length !== 1 || names[0] !== `${record.attempt}.preparing.json`) throw bootstrapUnknown();
     return;
@@ -132,8 +158,17 @@ export function assertBootstrapAccess(home: string): void {
  * changed or oversized ledgers block. No original is deleted/reclassified. */
 export function inspectBootstrapJournal(home: string): void {
   const dir = join(home, ".store-bootstrap"); let names: string[];
-  try { bootstrapHomeIdentity(dir); names = readdirSync(dir); }
-  catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return; throw error; }
+  const stored = storedProvenance(home), anchor = optionalAnchor(home);
+  if (!anchor) {
+    if (stored.value?.kind === "cold" || exists(dir) || stored.version >= 5 && !stored.value) throw bootstrapUnknown();
+    if (stored.value) validateProvenanceIdentity(home, stored.value);
+    return;
+  }
+  if (stored.value?.kind !== "cold") throw bootstrapUnknown();
+  validateProvenanceIdentity(home, stored.value);
+  if (!sameBootstrapIdentity(coldProof(anchor), coldProof(stored.value))) throw bootstrapUnknown();
+  try { if (!sameBootstrapIdentity(bootstrapHomeIdentity(dir), anchor.record.journalIdentity)) throw bootstrapUnknown(); names = readdirSync(dir); }
+  catch { throw bootstrapUnknown(); }
   if (!names.length || names.length > 48 || names.length % 3) throw bootstrapUnknown();
   const groups = new Map<string, Map<string, BootstrapRecord>>();
   for (const name of names) {
@@ -150,8 +185,113 @@ export function inspectBootstrapJournal(home: string): void {
     if (exited.preparedDigest !== pair.prepared.digest || exited.preparingDigest !== prepared.preparingDigest || !sameBootstrapIdentity(exited.preparingSignature, prepared.preparingSignature) ||
         !sameBootstrapIdentity(exited.files, prepared.files) || exited.namespace !== prepared.namespace ||
         [prepared, exited].some(item => item.file !== initial.file || item.pid !== initial.pid || item.workerThread !== initial.workerThread || item.processIdentity !== initial.processIdentity || !sameBootstrapIdentity(item.original, initial.original))) throw bootstrapUnknown();
-    const expected = [initial.file, join(home, "archive.db"), join(home, "history.db")].sort();
+    if (initial.attempt !== anchor.record.attempt) throw bootstrapUnknown();
+    const expected = bootstrapFiles(initial.file).sort();
     if (JSON.stringify(Object.keys(initial.original).sort()) !== JSON.stringify(expected) || JSON.stringify(Object.keys(prepared.files).sort()) !== JSON.stringify(expected)) throw bootstrapUnknown();
     for (const [file, identity] of Object.entries(prepared.files)) if (dirname(file) !== home || !sameBootstrapIdentity(identity, bootstrapFileIdentity(file))) throw bootstrapUnknown();
   }
+}
+
+export const bootstrapFiles = (file: string) => [...new Set([file, join(dirname(file), DB_FILE_NAME), join(dirname(file), "archive.db"), join(dirname(file), "history.db")])];
+const anchorPath = (home: string) => join(home, ".store-bootstrap.expected.json");
+const exists = (path: string) => { try { lstatSync(path); return true; } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return false; throw bootstrapUnknown(); } };
+function optionalAnchor(home: string): AnchorEvidence | undefined {
+  try {
+  if (!exists(anchorPath(home))) return;
+  const { bytes, ...proof } = readRawEvidence(anchorPath(home)), v = JSON.parse(bytes.toString("utf8"));
+  if (!object(v) || !strict(v, ["version", "contract", "attempt", "home", "homeIdentity", "file", "original", "journalIdentity"]) ||
+    v.version !== 1 || v.contract !== CONTRACT || !uuid(v.attempt) || v.home !== home || !text(v.file) || dirname(v.file) !== home || !identity(v.homeIdentity) || !identity(v.journalIdentity) || !identities(v.original, true)) throw bootstrapUnknown();
+  if (!sameBootstrapIdentity(bootstrapHomeIdentity(home), v.homeIdentity) || !sameBootstrapIdentity(bootstrapHomeIdentity(join(home, ".store-bootstrap")), v.journalIdentity)) throw bootstrapUnknown();
+  return { record: v as Anchor, ...proof };
+  } catch { throw bootstrapUnknown(); }
+}
+function coldProof(value: AnchorEvidence | Extract<Provenance, { kind: "cold" }>) {
+  return "record" in value ? { attempt: value.record.attempt, anchorDigest: value.digest, anchorSignature: value.signature, journalIdentity: value.record.journalIdentity } :
+    { attempt: value.attempt, anchorDigest: value.anchorDigest, anchorSignature: value.anchorSignature, journalIdentity: value.journalIdentity };
+}
+function assertRecordAnchor(record: BootstrapRecord): AnchorEvidence {
+  const anchor = optionalAnchor(record.home);
+  if (!anchor || record.attempt !== anchor.record.attempt || record.file !== anchor.record.file || !sameBootstrapIdentity(record.original, anchor.record.original) ||
+    record.anchorDigest !== anchor.digest || !sameBootstrapIdentity(record.anchorSignature, anchor.signature) || !sameBootstrapIdentity(record.journalIdentity, anchor.record.journalIdentity)) throw bootstrapUnknown();
+  return anchor;
+}
+export function syncBootstrapHomeChain(home: string, check: () => void): void {
+  const chain: { path: string; identity: Identity }[] = [];
+  for (let path = resolve(home);;) {
+    check(); if (chain.length >= 64) throw bootstrapUnknown(); chain.push({ path, identity: bootstrapHomeIdentity(path) });
+    const parent = dirname(path); if (parent === path) break; path = parent;
+  }
+  for (const entry of chain.reverse()) {
+    check(); if (!sameBootstrapIdentity(entry.identity, bootstrapHomeIdentity(entry.path))) throw bootstrapUnknown();
+    syncBootstrapDirectory(entry.path); check();
+  }
+  for (const entry of chain) if (!sameBootstrapIdentity(entry.identity, bootstrapHomeIdentity(entry.path))) throw bootstrapUnknown();
+}
+export function publishBootstrapAnchor(record: BootstrapRecord, check: () => void): BootstrapRecord {
+  check(); if (exists(anchorPath(record.home)) || exists(join(record.home, ".store-bootstrap"))) throw bootstrapUnknown();
+  syncBootstrapHomeChain(record.home, check); check();
+  const dir = join(record.home, ".store-bootstrap"); mkdirSync(dir, { mode: 0o700 }); check(); syncBootstrapDirectory(record.home); check(); syncBootstrapDirectory(dir); check();
+  const anchor: Anchor = { version: 1, contract: CONTRACT, attempt: record.attempt, home: record.home, homeIdentity: record.homeIdentity, file: record.file,
+    original: record.original, journalIdentity: bootstrapHomeIdentity(dir) };
+  const fd = openSync(anchorPath(record.home), "wx", 0o600);
+  try { check(); writeFileSync(fd, JSON.stringify(anchor) + "\n"); check(); fsyncSync(fd); } finally { closeSync(fd); }
+  check(); syncBootstrapDirectory(record.home); check();
+  const evidence = optionalAnchor(record.home)!;
+  return { ...record, anchorDigest: evidence.digest, anchorSignature: evidence.signature, journalIdentity: evidence.record.journalIdentity };
+}
+function parseProvenance(value: unknown): Provenance {
+  const v = value;
+  if (!object(v) || v.version !== 1 || v.contract !== CONTRACT || !identity(v.homeIdentity) || !identity(v.metadataIdentity) || !uuid(v.generation) ||
+    (v.kind !== "ordinary" && v.kind !== "cold") || !strict(v, v.kind === "ordinary" ? ["version", "contract", "homeIdentity", "metadataIdentity", "generation", "kind"] :
+    ["version", "contract", "homeIdentity", "metadataIdentity", "generation", "kind", "attempt", "anchorDigest", "anchorSignature", "journalIdentity"]) ||
+    v.kind === "cold" && (!uuid(v.attempt) || v.generation !== v.attempt || !digest(v.anchorDigest) || !validSignature(v.anchorSignature) || !identity(v.journalIdentity))) throw bootstrapUnknown();
+  return v as Provenance;
+}
+function storedProvenance(home: string): { version: number; value?: Provenance } {
+  const file = join(home, DB_FILE_NAME); if (!exists(file)) return { version: 0 };
+  const before = bootstrapFileIdentity(file), db = new DatabaseSync(file, { readOnly: true, timeout: 0 });
+  try {
+    const version = db.prepare("SELECT 1 FROM sqlite_master WHERE name='bridge_components'").get() ? Number(db.prepare("SELECT version FROM bridge_components WHERE name='metadata'").get()?.version ?? 0) : 0;
+    const raw = db.prepare("SELECT 1 FROM sqlite_master WHERE name='bridge_metadata'").get() ? db.prepare("SELECT value FROM bridge_metadata WHERE domain='store-bootstrap' AND key='provenance'").get()?.value : undefined;
+    if (!sameBootstrapIdentity(before, bootstrapFileIdentity(file))) throw bootstrapUnknown();
+    if (raw === undefined) return { version };
+    if (!text(raw, 16384)) throw bootstrapUnknown(); return { version, value: parseProvenance(JSON.parse(raw)) };
+  } finally { db.close(); }
+}
+function validateProvenanceIdentity(home: string, value: Provenance) {
+  if (!sameBootstrapIdentity(value.homeIdentity, bootstrapHomeIdentity(home)) || !sameBootstrapIdentity(value.metadataIdentity, bootstrapFileIdentity(join(home, DB_FILE_NAME)))) throw bootstrapUnknown();
+}
+function currentProvenance(home: string): Provenance {
+  const base = { version: 1 as const, contract: CONTRACT, homeIdentity: bootstrapHomeIdentity(home), metadataIdentity: bootstrapFileIdentity(join(home, DB_FILE_NAME)) };
+  if (initializer?.home === home) {
+    assertBootstrapAccess(home); const anchor = assertRecordAnchor(initializer.evidence.record);
+    return { ...base, generation: anchor.record.attempt, kind: "cold", ...coldProof(anchor) };
+  }
+  if (exists(anchorPath(home)) || exists(join(home, ".store-bootstrap"))) throw bootstrapUnknown();
+  return { ...base, generation: randomUUID(), kind: "ordinary" };
+}
+/** Called only inside the canonical pre-current metadata schema transaction.
+ * Normal current-component missing-provenance access refuses before reaching it. */
+export function initializeBootstrapProvenance(db: DatabaseSync, home: string, previousVersion: number): void {
+  home = physicalPath(resolve(home));
+  if (!db.isTransaction || !Number.isSafeInteger(previousVersion) || previousVersion < 0 || previousVersion >= 5 || physicalPath(resolve(db.location("main")!)) !== physicalPath(resolve(join(home, DB_FILE_NAME)))) throw bootstrapUnknown();
+  const value = currentProvenance(home);
+  db.prepare("INSERT INTO bridge_metadata(domain,key,value,updated_at) VALUES('store-bootstrap','provenance',?,?)").run(JSON.stringify(value), Date.now());
+}
+export function bindColdBootstrapMetadata(db: DatabaseSync, home: string, check: () => void): void {
+  home = physicalPath(resolve(home)); if (initializer?.home !== home) throw bootstrapUnknown();
+  check(); const expected = currentProvenance(home), stored = storedProvenance(home); if (stored.version !== 5 || !stored.value) throw bootstrapUnknown();
+  validateProvenanceIdentity(home, stored.value);
+  if (stored.value.kind === "cold") { if (!sameBootstrapIdentity(expected, stored.value)) throw bootstrapUnknown(); return; }
+  db.exec("BEGIN IMMEDIATE");
+  try { check(); db.prepare("UPDATE bridge_metadata SET value=?,updated_at=? WHERE domain='store-bootstrap' AND key='provenance'").run(JSON.stringify(expected), Date.now()); check(); db.exec("COMMIT"); }
+  catch (error) { db.exec("ROLLBACK"); throw error; }
+}
+export function captureBootstrapWitness(home: string): BootstrapWitness {
+  inspectBootstrapJournal(home); const anchor = optionalAnchor(home); if (!anchor) throw bootstrapUnknown();
+  const dir = join(home, ".store-bootstrap"), records = readdirSync(dir).sort().map(name => readBootstrapEvidence(join(dir, name)));
+  return { home, anchor, records };
+}
+export function assertBootstrapWitness(expected: BootstrapWitness | undefined): void {
+  if (expected && !sameBootstrapIdentity(captureBootstrapWitness(expected.home), expected)) throw bootstrapUnknown();
 }

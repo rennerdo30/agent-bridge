@@ -1,8 +1,8 @@
 import { admissionSqliteBusy } from "./storage-admission.js";
 import { observeAdmissionPhase } from "./admission-observation.js";
 import { guardPriorEndpoints } from "./prior-endpoints.js";
-import { assertBootstrapAccess } from "./store-bootstrap-journal.js";
-import { assertMetadataUpgradeBoundary } from "./metadata-db.js";
+import { assertBootstrapAccess, assertBootstrapWitness } from "./store-bootstrap-journal.js";
+import { assertMetadataUpgradeBoundary, metadataDb } from "./metadata-db.js";
 import { existsSync, mkdirSync, realpathSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { dirname, resolve } from "node:path";
@@ -470,6 +470,7 @@ export class MessageStore {
         finally { this.closeCapturedHandle(inspection); }
       }
       if (version === 2 || version === 3) throw Object.assign(new Error("Pre-lease schema2/3 requires owner-coordinated shutdown and explicit offline migration into an isolated home; automatic shared-home migration is refused."), { code: "STORE_OFFLINE_REQUIRED" });
+      metadataDb(dirname(file));
       if (version < SQLITE_STORE_VERSION) {
         try { unlockUpgrade = observeAdmissionPhase("leases", () => maintenanceLock(dirname(file), false, true)); }
         catch (cause) { throw Object.assign(new Error("Mailbox migration exclusion is unavailable; owner-coordinated shutdown is required before sharing this data home.", { cause }), { code: "STORE_READER_ACTIVE" }); }
@@ -1529,11 +1530,11 @@ export async function openMessageStore(file: string, log: Logger, endpoint: stri
   signal?.throwIfAborted();
   if (file !== ":memory:") assertBootstrapAccess(dirname(file));
   if (file === ":memory:") return new MessageStore(file, log);
-  if (startupDeadline !== undefined) await (await import("./store-bootstrap.js")).prepareColdStore(file, endpoint, token, log, signal, startupDeadline);
+  const expected = startupDeadline !== undefined ? await (await import("./store-bootstrap.js")).prepareColdStore(file, endpoint, token, log, signal, startupDeadline) : undefined;
   let store: MessageStore | undefined, admitted: (() => number) | undefined;
   try {
     const opened = await guardPriorEndpoints(dirname(file), endpoint, token, log, signal, check => {
-      admitted = check; store = new MessageStore(file, log); check(); return store;
+      admitted = check; assertBootstrapWitness(expected); store = new MessageStore(file, log); assertBootstrapWitness(expected); check(); return store;
     }, file, startupDeadline);
     admitted?.(); signal?.throwIfAborted(); return opened;
   } catch (error) {
