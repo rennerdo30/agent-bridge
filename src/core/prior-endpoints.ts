@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync, lstatSync } from "node:fs";
 import { dirname, join, posix, resolve } from "node:path";
 import { connect } from "node:net";
+import { setTimeout as delay } from "node:timers/promises";
 import { DatabaseSync } from "node:sqlite";
 import { BridgeClient } from "./client.js";
 import { APP_NAME, CONNECT_TIMEOUT_MS, DB_FILE_NAME, PROTOCOL_VERSION, WINDOWS_PIPE_PREFIX } from "./constants.js";
@@ -43,6 +44,7 @@ function refused(endpoint: string, reason: string): BridgeError {
  * This observation is NOT migration exclusion: the storage maintenance lock supplies that boundary. */
 export async function guardPriorEndpoints(home: string, current: string, token: string, log: Logger, signal?: AbortSignal): Promise<void> {
   signal?.throwIfAborted();
+  const deadline = Date.now() + CONNECT_TIMEOUT_MS;
   const file = join(home, DB_FILE_NAME);
   if (existsSync(file)) {
     let inspectionState: { version: number; metadata: number };
@@ -66,38 +68,49 @@ export async function guardPriorEndpoints(home: string, current: string, token: 
     if (inspectionState.version === 2 || inspectionState.version === 3) throw refused(home, "a pre-lease schema2/3 store requiring explicit offline migration into an isolated home");
     if (inspectionState.metadata === 1 || inspectionState.metadata === 2) throw refused(home, `a component${inspectionState.metadata} metadata store whose cached inactive writers require explicit owner-coordinated offline migration into an isolated home`);
   }
-  for (const endpoint of priorEndpoints(home)) {
+  for (let observation = 0; ; observation++) {
+    for (const endpoint of priorEndpoints(home)) {
+      signal?.throwIfAborted();
+      if (endpoint === current) continue; // The ordinary current endpoint exact-auth gate handles custom overrides.
+      if (process.platform === "win32") {
+        // Node cannot attest a foreign named pipe's ACL/server identity. Do not
+        // disclose a token to it: any live or indeterminate pipe blocks startup.
+        await new Promise<void>((accept, reject) => {
+          const socket = connect(endpoint), timer = setTimeout(() => { socket.destroy(); reject(refused(endpoint, "unresponsive")); }, PROBE_MS);
+          const done = () => { clearTimeout(timer); socket.destroy(); };
+          socket.once("connect", () => { done(); reject(refused(endpoint, "active with unverified pipe ownership")); });
+          socket.once("error", error => { done(); if (["ENOENT", "ECONNREFUSED"].includes((error as NodeJS.ErrnoException).code ?? "")) accept(); else reject(refused(endpoint, "inaccessible")); });
+        });
+        continue;
+      }
+      try {
+        const entry = lstatSync(endpoint), directory = lstatSync(dirname(endpoint)), uid = process.getuid?.();
+        if (!entry.isSocket() || entry.isSymbolicLink() || uid === undefined || entry.uid !== uid ||
+            !directory.isDirectory() || directory.isSymbolicLink() || directory.uid !== uid || (directory.mode & 0o077) !== 0)
+          throw refused(endpoint, "not a verified private socket");
+      } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") continue; throw error; }
+      let client: BridgeClient;
+      try { client = await BridgeClient.connect(endpoint, log, PROBE_MS, { readOnlyDirectory: true }); }
+      catch (error) {
+        if (["ENOENT", "ECONNREFUSED"].includes((error as NodeJS.ErrnoException).code ?? "")) continue;
+        throw refused(endpoint, "inaccessible or unresponsive");
+      }
+      try { signal?.throwIfAborted(); await client.request("auth", { protocol: PROTOCOL_VERSION, token }, PROBE_MS); }
+      catch { signal?.throwIfAborted(); throw refused(endpoint, "active and incompatible or unauthenticated"); }
+      finally { client.close(); }
+      throw refused(endpoint, "active");
+    }
     signal?.throwIfAborted();
-    if (endpoint === current) continue; // The ordinary current endpoint exact-auth gate handles custom overrides.
-    if (process.platform === "win32") {
-      // Node cannot attest a foreign named pipe's ACL/server identity. Do not
-      // disclose a token to it: any live or indeterminate pipe blocks startup.
-      await new Promise<void>((accept, reject) => {
-        const socket = connect(endpoint), timer = setTimeout(() => { socket.destroy(); reject(refused(endpoint, "unresponsive")); }, PROBE_MS);
-        const done = () => { clearTimeout(timer); socket.destroy(); };
-        socket.once("connect", () => { done(); reject(refused(endpoint, "active with unverified pipe ownership")); });
-        socket.once("error", error => { done(); if (["ENOENT", "ECONNREFUSED"].includes((error as NodeJS.ErrnoException).code ?? "")) accept(); else reject(refused(endpoint, "inaccessible")); });
-      });
-      continue;
-    }
-    try {
-      const entry = lstatSync(endpoint), directory = lstatSync(dirname(endpoint)), uid = process.getuid?.();
-      if (!entry.isSocket() || entry.isSymbolicLink() || uid === undefined || entry.uid !== uid ||
-          !directory.isDirectory() || directory.isSymbolicLink() || directory.uid !== uid || (directory.mode & 0o077) !== 0)
-        throw refused(endpoint, "not a verified private socket");
-    } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") continue; throw error; }
-    let client: BridgeClient;
-    try { client = await BridgeClient.connect(endpoint, log, PROBE_MS, { readOnlyDirectory: true }); }
+    try { assertCompatibleMailboxReaders(home); return; }
     catch (error) {
-      if (["ENOENT", "ECONNREFUSED"].includes((error as NodeJS.ErrnoException).code ?? "")) continue;
-      throw refused(endpoint, "inaccessible or unresponsive");
+      signal?.throwIfAborted();
+      const census = error as { code?: string; readerCompatibility?: string };
+      // Only a new successful census can admit. Never expire, clean or grant an
+      // unknown reader; a completed old declaration and all other errors refuse.
+      // Recheck endpoints too: one may have appeared while the census yielded.
+      if (!(census.code === "ENOENT" || census.code === "STORE_READER_ACTIVE" && census.readerCompatibility === "unproven") || Date.now() >= deadline)
+        throw refused(home, "retained by an unproven storage reader");
     }
-    try { signal?.throwIfAborted(); await client.request("auth", { protocol: PROTOCOL_VERSION, token }, PROBE_MS); }
-    catch { signal?.throwIfAborted(); throw refused(endpoint, "active and incompatible or unauthenticated"); }
-    finally { client.close(); }
-    throw refused(endpoint, "active");
+    await delay(Math.min(25 * 2 ** Math.min(observation, 4), Math.max(1, deadline - Date.now())), undefined, { signal });
   }
-  signal?.throwIfAborted();
-  try { assertCompatibleMailboxReaders(home); }
-  catch { throw refused(home, "retained by an unproven storage reader"); }
 }

@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { BridgeClient } from "../src/core/client.js";
-import { PROTOCOL_VERSION } from "../src/core/constants.js";
+import { CONNECT_TIMEOUT_MS, PROTOCOL_VERSION } from "../src/core/constants.js";
 import { closeMetadataDbs } from "../src/core/metadata-db.js";
 import { nullLogger } from "../src/core/logger.js";
 import { BridgeNode } from "../src/core/node.js";
@@ -14,11 +14,20 @@ import { BridgeError } from "../src/core/protocol.js";
 import { assertCompatibleMailboxReaders, storageLease } from "../src/core/storage-lock.js";
 import { deliveryFailure } from "../src/mcp/delivery-evidence.js";
 
-const io = vi.hoisted(() => ({ connect: vi.fn(), lstat: vi.fn(), write: vi.fn(), actualLstat: undefined as any, actualWrite: undefined as any }));
+const io = vi.hoisted(() => ({ connect: vi.fn(), lstat: vi.fn(), write: vi.fn(), read: vi.fn(), stat: vi.fn(), actualLstat: undefined as any, actualWrite: undefined as any, actualRead: undefined as any, actualStat: undefined as any }));
+vi.mock("node:timers/promises", async original => ({ ...await original<typeof import("node:timers/promises")>(),
+  setTimeout: (ms: number, value: unknown, options?: { signal?: AbortSignal }) => new Promise((resolve, reject) => {
+    const signal = options?.signal;
+    if (signal?.aborted) { reject(signal.reason); return; }
+    const timer = setTimeout(() => { signal?.removeEventListener("abort", aborted); resolve(value); }, ms);
+    const aborted = () => { clearTimeout(timer); signal?.removeEventListener("abort", aborted); reject(signal!.reason); };
+    signal?.addEventListener("abort", aborted, { once: true });
+  }) }));
 vi.mock("node:net", async original => ({ ...await original<typeof import("node:net")>(), connect: io.connect }));
 vi.mock("node:fs", async original => {
   const actual = await original<typeof import("node:fs")>(); io.actualLstat = actual.lstatSync; io.actualWrite = actual.writeSync;
-  return { ...actual, lstatSync: io.lstat, writeSync: io.write };
+  io.actualRead = actual.readFileSync; io.actualStat = actual.statSync;
+  return { ...actual, lstatSync: io.lstat, writeSync: io.write, readFileSync: io.read, statSync: io.stat };
 });
 let home: string, file: string, original: Buffer, live: string | undefined;
 let inspections = 0, busy = 0;
@@ -26,6 +35,7 @@ const sockets: { destroyed: boolean }[] = [];
 beforeEach(() => {
   live = undefined; inspections = 0; busy = 0; sockets.length = 0;
   io.write.mockImplementation(io.actualWrite);
+  io.read.mockImplementation(io.actualRead); io.stat.mockImplementation(io.actualStat);
   io.lstat.mockImplementation((path: string) => {
     if (path === live || live && path === dirname(live)) return {
       isSocket: () => path === live, isDirectory: () => path !== live, isSymbolicLink: () => false,
@@ -50,9 +60,50 @@ beforeEach(() => {
     return prepare.call(this, sql);
   });
 });
-afterEach(() => { vi.restoreAllMocks(); closeMetadataDbs(); io.connect.mockReset(); io.lstat.mockReset(); rmSync(home, { recursive: true, force: true }); });
+afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); closeMetadataDbs(); io.connect.mockReset(); io.lstat.mockReset(); rmSync(home, { recursive: true, force: true }); });
 const guard = (signal?: AbortSignal) => guardPriorEndpoints(home, "fixture-current", "fixture-only-token", nullLogger, signal);
 const unchanged = () => { expect(readFileSync(file).equals(original)).toBe(true); expect(readdirSync(home)).toEqual(["bridge.db"]); };
+
+it.each(["publication", "release"])("reinspects a suspended %s census before admitting effects, without latching a false protocol refusal", async phase => {
+  vi.useFakeTimers(); const release = storageLease(home), dir = join(home, ".storage-users"), lease = join(dir, readdirSync(dir)[0]!);
+  const originalLease = io.actualRead(lease), effect = vi.fn();
+  let ready = false, observations = 0, failure: unknown;
+  io.read.mockImplementation((path: unknown, ...args: any[]) => {
+    if (path === lease && !ready) {
+      observations++;
+      if (phase === "publication") return "";
+      throw Object.assign(new Error("fixture own lease disappearing after directory snapshot"), { code: "ENOENT" });
+    }
+    return io.actualRead(path, ...args);
+  });
+  io.stat.mockImplementation((path: unknown, ...args: any[]) => {
+    if (path === lease && !ready && phase === "release") throw Object.assign(new Error("fixture absent after snapshot"), { code: "ENOENT" });
+    return io.actualStat(path, ...args);
+  });
+  const admission = guard().then(effect, error => { failure = error; });
+  try {
+    await vi.waitFor(() => expect(observations).toBeGreaterThan(0));
+    expect(effect).not.toHaveBeenCalled(); expect(failure).toBeUndefined();
+    ready = true; await vi.runAllTimersAsync(); await admission;
+    expect(effect).toHaveBeenCalledOnce(); expect(failure).toBeUndefined();
+    expect(io.actualRead(lease)).toEqual(originalLease); expect(readFileSync(file)).toEqual(original);
+  } finally { ready = true; await vi.runAllTimersAsync(); await admission; release(); }
+});
+
+it("cancels an unresolved reader observation without an effect or protocol-refusal substitution", async () => {
+  vi.useFakeTimers(); const release = storageLease(home), dir = join(home, ".storage-users"), lease = join(dir, readdirSync(dir)[0]!);
+  let observations = 0;
+  io.read.mockImplementation((path: unknown, ...args: any[]) => {
+    if (path === lease) { observations++; return ""; }
+    return io.actualRead(path, ...args);
+  });
+  const stop = new AbortController(), effect = vi.fn();
+  const admission = guard(stop.signal).then(effect, error => error);
+  try {
+    await vi.waitFor(() => expect(observations).toBeGreaterThan(0)); stop.abort();
+    expect(await admission).toMatchObject({ name: "AbortError" }); expect(effect).not.toHaveBeenCalled(); expect(readFileSync(file)).toEqual(original);
+  } finally { io.read.mockImplementation(io.actualRead); release(); }
+});
 
 it("fails closed during actual lease publication and admits only its completed current declaration", async () => {
   let unpublished: unknown;
@@ -72,12 +123,51 @@ it("fails closed during actual lease publication and admits only its completed c
 });
 
 it("distinguishes incomplete reader refusal from an endpoint version without admitting or rewriting it", async () => {
+  vi.useFakeTimers(); const began = Date.now();
   const fs = await import("node:fs"), dir = join(home, ".storage-users"); fs.mkdirSync(dir);
   const lease = join(dir, `${process.pid}-incomplete-publication`); fs.writeFileSync(lease, "");
-  let refusal: unknown; try { await guard(); } catch (error) { refusal = error; }
+  let refusal: unknown; const admission = guard().catch(error => { refusal = error; });
+  await vi.runAllTimersAsync(); await admission;
   expect(refusal).toMatchObject({ code: "protocol_mismatch" });
   expect(deliveryFailure(refusal)).toEqual({ code: "protocol_mismatch", reason: "protocol-refusal", protocol: { source: "storage-reader" } });
+  expect(Date.now() - began).toBeLessThanOrEqual(CONNECT_TIMEOUT_MS);
   expect(readFileSync(lease)).toEqual(Buffer.alloc(0)); expect(readFileSync(file)).toEqual(original);
+});
+
+it.each([2, 3, 4, 5, 6, 7, PROTOCOL_VERSION])("never waits through or rewrites a completed incompatible protocol%s/schema reader", async protocol => {
+  vi.useFakeTimers(); const release = storageLease(home), dir = join(home, ".storage-users"), lease = join(dir, readdirSync(dir)[0]!);
+  const fs = await import("node:fs"), owner = JSON.parse(readFileSync(lease, "utf8"));
+  fs.writeFileSync(lease, JSON.stringify({ ...owner, mailboxProtocol: protocol, mailboxSchema: protocol === PROTOCOL_VERSION ? 13 : 14 })); const bytes = readFileSync(lease), began = Date.now();
+  try {
+    await expect(guard()).rejects.toMatchObject({ code: "protocol_mismatch" });
+    expect(Date.now()).toBe(began); expect(readFileSync(lease)).toEqual(bytes); expect(readFileSync(file)).toEqual(original);
+  } finally { release(); }
+});
+
+it.each([1, 2])("refuses cached-writer metadata%s before probing or any reader-admission wait", async metadata => {
+  vi.restoreAllMocks(); const db = new DatabaseSync(file);
+  db.exec(`CREATE TABLE bridge_components(name TEXT, version INTEGER); INSERT INTO bridge_components VALUES ('metadata', ${metadata})`); db.close();
+  original = readFileSync(file);
+  await expect(guard()).rejects.toMatchObject({ code: "protocol_mismatch" });
+  expect(io.connect).not.toHaveBeenCalled(); unchanged();
+});
+
+it("rechecks a prior endpoint published while an incomplete reader census yields", async () => {
+  vi.useFakeTimers(); const fs = await import("node:fs"), dir = join(home, ".storage-users"); fs.mkdirSync(dir);
+  const lease = join(dir, `${process.pid}-incomplete-publication`); fs.writeFileSync(lease, "");
+  let seen = false;
+  io.read.mockImplementation((path: unknown, ...args: any[]) => { if (path === lease) seen = true; return io.actualRead(path, ...args); });
+  const request = vi.fn().mockRejectedValue(new BridgeError("protocol_mismatch", "fixture incompatible p7")), close = vi.fn();
+  const connect = vi.spyOn(BridgeClient, "connect").mockResolvedValue({ request, close } as any);
+  let refusal: unknown; const admission = guard().catch(error => { refusal = error; });
+  await vi.waitFor(() => expect(seen).toBe(true));
+  live = priorEndpoints(home).find(path => /-p7(?:\.sock)?$/.test(path))!;
+  fs.writeFileSync(lease, JSON.stringify({ pid: process.pid, nonce: "fixture-current", createdAt: Date.now(), mailboxProtocol: PROTOCOL_VERSION, mailboxSchema: 14 }));
+  await vi.runAllTimersAsync(); await admission;
+  expect(refusal).toMatchObject({ code: "protocol_mismatch" });
+  expect(deliveryFailure(refusal).protocol?.source).toBe("prior-endpoint");
+  if (process.platform === "win32") expect(connect).not.toHaveBeenCalled(); else expect(close).toHaveBeenCalledOnce();
+  expect(readFileSync(file)).toEqual(original);
 });
 
 it("yields through a transient read-only schema inspection busy error before admitting startup", async () => {

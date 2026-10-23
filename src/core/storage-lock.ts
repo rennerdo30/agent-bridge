@@ -176,7 +176,12 @@ export function assertCompatibleMailboxReaders(home: string): void {
     if (owner?.pid === pid && owner.mailboxProtocol === PROTOCOL_VERSION && owner.mailboxSchema === SQLITE_STORE_VERSION) continue;
     const createdAt = owner?.createdAt ?? statSync(path).mtimeMs;
     if (Number.isSafeInteger(pid) && pid > 0 && ownerGone(pid, createdAt)) continue;
-    throw Object.assign(new Error(`Mailbox reader compatibility is unproven (lease ${path}); owner-coordinated shutdown is required before sharing this data home.`), { code: "STORE_READER_ACTIVE" });
+    // A complete incompatible declaration is terminal. An incomplete entry may
+    // be between exclusive creation and write, or removal after readdir. It is
+    // never compatible; asynchronous admission may only take a fresh census.
+    const incompatible = owner?.pid === pid && Number.isSafeInteger(owner.mailboxProtocol) && Number.isSafeInteger(owner.mailboxSchema);
+    throw Object.assign(new Error(`Mailbox reader compatibility is unproven (lease ${path}); owner-coordinated shutdown is required before sharing this data home.`),
+      { code: "STORE_READER_ACTIVE", readerCompatibility: incompatible ? "incompatible" : "unproven" });
   }
 }
 
