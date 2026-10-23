@@ -341,6 +341,7 @@ function createRecovery(home: string): string {
 }
 
 export function readBackup(path: string): BackupManifest {
+  bootstrapHomeIdentity(path);
   if (existsSync(join(path, "failure.json"))) throw new Error("Unsettled backup publication; original snapshot retained");
   // Resolve only the fixed external witness name, never a manifest-supplied
   // path. No database/config payload is read before this proof is available.
@@ -370,7 +371,9 @@ export function readBackup(path: string): BackupManifest {
   }
   if (bootstrap) {
     const marker = join(path, PUBLICATION_NAME), state = lstatSync(marker);
-    if (!state.isFile() || state.isSymbolicLink() || state.nlink !== 1 || state.size > 256) throw new Error("Unproven backup publication");
+    // Format2 adds the external group's digest and exact five-part file
+    // signature; the former 256-byte v1 marker bound cannot contain it.
+    if (!state.isFile() || state.isSymbolicLink() || state.nlink !== 1 || state.size > 1024) throw new Error("Unproven backup publication");
     const publication: unknown = JSON.parse(readFileSync(marker, "utf8"));
     if (!isRecord(publication) || publication.version !== 2 || publication.manifest !== manifestDigest || !witness || publication.group !== witness.digest || !sameBootstrapIdentity(publication.groupSignature, witness.signature)) throw new Error("Unproven backup publication");
     const checksummedDatabases = [...seen].filter(name => bootstrap.databases.includes(name)).sort();
