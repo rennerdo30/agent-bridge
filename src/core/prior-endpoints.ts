@@ -49,9 +49,10 @@ export async function guardPriorEndpoints(home: string, current: string, token: 
   const expired = () => new BridgeError("timeout", "Prior endpoint admission exceeded its aggregate budget; startup was not admitted. No storage or registration effects were allowed.");
   const remaining = () => {
     signal?.throwIfAborted();
-    if (Date.now() >= deadline && !admission.signal.aborted) admission.abort(expired());
+    const left = deadline - Date.now();
+    if (left <= 0 && !admission.signal.aborted) admission.abort(expired());
     admission.signal.throwIfAborted();
-    return deadline - Date.now();
+    return left;
   };
   const cancelled = () => admission.abort(signal!.reason);
   signal?.addEventListener("abort", cancelled, { once: true });
