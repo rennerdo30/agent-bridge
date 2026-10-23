@@ -262,7 +262,7 @@ function validateProvenanceIdentity(home: string, value: Provenance) {
   if (!sameBootstrapIdentity(value.homeIdentity, bootstrapHomeIdentity(home)) || !sameBootstrapIdentity(value.metadataIdentity, bootstrapFileIdentity(join(home, DB_FILE_NAME)))) throw bootstrapUnknown();
 }
 function currentProvenance(home: string): Provenance {
-  const base = { version: 1 as const, contract: CONTRACT, homeIdentity: bootstrapHomeIdentity(home), metadataIdentity: bootstrapFileIdentity(join(home, DB_FILE_NAME)) };
+  const base = { version: 1 as const, contract: CONTRACT as typeof CONTRACT, homeIdentity: bootstrapHomeIdentity(home), metadataIdentity: bootstrapFileIdentity(join(home, DB_FILE_NAME)) };
   if (initializer?.home === home) {
     assertBootstrapAccess(home); const anchor = assertRecordAnchor(initializer.evidence.record);
     return { ...base, generation: anchor.record.attempt, kind: "cold", ...coldProof(anchor) };
