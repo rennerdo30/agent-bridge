@@ -5,6 +5,8 @@ import { MessageStore } from "../src/core/store.js";
 import { NativeChildren } from "../src/core/native-children.js";
 import { nullLogger } from "../src/core/logger.js";
 import { PROTOCOL_VERSION } from "../src/core/constants.js";
+import { makeEnv, type TestEnv } from "./helpers.js";
+import { join } from "node:path";
 
 const io = vi.hoisted(() => ({ servers: [] as any[] }));
 vi.mock("node:net", async original => {
@@ -18,10 +20,11 @@ vi.mock("node:net", async original => {
 });
 const deferred = () => { let release!: () => void; const promise = new Promise<void>(done => { release = done; }); return { promise, release }; };
 let store: MessageStore | undefined;
+let env: TestEnv | undefined;
 const brokers: Broker[] = [];
-afterEach(async () => { for (const broker of brokers.splice(0)) await broker.close(); store?.close(); store = undefined; vi.restoreAllMocks(); vi.useRealTimers(); io.servers = []; });
-function fixture() {
-  store = new MessageStore(":memory:", nullLogger); const broker = new Broker("fixture-startup", store, nullLogger, "fixture-token");
+afterEach(async () => { for (const broker of brokers.splice(0)) await broker.close(); store?.close(); store = undefined; vi.restoreAllMocks(); vi.useRealTimers(); io.servers = []; await env?.cleanup(); env = undefined; });
+function fixture(file = ":memory:") {
+  store = new MessageStore(file, nullLogger); const broker = new Broker("fixture-startup", store, nullLogger, "fixture-token");
   brokers.push(broker);
   const server = Object.assign(new EventEmitter(), { listening: true, address: () => "fixture-startup", close(this: any, done?: () => void) { this.listening = false; this.emit("close"); done?.(); return this; } });
   const reservation = { ownedServer: () => server, activate: vi.fn(), close: vi.fn(async () => { server.listening = false; }) };
@@ -73,4 +76,15 @@ it("rejects protocol8 authentication before granting authority while protocol9 a
   expect(connection.authed).toBe(false); expect(insert).not.toHaveBeenCalled(); expect(insertOnce).not.toHaveBeenCalled();
   expect(PROTOCOL_VERSION).toBe(9); auth(connection, { protocol: 9, token: "fixture-token" });
   expect(connection.authed).toBe(true); expect(insert).not.toHaveBeenCalled(); expect(insertOnce).not.toHaveBeenCalled();
+});
+
+it("does not schedule actual file-store archive maintenance while TCP is suspended across expiry", async () => {
+  env = makeEnv(); const f = fixture(env.db), gate = deferred(), entered = deferred();
+  vi.spyOn(f.broker as any, "startTcpFallback").mockImplementation(async () => { entered.release(); await gate.promise; });
+  const backups = vi.spyOn(store!, "startBackups");
+  const pending = f.broker.listen(f.reservation as any, f.check, f.controller.signal).catch((error: unknown) => error);
+  await entered.promise; const earlyCalls = backups.mock.calls.length, timer = (store as any).archiveTimer;
+  f.expire(); await Promise.resolve(); const lateCalls = backups.mock.calls.length;
+  gate.release(); const failure = await pending;
+  expect(earlyCalls).toBe(0); expect(timer).toBeNull(); expect(lateCalls).toBe(0); expect(failure).toMatchObject({ code: "timeout" });
 });

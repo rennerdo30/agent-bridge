@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
-import { existsSync, readFileSync, readdirSync, renameSync, mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { copyFileSync, existsSync, readFileSync, readdirSync, renameSync, mkdirSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { openMessageStore, type MessageStore } from "../src/core/store.js";
@@ -171,6 +171,38 @@ it("checks complete evidence again at final construction rather than trusting ex
   });
   await expect(open()).rejects.toMatchObject({ code: "STORE_BOOTSTRAP_UNSETTLED" });
   expect(changed).toBe(true); expect(opened).toBeUndefined(); expect(existsSync(join(env.home, "retained-preparing-proof"))).toBe(true); expect(ddl).toBe(1);
+});
+
+it("refuses a parent-directory publication failure before journal or schema effects", async () => {
+  schemaMs = 0; directoryIo.onSync = () => { if (directoryIo.syncs.at(-1) === dirname(env.home)) throw new Error("Controlled parent publication failure"); };
+  await expect(open()).rejects.toMatchObject({ code: "STORE_BOOTSTRAP_UNSETTLED" });
+  expect(ddl).toBe(0); expect(existsSync(env.db)).toBe(false); expect(existsSync(join(env.home, ".store-bootstrap"))).toBe(false);
+});
+
+it.each(["absent", "replaced"])("retains expected whole-journal identity through final construction: %s", async mode => {
+  schemaMs = 0;
+  const policy = await import("../src/core/sqlite-policy.js"), configure = policy.configureSqlite; let changed = false;
+  vi.spyOn(policy, "configureSqlite").mockImplementation((...args) => {
+    configure(...args);
+    if (!changed && wire.workers.length && wire.workers[0].threadId === -1) {
+      changed = true; const dir = join(env.home, ".store-bootstrap"), retained = join(env.home, "retained-original-journal");
+      renameSync(dir, retained);
+      if (mode === "replaced") { mkdirSync(dir); for (const name of readdirSync(retained)) copyFileSync(join(retained, name), join(dir, name)); }
+    }
+  });
+  const failure = await open().then(value => { opened = value; return undefined; }, error => error);
+  expect(failure).toMatchObject({ code: "STORE_BOOTSTRAP_UNSETTLED" }); expect(opened).toBeUndefined(); expect(changed).toBe(true); expect(ddl).toBe(1);
+  expect(readdirSync(join(env.home, "retained-original-journal"))).toHaveLength(3);
+});
+
+it("refuses a missing whole journal on restart and cached metadata instead of treating it as never prepared", async () => {
+  schemaMs = 0; opened = await open(); opened.close(); opened = undefined;
+  const cached = metadataDb(env.home), original = readFileSync(env.db);
+  renameSync(join(env.home, ".store-bootstrap"), join(env.home, "retained-original-journal"));
+  expect(() => metadataDb(env.home)).toThrow(/preparation/i); expect(cached.isOpen).toBe(true);
+  const failure = await open().then(value => { opened = value; return undefined; }, error => error);
+  expect(failure).toMatchObject({ code: "STORE_BOOTSTRAP_UNSETTLED" }); expect(ddl).toBe(1); expect(wire.starts).toBe(1);
+  expect(readFileSync(env.db)).toEqual(original);
 });
 
 it.each([["missing module", "ERR_MODULE_NOT_FOUND"], ["unknown code", "not-allowlisted"], ["oversized code", "x".repeat(4097)]])("retains only a bounded classification for an actual fake Worker error event: %s", async (_label, code) => {
