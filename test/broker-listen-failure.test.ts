@@ -16,10 +16,15 @@ const onUnhandled = (reason: unknown) => { unhandled.push(reason); };
 beforeEach(() => { env = makeEnv(); unhandled.length = 0; process.on("unhandledRejection", onUnhandled); });
 afterEach(async () => { process.off("unhandledRejection", onUnhandled); await env.cleanup(); });
 
-const settle = (p: Promise<void>, ms: number) => Promise.race([
-  p.then(() => "resolved", (err: Error) => `rejected: ${err.message}`),
-  new Promise<string>((r) => setTimeout(() => r("pending"), ms)),
-]);
+const settle = async (p: Promise<void>, ms: number) => {
+  let deadline: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      p.then(() => "resolved", (err: Error) => `rejected: ${err.message}`),
+      new Promise<string>((r) => { deadline = setTimeout(() => r("pending"), ms); }),
+    ]);
+  } finally { if (deadline) clearTimeout(deadline); } // The same original deadline; no orphan timer after rejection.
+};
 
 it("keeps a broker whose optional startup step throws (handoff replay) and still settles listen()", async () => {
   const store = new MessageStore(env.db, nullLogger);

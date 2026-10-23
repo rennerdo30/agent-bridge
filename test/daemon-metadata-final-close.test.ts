@@ -207,12 +207,14 @@ describe("metadata close prerequisites: observations only; canonical issuer UNWI
   expect(journal.length).toBeGreaterThan(512); expect(journal.subarray(0, 8).toString("hex")).toBe("d9d505f920a163d7");
   expect(journal.readUInt32BE(16)).toBeGreaterThan(0); expect(journal.readUInt32BE(24)).toBeGreaterThanOrEqual(512);
   expect(main.equals(originalMain)).toBe(false); // Actual uncommitted database spill, not only an inert journal file.
-  const authorizing = vi.spyOn(api, "metadataDb"), unchanged = noEffects(), result = observe(); retained(result); unchanged();
+  const authorizing = vi.spyOn(api, "metadataDb"), anyPrepare = vi.spyOn(DatabaseSync.prototype, "prepare"), anyExec = vi.spyOn(DatabaseSync.prototype, "exec");
+  const unchanged = noEffects(), result = observe(); retained(result); unchanged();
   expect(result.blockers).toContain("nonrecovering_read_unproved"); expect(result.blockers).toContain("schema_unknown");
   expect(result.blockers).toContain("durability_unknown"); expect(result.schemaDigest).toBeNull();
   // No new authorizing open/SQL may recover this genuine hot journal. Observe
   // only the exact native reference retained before the owned child exited.
-  expect(authorizing).not.toHaveBeenCalled(); expect(Object.is(ownedReferences.get(home), db)).toBe(true);
+  expect(authorizing).not.toHaveBeenCalled(); expect(anyPrepare).not.toHaveBeenCalled(); expect(anyExec).not.toHaveBeenCalled();
+  expect(Object.is(ownedReferences.get(home), db)).toBe(true);
   expect(db.isOpen).toBe(true); expect(db.isTransaction).toBe(false);
   expect(readFileSync(file)).toEqual(main); expect(readFileSync(journalFile)).toEqual(journal);
   // Do NOT call statement.get() or inspect rows. It is retained but its safe use
