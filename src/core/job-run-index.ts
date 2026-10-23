@@ -137,15 +137,16 @@ function olderWriter(writer: unknown): boolean {
 }
 /** Broker startup owns the zero-wait SQLite policy for this home. After an upgrade it invalidates
  * once (older processes may have written runs without index rows), then starts the eager backfill. */
-export function startBrokerJobRunIndex(home: string): Promise<void> {
+export function startBrokerJobRunIndex(home: string, check: () => void = () => {}): Promise<void> {
+  check();
   try {
     if (existsSync(join(home, "bridge.db"))) {
       const complete = value(home, STATE, "complete");
       if (isRecord(complete) && (complete.version !== SCHEMA || olderWriter(complete.writer))) invalidateJobRunIndex(home);
     }
   } catch { /* The backfill below reports a persistent metadata failure. */ }
-  brokerHomes.add(rootKey(home));
-  return startJobRunBackfill(home);
+  check(); brokerHomes.add(rootKey(home));
+  return startJobRunBackfill(home, 0, check);
 }
 function scheduleRetry(home: string, attempt = 0): void {
   let key: string;
@@ -223,9 +224,9 @@ export function releasingMetadata<T>(home: string, action: () => T): T {
  * one short transaction: FULL fsync is amortized over the batch and the write lock is never held
  * during file IO. Each update's history/head read+write remains in that one transaction. */
 const INDEX_BATCH = 32;
-async function indexObserved(home: string, key: string, runs: RunLogRecord[], signal: AbortSignal): Promise<void> {
+async function indexObserved(home: string, key: string, runs: RunLogRecord[], signal: AbortSignal, check: () => void = () => {}): Promise<void> {
   for (let at = 0; at < runs.length; at += INDEX_BATCH) {
-    signal.throwIfAborted();
+    check(); signal.throwIfAborted();
     const batch = runs.slice(at, at + INDEX_BATCH);
     const observed = batch.map(run => {
       if (!run.metadataFile || relative(key, run.file).split(sep)[0] !== "runs") return { run };
@@ -239,6 +240,7 @@ async function indexObserved(home: string, key: string, runs: RunLogRecord[], si
     // A feed may rewrite routing metadata after the observation: re-read only that pair under the lock,
     // so a stale observation never commits after the writer's own route update.
     await retryBusy(signal, () => transaction(home, () => {
+      check();
       for (const { run, source, witness } of observed) {
         indexJobRun(home, source && metadataWitness(source.metadataFile!) !== witness ? observeRunFile(home, source.file, source.metadataFile!) : run);
       }
@@ -249,19 +251,22 @@ async function indexObserved(home: string, key: string, runs: RunLogRecord[], si
 
 /** One eager, shared background operation per broker home. Partial observations are durable;
  * a crash simply resumes idempotent upserts. No source bytes are moved or removed by backfill. */
-export function startJobRunBackfill(home: string, attempt = 0): Promise<void> {
+export function startJobRunBackfill(home: string, attempt = 0, check: () => void = () => {}): Promise<void> {
+  check();
   const key = rootKey(home), active = pending.get(key);
   if (active) return active.work;
   const retry = retries.get(key); if (retry) { clearTimeout(retry.timer); retries.delete(key); }
   const stop = new AbortController();
   const work = (async () => {
     await yieldTurn(); // Never discover a catalog inline in a request handler.
+    check();
     stop.signal.throwIfAborted();
     if (ready(home)) return;
     // The broker and a fallback MCP reader may live in different processes.
     // Share the existing crash-recoverable, archive-on-release lease protocol.
     let release: (() => void) | undefined;
     while (!release) {
+      check();
       stop.signal.throwIfAborted();
       if (ready(home)) return;
       try { release = metadataFileLease(join(key, "job-run-index.lease"), 0, true); }
@@ -275,10 +280,13 @@ export function startJobRunBackfill(home: string, attempt = 0): Promise<void> {
       let complete = false;
       const before = value(home, STATE, "invalidated"), failures = failureWitness(home), observedFrom = Date.now();
       const runs = await readRunLogsResponsive(home, undefined, observed => { complete = observed; }, stop.signal, true);
-      await indexObserved(home, key, runs, stop.signal);
+      check();
+      await indexObserved(home, key, runs, stop.signal, check);
+      check();
       stop.signal.throwIfAborted();
       if (!complete) throw preparing("catalog observation incomplete");
       await retryBusy(stop.signal, () => transaction(home, () => {
+        check();
         if (value(home, STATE, "invalidated") !== before || failureWitness(home) !== failures) throw preparing("unindexed writer change");
         put(home, STATE, "complete", { version: SCHEMA, failures, writer: APP_VERSION, observedFrom, completedAt: Date.now() } satisfies Completion);
       }));

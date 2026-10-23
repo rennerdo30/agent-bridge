@@ -7,7 +7,7 @@ import { maintenanceLock, withMaintenanceExclusion } from "./storage-lock.js";
 import { guardBootstrapPreparation } from "./prior-endpoints.js";
 import { processIdentity } from "./process-identity.js";
 import { checkBootstrapOriginal, coldStoreFiles, needsColdPreparation, type ColdBootstrapPlan } from "./store-bootstrap.js";
-import { appendBootstrapRecord, bootstrapFileIdentity, bootstrapHomeIdentity, bootstrapUnknown, inspectBootstrapJournal, sameBootstrapIdentity, type BootstrapRecord } from "./store-bootstrap-journal.js";
+import { appendBootstrapRecord, bootstrapFileIdentity, bootstrapHomeIdentity, bootstrapUnknown, inspectBootstrapJournal, readBootstrapEvidence, sameBootstrapIdentity, withBootstrapInitializer, type BootstrapRecord } from "./store-bootstrap-journal.js";
 
 /** Actual initializer kernel; tests invoke it only behind an explicit fake
  * Worker transport. There is no broker, provider, listener or service launch. */
@@ -25,12 +25,14 @@ export async function runColdStoreBootstrap(plan: ColdBootstrapPlan): Promise<Bo
         checkBootstrapOriginal(record); check();
         if (!needsColdPreparation(record.file)) throw bootstrapUnknown();
         appendBootstrapRecord(record); check(); // Immutable pending evidence BEFORE any schema/metadata effect.
-        store = new MessageStore(record.file, nullLogger); check();
-        const namespace = store.namespace; check();
-        store.closeBootstrapPreparation(); store = undefined;
-        closeMetadataDbs(); check();
+        const initial = readBootstrapEvidence(join(record.home, ".store-bootstrap", `${record.attempt}.preparing.json`));
+        const namespace = withBootstrapInitializer(record, check, () => {
+          store = new MessageStore(record.file, nullLogger); check();
+          const namespace = store.namespace; check();
+          store.closeBootstrapPreparation(); store = undefined; closeMetadataDbs(); check(); return namespace;
+        });
         if (!sameBootstrapIdentity(bootstrapHomeIdentity(record.home), record.homeIdentity)) throw bootstrapUnknown();
-        const prepared: BootstrapRecord = { ...record, state: "prepared", namespace,
+        const prepared: BootstrapRecord = { ...record, state: "prepared", namespace, preparingDigest: initial.digest, preparingSignature: initial.signature,
           files: Object.fromEntries(coldStoreFiles(record.file).map(file => [file, bootstrapFileIdentity(file)])) };
         for (const [file, original] of Object.entries(record.original)) if (original && !sameBootstrapIdentity(original, prepared.files![file])) throw bootstrapUnknown();
         appendBootstrapRecord(prepared); check(); return prepared;

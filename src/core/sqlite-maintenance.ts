@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { assertBootstrapAccess } from "./store-bootstrap-journal.js";
 import { createHash } from "node:crypto";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -65,6 +66,7 @@ export function archiveInitializationObservation(db: DatabaseSync): Readonly<{
     ownerBound: false, ownershipReleased: false });
 }
 export function openArchive(path: string, options: { migrate?: boolean; home?: string } = {}): DatabaseSync {
+  if (path !== ":memory:") assertBootstrapAccess(options.home ?? dirname(path));
   storageAdmissionRemaining();
   const existed = existsSync(path);
   let admitted: ReturnType<typeof preserveArchiveTarget> | undefined;

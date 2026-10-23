@@ -1,6 +1,8 @@
 import { admissionSqliteBusy } from "./storage-admission.js";
 import { observeAdmissionPhase } from "./admission-observation.js";
 import { guardPriorEndpoints } from "./prior-endpoints.js";
+import { assertBootstrapAccess } from "./store-bootstrap-journal.js";
+import { assertMetadataUpgradeBoundary } from "./metadata-db.js";
 import { existsSync, mkdirSync, realpathSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { dirname, resolve } from "node:path";
@@ -447,6 +449,7 @@ export class MessageStore {
     file: string,
     private readonly log: Logger,
   ) {
+    if (file !== ":memory:") { assertBootstrapAccess(dirname(file)); assertMetadataUpgradeBoundary(dirname(file)); }
     retainedStoreConstructions.add(this.lifecycleConstruction);
     try {
     this.file = file;
@@ -1524,6 +1527,7 @@ export class MessageStore {
  * same fresh reader proof/deadline. A completed earlier guard grants no authority. */
 export async function openMessageStore(file: string, log: Logger, endpoint: string, token: string, signal?: AbortSignal, startupDeadline?: number): Promise<MessageStore> {
   signal?.throwIfAborted();
+  if (file !== ":memory:") assertBootstrapAccess(dirname(file));
   if (file === ":memory:") return new MessageStore(file, log);
   if (startupDeadline !== undefined) await (await import("./store-bootstrap.js")).prepareColdStore(file, endpoint, token, log, signal, startupDeadline);
   let store: MessageStore | undefined, admitted: (() => number) | undefined;

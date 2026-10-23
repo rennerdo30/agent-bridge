@@ -544,7 +544,8 @@ export class NetworkService {
     return this.broker.receive(message, destination ?? null);
   }
 
-  async start(deferAuthority = false): Promise<void> {
+  async start(deferAuthority = false, check: () => void = () => {}, signal?: AbortSignal): Promise<void> {
+    check(); signal?.throwIfAborted();
     if (!this.cfg.enabled) throw new Error("networking is disabled");
     if (this.server || this.closed) throw new Error("network service already started or closed");
     this.authorityActive = !deferAuthority;
@@ -574,11 +575,13 @@ export class NetworkService {
         server.once("error", reject);
         server.listen(this.cfg.port, this.cfg.bind, () => { server.off("error", reject); resolve(); });
       });
+      check(); signal?.throwIfAborted();
       if (this.cfg.discovery) {
         this.discovery = new NetworkDiscovery({ identity: this.keys.identity, port: this.port, onError: (err) => this.log.warn("network discovery error", { message: err.message }) });
         await this.discovery.start();
+        check(); signal?.throwIfAborted();
       }
-      this.startupComplete = true;
+      check(); this.startupComplete = true;
       if (!deferAuthority) this.activateAuthority();
     } catch (err) { await this.close(); throw err; }
   }

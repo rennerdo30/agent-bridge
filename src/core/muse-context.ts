@@ -56,9 +56,11 @@ export function writeMusePrivateJson(path: string, value: Record<string, unknown
 }
 
 /** writeMusePrivateJson with the DPAPI helper off the event loop; same file format, mode and flag semantics. */
-export async function writeMusePrivateJsonAsync(path: string, value: Record<string, unknown>, flag = "wx"): Promise<void> {
+export async function writeMusePrivateJsonAsync(path: string, value: Record<string, unknown>, flag = "wx", signal?: AbortSignal, check?: () => void): Promise<void> {
+  signal?.throwIfAborted(); check?.();
   const text = JSON.stringify(value);
-  const content = process.platform === "win32" ? JSON.stringify({ protected: await windowsProtectAsync(text, false) }) : text;
+  const content = process.platform === "win32" ? JSON.stringify({ protected: await windowsProtectAsync(text, false, signal) }) : text;
+  signal?.throwIfAborted(); check?.();
   writeFileSync(path, content, { mode: 0o600, flag });
 }
 

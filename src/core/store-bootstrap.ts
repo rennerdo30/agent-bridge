@@ -10,7 +10,7 @@ import { ownProcessIdentity } from "./process-identity.js";
 import { physicalPath } from "./project-identity.js";
 import { maintenanceLock } from "./storage-lock.js";
 import type { Logger } from "./logger.js";
-import { appendBootstrapRecord, bootstrapDigest, bootstrapFileIdentity, bootstrapHomeIdentity, bootstrapUnknown, bootstrapWorkerFailure, inspectBootstrapJournal, readBootstrapRecord, sameBootstrapIdentity, type BootstrapRecord } from "./store-bootstrap-journal.js";
+import { appendBootstrapRecord, bootstrapFileIdentity, bootstrapHomeIdentity, bootstrapUnknown, bootstrapWorkerFailure, inspectBootstrapJournal, readBootstrapPair, sameBootstrapIdentity, type BootstrapRecord, type BootstrapEvidence } from "./store-bootstrap-journal.js";
 
 export interface ColdBootstrapPlan { record: BootstrapRecord; endpoint: string; token: string; deadline: number; revoked: SharedArrayBuffer }
 const pending = new Set<string>();
@@ -29,7 +29,7 @@ export function needsColdPreparation(file: string): boolean {
     metadata = db.prepare("SELECT 1 FROM sqlite_master WHERE name='bridge_components'").get()
       ? Number(db.prepare("SELECT version FROM bridge_components WHERE name='metadata'").get()?.version ?? 0) : 0;
   } finally { db.close(); }
-  if (version === 0 && metadata === 3 && !present[1] && !present[2]) return true;
+  if (version === 0 && metadata === 4 && !present[1] && !present[2]) return true;
   if (version === 14 && (!present[1] || !present[2])) throw bootstrapUnknown();
   return false; // Existing populated/legacy stores retain the ordinary migration/refusal contract.
 }
@@ -58,7 +58,7 @@ export async function prepareColdStore(file: string, endpoint: string, token: st
       check(); bootstrapHomeIdentity(home); inspectBootstrapJournal(home);
       if (!needsColdPreparation(file)) return undefined;
       return { version: 1 as const, attempt: randomUUID(), state: "preparing" as const, home, homeIdentity: bootstrapHomeIdentity(home), file,
-        contract: "protocol8-metadata3-schema14-cold-v1" as const,
+        contract: "protocol9-metadata4-schema14-cold-v2" as const,
         original: Object.fromEntries(coldStoreFiles(file).map(path => [path, existsSync(path) ? bootstrapFileIdentity(path) : null])),
         pid: process.pid, processIdentity: "" };
     }, file, deadline);
@@ -68,10 +68,11 @@ export async function prepareColdStore(file: string, endpoint: string, token: st
     const revoked = new SharedArrayBuffer(4), cell = new Int32Array(revoked);
     const plan: ColdBootstrapPlan = { record, endpoint, token, deadline, revoked };
     // Register cancellation before any cold owned worker can start.
-    let cancelled: unknown, prepared: BootstrapRecord | undefined, termination: Promise<number> | undefined;
+    let cancelled: unknown, prepared: BootstrapRecord | undefined, originalPair: { initial: BootstrapEvidence; prepared: BootstrapEvidence } | undefined, termination: Promise<number> | undefined;
+    let phase = "worker-start-or-kernel";
     let rejectWait: ((error: unknown) => void) | undefined;
     const stop = () => {
-      cancelled ??= signal?.aborted ? signal.reason : bootstrapUnknown(); Atomics.store(cell, 0, 1);
+      cancelled ??= signal?.aborted ? signal.reason : Object.assign(bootstrapUnknown(), { bootstrapStage: phase, bootstrapFailure: "original-deadline-or-unsettled-stop" }); Atomics.store(cell, 0, 1);
       if (worker && !termination) {
         termination = worker.terminate();
         void termination.then(() => rejectWait?.(cancelled), error => { cancelled = new AggregateError([cancelled, error], "Owned cold-store worker termination is unproven; original evidence retained"); rejectWait?.(cancelled); });
@@ -93,7 +94,7 @@ export async function prepareColdStore(file: string, endpoint: string, token: st
           if (message?.attempt !== record.attempt || message?.state !== "prepared") { stop(); return; }
           try {
             const mismatch = (reason: string) => Object.assign(bootstrapUnknown(), { bootstrapStage: "prepared-record-validation", bootstrapFailure: reason });
-            try { prepared = readBootstrapRecord(join(home, ".store-bootstrap", `${record.attempt}.prepared.json`)); }
+            try { originalPair = readBootstrapPair(home, record.attempt); prepared = originalPair.prepared.record; }
             catch { throw mismatch("unreadable-prepared-record"); }
             if (prepared.attempt !== record.attempt || prepared.state !== "prepared") throw mismatch("attempt-or-state");
             if (prepared.home !== home || prepared.file !== file) throw mismatch("destination");
@@ -102,6 +103,7 @@ export async function prepareColdStore(file: string, endpoint: string, token: st
             if (prepared.workerThread !== workerThread) throw mismatch("worker-thread");
             if (prepared.processIdentity !== identity) throw mismatch("process-incarnation");
             if (!prepared.files || !prepared.namespace) throw mismatch("missing-prepared-proof");
+            phase = "prepared-awaiting-exit";
           } catch (error) { cancelled = error; stop(); }
         });
         worker!.on("error", error => { cancelled ??= bootstrapWorkerFailure(error); stop(); });
@@ -112,14 +114,18 @@ export async function prepareColdStore(file: string, endpoint: string, token: st
         try { check(); } catch (error) { cancelled = error; stop(); }
       });
       check();
+      phase = "exit-evidence-finalization";
       // Exit IPC is not a proof transfer. This new guard owns only the durable
       // exact-exit record; the final opener obtains yet another fresh proof.
       await guardPriorEndpoints(home, endpoint, token, log, signal, remaining => {
         const release = maintenanceLock(home, false, true);
         try {
           remaining(); check();
-          for (const [path, id] of Object.entries(prepared!.files!)) if (!sameBootstrapIdentity(bootstrapFileIdentity(path), id)) throw bootstrapUnknown();
-          appendBootstrapRecord({ ...prepared!, state: "exited", preparedDigest: bootstrapDigest(prepared!) }); remaining(); check();
+          const current = readBootstrapPair(home, record.attempt);
+          if (!sameBootstrapIdentity(current, originalPair)) throw bootstrapUnknown();
+          for (const [path, id] of Object.entries(current.prepared.record.files!)) if (!sameBootstrapIdentity(bootstrapFileIdentity(path), id)) throw bootstrapUnknown();
+          appendBootstrapRecord({ ...current.prepared.record, state: "exited", preparedDigest: current.prepared.digest }); remaining(); check();
+          inspectBootstrapJournal(home); remaining(); check();
         } finally { release(); }
       }, file, deadline);
     } finally {

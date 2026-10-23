@@ -112,7 +112,7 @@ export async function runBrokerDaemon(home: string, pipe: string, log: Logger): 
   };
   try {
     try {
-      await broker.listen(reservation, () => startup.remaining()); listening = true;
+      await broker.listen(reservation, () => startup.remaining(), startup.signal); listening = true;
       startup.remaining(); startup.close(); process.off("SIGTERM", stopStartup); process.off("SIGINT", stopStartup);
     }
     catch (error) {

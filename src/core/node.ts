@@ -486,7 +486,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
       startup.remaining();
       const broker = new Broker(this.opts.pipePath, store, this.log.child("broker"), this.opts.token, Date.now, join(dirname(this.opts.dbPath), JOBS_FILE), this.opts.network);
       if (this.degradedReason) broker.setHostingMode("embedded_degraded", this.degradedReason);
-      await broker.listen(reservation, () => startup.remaining());
+      await broker.listen(reservation, () => startup.remaining(), startup.signal);
       if (this.stopping || startup.signal.aborted || Date.now() >= startup.deadline) {
         // stop() ran while this node was opening the store or listening: never keep a broker nobody will close.
         await broker.close();

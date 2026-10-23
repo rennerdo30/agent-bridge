@@ -102,14 +102,14 @@ it("restores namespace, original spec/archive and proof/index in one consistent 
   expect(runnerLedgerNamespace(env.home)).toBe(f.ledger.namespace);
   expect(() => assertRunnerArchiveAdmission(env.home, f.spec.job.id)).not.toThrow();
 });
-it.each([{ version: 0, evidence: "pre-component" }, { version: 1, evidence: "shipping" }, { version: 1, evidence: "b206" }, { version: 2, evidence: "80e" }])("upgrades $evidence metadata component $version additively after interrupted backup, with old reader exclusion", ({ version, evidence }) => {
+it.each([{ version: 0, evidence: "pre-component" }, { version: 1, evidence: "shipping" }, { version: 1, evidence: "b206" }, { version: 2, evidence: "80e" }, { version: 3, evidence: "6b-unreleased" }])("upgrades $evidence metadata component $version additively after interrupted backup, with old reader exclusion", ({ version, evidence }) => {
   env = makeEnv(); const db = metadataDb(env.home);
   const original = JSON.stringify({ pid: 0, status: "done", report: "original archived bytes", originalProof: "do-not-reclassify",
     ...(["b206", "80e"].includes(evidence) ? { pendingDeliveryRetention: [{ messageId: "old-uuid", record: "original archived bytes" }] } : {}) });
   db.prepare("INSERT INTO bridge_metadata VALUES(?,?,?,?)").run("job-state-archive", "legacy/old", original, 1);
   db.prepare("UPDATE bridge_components SET version=? WHERE name='metadata'").run(version);
   closeMetadataDb(env.home);
-  if (version === 1 || version === 2) {
+  if (version > 0 && version < METADATA_STORE_VERSION) {
     const originalBytes = readFileSync(join(env.home, "bridge.db"));
     expect(() => metadataDb(env.home)).toThrow(new RegExp(`component${version} cached writers`));
     expect(readFileSync(join(env.home, "bridge.db"))).toEqual(originalBytes);
@@ -136,7 +136,7 @@ it.each([{ version: 0, evidence: "pre-component" }, { version: 1, evidence: "shi
   const exclusive = maintenanceLock(env.home); exclusive();
   // The fixture home is owned; no real process or installed store participates.
 });
-it.each([1, 2])("keeps component%s and every original row when migration aborts after its verified backup, then retries idempotently", version => {
+it.each([1, 2, 3])("keeps component%s and every original row when migration aborts after its verified backup, then retries idempotently", version => {
   env = makeEnv(); const db = metadataDb(env.home);
   db.prepare("INSERT INTO bridge_metadata VALUES(?,?,?,?)").run("job-state", "old", JSON.stringify({ pid: 0, status: "done", report: "unique shipping bytes" }), 1);
   const original = db.prepare("SELECT * FROM bridge_metadata ORDER BY domain,key").all();

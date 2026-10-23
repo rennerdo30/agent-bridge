@@ -7,9 +7,10 @@ import { metadataFileLease } from "./metadata-file-lease.js";
 import { assertStoreUpgrade, liveStorePeers, metadataRelease } from "./store-compatibility.js";
 import { maintenanceLock, storageLease } from "./storage-lock.js";
 import { physicalPath } from "./project-identity.js";
+import { assertBootstrapAccess } from "./store-bootstrap-journal.js";
 import { snapshotMetadataTables } from "./metadata-snapshot.js";
 
-export const METADATA_STORE_VERSION = 3;
+export const METADATA_STORE_VERSION = 4;
 const VERSION = METADATA_STORE_VERSION;
 const connections = new Map<string, DatabaseSync>();
 type MetadataAdmissionIdentity = { home: string; file: string };
@@ -147,6 +148,7 @@ export function physicalMetadataPath(path: string): void {
 
 /** Observe an already admitted component without starting a competing migration. */
 export function existingMetadataDb(home: string): DatabaseSync | undefined {
+ assertBootstrapAccess(home);
  const file = join(resolve(home),"bridge.db"), cached = connections.get(handleKey(file));
  if (cached) { admissionSqliteBusy(cached); return escapeMetadataReference(cached); }
  if (!existsSync(file)) return undefined;
@@ -164,6 +166,7 @@ export function existingMetadataDb(home: string): DatabaseSync | undefined {
 /** Read old component presence without granting its handle to a writer. The
  * capability census must not disappear merely because this reader is newer. */
 export function metadataPresenceRows(home: string): Record<string, unknown>[] | undefined {
+ assertBootstrapAccess(home);
  const file = join(resolve(home), "bridge.db");
  if (!existsSync(file)) return undefined;
  physicalMetadataPath(file);
@@ -186,11 +189,25 @@ export function assertMetadataAdmission(home: string): void {
 /** An operator attestation, never inferred from endpoints or an environment flag.
  * All readers stopped; the named home is explicitly isolated from old releases. */
 export interface OfflineMetadataAdmission { kind: "offline-isolated"; home: string }
+/** Read-only preflight before any writable opener or schema/backup publication. */
+export function assertMetadataUpgradeBoundary(home: string, offline?: OfflineMetadataAdmission): void {
+ const file = join(resolve(home), "bridge.db"); if (!existsSync(file)) return;
+ const inspection = new DatabaseSync(file, { readOnly: true, timeout: 0 });
+ try {
+  const version = inspection.prepare("SELECT 1 FROM sqlite_master WHERE name='bridge_components'").get()
+   ? Number(inspection.prepare("SELECT version FROM bridge_components WHERE name='metadata'").get()?.version ?? 0) : 0;
+  if (version > 0 && version < VERSION && (!offline || offline.kind !== "offline-isolated" || handleKey(physicalPath(resolve(offline.home))) !== handleKey(physicalPath(resolve(home)))))
+   throw Object.assign(new Error(`Metadata component${version} cached writers cannot be excluded automatically. Owner-coordinated offline migration into an explicitly isolated home is required; originals retained.`), { code: "STORE_OFFLINE_REQUIRED" });
+  if (!Number.isSafeInteger(version) || version < 0 || version > VERSION) throw new Error("Metadata component is unproven or newer; originals retained.");
+ } finally { inspection.close(); }
+}
 export function metadataDb(home: string, offline?: OfflineMetadataAdmission): DatabaseSync {
+ assertBootstrapAccess(home);
  storageAdmissionRemaining();
  const file = join(resolve(home), "bridge.db");
  const cached = connections.get(handleKey(file));
  if (cached) { admissionSqliteBusy(cached); return escapeMetadataReference(cached); }
+ assertMetadataUpgradeBoundary(home, offline);
  physicalMetadataPath(file);
  mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
  const existed = existsSync(file);

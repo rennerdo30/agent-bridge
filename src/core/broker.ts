@@ -95,7 +95,8 @@ import { DECISION_MESSAGE_HOP, MAX_DECISION_TEXT_CHARS, MAX_DECISION_TOPIC_CHARS
 import { askOwnerSchema, questionAnswerSchema, QUESTIONS_FILE } from "./owner-questions.js";
 import { OwnerQuestionService, OWNER_ADDRESS } from "./owner-question-service.js";
 import { BROKER_TCP_FILE, ensurePrivateSocketDirectory, isEphemeralBrokerTcpRecord, resolvePipePath } from "./paths.js";
-import { hasEndpointActivationWitness, type EndpointReservation } from "./endpoint-reservation.js";
+import { hasEndpointActivationWitness, EndpointReservation } from "./endpoint-reservation.js";
+const retainedStartupOwners = new Set<Broker>();
 
 export type LifecycleServingPhase = "admission" | "prepare" | "write";
 /** Opaque source capability. Shape/copy/serialized flags never confer authority. */
@@ -455,6 +456,7 @@ export class Broker {
   private networkChange: Promise<unknown> = Promise.resolve();
   private networkAuthorityDeferred = false;
   private startupAuthorityRevoked = false;
+  private readonly startupTransports = new Set<Server>();
   private readonly handlers: { [O in Exclude<Op, "modeSend">]: Handler<O> };
   private jobsSnapshot: { active: JsonSnapshot; archive: string; records: Record<string, unknown>[] } | null = null;
   private jobsForDispatch: Record<string, unknown>[] | null = null;
@@ -791,64 +793,48 @@ export class Broker {
   }
 
   /** Bind the endpoint. Rejects with the socket error (EADDRINUSE when another broker owns it). */
-  listen(reservation?: EndpointReservation, beforeActivate?: () => void): Promise<void> {
+  async listen(reservation?: EndpointReservation, beforeActivate?: () => void, signal?: AbortSignal): Promise<void> {
     beforeActivate?.();
-    if (reservation) return this.listenReserved(reservation, beforeActivate);
-    return new Promise((resolve, reject) => {
-      const server = createServer((socket) => this.accept(socket));
-      const onError = (err: Error) => {
-        server.removeListener("listening", listening);
-        reject(err);
-      };
-      /** Optional services: a failure is logged and the broker keeps serving without them (AB-223, AB-239). */
-      const optional = (what: string, step: () => void) => {
-        try { step(); } catch (err) { this.log.warn(`broker startup: ${what} failed; continuing without it`, { err: String(err) }); }
-      };
-      const onListening = async () => {
-        server.removeListener("error", onError);
-        server.on("error", (err) => this.log.error("broker server error", { err }));
-        this.server = server;
-        try {
-          await this.startServices(optional);
-          this.tcpReady = this.startTcpFallback();
-          await this.tcpReady.catch(err => this.log.warn("broker TCP fallback unavailable", { err: String(err) }));
-          resolve();
-        } catch (err) {
-          // Never leave a bound, half-started broker behind or an unhandled rejection: release the endpoint and let
-          // election retry. The caller owns (and closes) the store.
-          this.log.error("broker startup failed; releasing the endpoint", { err: String(err) });
-          await this.abortStartup().catch((closeErr) => this.log.warn("broker startup cleanup failed", { err: String(closeErr) }));
-          reject(err);
-        }
-      };
-      const listening = () => { void onListening(); };
-      server.once("error", onError);
-      server.once("listening", listening);
-      ensurePrivateSocketDirectory(this.pipePath);
-      server.listen(this.pipePath);
-    });
+    signal?.throwIfAborted();
+    const owned = reservation ?? await EndpointReservation.bind(this.pipePath);
+    return this.listenReserved(owned, beforeActivate, signal, reservation !== undefined);
   }
 
-  private async listenReserved(reservation: EndpointReservation, beforeActivate?: () => void): Promise<void> {
+  private async listenReserved(reservation: EndpointReservation, beforeActivate?: () => void, signal?: AbortSignal, allowIssuer = true): Promise<void> {
     this.server = reservation.ownedServer(this.pipePath);
     this.networkAuthorityDeferred = true;
+    let completed = false, cleanup: Promise<void> | undefined, transportCleanup: Promise<void> | undefined;
+    const check = () => {
+      if (!completed) { signal?.throwIfAborted(); beforeActivate?.(); signal?.throwIfAborted(); }
+      if (this.startupAuthorityRevoked || this.closing) throw new DOMException("Broker startup revoked", "AbortError");
+    };
+    const revoke = () => {
+      this.startupAuthorityRevoked = true; this.networkAuthorityDeferred = true; this.network?.deferAuthority();
+      this.healthMonitor.close(); if (this.purgeTimer) clearInterval(this.purgeTimer); this.purgeTimer = null;
+      for (const c of this.conns) c.socket.destroy();
+      retainedStartupOwners.add(this);
+      transportCleanup ??= reservation.close(); void transportCleanup.catch(() => {});
+      cleanup ??= this.abortStartup(); void cleanup.catch(() => {});
+    };
+    signal?.addEventListener("abort", revoke, { once: true });
     const optional = (what: string, step: () => void) => {
-      try { step(); } catch (err) { this.log.warn(`broker startup: ${what} failed; continuing without it`, { err: String(err) }); }
+      check(); try { step(); check(); } catch (err) { check(); this.log.warn(`broker startup: ${what} failed; continuing without it`, { err: String(err) }); }
     };
     try {
-      await this.startServices(optional);
+      check(); await this.startServices(optional, check, signal); check();
+      this.tcpReady = this.startTcpFallback(check, signal);
+      await this.tcpReady.catch(err => { check(); this.log.warn("broker TCP fallback unavailable", { err: String(err) }); }); check();
       const accept = (socket: Socket) => this.accept(socket);
-      beforeActivate?.();
+      check();
       reservation.activate(accept, this);
       this.network?.activateAuthority();
       this.networkAuthorityDeferred = false;
       this.server.on("error", err => this.log.error("broker server error", { err }));
-      this.tcpReady = this.startTcpFallback();
-      await this.tcpReady.catch(err => this.log.warn("broker TCP fallback unavailable", { err: String(err) }));
+      completed = true;
       // Only this real controlled reservation's completed activation registers a
       // source issuer. A constructor, legacy listener, tentative or failed start
       // cannot register/mint. Failure here leaves ordinary serving unchanged.
-      if (!servingBindings.has(this) && this.hosting.mode === "daemon" && this.store.file !== ":memory:"
+      if (allowIssuer && !servingBindings.has(this) && this.hosting.mode === "daemon" && this.store.file !== ":memory:"
         && hasEndpointActivationWitness(reservation, this, this.server, this.pipePath, accept)) {
         try {
           const server = this.server, home = realpathSync.native(dirname(this.store.file)), identity = servingHomeIdentity(home), hosting = this.hosting;
@@ -861,12 +847,11 @@ export class Broker {
         } catch { /* Unproved canonical home/endpoint binding is lifecycle unsupported, never repaired. */ }
       }
     } catch (error) {
-      this.startupAuthorityRevoked = true;
-      this.network?.deferAuthority();
-      await this.abortStartup().catch(() => {});
-      await reservation.close();
+      revoke();
+      try { await Promise.all([cleanup, transportCleanup]); retainedStartupOwners.delete(this); }
+      catch { throw new Error("Broker startup cleanup remains unsettled; exact owned resources are retained."); }
       throw error;
-    }
+    } finally { signal?.removeEventListener("abort", revoke); }
   }
 
   /** Undo a failed listen(): background services, timers and the bound server; the store stays open for its owner. */
@@ -875,34 +860,33 @@ export class Broker {
     if (this.purgeTimer) clearInterval(this.purgeTimer);
     this.purgeTimer = null;
     if (this.mobileResources) await this.disposeMobileResources().catch(() => this.mobileDisposalDiagnostic("mobile_disposal_failed"));
-    await this.stopTcpFallback();
     this.questions?.close(); this.questions = null;
-    if (this.jobsPath) await stopJobRunBackfill(dirname(this.jobsPath));
-    await this.historyBackground?.close().catch(() => {});
-    this.historyBackground = null;
-    await this.jobArchiveBackground?.close().catch(() => {});
-    this.jobArchiveBackground = null;
-    await this.store.closeBackups().catch(() => {});
+    const jobs = this.jobsPath ? stopJobRunBackfill(dirname(this.jobsPath)) : undefined;
+    const historyOwner = this.historyBackground, archiveOwner = this.jobArchiveBackground, networkOwner = this.network;
+    const history = historyOwner?.close().then(() => { if (this.historyBackground === historyOwner) this.historyBackground = null; });
+    const archive = archiveOwner?.close().then(() => { if (this.jobArchiveBackground === archiveOwner) this.jobArchiveBackground = null; });
+    const backups = this.store.closeBackups(), network = networkOwner?.close().then(() => { if (this.network === networkOwner) this.network = null; }), tcp = this.stopTcpFallback();
+    const results = await Promise.allSettled([jobs, history, archive, backups, network, tcp]);
     this.remoteDashboard?.close(); this.remoteDashboard = null;
     this.remoteJobs?.close(); this.remoteJobs = null;
     this.decisionSync?.close(); this.decisionSync = null;
-    await this.network?.close().catch(() => {});
-    this.network = null;
     for (const c of this.conns) c.socket.destroy();
     this.conns.clear();
     const server = this.server;
     this.server = null;
     if (server) await new Promise<void>((r) => server.close(() => r()));
+    if (results.some(result => result.status === "rejected")) throw new Error("Partial broker service cleanup is unproven; exact startup owner retained.");
   }
 
-  private async startServices(optional: (what: string, step: () => void) => void): Promise<void> {
-        if (this.jobsPath) void startBrokerJobRunIndex(dirname(this.jobsPath)).catch(error => this.log.warn("job run index preparing", { err: String(error) }));
-        await this.nativeChildren.recover();
+  private async startServices(optional: (what: string, step: () => void) => void, check: () => void = () => {}, signal?: AbortSignal): Promise<void> {
+        check();
+        await this.nativeChildren.recover(check); check();
+        if (this.jobsPath) void startBrokerJobRunIndex(dirname(this.jobsPath), check).catch(error => this.log.warn("job run index preparing", { err: String(error) }));
         if (this.jobsPath && this.store.file !== ":memory:") optional("job archive worker", () => { this.jobArchiveBackground = new JobArchiveBackground(this.jobsPath!, this.log); });
         optional("backups", () => this.store.startBackups());
-        this.healthMonitor.start();
+        check(); this.healthMonitor.start();
         optional("handoff replay", () => this.applyHandoffs());
-        this.purgeTimer = setInterval(() => this.purge(), PURGE_INTERVAL_MS);
+        check(); this.purgeTimer = setInterval(() => this.purge(), PURGE_INTERVAL_MS);
         this.purgeTimer.unref();
         // Config toggles pause the monitor and later resume its durable cursors.
         // The environment kill switch intentionally disables even the worker.
@@ -913,11 +897,11 @@ export class Broker {
           this.store.historyMessageSink = () => this.historyBackground?.messageArrived();
           void history.reconcileAsks().catch(error => this.log.debug("startup ask reconciliation deferred", { error: String(error) }));
         });
-        this.purge();
+        check(); this.purge(); check();
         this.log.info("broker listening", { pipe: this.pipePath });
         if (this.store.file !== ":memory:" && existsSync(join(dirname(this.store.file),QUESTIONS_FILE))) optional("owner questions", () => { this.ownerQuestions(); });
         // Another broker may have enabled or changed pairing since this session started.
-        if (this.networking) this.networking.config = readNetworkConfig(this.networking.home, this.networking.config);
+        check(); if (this.networking) this.networking.config = readNetworkConfig(this.networking.home, this.networking.config);
         if (this.networking?.config.enabled) {
           try {
             this.network = new NetworkService(this.networking.home, this.networking.config, {
@@ -931,7 +915,7 @@ export class Broker {
         recipientReceipts: true,
             }, this.log);
             this.installRemoteJobs(this.network);
-            await this.network.start(this.networkAuthorityDeferred);
+            check(); await this.network.start(true, check, signal); check();
           } catch (err) {
             this.remoteDashboard?.close();
             this.remoteDashboard = null;
@@ -941,6 +925,7 @@ export class Broker {
             this.decisionSync = null;
             await this.network?.close();
             this.network = null;
+            check();
             this.log.warn("networking could not start; local broker remains available", { message: (err as Error).message });
           }
         }
@@ -952,23 +937,27 @@ export class Broker {
    * the named pipe; loopback stays reachable. The port is recorded in the private
    * bridge home, and the protocol still requires the broker token on hello.
    */
-  private async startTcpFallback(): Promise<void> {
+  private async startTcpFallback(check: () => void = () => {}, signal?: AbortSignal): Promise<void> {
+    check();
     if (process.platform !== "win32" || this.store.file === ":memory:") return;
     const home = dirname(this.store.file), file = join(home, BROKER_TCP_FILE);
-    // The pipe is already serving: every PowerShell helper here (own creation identity, DPAPI
+    // The pipe remains tentative: every PowerShell helper here (own creation identity, DPAPI
     // unprotect of a previous record, DPAPI protect of the new one) runs off the event loop.
     // Run synchronously they blocked authentication of waiting clients for seconds on Windows.
-    const [identity, previous] = await Promise.all([ownProcessIdentity(),
-      existsSync(file) ? Promise.resolve().then(() => readMusePrivateJsonAsync(file)).then(record => ({ record }), (error: unknown) => ({ error })) : undefined]);
+    const [identity, previous] = await Promise.all([ownProcessIdentity(signal),
+      existsSync(file) ? Promise.resolve().then(() => { check(); return readMusePrivateJsonAsync(file, signal); }).then(record => ({ record }), (error: unknown) => ({ error })) : undefined]);
+    check();
     if (!identity || this.closing) return;
     const nonce = this.tcpNonce = randomUUID();
     const server = createServer((socket) => this.accept(socket, "tcp"));
+    this.startupTransports.add(server); server.once("close", () => this.startupTransports.delete(server));
     this.tcpServer = server;
     server.on("error", (err) => this.log.warn("broker TCP fallback error", { err: String(err) }));
     await new Promise<void>((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", () => {
       server.removeListener("error", reject);
       resolve();
     }); });
+    check();
     const address = server.address();
     if (!address || typeof address === "string" || this.closing) return;
     this.tcpPort = address.port;
@@ -980,14 +969,15 @@ export class Broker {
       if (previous && ("error" in previous ? true : !isEphemeralBrokerTcpRecord(previous.record))) {
         throw "error" in previous ? previous.error : new Error("Retaining unknown TCP discovery state");
       }
-      await writeMusePrivateJsonAsync(temporary, { port: address.port, pid: process.pid, identity, nonce, protocol: PROTOCOL_VERSION, pipePath: this.pipePath });
+      check(); await writeMusePrivateJsonAsync(temporary, { port: address.port, pid: process.pid, identity, nonce, protocol: PROTOCOL_VERSION, pipePath: this.pipePath }, "wx", signal, check);
       staged = true;
+      check();
       // The read above and the protected write are asynchronous: content that appeared since an absent read
       // was never checked and may be durable user state, so it is retained rather than replaced.
       if (!previous && existsSync(file)) throw new Error("Retaining TCP discovery state that appeared during publication");
       renameSync(temporary, file);
     }
-    catch (err) { this.log.warn("broker TCP fallback port could not be recorded", { err: String(err) }); }
+    catch (err) { check(); this.log.warn("broker TCP fallback port could not be recorded", { err: String(err) }); }
     finally { if (staged) try { unlinkSync(temporary); } catch { /* Exclusively owned unpublished staging only. */ } }
     this.log.info("broker loopback fallback listening", { port: address.port });
   }
@@ -1109,7 +1099,7 @@ export class Broker {
   }
 
   private accept(socket: Socket, transport: Conn["transport"] = "pipe"): void {
-    if (this.startupAuthorityRevoked) { socket.destroy(); return; }
+    if (this.startupAuthorityRevoked || this.networkAuthorityDeferred) { socket.destroy(); return; }
     const conn: Conn = { socket, peer: null, authed: false, inFlight: 0, mailGeneration: 0, transport };
     this.conns.add(conn);
     this.updateIdle();

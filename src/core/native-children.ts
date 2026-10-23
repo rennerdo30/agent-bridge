@@ -25,8 +25,8 @@ export class NativeChildren {
   constructor(private readonly store: MessageStore) {}
   private parentKey(peer: PeerInfo): string { return JSON.stringify([peer.id, peer.sessionId, peer.name]); }
 
-  recover(): Promise<void> {
-    return this.recovery ??= this.recoverOrphans().then(() => { this.recoverySettled = true; });
+  recover(check: () => void = () => {}): Promise<void> {
+    check(); return this.recovery ??= this.recoverOrphans(check).then(() => { check(); this.recoverySettled = true; });
   }
   private admitNative(): void { if (this.lifecycleFrozen) throw new BridgeError("bad_request", "Native subagent admission is draining; retry later."); }
   private trackNative<T>(operation: () => Promise<T>): Promise<T> {
@@ -82,9 +82,9 @@ export class NativeChildren {
     const current = await this.observeNativeLifecycle(deadline);
     return !current.blocker && current.generation === observation.generation && current.memoryActive === 0 && current.durableActive === 0 && current.pending === 0;
   }
-  private async recoverOrphans(): Promise<void> {
+  private async recoverOrphans(check: () => void): Promise<void> {
     // No connection survived a broker restart. The retained mapping makes orphan recovery exact.
-    for (const route of this.store.nativeChildRoutes()) await this.store.retryWrite(() => this.store.returnNativeChild(route.address, route.parent));
+    check(); for (const route of this.store.nativeChildRoutes()) { check(); await this.store.retryWrite(() => { check(); return this.store.returnNativeChild(route.address, route.parent); }); check(); }
   }
   private parent(peer: PeerInfo): string {
     if (peer.agent !== "claude" || peer.jobAgent || peer.subagent || !peer.sessionId) throw new BridgeError("unauthorized", "Native child addresses require a registered Claude parent session.");

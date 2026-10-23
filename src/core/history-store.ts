@@ -1,4 +1,5 @@
 import { admissionSqliteBusy, storageAdmissionRemaining, storageAdmissionTimeout } from "./storage-admission.js";
+import { assertBootstrapAccess } from "./store-bootstrap-journal.js";
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -168,6 +169,7 @@ export function historyInitializationObservation(db: DatabaseSync): Readonly<{
     ownerBound: false, ownershipReleased: false });
 }
 export function openHistoryStore(file: string): DatabaseSync {
+  if (file !== ":memory:") assertBootstrapAccess(dirname(file));
   const timeout = storageAdmissionTimeout(3000);
   const db = new DatabaseSync(file, { timeout });
   const record: HistoryInitialization = { identity: Symbol(), db, file, state: "initializing", close: "not_attempted" };

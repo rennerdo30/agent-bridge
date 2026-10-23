@@ -7,7 +7,7 @@ import { openMessageStore, type MessageStore } from "../src/core/store.js";
 import { closeMetadataDbs, metadataDb } from "../src/core/metadata-db.js";
 import { nullLogger } from "../src/core/logger.js";
 import * as migrations from "../src/core/sqlite-migrations.js";
-import { inspectBootstrapJournal } from "../src/core/store-bootstrap-journal.js";
+import { inspectBootstrapJournal, readBootstrapEvidence } from "../src/core/store-bootstrap-journal.js";
 import { makeEnv, type TestEnv } from "./helpers.js";
 
 const wire = vi.hoisted(() => ({ starts: 0, before: undefined as undefined | (() => Promise<void>),
@@ -17,7 +17,7 @@ const directoryIo = vi.hoisted(() => ({ next: 2_000_000_000, handles: new Map<nu
 // Windows filesystem supports directory fsync. Ordinary file IO stays real.
 vi.mock("node:fs", async original => {
   const actual = await original<typeof import("node:fs")>();
-  return { ...actual,
+  return { ...actual, constants: { ...actual.constants, O_DIRECTORY: actual.constants.O_DIRECTORY || 0x10000 },
     openSync: (...args: Parameters<typeof actual.openSync>) => {
       const path = String(args[0]);
       if (actual.existsSync(path) && actual.lstatSync(path).isDirectory()) { const fd = directoryIo.next++; directoryIo.handles.set(fd, path); return fd; }
@@ -132,6 +132,29 @@ it.each(["preparing-missing", "prepared-replaced", "prepared-in-place"])("revali
   gate.release(); const error = await pending;
   expect(error).toMatchObject({ code: "STORE_BOOTSTRAP_UNSETTLED" }); expect(opened).toBeUndefined();
   expect(readdirSync(dir).some(name => name.endsWith(".exited.json"))).toBe(false); expect(ddl).toBe(1);
+});
+
+it("rejects an in-place journal mutation during its descriptor read and retains the original bytes separately", async () => {
+  schemaMs = 0; opened = await open(); opened.close(); opened = undefined; closeMetadataDbs();
+  const dir = join(env.home, ".store-bootstrap"), path = join(dir, readdirSync(dir).find(name => name.endsWith(".prepared.json"))!);
+  const original = readFileSync(path); writeFileSync(join(env.home, "retained-original-proof"), original);
+  directoryIo.mutateRead = changed => { if (changed !== path) return; directoryIo.mutateRead = undefined; writeFileSync(path, Buffer.concat([original, Buffer.from(" ")])); };
+  expect(() => readBootstrapEvidence(path)).toThrow(/preparation/i);
+  expect(readFileSync(join(env.home, "retained-original-proof"))).toEqual(original);
+});
+
+it("checks complete evidence again at final construction rather than trusting exit publication", async () => {
+  schemaMs = 0;
+  const policy = await import("../src/core/sqlite-policy.js"), configure = policy.configureSqlite; let changed = false;
+  vi.spyOn(policy, "configureSqlite").mockImplementation((...args) => {
+    configure(...args);
+    if (!changed && wire.workers.length && wire.workers[0].threadId === -1) {
+      changed = true; const dir = join(env.home, ".store-bootstrap"), path = join(dir, readdirSync(dir).find(name => name.endsWith(".preparing.json"))!);
+      renameSync(path, join(env.home, "retained-preparing-proof"));
+    }
+  });
+  await expect(open()).rejects.toMatchObject({ code: "STORE_BOOTSTRAP_UNSETTLED" });
+  expect(changed).toBe(true); expect(opened).toBeUndefined(); expect(existsSync(join(env.home, "retained-preparing-proof"))).toBe(true); expect(ddl).toBe(1);
 });
 
 it.each([["missing module", "ERR_MODULE_NOT_FOUND"], ["unknown code", "not-allowlisted"], ["oversized code", "x".repeat(4097)]])("retains only a bounded classification for an actual fake Worker error event: %s", async (_label, code) => {
