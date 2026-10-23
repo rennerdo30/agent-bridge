@@ -35,15 +35,17 @@ const base = () => new URL(ui.url).origin;
 const headers = () => ({ cookie, "x-agent-bridge": "1", "content-type": "application/json" });
 const post = (action: string, body = {}) => fetch(`${base()}/api/network/${action}`, { method: "POST", headers: headers(), body: JSON.stringify(body) });
 const config = (name: string, enabled = true) => ({ ...DEFAULT_NETWORK_CONFIG, enabled, name, bind: LOOPBACK, port: 0, discovery: false });
-function host(environment: TestEnv, name: string) {
+async function host(environment: TestEnv, name: string) {
   const node = new BridgeNode({ pipePath: environment.pipe, dbPath: environment.db, token: loadOrCreateToken(environment.home), agent: "claude", name, cwd: environment.home, autoWake: false, log: nullLogger, network: { home: environment.home, config: config(name, false) } });
   nodes.push(node);
+  await node.setSessionId(`fixture-native-${name}`);
+  await node.start();
   return node;
 }
 beforeEach(async () => {
   vi.clearAllMocks();
   env = makeEnv(); environments.push(env);
-  await host(env, "local-pc").start();
+  await host(env, "local-pc");
   ui = await startUi({ home: env.home, pipe: env.pipe, port: 0, log: nullLogger, usage: async () => [] }); dashboards.push(ui);
   const response = await fetch(ui.url, { redirect: "manual" });
   cookie = response.headers.get("set-cookie")!.split(";")[0]!;
@@ -95,7 +97,7 @@ describe("authenticated dashboard network flow", () => {
     expect(await (await fetch(`${base()}/api/transfers`, { headers: { cookie } })).json()).toEqual({ transfers: [] });
     await post("configure", { ...config("local-pc"), confirm: true });
     const other = makeEnv(); environments.push(other);
-    const otherHost = host(other, "remote-pc"); await otherHost.start();
+    const otherHost = await host(other, "remote-pc");
     const otherUi = await startUi({ home: other.home, pipe: other.pipe, port: 0, log: nullLogger, usage: async () => [] }); dashboards.push(otherUi);
     const login = await fetch(otherUi.url, { redirect: "manual" });
     const otherHeaders = { ...headers(), cookie: login.headers.get("set-cookie")!.split(";")[0]! }; const otherBase = new URL(otherUi.url).origin;
@@ -133,7 +135,7 @@ describe("authenticated dashboard network flow", () => {
   it("creates and links codes, lists health/remote peers, verifies an echo and unlinks on loopback only", async () => {
     await post("configure", { ...config("local-pc"), confirm: true });
     const other = makeEnv(); environments.push(other);
-    const otherHost = host(other, "remote-pc"); await otherHost.start();
+    const otherHost = await host(other, "remote-pc");
     const otherUi = await startUi({ home: other.home, pipe: other.pipe, port: 0, log: nullLogger, usage: async () => [] }); dashboards.push(otherUi);
     const login = await fetch(otherUi.url, { redirect: "manual" });
     const otherHeaders = { ...headers(), cookie: login.headers.get("set-cookie")!.split(";")[0]! };

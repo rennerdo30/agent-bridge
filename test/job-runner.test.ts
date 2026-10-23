@@ -467,13 +467,15 @@ describe.skipIf(!existsSync(SERVER))("background subagents in job runners", () =
   });
 
   it("delivers plain messages during a detached approval and requires an explicit decide", async () => {
-    const fake = FAKE_CLAUDE.replace('  const args = process.argv.slice(2);', `
+    // Record the actual first invocation and native init before its approval
+    // wait, matching a real tool approval reached inside an admitted turn.
+    const fake = FAKE_CLAUDE.replace('  const release = ', `
       if (/ask-approval/.test(prompt)) {
         const response = await fetch(process.env.AGENT_BRIDGE_RELAY_URL, { method: "POST", headers: { authorization: "Bearer " + process.env.AGENT_BRIDGE_RELAY_TOKEN }, body: JSON.stringify({ agent: "claude", tool: "shell", detail: "test permission" }) });
         const decision = await response.json();
         if (!decision.allow) throw new Error("Unexpected denial");
       }
-      const args = process.argv.slice(2);`);
+      const release = `);
     writeFileSync(join(home, "bin", "fake-claude.mjs"), "#!/usr/bin/env node\n" + fake);
     const session = await startSession();
     const output = await call(session, "spawn_claude", { prompt: "ask-approval", title: "Approval test", access: "edit" });

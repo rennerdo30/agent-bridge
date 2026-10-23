@@ -118,9 +118,20 @@ describe("durable project job mail", () => {
     const source = await node("claude-master", path), secondary = await node("codex-master", path);
     const a = await node("codex-job-one", path, { id: "one", owner: "first", parent: source.name });
     const b = await node("codex-job-two", path, { id: "two", owner: "second", parent: secondary.name });
+    const recipient = b as any, originalEvent = recipient.onEvent.bind(b), held: (() => void)[] = [];
+    const admission = vi.spyOn(recipient, "onEvent").mockImplementation((...args: unknown[]) => {
+      const [event, data] = args as [string, { from?: { name: string }; recipient?: string; conversationId?: string }];
+      if (event === "message" && data.from?.name === a.name && data.recipient === b.name &&
+          data.conversationId?.startsWith("siblings-") && !data.conversationId.endsWith(":note")) held.push(() => originalEvent(...args));
+      else originalEvent(...args);
+    });
     const sent = await a.sendSibling({ to: b.name, body: "Private sibling context" }, 32);
     const id = sent.messages[0]!.id;
-    expect(b.unread().some((m) => m.id === id)).toBe(true);
+    await expect.poll(() => held.length).toBeGreaterThan(0);
+    expect(b.unread().some(m => m.id === id)).toBe(false); // Sender storage ACK is not recipient consumption.
+    admission.mockRestore(); for (const release of held) release(); // Preserve every delayed event, including retries.
+    // Storage ACK is on the sender connection; await recipient event visibility.
+    await expect.poll(() => b.unread().some((m) => m.id === id)).toBe(true);
     const third = await node("claude-third", path);
     await source.setUnavailable(true);
     expect(b.unread().some((m) => m.id === id)).toBe(true);

@@ -14,6 +14,7 @@ import { nullLogger } from "../src/core/logger.js";
 import { BridgeError } from "../src/core/protocol.js";
 import { JOBS_FILE, PROTOCOL_VERSION } from "../src/core/constants.js";
 import { makeEnv, until } from "./helpers.js";
+import { jobWaitSnapshot } from "./job-wait-diagnostics.js";
 
 const report = "Subagent codex-job-12345678 done after 1s.\n\nFinal review";
 const initial = (): StoredFinalResult => ({ report, reportId: "turn-one", delivered: false });
@@ -304,15 +305,24 @@ it("keeps only the report location in jobs.json and serves the text from the mes
   await node.start();
   const store = join(env.home, JOBS_FILE);
   const jobs = new JobManager(node, nullLogger, store);
+  let stage = "initial-admission", observed: Job | undefined;
   try {
     const job = jobs.start("codex", null, "review", async () => ({ sessionId: "located", text: "Located final review", isError: false, details: {} }));
+    observed = job; stage = "recipient-inbox";
     await until(() => node.unread().some(m => m.body.includes("Located final review")));
     const saved = readStore(store).find(j => j.id === job.id)!;
     expect(saved).toMatchObject({ status: "done", resultStored: true, reportId: expect.any(String) });
     expect(saved).not.toHaveProperty("report");
     expect(JSON.parse(readFileSync(store, "utf8")).jobs.find((j: { id: string }) => j.id === job.id)).not.toHaveProperty("report");
     expect(node.unread().find(m => m.body.includes("Located final review"))?.id).toBe(saved.reportId);
+    stage = "stored-report-text";
     await until(() => readJobReport(env.home, saved) !== null);
     expect(readJobReport(env.home, saved)).toContain("Located final review");
+  } catch (error) {
+    try { console.error("Report location settlement diagnostics:", JSON.stringify({ stage, status: observed?.status,
+      ownerBound: Boolean(observed?.deliveryOwner), resultStored: observed?.resultStored === true, reportIdPresent: Boolean(observed?.reportId),
+      pendingReports: (jobs as any).pendingReports?.size, inboxCount: node.unread().length,
+      admission: jobWaitSnapshot(env.home, observed ? [observed.id] : []) })); } catch { /* Original failure wins. */ }
+    throw error;
   } finally { jobs.cancelAll(); await env.cleanup(); }
 });
