@@ -1,4 +1,4 @@
-import { admissionSqliteBusy } from "./storage-admission.js";
+import { admissionSqliteBusy, storageAdmissionRemaining } from "./storage-admission.js";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -41,9 +41,11 @@ export function storeCompatibilityObservation(db: DatabaseSync) {
  * Neither database nor its original records are removed after a later upgrade.
  */
 export function attachStoreCompatibility(db: DatabaseSync, file: string, log: Logger, create: boolean): void {
+  storageAdmissionRemaining();
   const path = join(dirname(file), "store-compatibility.db");
   const existed = existsSync(path);
   if (!create && !existed) return;
+  admissionSqliteBusy(db);
   const capture: OverlayCapture = { identity: Symbol("compatibility overlay admission"), main: db, file: path,
     open: "attempted", initialize: "not_attempted", close: "not_attempted", attach: "not_attempted", merge: "not_attempted" };
   const captures = overlayCaptures.get(db) ?? []; captures.push(capture); overlayCaptures.set(db, captures);
@@ -52,23 +54,32 @@ export function attachStoreCompatibility(db: DatabaseSync, file: string, log: Lo
   try { overlay = new DatabaseSync(path); capture.overlay = overlay; capture.open = "returned"; }
   catch (error) { capture.open = "unknown"; throw error; }
   capture.initialize = "attempted";
-  try { admissionSqliteBusy(overlay,3000,true); migrateSqlite(overlay, path, existed, 1, [{ version: 1, sql: SCHEMA }], log); capture.initialize = "returned"; }
+  try {
+    admissionSqliteBusy(overlay,3000,true); migrateSqlite(overlay, path, existed, 1, [{ version: 1, sql: SCHEMA }], log);
+    capture.initialize = "returned"; storageAdmissionRemaining();
+  }
   catch (error) { capture.initialize = "unknown"; throw error; }
   finally {
     capture.close = "attempted";
     try { overlay.close(); capture.close = "returned"; }
     catch (error) { capture.close = "unknown"; throw error; }
   }
+  storageAdmissionRemaining(); // A late initializer or owned close cannot authorize ATTACH.
   capture.attach = "attempted";
-  try { db.prepare("ATTACH DATABASE ? AS store_compatibility").run(path); capture.attach = "returned"; }
-  catch (error) { capture.attach = "unknown"; throw error; }
+  try {
+    db.prepare("ATTACH DATABASE ? AS store_compatibility").run(path); capture.attach = "returned";
+    storageAdmissionRemaining();
+  }
+  catch (error) { if (capture.attach !== "returned") capture.attach = "unknown"; throw error; }
   // A subsequent backup-first primary upgrade adopts supplemental rows while
   // retaining the sidecar as its original recovery source.
   capture.merge = "attempted";
-  try { db.exec("BEGIN IMMEDIATE"); }
-  catch (error) { capture.merge = "unknown"; throw error; }
+  let transaction = false;
   try {
+    storageAdmissionRemaining(); db.exec("BEGIN IMMEDIATE"); transaction = true;
+    storageAdmissionRemaining();
     for (const table of TABLES) {
+      storageAdmissionRemaining();
       if (!db.prepare("SELECT name FROM main.sqlite_master WHERE type='table' AND name=?").get(table)) continue;
       const merge = table === "peer_last_seen"
         ? "ON CONFLICT(name) DO UPDATE SET seen_at=MAX(peer_last_seen.seen_at,excluded.seen_at)"
@@ -79,13 +90,22 @@ export function attachStoreCompatibility(db: DatabaseSync, file: string, log: Lo
       // their original values and the empty default, never fabricated authority.
       const columns = table === "job_delivery_routes" ? "(id,recipient,consumed_at)" : "";
       const selected = table === "job_delivery_routes" ? "id,recipient,consumed_at" : "*";
+      storageAdmissionRemaining();
       db.exec(`INSERT INTO main.${table}${columns} SELECT ${selected} FROM store_compatibility.${table} WHERE 1 ${merge}`);
     }
+    storageAdmissionRemaining();
     if (!db.prepare("SELECT name FROM main.sqlite_master WHERE name='peer_last_seen'").get()) {
+      storageAdmissionRemaining();
       db.exec(`INSERT INTO store_compatibility.peer_last_seen SELECT name, MAX(learned_at) FROM peer_names GROUP BY name
         ON CONFLICT(name) DO UPDATE SET seen_at=MAX(peer_last_seen.seen_at,excluded.seen_at)`);
     }
-    db.exec("COMMIT");
+    storageAdmissionRemaining(); db.exec("COMMIT"); transaction = false;
+    storageAdmissionRemaining();
     capture.merge = "returned"; retainedOverlayCaptures.delete(capture);
-  } catch (error) { capture.merge = "unknown"; db.exec("ROLLBACK"); throw error; }
+  } catch (error) {
+    capture.merge = "unknown";
+    if (transaction) try { db.exec("ROLLBACK"); }
+    catch (rollback) { throw new AggregateError([error, rollback], "Overlay adoption rollback is unconfirmed; original sidecar evidence is retained."); }
+    throw error;
+  }
 }

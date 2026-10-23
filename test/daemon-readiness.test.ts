@@ -4,6 +4,13 @@ import { fixtureDaemonReadiness } from "./daemon-readiness.js";
 
 afterEach(() => vi.restoreAllMocks());
 
+it("refuses a successful probe returned after the original readiness deadline", async () => {
+  let now = 0; vi.spyOn(Date, "now").mockImplementation(() => now);
+  const probe = vi.fn(async () => { now = 10001; return 271; }), pause = vi.fn();
+  await expect(fixtureDaemonReadiness(probe, 10000, pause)).rejects.toMatchObject({ code: "timeout" });
+  expect(probe).toHaveBeenCalledOnce(); expect(pause).not.toHaveBeenCalled();
+});
+
 it("does not mistake the tentative no-effect auth reply for an admitted daemon or a failed operation", async () => {
   let now = 0, admitted = false; vi.spyOn(Date, "now").mockImplementation(() => now);
   const probe = vi.fn(async () => {

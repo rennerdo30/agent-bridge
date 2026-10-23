@@ -19,6 +19,7 @@ import { PROTOCOL_VERSION } from "../src/core/constants.js";
 import type { BridgeMessage } from "../src/core/protocol.js";
 import { makeEnv, until, type TestEnv } from "./helpers.js";
 import { fixturePeer, ownedMessage } from "./owned-mail.js";
+import { withStorageAdmission } from "../src/core/storage-admission.js";
 
 const leaseFault = vi.hoisted(() => ({ path: "", mode: "none" as "none" | "before" | "after", failure: new Error("SIMULATED lease removal failure") }));
 const acquisitionFault = vi.hoisted(() => ({ directory: "", stage: "none" as "none" | "write" | "close_before" | "close_after",
@@ -124,9 +125,18 @@ function disposeDirectory(dir: Dir): void {
   if (!outcome.closed) { directoryFault.actualClose!.call(dir); outcome.closed = true; }
 }
 const kinds = [
-  { name: "archive", open: openArchive, observe: archiveInitializationObservation, initialSql: "PRAGMA busy_timeout = 3000" },
-  { name: "history", open: openHistoryStore, observe: historyInitializationObservation, initialSql: "PRAGMA busy_timeout=3000" },
+  { name: "archive", open: openArchive, observe: archiveInitializationObservation },
+  { name: "history", open: openHistoryStore, observe: historyInitializationObservation },
 ] as const;
+// Fail after real native initialization SQL, independently of the connection's
+// scoped/ordinary wait policy or whitespace used to set that policy.
+const initializingWal = (sql: string) => /^\s*PRAGMA\s+journal_mode\s*=\s*WAL\s*;?\s*$/i.test(sql);
+function openFixtureHandle(kind: typeof kinds[number], file: string): DatabaseSync {
+  const db = kind.open(file);
+  // Even an unexpectedly successful opener belongs to this fixture. A missed
+  // fault must fail the assertion without leaking its exact returned handle.
+  owned.set(db, { actuallyClosed: false }); return db;
+}
 function initialized(kind: typeof kinds[number], name: string) {
   const file = join(env.home, name), db = kind.open(file); owned.set(db, { actuallyClosed: false });
   db.exec("CREATE TABLE owned_closure_fixture(id INTEGER PRIMARY KEY, body BLOB NOT NULL); INSERT INTO owned_closure_fixture VALUES(1,x'00ff04');");
@@ -153,19 +163,20 @@ describe("owned opener capture dependency (not producer drain or final-close aut
     });
     it(`${kind.name} preserves a real initialized database when SIMULATED initialization fails and actual close returns`, () => {
       const fixture = initialized(kind, `${kind.name}-closed.db`), failure = new Error("SIMULATED initialization error after real native SQL");
-      let captured: DatabaseSync | undefined;
+      let captured: DatabaseSync | undefined, injected = 0;
       vi.spyOn(DatabaseSync.prototype, "exec").mockImplementation(function(this: DatabaseSync, sql: string) {
         const result = nativeExec.call(this, sql);
-        if (sql === kind.initialSql) {
+        if (initializingWal(sql)) {
           expect(kind.observe(this)).toMatchObject({ captured: true, initialization: "initializing", close: "not_attempted", ownerBound: false });
-          captured = this; owned.set(this, { actuallyClosed: false }); throw failure;
+          injected++; captured = this; owned.set(this, { actuallyClosed: false }); throw failure;
         }
         return result;
       });
       const close = vi.spyOn(DatabaseSync.prototype, "close").mockImplementation(function(this: DatabaseSync) {
         const result = nativeClose.call(this); if (this === captured) owned.get(this)!.actuallyClosed = true; return result;
       });
-      expect(() => kind.open(fixture.file)).toThrow(failure); expect(close).toHaveBeenCalledTimes(1);
+      expect(() => openFixtureHandle(kind, fixture.file)).toThrow(failure); expect(close).toHaveBeenCalledTimes(1);
+      expect(injected).toBe(1);
       expect(kind.observe(captured!)).toMatchObject({ initialization: "failed", close: "returned", retained: true, ownerBound: false, ownershipReleased: false });
       vi.restoreAllMocks(); expect(readFileSync(fixture.file)).toEqual(fixture.bytes); expect(retainedRow(fixture.file)).toEqual([0, 255, 4]);
     });
@@ -173,12 +184,12 @@ describe("owned opener capture dependency (not producer drain or final-close aut
       for (const when of ["before", "after"] as const) {
         const fixture = initialized(kind, `${kind.name}-${when}.db`);
         const initializationFailure = new Error("SIMULATED initialization failure"), closeFailure = new Error("SIMULATED native close outcome error");
-        let captured: DatabaseSync | undefined;
+        let captured: DatabaseSync | undefined, injected = 0;
         vi.spyOn(DatabaseSync.prototype, "exec").mockImplementation(function(this: DatabaseSync, sql: string) {
           const result = nativeExec.call(this, sql);
-          if (sql === kind.initialSql) {
+          if (initializingWal(sql)) {
             expect(kind.observe(this)).toMatchObject({ captured: true, initialization: "initializing", close: "not_attempted", ownerBound: false });
-            captured = this; owned.set(this, { actuallyClosed: false }); throw initializationFailure;
+            injected++; captured = this; owned.set(this, { actuallyClosed: false }); throw initializationFailure;
           }
           return result;
         });
@@ -188,7 +199,8 @@ describe("owned opener capture dependency (not producer drain or final-close aut
           throw closeFailure;
         });
         // Existing helper semantics throw its actual close error if close fails.
-        expect(() => kind.open(fixture.file)).toThrow(closeFailure); expect(close).toHaveBeenCalledTimes(1);
+        expect(() => openFixtureHandle(kind, fixture.file)).toThrow(closeFailure); expect(close).toHaveBeenCalledTimes(1);
+        expect(injected).toBe(1);
         expect(kind.observe(captured!)).toMatchObject({ captured: true, initialization: "failed", close: "unknown", retained: true,
           ownerBound: false, ownershipReleased: false });
         vi.restoreAllMocks();
@@ -203,18 +215,71 @@ describe("owned opener capture dependency (not producer drain or final-close aut
     const initializationFailure = new Error("SIMULATED initialization failure"), closeFailure = new Error("SIMULATED error after actual native close");
     vi.spyOn(DatabaseSync.prototype, "exec").mockImplementation(function(this: DatabaseSync, sql: string) {
       const result = nativeExec.call(this, sql);
-      if (sql === kind.initialSql) { captures.push(this); owned.set(this, { actuallyClosed: false }); throw initializationFailure; }
+      if (initializingWal(sql)) {
+        expect(kind.observe(this)).toMatchObject({ captured: true, initialization: "initializing", close: "not_attempted" });
+        captures.push(this); owned.set(this, { actuallyClosed: false }); throw initializationFailure;
+      }
       return result;
     });
     vi.spyOn(DatabaseSync.prototype, "close").mockImplementation(function(this: DatabaseSync) {
       nativeClose.call(this); owned.get(this)!.actuallyClosed = true; throw closeFailure;
     });
-    for (let n = 0; n < 129; n++) expect(() => kind.open(fixture.file)).toThrow(closeFailure);
+    for (let n = 0; n < 129; n++) expect(() => openFixtureHandle(kind, fixture.file)).toThrow(closeFailure);
     expect(new Set(captures).size).toBe(129);
     for (const db of captures) expect(kind.observe(db)).toMatchObject({ initialization: "failed", close: "unknown", retained: true,
       overflow: true, ownerBound: false, ownershipReleased: false });
     vi.restoreAllMocks(); expect(readFileSync(fixture.file)).toEqual(fixture.bytes); expect(retainedRow(fixture.file)).toEqual([0, 255, 4]);
   });
+  for (const kind of kinds) {
+    it.each(["initialization", "close_before", "close_after"] as const)(`${kind.name} preserves the exact %s failure through scoped policy cleanup`, when => {
+      const fixture = initialized(kind, `${kind.name}-scoped-${when}.db`);
+      const initializationFailure = new Error("SIMULATED scoped native initialization failure"), closeFailure = new Error("SIMULATED scoped close failure");
+      let captured: DatabaseSync | undefined, injected = 0, closes = 0;
+      vi.spyOn(DatabaseSync.prototype, "exec").mockImplementation(function(this: DatabaseSync, sql: string) {
+        const result = nativeExec.call(this, sql);
+        if (initializingWal(sql)) {
+          expect(kind.observe(this)).toMatchObject({ captured: true, initialization: "initializing", close: "not_attempted" });
+          injected++; captured = this; owned.set(this, { actuallyClosed: false }); throw initializationFailure;
+        }
+        return result;
+      });
+      vi.spyOn(DatabaseSync.prototype, "close").mockImplementation(function(this: DatabaseSync) {
+        if (this !== captured) return nativeClose.call(this);
+        closes++;
+        if (when === "close_before") throw closeFailure;
+        nativeClose.call(this); owned.get(this)!.actuallyClosed = true;
+        if (when === "close_after") throw closeFailure;
+      });
+      let failure: unknown;
+      try { withStorageAdmission(() => 2000, () => openFixtureHandle(kind, fixture.file)); } catch (error) { failure = error; }
+      expect(failure).toBe(when === "initialization" ? initializationFailure : closeFailure);
+      expect(injected).toBe(1); expect(closes).toBe(1);
+      expect(kind.observe(captured!)).toMatchObject({ captured: true, initialization: "failed", retained: true,
+        close: when === "initialization" ? "returned" : "unknown", ownerBound: false, ownershipReleased: false });
+      vi.restoreAllMocks(); if (!owned.get(captured!)!.actuallyClosed) dispose(captured!);
+      expect(kind.observe(captured!)).toMatchObject({ retained: true, close: when === "initialization" ? "returned" : "unknown", ownershipReleased: false });
+      expect(readFileSync(fixture.file)).toEqual(fixture.bytes); expect(retainedRow(fixture.file)).toEqual([0, 255, 4]);
+    });
+    it(`${kind.name} reports a policy-cleanup inspection failure without inventing native initialization or close failure`, () => {
+      const fixture = initialized(kind, `${kind.name}-cleanup-inspection.db`), inspectionFailure = new Error("SIMULATED cleanup policy inspection failure");
+      let returned: DatabaseSync | undefined, inspections = 0;
+      vi.spyOn(DatabaseSync.prototype, "prepare").mockImplementation(function(this: DatabaseSync, sql: string) {
+        // Only after the actual opener has returned: this is support cleanup,
+        // not its earlier native initialization, and must not be swallowed.
+        if (this === returned && sql === "PRAGMA busy_timeout") { inspections++; throw inspectionFailure; }
+        return nativePrepare.call(this, sql);
+      });
+      let failure: unknown;
+      try { withStorageAdmission(() => 2000, () => { returned = openFixtureHandle(kind, fixture.file); }); } catch (error) { failure = error; }
+      expect(inspections).toBe(1); expect(failure).toBeInstanceOf(AggregateError);
+      expect((failure as AggregateError).errors).toEqual([inspectionFailure]);
+      expect(kind.observe(returned!)).toMatchObject({ captured: true, initialization: "returned", close: "not_attempted", retained: false,
+        ownerBound: false, ownershipReleased: false });
+      expect(returned!.isOpen).toBe(true);
+      vi.restoreAllMocks(); dispose(returned!);
+      expect(readFileSync(fixture.file)).toEqual(fixture.bytes); expect(retainedRow(fixture.file)).toEqual([0, 255, 4]);
+    });
+  }
 });
 
 describe("actual operation-scoped storage lease evidence (not lifecycle release authority)", () => {

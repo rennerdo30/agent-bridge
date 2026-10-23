@@ -24,7 +24,7 @@ import { startUi, type UiOptions } from "../src/cli/ui.js";
 import { readDashboardInfo } from "../src/cli/dashboard.js";
 import { deliveryFailure } from "../src/mcp/delivery-evidence.js";
 import { httpFailureEvidence } from "./http-failure-evidence.js";
-import { fixtureDaemonReadiness } from "./daemon-readiness.js";
+import { fixtureDaemonProbe, fixtureDaemonReadiness, type FixtureReadinessBudget } from "./daemon-readiness.js";
 
 const cli = join(import.meta.dirname, "../plugins/codex/dist/cli.mjs");
 let env: TestEnv, nodes: BridgeNode[], children: ChildProcess[], owned: Map<number, string>;
@@ -194,7 +194,11 @@ async function client(token = loadOrCreateToken(env.home)) {
   try { await c.request("auth", { protocol: PROTOCOL_VERSION, token }); return c; }
   catch (error) { c.close(); throw error; }
 }
-async function remember() {
+async function remember(budget?: FixtureReadinessBudget) {
+  if (budget) {
+    const result = await fixtureDaemonProbe(env.pipe, loadOrCreateToken(env.home), budget);
+    budget.remaining(); expect(result.identity).toBeTruthy(); owned.set(result.pid, result.identity!); return result.pid;
+  }
   const c = await client();
   try {
     const ping = await c.request("ping", {}), identity = await readProcessIdentity(ping.brokerPid);
