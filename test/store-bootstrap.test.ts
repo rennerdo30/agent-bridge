@@ -12,7 +12,7 @@ import { makeEnv, type TestEnv } from "./helpers.js";
 
 const wire = vi.hoisted(() => ({ starts: 0, before: undefined as undefined | (() => Promise<void>),
   after: undefined as undefined | (() => Promise<void>), wrong: false, workers: [] as any[], stage: "idle", kernelThread: 0, error: undefined as unknown, exitedBeforeMessage: false, wrongThread: false }));
-const directoryIo = vi.hoisted(() => ({ next: 2_000_000_000, handles: new Map<number, string>(), files: new Map<number, string>(), failure: "", syncs: [] as string[], mutateRead: undefined as undefined | ((path: string) => void) }));
+const directoryIo = vi.hoisted(() => ({ next: 2_000_000_000, handles: new Map<number, string>(), files: new Map<number, string>(), failure: "", syncs: [] as string[], onSync: undefined as undefined | (() => void), mutateRead: undefined as undefined | ((path: string) => void) }));
 // Explicit simulated directory-durability capability, never evidence that a
 // Windows filesystem supports directory fsync. Ordinary file IO stays real.
 vi.mock("node:fs", async original => {
@@ -25,7 +25,7 @@ vi.mock("node:fs", async original => {
     },
     fstatSync: (fd: number, options?: any) => directoryIo.handles.has(fd) ? actual.lstatSync(directoryIo.handles.get(fd)!, options) : actual.fstatSync(fd, options),
     fsyncSync: (fd: number) => { const path = directoryIo.handles.get(fd); if (!path) return actual.fsyncSync(fd);
-      directoryIo.syncs.push(path); if (directoryIo.failure && (directoryIo.failure === "all" || path.endsWith(".store-bootstrap"))) throw Object.assign(new Error("Controlled directory publication unavailable"), { code: "ENOTSUP" }); },
+      directoryIo.syncs.push(path); directoryIo.onSync?.(); if (directoryIo.failure && (directoryIo.failure === "all" || path.endsWith(".store-bootstrap"))) throw Object.assign(new Error("Controlled directory publication unavailable"), { code: "ENOTSUP" }); },
     closeSync: (fd: number) => { if (directoryIo.handles.delete(fd)) return; directoryIo.files.delete(fd); return actual.closeSync(fd); },
     readSync: (fd: number, buffer: Buffer, offset: number, length: number, position: number) => {
       const count = actual.readSync(fd, buffer, offset, length, position), path = directoryIo.files.get(fd);
@@ -82,7 +82,7 @@ let env: TestEnv, opened: MessageStore | undefined, clock: number, start: number
 let pendingDiagnostic: ReturnType<typeof setTimeout>, fixtureNumber = 0;
 const deferred = () => { let release!: () => void; const promise = new Promise<void>(done => { release = done; }); return { promise, release }; };
 beforeEach(() => {
-  directoryIo.failure = ""; directoryIo.syncs = []; directoryIo.mutateRead = undefined;
+  directoryIo.failure = ""; directoryIo.syncs = []; directoryIo.onSync = undefined; directoryIo.mutateRead = undefined;
   const number = ++fixtureNumber; wire.stage = "setup";
   pendingDiagnostic = setTimeout(() => console.error("Mock cold-bootstrap pending", { fixture: number, stage: wire.stage }), 1000);
   env = makeEnv(); schemaMs = 2400; ddl = 0; wire.starts = 0; wire.workers = []; wire.before = undefined; wire.after = undefined; wire.wrong = false; wire.error = undefined; wire.exitedBeforeMessage = false; wire.wrongThread = false;
@@ -108,6 +108,12 @@ it.each(["all", "record-directory"])("refuses unsupported directory publication 
   const error = await open().then(store => { opened = store; return undefined; }, error => error);
   expect(error).toMatchObject({ code: "STORE_BOOTSTRAP_UNSETTLED" });
   expect(ddl).toBe(0); expect(existsSync(env.db)).toBe(false);
+});
+
+it("does not publish a journal or schema after the supported home flush exhausts the original deadline", async () => {
+  schemaMs = 0; directoryIo.onSync = () => { clock = start + 10001; };
+  await expect(open()).rejects.toMatchObject({ code: "STORE_BOOTSTRAP_UNSETTLED" });
+  expect(ddl).toBe(0); expect(existsSync(env.db)).toBe(false); expect(existsSync(join(env.home, ".store-bootstrap"))).toBe(false);
 });
 
 it("fences every opener including no-deadline and cached metadata before admitting an unsettled preparation", async () => {

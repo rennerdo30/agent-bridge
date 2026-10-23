@@ -24,7 +24,7 @@ export async function runColdStoreBootstrap(plan: ColdBootstrapPlan): Promise<Bo
       return withMaintenanceExclusion(release, check, () => {
         checkBootstrapOriginal(record); check();
         if (!needsColdPreparation(record.file)) throw bootstrapUnknown();
-        appendBootstrapRecord(record); check(); // Immutable pending evidence BEFORE any schema/metadata effect.
+        appendBootstrapRecord(record, check); check(); // Immutable pending evidence BEFORE any schema/metadata effect.
         const initial = readBootstrapEvidence(join(record.home, ".store-bootstrap", `${record.attempt}.preparing.json`));
         const namespace = withBootstrapInitializer(record, check, () => {
           store = new MessageStore(record.file, nullLogger); check();
@@ -35,7 +35,7 @@ export async function runColdStoreBootstrap(plan: ColdBootstrapPlan): Promise<Bo
         const prepared: BootstrapRecord = { ...record, state: "prepared", namespace, preparingDigest: initial.digest, preparingSignature: initial.signature,
           files: Object.fromEntries(coldStoreFiles(record.file).map(file => [file, bootstrapFileIdentity(file)])) };
         for (const [file, original] of Object.entries(record.original)) if (original && !sameBootstrapIdentity(original, prepared.files![file])) throw bootstrapUnknown();
-        appendBootstrapRecord(prepared); check(); return prepared;
+        appendBootstrapRecord(prepared, check); check(); return prepared;
       });
     }, record.file, deadline, revoked);
   } finally {

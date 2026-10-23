@@ -437,7 +437,7 @@ it("distinguishes incomplete reader refusal from an endpoint version without adm
   expect(readFileSync(lease)).toEqual(Buffer.alloc(0)); expect(readFileSync(file)).toEqual(original);
 });
 
-it.each([2, 3, 4, 5, 6, 7, PROTOCOL_VERSION])("never waits through or rewrites a completed incompatible protocol%s/schema reader", async protocol => {
+it.each([2, 3, 4, 5, 6, 7, 8, PROTOCOL_VERSION])("never waits through or rewrites a completed incompatible protocol%s/schema reader", async protocol => {
   vi.useFakeTimers(); const release = storageLease(home), dir = join(home, ".storage-users"), lease = join(dir, readdirSync(dir)[0]!);
   const fs = await import("node:fs"), owner = JSON.parse(readFileSync(lease, "utf8"));
   fs.writeFileSync(lease, JSON.stringify({ ...owner, mailboxProtocol: protocol, mailboxSchema: protocol === PROTOCOL_VERSION ? 13 : 14 })); const bytes = readFileSync(lease), began = Date.now();
@@ -447,7 +447,7 @@ it.each([2, 3, 4, 5, 6, 7, PROTOCOL_VERSION])("never waits through or rewrites a
   } finally { release(); }
 });
 
-it.each([1, 2])("refuses cached-writer metadata%s before probing or any reader-admission wait", async metadata => {
+it.each([1, 2, 3])("refuses cached-writer metadata%s before probing or any reader-admission wait", async metadata => {
   vi.restoreAllMocks(); const db = new DatabaseSync(file);
   db.exec(`CREATE TABLE bridge_components(name TEXT, version INTEGER); INSERT INTO bridge_components VALUES ('metadata', ${metadata})`); db.close();
   original = readFileSync(file);

@@ -124,7 +124,7 @@ export async function prepareColdStore(file: string, endpoint: string, token: st
           const current = readBootstrapPair(home, record.attempt);
           if (!sameBootstrapIdentity(current, originalPair)) throw bootstrapUnknown();
           for (const [path, id] of Object.entries(current.prepared.record.files!)) if (!sameBootstrapIdentity(bootstrapFileIdentity(path), id)) throw bootstrapUnknown();
-          appendBootstrapRecord({ ...current.prepared.record, state: "exited", preparedDigest: current.prepared.digest }); remaining(); check();
+          appendBootstrapRecord({ ...current.prepared.record, state: "exited", preparedDigest: current.prepared.digest }, () => { remaining(); check(); }); remaining(); check();
           inspectBootstrapJournal(home); remaining(); check();
         } finally { release(); }
       }, file, deadline);

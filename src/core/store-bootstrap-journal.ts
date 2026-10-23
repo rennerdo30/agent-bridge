@@ -79,18 +79,19 @@ export function syncBootstrapDirectory(path: string): void {
   } catch { throw Object.assign(bootstrapUnknown(), { bootstrapStage: "directory-publication", bootstrapFailure: "unsupported-or-unproven" }); }
   finally { if (fd !== undefined) closeSync(fd); }
 }
-export function appendBootstrapRecord(record: BootstrapRecord): void {
+export function appendBootstrapRecord(record: BootstrapRecord, check: () => void): void {
+  check();
   recordSchema.parse(record);
   const contents = JSON.stringify(record) + "\n";
   if (Buffer.byteLength(contents) > 16384) throw bootstrapUnknown();
   if (physicalPath(resolve(record.home)) !== record.home || dirname(record.file) !== record.home ||
       !sameBootstrapIdentity(bootstrapHomeIdentity(record.home), record.homeIdentity)) throw bootstrapUnknown();
-  syncBootstrapDirectory(record.home); // Probe before creating even the journal directory.
+  syncBootstrapDirectory(record.home); check(); // Probe before creating even the journal directory.
   const dir = join(record.home, ".store-bootstrap"); mkdirSync(dir, { recursive: true, mode: 0o700 }); bootstrapHomeIdentity(dir);
-  syncBootstrapDirectory(dir); syncBootstrapDirectory(record.home);
+  check(); syncBootstrapDirectory(dir); check(); syncBootstrapDirectory(record.home); check();
   const path = join(dir, `${record.attempt}.${record.state}.json`), fd = openSync(path, "wx", 0o600);
-  try { writeFileSync(fd, contents); fsyncSync(fd); } finally { closeSync(fd); }
-  syncBootstrapDirectory(dir); syncBootstrapDirectory(record.home);
+  try { check(); writeFileSync(fd, contents); check(); fsyncSync(fd); } finally { closeSync(fd); }
+  check(); syncBootstrapDirectory(dir); check(); syncBootstrapDirectory(record.home); check();
 }
 export function readBootstrapPair(home: string, attempt: string): { initial: BootstrapEvidence; prepared: BootstrapEvidence } {
   const dir = join(home, ".store-bootstrap"), initial = readBootstrapEvidence(join(dir, `${attempt}.preparing.json`)), prepared = readBootstrapEvidence(join(dir, `${attempt}.prepared.json`));
@@ -143,7 +144,7 @@ export function inspectBootstrapJournal(home: string): void {
   }
   for (const group of groups.values()) {
     const initial = group.get("preparing"), prepared = group.get("prepared"), exited = group.get("exited");
-    if (!initial || !prepared || !exited) throw bootstrapUnknown();
+    if (!initial || !prepared || !prepared.files || !exited) throw bootstrapUnknown();
     const pair = readBootstrapPair(home, initial.attempt);
     if (exited.preparedDigest !== pair.prepared.digest || exited.preparingDigest !== prepared.preparingDigest || !sameBootstrapIdentity(exited.preparingSignature, prepared.preparingSignature) ||
         !sameBootstrapIdentity(exited.files, prepared.files) || exited.namespace !== prepared.namespace ||
