@@ -149,7 +149,11 @@ export function physicalMetadataPath(path: string): void {
 /** Observe an already admitted component without starting a competing migration. */
 export function existingMetadataDb(home: string): DatabaseSync | undefined {
  assertBootstrapAccess(home);
- assertMetadataUpgradeBoundary(home);
+ // A legacy component is observable by the capability census through its old
+ // read-only path, never exported as an admitted writable handle. Explicit
+ // offline migration must still be able to run that census before upgrading.
+ try { assertMetadataUpgradeBoundary(home); }
+ catch (error) { if ((error as NodeJS.ErrnoException).code === "STORE_OFFLINE_REQUIRED") return undefined; throw error; }
  const file = join(resolve(home),"bridge.db"), cached = connections.get(handleKey(file));
  if (cached) { admissionSqliteBusy(cached); return escapeMetadataReference(cached); }
  if (!existsSync(file)) return undefined;
