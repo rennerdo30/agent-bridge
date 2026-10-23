@@ -1,4 +1,21 @@
-# R37 backup proof contract proposed for parent review
+# R37 backup proof contract and decision history
+
+**Current status:** parent approved source-only artifact2/external witness,
+secret-safe typed datafile registration and the demonstrated protocol11/metadata6
+writer boundary. Config exclusion applies to discovery; the existing explicit
+config capture remains. These supersede the pending questions in the historical
+proposal below. Implementation/review evidence is in
+[R37 correction](t3-cross-machine-r37-correction.md), complete inventories/budgets
+in `t3-cross-machine-r37-receipt.json`, and scope/availability proposals in the
+[coupling map](t3-cross-machine-r37-coupling.md). Final source6a64be36 is UNTESTED;
+exact667 has21 mocked passes plus earlier noEmit. No source/native acceptance.
+
+The final `initial` catalog proposal and strict computed publication bounds were
+added after admitted validation and remain source-review candidates. Parser
+incompatibility does not prove cached-writer exclusion. No additional version
+bump, Windows fallback or scope extraction is authorized.
+
+## Historical proposal, preserved below
 
 Base for this correction: `8b586dee20b20154f5602467d59dadc46d2f8e10`.
 R36 review at92db was CHANGES REQUIRED, AB-45843252/PR5632437888. The
