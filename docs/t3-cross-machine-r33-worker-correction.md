@@ -147,3 +147,18 @@ fixture establish the clock mismatch; actual-worker hosted execution is still
 required to show the corrected fixture reaches and passes its original final
 assertions. No discarded native error, power-loss durability or general Windows
 availability is retroactively proved.
+
+The final fixture correction source is
+**ef1ed5ae65f5b74ab00eab2b4ee609c8e944ac17**, tree
+**eb07552ee5c5647e79edf0aaba13b233d77ed22e**. NoEmit only: ownPID52096,
+start2026-10-23T09:17:28.3749161Z/end09:17:29.6478025Z,1271ms,exit0,
+no timeout. Actual daemon/backoff fixture is **NOT RUN locally**. Its CI red
+is retained above; no native red/green claim. Raw receipt and exact-head streams:
+`E:/AgentData/reports/ab458-r33-ef1ed5ae-final-remaining.json`, `.out`, `.err`.
+The same additional parent allowance now totals **10718ms/12000ms** across
+the three explicitly recorded segments, without renewing the cap. No more local
+validation is scheduled. Production cancellation/checklist selected green
+remains qualified to43d9; original worker15-case green remains qualified to8b.
+The final documentation commit after this source is not called an exact tested
+source head. R33 full review on6b remains evidence for that object only; these
+new commits need fresh complete review and hosted actual-worker acceptance.
