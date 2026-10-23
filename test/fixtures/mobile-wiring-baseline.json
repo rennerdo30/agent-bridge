@@ -9,7 +9,7 @@
     "src/core/node.ts:constructor": "c70bf3e865405166e195839fd1b315548b5a0a56847db0bba52eba72d0b691f5",
     "src/core/node.ts:start": "b504e47bab8d53e8bb71ad3457594988c38cc78bed67e2b1be3e197bc1f5066a",
     "src/core/node.ts:stop": "b98b5631cf7643be62bce61fac172fc79c0da09db2c7720abf14502736b57359",
-    "src/core/node.ts:tryBecomeBroker": "a945a95f23803cb80cb3ea51d5480d22eb1725854d1ce6f49a2ccf24289e8d36",
+    "src/core/node.ts:tryBecomeBroker": "0703c468cdaf390be07a5d4015e455a66738b230b86084993718847ea85a116f",
     "src/cli/dashboard.ts:constructor": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
     "src/cli/dashboard.ts:open": "6eacbb835304e2a5d3c303c54c3c674910cbf4f9a5411b3af62a7747fe2d211b",
     "src/cli/dashboard.ts:ensure": "d19ca8a9485ccc07d588997e3497bc11545e730a264e9a6f59bf1ceb0dfcda49",

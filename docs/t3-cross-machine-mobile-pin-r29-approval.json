@@ -1,0 +1,30 @@
+{
+  "approval": "Parent explicitly approved ONLY node.tryBecomeBroker baseline amendment after reviewing normalized artifact a56d111d and frozen factory/guard/proof/nested storage/process scope. Not source acceptance or merge approval. Fresh full R29 and hosted gates required.",
+  "sourceCommit": "78bd894a9f3d22eb1caecb0b7e322fdcbfef331e",
+  "sourceTree": "c7288625fd57e1704cc5ea5aee2ac8ab7c862d7c",
+  "artifactCommit": "a56d111d66bfe9d060833a83715d0a044a92bf09",
+  "artifactTree": "cda5cadcd9a095e58ee3eb3e9ed2a7846f365e5b",
+  "method": "src/core/node.ts:tryBecomeBroker",
+  "previous": "a945a95f23803cb80cb3ea51d5480d22eb1725854d1ce6f49a2ccf24289e8d36",
+  "current": "0703c468cdaf390be07a5d4015e455a66738b230b86084993718847ea85a116f",
+  "sourceFileSha256": {
+    "src/cli/broker-daemon.ts": "30a2a2441885dd39721dd442dd77976c1687f3dd4ea97718bc751bd06911e978",
+    "src/cli/reindex.ts": "3d9dfd00f37a1b6718cdbd152781d13ad29ace920f9cd789599e7752bdb0452d",
+    "src/core/history-store.ts": "d372f01860e5601732361bfb7ef72fa0e079575b665a479be0219ee829b07a4a",
+    "src/core/metadata-db.ts": "f80b23b180a1fb3047073d23f67f407ceb2b3285c9a326394e6b60506aa76b94",
+    "src/core/metadata-file-lease.ts": "14052aac7d7107491bfbb825d0d04cd0e7917cf86e9d013c0f8dd18329726c4c",
+    "src/core/migration-lock.ts": "c4d417cfa60fe1cf693f429dbbf479567e5a6a287b51101dacbf711de467290c",
+    "src/core/node.ts": "e34879b046248caf82def0f1f59b117aaea4eeea0d4b240b2aef8d3df7c29b4d",
+    "src/core/prior-endpoints.ts": "40eb86ea6df80bb450a0e98879217121e4c636ae0079d757a6dcdf3af6561821",
+    "src/core/process-identity.ts": "f4745d14c2f5d6aed861cdc987228e23a4433094e3ae0b65b649a9ad7171f564",
+    "src/core/sqlite-maintenance.ts": "b57cfe17d3f2d83a220bcf335cd5a685197558a06444fc059d33866040c96a73",
+    "src/core/sqlite-migrations.ts": "d52c74cb4f02d51b217e2eaa35de385c4664df8d51fde6b50e09a6cc41e90c93",
+    "src/core/sqlite-policy.ts": "be2907b6b8721514f2b25f949ebb4b1d846bb8c8aa3d1a88d8822d9e8028415f",
+    "src/core/storage-admission.ts": "ada0eee4fca253a5815e0b652ca4a788b2b8ebf9143ddc8d83a31f2b680da684",
+    "src/core/storage-lock.ts": "0d8948add01827ea9d05730778bc5d15ba636af46ac61bb6cbfacc6e368ad913",
+    "src/core/store.ts": "8cf6f6109f04f8a0c9813c64d25f354c266846a1349f9cbb24d4d99b537b70d8",
+    "src/core/windows-process-identity.ts": "d1513d7e1ed00ce8f677fc91a92abcc5d6e3bc6b0b137775a274f8178eaac257"
+  },
+  "preserved": "Other12 method entries, UI f2a5b28254d4bb467f28bdee139e3b23bd9d4bd0c7c15fee116b4ed85a6ac385, normalizer and behavioral assertions unchanged. Only exact methods entry replaced; historical updates remain unchanged. No source changes in amendment.",
+  "testedHead": "Recorded independently in exact frozen R29 external validation receipt; source/artifact/pin commits are distinct."
+}
