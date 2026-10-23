@@ -26,13 +26,14 @@ vi.mock("node:fs", async original => {
 });
 
 let env: TestEnv | undefined, backup: BackupBackground | undefined;
+let ownedTransport: (EventEmitter & { exitCode: number | null }) | undefined;
 afterEach(async () => {
   // Dispose only this fixture's EventEmitter transport on an early assertion
   // failure. Nonzero cleanup is not a successful worker/settlement witness.
-  if (transport.worker?.exitCode === null) { transport.worker.exitCode = 1; transport.worker.emit("exit", 1, null); }
+  if (ownedTransport?.exitCode === null) { ownedTransport.exitCode = 1; ownedTransport.emit("exit", 1, null); }
   await backup?.close(); backup = undefined;
   vi.useRealTimers(); vi.unstubAllEnvs(); vi.restoreAllMocks();
-  await env?.cleanup(); env = undefined; transport.worker = undefined;
+  await env?.cleanup(); env = undefined; transport.worker = undefined; ownedTransport = undefined;
 });
 
 it("keeps the exact accepted capture pending after observer expiry and verified copy until its actual owned exit", async () => {
@@ -43,6 +44,7 @@ it("keeps the exact accepted capture pending after observer expiry and verified 
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
   const send = vi.fn((_message: unknown, callback?: () => void) => callback?.()), kill = vi.fn();
   const worker = Object.assign(new EventEmitter(), { connected: true, exitCode: null as number | null, send, kill, unref: vi.fn() });
+  ownedTransport = worker;
   transport.worker = worker as unknown as ChildProcess;
   backup = new BackupBackground(env.home, nullLogger); Reflect.get(backup, "start").call(backup);
   expect(transport.starts).toBe(1); expect(transport.builds).toBe(0);
