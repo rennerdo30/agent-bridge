@@ -175,7 +175,8 @@ it("checks complete evidence again at final construction rather than trusting ex
 
 it("refuses a parent-directory publication failure before journal or schema effects", async () => {
   schemaMs = 0; directoryIo.onSync = () => { if (directoryIo.syncs.at(-1) === dirname(env.home)) throw new Error("Controlled parent publication failure"); };
-  await expect(open()).rejects.toMatchObject({ code: "STORE_BOOTSTRAP_UNSETTLED" });
+  const failure = await open().then(value => { opened = value; return undefined; }, error => error);
+  expect(failure).toMatchObject({ code: "STORE_BOOTSTRAP_UNSETTLED" });
   expect(ddl).toBe(0); expect(existsSync(env.db)).toBe(false); expect(existsSync(join(env.home, ".store-bootstrap"))).toBe(false);
 });
 
