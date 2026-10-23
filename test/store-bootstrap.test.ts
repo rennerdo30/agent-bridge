@@ -14,7 +14,7 @@ import { makeEnv, type TestEnv } from "./helpers.js";
 const wire = vi.hoisted(() => ({ starts: 0, before: undefined as undefined | (() => Promise<void>),
   after: undefined as undefined | (() => Promise<void>), wrong: false, workers: [] as any[], stage: "idle", kernelThread: 0, error: undefined as unknown, exitedBeforeMessage: false, wrongThread: false,
   beforeMaintenance: undefined as undefined | (() => void), afterIncremental: undefined as undefined | ((target: string) => void),
-  incrementalSnapshot: undefined as undefined | ((db: DatabaseSync, target: string | Buffer | URL) => number) }));
+  incrementalSnapshot: undefined as undefined | ((db: DatabaseSync, target: string | Buffer | URL) => number), databaseHandles: [] as DatabaseSync[] }));
 const directoryIo = vi.hoisted(() => ({ next: 2_000_000_000, handles: new Map<number, string>(), files: new Map<number, string>(), failure: "", syncs: [] as string[], onSync: undefined as undefined | (() => void), mutateRead: undefined as undefined | ((path: string) => void), onCopy: undefined as undefined | ((source: string, target: string) => void) }));
 // Explicit simulated directory-durability capability, never evidence that a
 // Windows filesystem supports directory fsync. Ordinary file IO stays real.
@@ -83,7 +83,9 @@ vi.mock("../src/core/storage-lock.js", async original => {
 });
 vi.mock("node:sqlite", async original => {
   const actual = await original<typeof import("node:sqlite")>();
-  return { ...actual, backup: async (...args: Parameters<typeof actual.backup>) => {
+  return { ...actual, DatabaseSync: new Proxy(actual.DatabaseSync, { construct(target, args) {
+    const handle = Reflect.construct(target, args, target) as DatabaseSync; wire.databaseHandles.push(handle); return handle;
+  } }), backup: async (...args: Parameters<typeof actual.backup>) => {
     const result = wire.incrementalSnapshot ? wire.incrementalSnapshot(args[0], args[1]) : await actual.backup(...args);
     wire.afterIncremental?.(String(args[1])); return result;
   } };
@@ -103,7 +105,7 @@ let pendingDiagnostic: ReturnType<typeof setTimeout>, fixtureNumber = 0;
 const deferred = () => { let release!: () => void; const promise = new Promise<void>(done => { release = done; }); return { promise, release }; };
 beforeEach(() => {
   directoryIo.failure = ""; directoryIo.syncs = []; directoryIo.onSync = undefined; directoryIo.mutateRead = undefined; directoryIo.onCopy = undefined;
-  const number = ++fixtureNumber; wire.stage = "setup"; wire.beforeMaintenance = undefined; wire.afterIncremental = undefined; wire.incrementalSnapshot = undefined;
+  const number = ++fixtureNumber; wire.stage = "setup"; wire.beforeMaintenance = undefined; wire.afterIncremental = undefined; wire.incrementalSnapshot = undefined; wire.databaseHandles = [];
   pendingDiagnostic = setTimeout(() => console.error("Mock cold-bootstrap pending", { fixture: number, stage: wire.stage }), 1000);
   env = makeEnv(); schemaMs = 2400; ddl = 0; wire.starts = 0; wire.workers = []; wire.before = undefined; wire.after = undefined; wire.wrong = false; wire.error = undefined; wire.exitedBeforeMessage = false; wire.wrongThread = false;
   start = clock = Date.now(); vi.spyOn(Date, "now").mockImplementation(() => clock); vi.spyOn(performance, "now").mockImplementation(() => clock - start);
@@ -179,13 +181,22 @@ it.each(["missing-envelope", "missing-namespace", "missing-owner-table"])("R37 r
   if (kind === "missing-namespace") seed.exec("DROP TABLE mailbox_store");
   if (kind === "missing-owner-table") seed.exec("DROP TABLE message_frontends"); seed.close();
   const before = readFileSync(env.db), names = readdirSync(env.home), metadata = await import("../src/core/metadata-db.js"), initialize = vi.spyOn(metadata, "metadataDb");
-  let failure: unknown;
-  try { opened = new MessageStore(env.db, nullLogger); } catch (error) { failure = error; }
-  expect(failure).toMatchObject({ code: "STORE_LAYOUT_UNSUPPORTED" }); expect(initialize).not.toHaveBeenCalled();
-  expect(readFileSync(env.db).equals(before)).toBe(true); expect(readdirSync(env.home)).toEqual(names);
-  expect(existsSync(join(env.home, ".migration-snapshots"))).toBe(false);
-  const retained = new DatabaseSync(env.db, { readOnly: true });
-  try { expect(retained.prepare("SELECT hex(body) AS body FROM owner_original").all()).toEqual([{ body: "00FF01" }]); } finally { retained.close(); }
+  const ownBoundary = wire.databaseHandles.length;
+  try {
+    let failure: unknown;
+    try { opened = new MessageStore(env.db, nullLogger); } catch (error) { failure = error; }
+    expect(failure).toMatchObject({ code: "STORE_LAYOUT_UNSUPPORTED" }); expect(initialize).not.toHaveBeenCalled();
+    expect(readFileSync(env.db).equals(before)).toBe(true); expect(readdirSync(env.home)).toEqual(names);
+    expect(existsSync(join(env.home, ".migration-snapshots"))).toBe(false);
+    const retained = new DatabaseSync(env.db, { readOnly: true });
+    try { expect(retained.prepare("SELECT hex(body) AS body FROM owner_original").all()).toEqual([{ body: "00FF01" }]); } finally { retained.close(); }
+  } finally {
+    opened?.close(); opened = undefined; closeMetadataDbs();
+    // The broken constructor may throw before returning its store. These are
+    // exact actual native refs minted by THIS fixture boundary, never a path-
+    // based reopen or a foreign handle. Close only those still owned/open.
+    for (const handle of wire.databaseHandles.slice(ownBoundary)) if (handle.isOpen) { expect(handle.isTransaction).toBe(false); handle.close(); }
+  }
 });
 
 it.each(["all", "record-directory"])("refuses unsupported directory publication before schema effects: %s", async failure => {
