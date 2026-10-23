@@ -123,7 +123,7 @@ it("retains the earliest released 0.29 schema for inspection without granting su
   try {
     expect(store.byId(message.id)).toBeNull(); expect(() => store.insert(message)).toThrow(/ownership storage upgrade/);
   } finally { store.close(); }
-  recordStorePeer(env.home, { pid: process.pid, name: "exclusive-current-reader", version: APP_VERSION, storeCapabilities: { json: 4, sqlite: SQLITE_STORE_VERSION } });
+  recordStorePeer(env.home, { pid: process.pid, name: "exclusive-current-reader", version: APP_VERSION, storeCapabilities: { json: 4, sqlite: SQLITE_STORE_VERSION, metadata: 2 } });
   store = new MessageStore(env.db, nullLogger);
   try {
     expect(store.frontendOwnership).toBe(true);
@@ -156,7 +156,7 @@ it.each([6, 7, 8])("hosts schema %i without an upgrade, persists supplemental me
   } finally { store.close(); }
   store = new MessageStore(env.db, nullLogger);
   try { expect(store.broadcastRecipients(Date.now(), new Set()).queued).toContain("offline-peer"); } finally { store.close(); }
-  recordStorePeer(env.home, { pid: process.pid, name: "reloaded-session", version: APP_VERSION, storeCapabilities: { json: 4, sqlite: SQLITE_STORE_VERSION } });
+  recordStorePeer(env.home, { pid: process.pid, name: "reloaded-session", version: APP_VERSION, storeCapabilities: { json: 4, sqlite: SQLITE_STORE_VERSION, metadata: 2 } });
   store = new MessageStore(env.db, nullLogger);
   try {
     expect(store.broadcastNames()).toContain("offline-peer");

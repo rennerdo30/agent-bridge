@@ -182,7 +182,7 @@ export function assertCompatibleMailboxReaders(home: string): void {
 
 /** Never expires a live process's lease by age. A lease is stale only when its process is gone or its PID
  * now belongs to a process that started after the lease was written. */
-export function maintenanceLock(home: string): () => void {
+export function maintenanceLock(home: string, allowOwnCompatibleLease = false): () => void {
   mkdirSync(home, { recursive: true, mode: 0o700 });
   const path = join(home, LOCK_FILE);
   let owner: LockOwner;
@@ -199,6 +199,11 @@ export function maintenanceLock(home: string): () => void {
       const lease = join(dir, file);
       const pid = Number(file.split("-")[0]);
       if (!Number.isSafeInteger(pid) || pid <= 0) throw new Error(`unknown storage lease ${lease}; stop all bridge processes first`);
+      // Metadata admission is synchronous and cannot overlap another JS effect
+      // in this process. Never exempt a foreign process or an older own lease.
+      const declaration = readOwner(lease);
+      if (allowOwnCompatibleLease && pid === process.pid && declaration?.pid === pid &&
+          declaration.mailboxProtocol === PROTOCOL_VERSION && declaration.mailboxSchema === SQLITE_STORE_VERSION) continue;
       // Leases from older versions are empty; the file is never modified after creation, so its mtime is its creation time.
       let createdAt = readOwner(lease)?.createdAt;
       if (createdAt === undefined) {

@@ -1293,7 +1293,7 @@ it.each(["outbound-send", "outbound-receipt", "inbound-send", "inbound-receipt"]
   expect(received).not.toHaveBeenCalled(); expect(receipt).not.toHaveBeenCalled();
 });
 
-it.each([2, 3, 4, 5])("refuses protocol%s clients before registration, mailbox effects or daemon handover", async oldProtocol => {
+it.each([2, 3, 4, 5, 6])("refuses protocol%s clients before registration, mailbox effects or daemon handover", async oldProtocol => {
   const host = await persistentHost("pc-b"), handover = vi.fn(); host.broker.onNewerClient(handover);
   const client = await BridgeClient.connect(host.pipe, nullLogger); cleanup.push(() => client.close());
   await expect(client.request("auth", { protocol: oldProtocol, token: host.token, canHost: true })).rejects.toThrow(/protocol|upgrade/i);
@@ -1302,10 +1302,10 @@ it.each([2, 3, 4, 5])("refuses protocol%s clients before registration, mailbox e
     await expect((client.request as any)(operation, { ids: ["absent"], messageId: "absent", to: "target", body: "must not store" })).rejects.toThrow();
   }
   expect(host.store.byId("absent")).toBeNull(); expect((host.broker as any).localPeers()).toEqual([]);
-  expect(handover).not.toHaveBeenCalled(); expect(PROTOCOL_VERSION).toBe(6);
+  expect(handover).not.toHaveBeenCalled(); expect(PROTOCOL_VERSION).toBe(7);
 });
 
-it.each([2, 3, 4, 5])("new clients refuse a protocol%s endpoint without granting handover or later demand-start", async oldProtocol => {
+it.each([2, 3, 4, 5, 6])("new clients refuse a protocol%s endpoint without granting handover or later demand-start", async oldProtocol => {
   const dir = join(home, "old-endpoint"); mkdirSync(dir); const pipe = resolvePipePath(dir, {}), operations: string[] = [], auth: any[] = [];
   const sockets = new Set<import("node:net").Socket>();
   // Protocol2's exact auth refusal is sufficient; this endpoint implements no mailbox handlers.
@@ -1331,12 +1331,12 @@ it.each([2, 3, 4, 5])("new clients refuse a protocol%s endpoint without granting
   cleanup.push(() => node.stop()); cleanup.push(() => closeMetadataDb(dir));
   await node.setSessionId("new-client-session");
   await expect(node.start()).rejects.toThrow(`protocol ${oldProtocol}`);
-  expect(operations).toEqual(["auth"]); expect(auth[0].protocol).toBe(6); expect(auth[0].canHost).toBeUndefined();
+  expect(operations).toEqual(["auth"]); expect(auth[0].protocol).toBe(7); expect(auth[0].canHost).toBeUndefined();
   expect(server.listening).toBe(true); await close();
   await expect(node.ensureConnected()).rejects.toThrow(`protocol ${oldProtocol}`); expect(launch).not.toHaveBeenCalled();
 });
 
-it.each([2, 3, 4, 5])("blocks a live prior protocol%s endpoint before shared mailbox migration or daemon launch", async oldProtocol => {
+it.each([2, 3, 4, 5, 6])("blocks a live prior protocol%s endpoint before shared mailbox migration or daemon launch", async oldProtocol => {
   const dir = join(home, `prior-${oldProtocol}`); mkdirSync(dir, { mode: 0o700 });
   const dbPath = join(dir, "bridge.db"), seed = new MessageStore(dbPath, nullLogger);
   const retained = message(peer("historical-sender"), "unknown"); seed.insert(retained); seed.close(); closeMetadataDb(dir);

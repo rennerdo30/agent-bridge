@@ -1,8 +1,12 @@
 import { readFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 import { deliverFinalResult, PERMANENT_DELIVERY_CODES, readJobReport, readStoredFinalResult, resultDeliveryLabel, type StoredFinalResult } from "../src/mcp/final-result.js";
-import { writeRunnerState } from "../src/mcp/job-host.js";
+import { JobRunners, writeRunnerState } from "../src/mcp/job-host.js";
+import { publishRunnerSpec, runnerLedgerNamespace } from "../src/core/runner-store.js";
+import { runnerLedgerPrincipal } from "../src/mcp/runner-delivery-retention.js";
+import { quarantineTextAsync } from "../src/core/oversize.js";
 import { deliverWithRetry, inSendOrder } from "../src/mcp/job-runner.js";
 import { deliveryEvidenceSchema, deliveryFailure } from "../src/mcp/delivery-evidence.js";
 import { JobManager, readStore, type Job, type RunnerState } from "../src/mcp/jobs.js";
@@ -194,12 +198,17 @@ it("holds session fallback behind durable unsettled retention, then posts only t
   try {
     const job = jobs.start("codex", null, "review", async () => new Promise(() => {}));
     job.host = { pid: process.pid, peer: job.name, startedAt: job.startedAt };
-    const pending = [{ messageId: "11111111-1111-4111-8111-111111111111", record: "Original immutable evidence, not replay authority" }];
+    const spec = { owner: node.name, job: { ...job, allowedServers: [] } };
+    publishRunnerSpec(env.home, job.id, spec);
+    const namespace = runnerLedgerNamespace(env.home, true);
+    const pending = [{ messageId: randomUUID(), record: JSON.stringify({ namespace, job: job.id, body: "Original immutable evidence, not replay authority", authority: "evidence-only-no-replay" }) }];
+    const ledger = { version: 1 as const, namespace, generation: randomUUID(), principal: runnerLedgerPrincipal(spec), job: job.id, entries: pending };
     const failed: RunnerState = { pid: process.pid, peer: job.name, status: "done", updatedAt: Date.now(),
-      report, reportId: "original-final", delivered: false, pendingDeliveryRetention: pending, deliveryRetentionFailure: "attempts-exhausted" };
+      report, reportId: "original-final", delivered: false, deliveryLedger: ledger, pendingDeliveryRetention: pending, deliveryRetentionFailure: "attempts-exhausted" };
     writeRunnerState(env.home, job.id, failed);
     let state = failed;
-    jobs.runners = { state: () => state, alive: () => false, send: vi.fn(), kill: vi.fn() };
+    const admission = new JobRunners(node, env.home, "unused-cli", nullLogger);
+    jobs.runners = { state: () => state, alive: () => false, send: vi.fn(), kill: vi.fn(), assertTurnAdmission: job => admission.assertTurnAdmission(job) };
     const check = () => (jobs as unknown as { checkHosted(job: Job, ownershipRefreshed: boolean, polledState: RunnerState): void }).checkHosted(job, true, state);
     check(); check();
     expect(job.host).not.toBeNull(); expect(job.status).toBe("running");
@@ -207,8 +216,8 @@ it("holds session fallback behind durable unsettled retention, then posts only t
     expect(node.unread().some(message => message.body === report)).toBe(false);
     expect(readStoredFinalResult(env.home, job.id)).toEqual({ report, reportId: "original-final", delivered: false });
     // Confirmed evidence retention clears the barrier, never replays the note.
-    state = { ...failed, pendingDeliveryRetention: [], deliveryRetentionFailure: undefined, retainedDeliveryCount: 1 };
-    writeRunnerState(env.home, job.id, state);
+    state = { ...failed, deliveryLedger: { ...ledger, entries: [] }, pendingDeliveryRetention: [], deliveryRetentionFailure: undefined, retainedDeliveryCount: 1 };
+    await quarantineTextAsync(env.home, pending[0]!.messageId, pending[0]!.record, () => writeRunnerState(env.home, job.id, state));
     check(); check();
     await until(() => node.unread().some(message => message.body === report));
     expect(node.unread().filter(message => message.body === report)).toHaveLength(1);

@@ -5,12 +5,12 @@ import { loadConfig } from "../core/config.js";
 import { markerSafe } from "../core/approval-display.js";
 import { checkUsagePreflight, usageAdmissionText, usageSubmissionReceipt } from "../core/usage.js";
 import { usageProbeFor } from "../mcp/targets.js";
-import { REMOTE_JOB_USAGE_CAPABILITY } from "./remote-job-protocol.js";
+import { REMOTE_RUNNER_LEDGER_CAPABILITY, unsupportedRunnerLedger, REMOTE_JOB_USAGE_CAPABILITY } from "./remote-job-protocol.js";
 import { bundledCli } from "../core/delegate.js";
 import { isRecord, readJsonStore, writeJsonStore } from "../core/json-store.js";
 import type { Logger } from "../core/logger.js";
 import type { BridgeNode } from "../core/node.js";
-import type { PeerInfo } from "../core/protocol.js";
+import { BridgeError, type PeerInfo } from "../core/protocol.js";
 import { mailboxSchema, recipientKey, type InternalMessageOrigin } from "../core/recipient-ownership.js";
 import { answerPendingApproval, listPendingApprovals, publishApproval, type PendingApproval } from "../core/relay.js";
 import { startRunFeedReady, type RunFeed, type RunFeedOptions } from "../core/runfeed.js";
@@ -91,6 +91,7 @@ export class RemoteJobs {
   private readonly pendingStarts = new Map<string, { record: RemoteRecord; previous?: RemoteRecord; controller: AbortController; cancelRequested: boolean; committed: boolean }>();
   private readonly runners: JobRunners | null;
   private closed = false;
+  private readonly unsubscribeLink?: () => void;
 
   constructor(private readonly network: NetworkService, private readonly home: string, private readonly log: Logger,
     private readonly control: (record: { owner: string; name: string; id: string }, control: RunnerControl, origin: InternalMessageOrigin) => Promise<void>,
@@ -102,10 +103,20 @@ export class RemoteJobs {
       if (typeof r.pair !== "string" || typeof r.peer !== "string" || !r.job?.id || !r.args) continue;
       this.records.set(r.job.id, { ...r, job: { ...r.job, controller: new AbortController(), queue: [] } });
     }
-    network.registerExtension(REMOTE_JOB_FRAME, REMOTE_JOB_CAPABILITY, (payload, pair) => this.receive(payload, pair), [REMOTE_JOB_CANCELLED_CAPABILITY, REMOTE_JOB_ANTIGRAVITY_OPTIONS_CAPABILITY, REMOTE_JOB_USAGE_CAPABILITY]);
+    network.registerExtension(REMOTE_JOB_FRAME, REMOTE_JOB_CAPABILITY, (payload, pair) => this.receive(payload, pair), [REMOTE_JOB_CANCELLED_CAPABILITY, REMOTE_JOB_ANTIGRAVITY_OPTIONS_CAPABILITY, REMOTE_JOB_USAGE_CAPABILITY, REMOTE_RUNNER_LEDGER_CAPABILITY]);
+    this.unsubscribeLink = network.onLink?.(pair => {
+      if (network.peerSupports(pair.id, REMOTE_RUNNER_LEDGER_CAPABILITY)) return;
+      for (const [rid, pending] of this.pending) if (pending.host === pair.id || pending.host === pair.name) {
+        clearTimeout(pending.timer); this.pending.delete(rid); pending.reject(unsupportedRunnerLedger(true));
+      }
+    });
   }
 
   async request(host: string, peer: Pick<PeerInfo, "id" | "name">, raw: RemoteJobRequest, supervisor = peer.id, localJobName?: string): Promise<RemoteJobSnapshot> {
+    if (!this.network.peerSupports(host, REMOTE_RUNNER_LEDGER_CAPABILITY)) {
+      if (this.network.peerConnected(host)) throw unsupportedRunnerLedger();
+      throw new Error("Paired instance is disconnected; no remote request was dispatched");
+    }
     const request = remoteJobRequestSchema.parse(raw);
     if (request.op === "spawn") {
       const settings = Object.fromEntries(JOB_SETTING_KEYS.filter((key) => key in request.args).map((key) => [key, (request.args as Record<string, unknown>)[key]]));
@@ -115,7 +126,7 @@ export class RemoteJobs {
       }
     }
     const mirrorKey = `${host}/${request.job}`, mirrorTurn = this.mirrorTurns.get(mirrorKey);
-    if (!this.network.peerSupports(host, REMOTE_JOB_CAPABILITY)) throw new Error("Remote broker update needed or paired PC disconnected: update agent-bridge on the paired PC to a release with remote-jobs-v1, then start or reload one session there; its background broker hands over to the newer release (an embedded broker needs every hosting session restarted).");
+    if (!this.network.peerSupports(host, REMOTE_JOB_CAPABILITY)) throw new Error("Remote broker update needed or paired PC disconnected: owner-coordinated compatible host upgrade is required for remote-jobs-v1. No automatic broker replacement is performed.");
     if (request.op === "spawn" && (request.args.terminal_sandbox !== undefined || request.args.bypass_permissions !== undefined) && !this.network.peerSupports(host, REMOTE_JOB_ANTIGRAVITY_OPTIONS_CAPABILITY)) {
       throw new Error("Remote broker update needed: paired PC does not support Antigravity terminal_sandbox or bypass_permissions options.");
     }
@@ -126,6 +137,7 @@ export class RemoteJobs {
       this.pending.set(rid, { host, resolve, reject, timer });
     });
     void response.catch(() => {});
+    let dispatched = false;
     try {
       let wireRequest = request;
       if (request.op === "spawn" && !this.network.peerSupports(host, REMOTE_JOB_USAGE_CAPABILITY)) {
@@ -133,8 +145,10 @@ export class RemoteJobs {
         const { usageTurn, ...legacy } = request;
         wireRequest = legacy;
       }
+      dispatched = true; // A failed write/response cannot prove no accepted remote work.
       await this.network.sendExtension(host, REMOTE_JOB_FRAME, { kind: "request", rid, peer: { id: peer.id, name: peer.name, supervisor }, request: wireRequest });
       const snapshot = await response;
+      if (!this.network.peerSupports(host, REMOTE_RUNNER_LEDGER_CAPABILITY)) throw unsupportedRunnerLedger(true);
       // The remote result is authoritative even when this PC cannot yet retain its mirror.
       try {
         // An older poll remains a valid RPC result, but cannot rewrite a newer turn's mirror.
@@ -145,6 +159,8 @@ export class RemoteJobs {
     } catch (err) {
       const p = this.pending.get(rid);
       if (p) { clearTimeout(p.timer); this.pending.delete(rid); p.reject(err as Error); }
+      if (dispatched && request.op === "spawn") throw new BridgeError(err instanceof BridgeError ? err.code : "timeout", String((err as Error).message).slice(0, 8192),
+        { ...(err instanceof BridgeError ? err.details : {}), remoteExecutionUnconfirmed: true });
       if (request.op === "spawn" && request.args.base !== undefined) {
         throw new Error(`Remote spawn with explicit base ${request.args.base} failed; an older peer may not support the base option. Check the paired PC before retrying: ${(err as Error).message}`);
       }
@@ -156,6 +172,15 @@ export class RemoteJobs {
     const parsed = remoteJobWireSchema.safeParse(payload);
     if (!parsed.success) { this.log.warn("invalid remote job frame", { host: pair.name }); return; }
     const frame = parsed.data;
+    if (!this.network.peerSupports(pair.id, REMOTE_RUNNER_LEDGER_CAPABILITY)) {
+      if (frame.kind === "response") {
+        const pending = this.pending.get(frame.rid);
+        if (pending && (pending.host === pair.id || pending.host === pair.name)) {
+          clearTimeout(pending.timer); this.pending.delete(frame.rid); pending.reject(unsupportedRunnerLedger(true));
+        }
+      }
+      throw unsupportedRunnerLedger(frame.kind === "response");
+    }
     if (frame.kind === "response") {
       const p = this.pending.get(frame.rid);
       if (!p || (p.host !== pair.id && p.host !== pair.name)) return;
@@ -193,6 +218,7 @@ export class RemoteJobs {
   }
 
   private async handle(pair: NetworkPair, peer: { id: string; name: string; supervisor: string }, request: RemoteJobRequest, returnRoute?: RemoteSupervisorRoute): Promise<RemoteJobSnapshot> {
+    if (!this.network.peerSupports(pair.id, REMOTE_RUNNER_LEDGER_CAPABILITY)) throw unsupportedRunnerLedger();
     let record = this.records.get(request.job);
     if (record && (record.pair !== pair.id || record.peer !== peer.supervisor)) throw new Error("Remote job belongs to another supervisor.");
     if (record?.returnRoute && (!returnRoute || record.returnRoute.destination.hostFingerprint !== returnRoute.destination.hostFingerprint ||
@@ -200,7 +226,11 @@ export class RemoteJobs {
         recipientKey(record.returnRoute.destination.frontend, record.returnRoute.destination.native) !== recipientKey(returnRoute.destination.frontend, returnRoute.destination.native)))
       throw new Error("Remote job belongs to the original authenticated supervisor binding.");
     if (request.op === "spawn") {
-      if (record && hasUnsettledRunnerRetention(readRunnerState(this.home, record.job.id))) throw new Error("Remote runner retention is unsettled; recover original evidence on its execution host before continuation.");
+      if (record && hasUnsettledRunnerRetention(readRunnerState(this.home, record.job.id))) {
+        try { await this.runners?.recoverRetention(record.job, record.job.controller.signal, () => !this.closed && this.records.get(record!.job.id) === record); }
+          catch { throw new Error("Remote runner retention is unsettled; original generation requires owned evidence recovery"); }
+        throw new Error("Remote runner retention is unsettled; original generation must settle before continuation.");
+      }
       const cfg = loadConfig(this.home, request.target, this.log, {});
       const policy = loadConfig(this.home, "other", this.log, {}).network.remoteJobs;
       if (!policy.agents.includes(request.target)) throw new Error("Remote agent is not allowed by network.remoteJobs.agents.");
@@ -265,7 +295,7 @@ export class RemoteJobs {
         const host = await this.runners?.startAsync(job, { target: request.target, args: staged.args, base: staged.args, owner, byAgent: "other", cwd, cfg }, {
           signal: admission.controller.signal,
           isCurrent: () => !this.closed && this.records.get(job.id) === staged && this.pendingStarts.get(job.id) === admission &&
-            staged.job === job && staged.owner === owner && staged.peer === peer.supervisor && staged.pair === pair.id,
+            staged.job === job && staged.owner === owner && staged.peer === peer.supervisor && staged.pair === pair.id && this.network.peerSupports(pair.id, REMOTE_RUNNER_LEDGER_CAPABILITY),
         });
         if (!host) throw new Error("Remote job runner is unavailable; update the remote broker's bundled CLI.");
         job.host = host;
@@ -320,7 +350,11 @@ export class RemoteJobs {
     // report which could be settled without its preceding retention barrier.
     // Existing error responses preserve the requester's last observation and
     // cannot be mistaken for a receipt or positive proof of runner death.
-    if (hasUnsettledRunnerRetention(snapshot.state)) throw new Error("Remote runner retention is unsettled; recover original evidence on its execution host before continuation.");
+    if (hasUnsettledRunnerRetention(snapshot.state)) {
+      try { await this.runners?.recoverRetention(record!.job, record!.job.controller.signal, () => !this.closed && this.records.get(record!.job.id) === record); }
+      catch { throw new Error("Remote runner retention is unsettled; original generation requires owned evidence recovery"); }
+      throw new Error("Remote runner retention is unsettled; recover original evidence on its execution host before continuation.");
+    }
     return snapshot;
   }
 
@@ -440,6 +474,7 @@ export class RemoteJobs {
   }
 
   close(): void {
+    this.unsubscribeLink?.();
     this.closed = true;
     for (const intent of this.mirrorIntents.values()) intent.controller?.abort(new Error("Remote mirror broker closed"));
     this.mirrorIntents.clear();

@@ -19,7 +19,7 @@ import { runRemoteAsk } from "../src/mcp/remote-ask.js";
 import { registerTools } from "../src/mcp/server.js";
 import { DELEGATION_TARGETS } from "../src/mcp/targets.js";
 import { DEFAULT_NETWORK_CONFIG } from "../src/network/config.js";
-import { remoteSpawnArgsSchema, type RemoteJobRequest } from "../src/network/remote-job-protocol.js";
+import { REMOTE_RUNNER_LEDGER_CAPABILITY, remoteSpawnArgsSchema, type RemoteJobRequest } from "../src/network/remote-job-protocol.js";
 import { RemoteJobs } from "../src/network/remote-jobs.js";
 import { makeEnv, until, type TestEnv } from "./helpers.js";
 

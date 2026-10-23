@@ -35,7 +35,7 @@ beforeEach(() => {
   vi.spyOn(delegate, "pidAlive").mockReturnValue(false);
   vi.spyOn(worktree, "gitDirsOutside").mockResolvedValue([]);
   control = vi.fn(async () => {});
-  remote = new RemoteJobs({ registerExtension() {}, peers: () => [fixtureRemotePeer(home, pair, { ...peer, sessionId: peer.supervisor })] } as any, home, nullLogger, control);
+  remote = new RemoteJobs({ registerExtension() {}, peerSupports: () => true, peers: () => [fixtureRemotePeer(home, pair, { ...peer, sessionId: peer.supervisor })] } as any, home, nullLogger, control);
 });
 afterEach(() => { closeMetadataDbs(); remote.close(); vi.useRealTimers(); vi.restoreAllMocks(); rmSync(home, { recursive: true, force: true }); });
 function request(id: string, prompt = "retained prompt") { return { op: "spawn", job: id, target: "codex", args: { cwd: home, prompt, title: "Queued" } } as const; }
@@ -43,7 +43,7 @@ function handle(request: unknown) { return (remote as any).handle(pair, peer, re
 function neverQuery() {
   const pid = ++nextPid; mkdirSync(join(home, "storage-capabilities"));
   writeFileSync(join(home, "storage-capabilities", `${pid}.json`), JSON.stringify({ schemaVersion: 1, pid, name: "current-reader", version: APP_VERSION,
-    explicit: true, json: 4, sqlite: 9, processIdentity: `generation-${pid}` }));
+    explicit: true, json: 4, sqlite: 9, metadata: 2, processIdentity: `generation-${pid}` }));
   let resolve!: (ids: Map<number, string>) => void;
   vi.spyOn(identity, "readProcessIdentities").mockImplementation(() => new Promise(ready => { resolve = ready; }));
   return { started: () => Boolean(resolve), release: async () => { resolve(new Map([[pid, `generation-${pid}`]])); await refreshStorePeerIdentities(home); } };
@@ -65,8 +65,10 @@ it("refuses unsettled remote terminal snapshots and continuation before strippin
   await expect(handle(request(id, "must not replace pending evidence"))).rejects.toThrow("Remote runner retention is unsettled");
   expect(start).toHaveBeenCalledOnce(); expect(readRunnerState(home, id)).toMatchObject(state);
   expect(readFileSync(join(home, "remote-jobs.json"))).toEqual(original);
-  writeRunnerState(home, id, { ...state, pendingDeliveryRetention: [], deliveryRetentionFailure: undefined });
-  expect(await handle({ op: "state", job: id })).toMatchObject({ alive: false, state: { report: state.report, reportId: state.reportId, delivered: false } });
+  // These deliberately unproven old bytes cannot be blessed by clearing a
+  // field; retain the original report and evidence for explicit recovery.
+  expect(() => writeRunnerState(home, id, { ...state, pendingDeliveryRetention: [], deliveryRetentionFailure: undefined })).toThrow(/retention.*unsettled/i);
+  expect(readRunnerState(home, id)).toMatchObject(state);
 });
 
 it("retains admitted paired-host job authority when the local job registry has no copy", async () => {
@@ -140,7 +142,7 @@ it("does not commit another job's provisional generation during an unrelated per
   remote.close(); writeFileSync(join(home, "remote-jobs.json"), JSON.stringify({ version: 4, jobs: [previous] }));
   mkdirSync(join(home, "jobs")); writeFileSync(join(home, "jobs", "previous.json"), JSON.stringify({ version: 4, pid: 0, peer: previous.job.name,
     status: "done", sessionId: "saved-session", workdir: home, updatedAt: Date.now() }));
-  remote = new RemoteJobs({ registerExtension() {} } as any, home, nullLogger, control);
+  remote = new RemoteJobs({ registerExtension() {}, peerSupports: () => true } as any, home, nullLogger, control);
   let admission: any;
   vi.spyOn(JobRunners.prototype, "startAsync").mockImplementation(async (job, _spec, gate) => {
     if (job.id !== "previous") return host;

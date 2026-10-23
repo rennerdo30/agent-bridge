@@ -1,3 +1,4 @@
+import { assertRunnerArchiveAdmission } from "../core/runner-store.js";
 import { spawn } from "node:child_process";
 import { mkdirSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -12,12 +13,14 @@ import type { DelegateArgs } from "./delegate-run.js";
 import type { Job, JobHost, JobHostInfo, RunnerControl, RunnerState } from "./jobs.js";
 import { archiveFile, assertWritableStore, readJsonStore, retentionLimit } from "../core/json-store.js";
 import { existingMetadataDb } from "../core/metadata-db.js";
-import { legacyRunnerPeers, publishRunnerSpec, readRunnerStateRecord, runnerFilesImported, runnerSpecPath, runnerStatePath as storeStatePath, writeRunnerStateRecord } from "../core/runner-store.js";
+import { legacyRunnerPeers, publishRunnerSpec, readOriginalRunnerSpec, readRunnerStateRecord, runnerFilesImported, runnerSpecPath, runnerStatePath as storeStatePath, writeRunnerStateRecord } from "../core/runner-store.js";
 import { RemoteJobHost } from "./remote-job-host.js";
 import { jobEnvironment } from "../core/job-environment.js";
 import { setTimeout as delay } from "node:timers/promises";
 import { assertStoreUpgrade, refreshStorePeerIdentities } from "../core/store-compatibility.js";
 import { JSON_STORE_VERSION } from "../core/json-store.js";
+import { hasUnsettledRunnerRetention, RunnerRetentionUnsettled } from "./runner-delivery-retention.js";
+import { recoverRunnerLedger } from "./runner-ledger-recovery.js";
 import { cloneJson, fileSignature } from "../core/file-cache.js";
 import type { HostedAdmission } from "./jobs.js";
 
@@ -81,10 +84,10 @@ export function readRunnerState(home: string, id: string): RunnerState | null {
 }
 
 /** Atomic (one SQLite transaction), so the server never reads half a state. */
-export function writeRunnerState(home: string, id: string, state: RunnerState): void {
+export function writeRunnerState(home: string, id: string, state: RunnerState, initial = false): void {
   // The runner's own creation identity: its PID alone may be reused once it is gone (AB-236).
   const identity = state.identity ?? (state.pid === process.pid ? processIdentity(process.pid) : undefined);
-  writeRunnerStateRecord(home, id, { ...state, ...(identity ? { identity } : {}) });
+  writeRunnerStateRecord(home, id, { ...state, ...(identity ? { identity } : {}) }, initial);
 }
 
 /** How long a probed identity of a live runner PID is reused by the frequent liveness checks. */
@@ -184,7 +187,7 @@ export class JobRunners implements JobHost {
         if (!f.endsWith(".json") || f.endsWith(".spec.json") || Date.now() - statSync(path).mtimeMs <= keepMs) continue;
         const id = f.replace(/\.json$/, "");
         const state = readRunnerState(home, id);
-        if (state?.status === "done" || state?.status === "failed" || state?.status === "cancelled") {
+        if (!hasUnsettledRunnerRetention(state) && (state?.status === "done" || state?.status === "failed" || state?.status === "cancelled")) {
           archiveFile(path);
           archiveFile(specPath(home, id));
         }
@@ -203,6 +206,14 @@ export class JobRunners implements JobHost {
       await refreshStorePeerIdentities(this.home, signal);
       signal.throwIfAborted();
       if (admission && !admission.isCurrent()) throw new Error("Detached job startup lost its supervisor authority before launch");
+      if (hasUnsettledRunnerRetention(readRunnerStateRecord(this.home, job.id))) {
+        await this.recoverRetention(job, signal, admission?.isCurrent);
+        // This call recovered the ORIGINAL generation. It did not admit the
+        // replacement spec or consume its input. The caller must settle/recheck.
+        throw Object.assign(new Error("Original runner retention recovered; original generation must settle before a new turn is admitted"), { code: "RUNNER_PRIOR_GENERATION_RECOVERED" });
+      }
+      await delay(0, undefined, { signal }); // yield before the bounded stable archive census
+      if (admission && !admission.isCurrent()) throw new Error("Runner admission cancelled");
       try { return this.start(job, spec); }
       catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "STORE_UPGRADE_DEFERRED") throw error;
@@ -213,7 +224,19 @@ export class JobRunners implements JobHost {
     }
   }
 
+  async recoverRetention(job: Job, signal: AbortSignal = job.controller.signal, current: () => boolean = () => true): Promise<void> {
+    const state = readRunnerStateRecord(this.home, job.id) as unknown as RunnerState | null;
+    const principal = readOriginalRunnerSpec(this.home, job.id)?.job as Record<string, unknown> | undefined;
+    if (!state || !principal || principal.id !== job.id || principal.agent !== job.agent || principal.name !== job.name ||
+        principal.startedAt !== job.startedAt || runnerProcessAlive(state) || !current()) throw new RunnerRetentionUnsettled("invalid-evidence");
+    await recoverRunnerLedger(this.home, job.id, signal, () => {
+      const now = readRunnerStateRecord(this.home, job.id) as unknown as RunnerState | null;
+      return current() && Boolean(now && now.pid === state.pid && now.identity === state.identity && !runnerProcessAlive(now));
+    });
+  }
+
   start(job: Job, spec: Omit<RunnerSpec, "home" | "job">): JobHostInfo | null {
+    this.assertTurnAdmission(job);
     if (spec.args.host) return this.remote.start(job, spec.args.host, spec.target, spec.args);
     try {
       mkdirSync(join(this.home, RUNNERS_DIR_NAME), { recursive: true });
@@ -271,10 +294,17 @@ export class JobRunners implements JobHost {
       info.pid = pid;
       return info;
     } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "STORE_UPGRADE_DEFERRED") throw err;
+      if (err instanceof RunnerRetentionUnsettled || (err as NodeJS.ErrnoException).code === "STORE_UPGRADE_DEFERRED") throw err;
       this.log.warn("job runner unavailable; the subagent runs inside this server", { job: job.name, err: (err as Error).message });
       return null;
     }
+  }
+
+  assertTurnAdmission(job: Job): void {
+    if (job.remote) { this.remote.assertTurnAdmission(job); return; }
+    // Strict read: never infer absence from the convenience reader's catch/null.
+    if (hasUnsettledRunnerRetention(readRunnerStateRecord(this.home, job.id))) throw new RunnerRetentionUnsettled("invalid-evidence");
+    assertRunnerArchiveAdmission(this.home, job.id);
   }
 
   state(job: Job): RunnerState | null {

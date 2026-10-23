@@ -11,6 +11,8 @@ import { makeEnv, type TestEnv } from "./helpers.js";
 import * as oversize from "../src/core/oversize.js";
 import * as asyncFs from "node:fs/promises";
 import * as runnerStore from "../src/mcp/job-host.js";
+import { metadataDb } from "../src/core/metadata-db.js";
+import { publishRunnerSpec, readPendingRunnerSpec, readOriginalRunnerSpec, writeRunnerStateRecord } from "../src/core/runner-store.js";
 
 const mocks = vi.hoisted(() => ({ delegate: vi.fn(), node: null as any }));
 vi.mock("node:fs/promises", async original => ({ ...await original<typeof import("node:fs/promises")>() }));
@@ -32,10 +34,99 @@ let env: TestEnv;
 afterEach(async () => { vi.useRealTimers(); vi.restoreAllMocks(); vi.clearAllMocks(); if (env) await env.cleanup(); });
 function spec(): RunnerSpec {
   const args = { prompt: "Controlled single provider", title: "Delivery settlement" };
-  return { home: env.home, target: "codex", args, base: args, owner: "supervisor", byAgent: "codex", cwd: env.home, cfg: DEFAULT_CONFIG,
+  const config: RunnerSpec = { home: env.home, target: "codex", args, base: args, owner: "supervisor", byAgent: "codex", cwd: env.home, cfg: DEFAULT_CONFIG,
     job: { id: "abcdef12", name: "codex-job-abcdef12", owner: "supervisor", supervisor: "original-supervisor-session", agent: "codex", model: null,
       prompt: args.prompt, startedAt: Date.now(), sessionId: "original-native-session", workdir: env.home, worktree: null, allowedServers: [] } };
+  publishRunnerSpec(env.home, config.job.id, { ...config });
+  return config;
 }
+
+it.each([false, true])("captures all accepted successors and holds %s continuation input behind suspended failed retention", async continuation => {
+  env = makeEnv(); vi.useFakeTimers(); const config = spec();
+  writeFileSync(join(env.home, "jobs.json"), JSON.stringify({ version: 4, jobs: [{ ...config.job, status: "running", args: config.args }] }));
+  let release!: () => void, suspended = false, activeJob: any;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  const open = asyncFs.open;
+  const failedWriter = vi.spyOn(asyncFs, "open").mockImplementation(async (path, flags, mode) => {
+    const handle = await open(path, flags, mode);
+    vi.spyOn(handle, "sync").mockImplementation(async () => {
+      if (!suspended) { suspended = true; await held; }
+      throw new Error("controlled retention failure");
+    });
+    return handle;
+  });
+  mocks.delegate.mockImplementation(async (ctx, _target, _args, _signal, _progress, _background, job) => {
+    activeJob = job;
+    if (mocks.delegate.mock.calls.length === 1) {
+      for (const body of ["First accepted note", "Second accepted note", "Third accepted note"]) ctx.jobs.fromSubagent(job, body, null, false, true);
+      if (continuation) { job.queue.push("Original queued continuation"); job.usageQueuedControls = [{ cid: "original-control", body: "Original queued continuation" }]; }
+    }
+    return { status: "done", text: "Exact dependent final", sessionId: job.sessionId };
+  });
+  let settled = false;
+  const running = runOwnedJobRunner(config, nullLogger, null).then(code => { settled = true; return code; });
+  mocks.node.send.mockRejectedValue(new BridgeError("protocol_mismatch", "terminal refusal"));
+  try {
+    await vi.waitFor(() => expect(suspended).toBe(true));
+    expect(mocks.delegate).toHaveBeenCalledOnce();
+    if (continuation) expect(activeJob.queue).toEqual(["Original queued continuation"]);
+    const ledger = (readRunnerState(env.home, config.job.id) as any).deliveryLedger;
+    expect(ledger.entries.slice(0, 3).map((entry: any) => JSON.parse(entry.record).body)).toEqual(["First accepted note", "Second accepted note", "Third accepted note"]);
+    expect(new Set(ledger.entries.map((entry: any) => entry.messageId)).size).toBe(ledger.entries.length);
+    expect(mocks.node.send).toHaveBeenCalledOnce(); expect(settled).toBe(false);
+    release(); await vi.waitFor(() => expect(settled).toBe(true), { timeout: 5_000 });
+    expect(await running).toBe(1); expect(mocks.delegate).toHaveBeenCalledOnce();
+    const after = (readRunnerState(env.home, config.job.id) as any).deliveryLedger;
+    expect(after).toEqual(ledger);
+    failedWriter.mockRestore();
+    const failed = readRunnerState(env.home, config.job.id)!;
+    writeRunnerStateRecord(env.home, config.job.id, { ...failed, pid: 2147483647, identity: "original-dead-process" });
+    const host = new runnerStore.JobRunners({} as any, env.home, "unused-cli", nullLogger);
+    const job = { ...config.job, controller: new AbortController(), allowedServers: new Set(), queue: [] } as any;
+    const originalSpec = readOriginalRunnerSpec(env.home, config.job.id)!;
+    const originalNode = mocks.node;
+    await expect(host.recoverRetention({ ...job, startedAt: job.startedAt + 1 })).rejects.toMatchObject({ code: "RUNNER_RETENTION_UNSETTLED" });
+    expect((readRunnerState(env.home, config.job.id) as any).deliveryLedger).toEqual(ledger);
+    const db = metadataDb(env.home);
+    db.prepare("UPDATE bridge_metadata SET value=? WHERE domain='job-spec' AND key=?").run(JSON.stringify({ ...originalSpec, owner: "foreign-owner" }), config.job.id);
+    await expect(host.recoverRetention(job)).rejects.toMatchObject({ code: "RUNNER_RETENTION_UNSETTLED" });
+    expect((readRunnerState(env.home, config.job.id) as any).deliveryLedger).toEqual(ledger);
+    db.prepare("UPDATE bridge_metadata SET value=? WHERE domain='job-spec' AND key=?").run(JSON.stringify(originalSpec), config.job.id);
+    const namespace = db.prepare("SELECT value FROM bridge_metadata WHERE domain='runner-retention-index' AND key='namespace'").get()!.value;
+    db.prepare("UPDATE bridge_metadata SET value=? WHERE domain='runner-retention-index' AND key='namespace'").run(JSON.stringify({ version: 1, namespace: "f".repeat(64) }));
+    await expect(host.recoverRetention(job)).rejects.toMatchObject({ code: "RUNNER_RETENTION_UNSETTLED" });
+    expect((readRunnerState(env.home, config.job.id) as any).deliveryLedger).toEqual(ledger);
+    db.prepare("UPDATE bridge_metadata SET value=? WHERE domain='runner-retention-index' AND key='namespace'").run(namespace!);
+    const restart = host.startAsync(job, config);
+    const refused = expect(restart).rejects.toMatchObject({ code: "RUNNER_PRIOR_GENERATION_RECOVERED" });
+    await vi.runAllTimersAsync(); await refused;
+    expect(mocks.delegate).toHaveBeenCalledOnce(); expect(mocks.node).toBe(originalNode);
+    expect(mocks.node.send).toHaveBeenCalledOnce();
+    const recovered = readRunnerState(env.home, config.job.id)!;
+    expect(recovered.deliveryLedger).toEqual({ ...ledger, entries: [] });
+    expect(recovered).toMatchObject({ report: failed.report, reportId: failed.reportId, delivered: false, pendingDeliveryRetention: [] });
+    expect(readOriginalRunnerSpec(env.home, config.job.id)).toEqual(originalSpec);
+    const records = readdirSync(join(env.home, "quarantine")).map(file => readFileSync(join(env.home, "quarantine", file), "utf8"));
+    for (const entry of ledger.entries) expect(records.filter(record => record === entry.record)).toHaveLength(1);
+    if (continuation) expect(recovered.retainedRunnerInputs).toMatchObject({ phase: "evidence", bodies: ["Original queued continuation"], controls: [{ cid: "original-control", body: "Original queued continuation" }] });
+  } finally { release(); await vi.advanceTimersByTimeAsync(400_000); await running; vi.clearAllTimers(); }
+});
+
+it("refuses the real runner start and spec publication before resetting an unsettled original generation", () => {
+  env = makeEnv(); const config = spec();
+  const path = publishRunnerSpec(env.home, config.job.id, { ...config });
+  runnerStore.writeRunnerState(env.home, config.job.id, { pid: process.pid, peer: config.job.name, status: "done", updatedAt: Date.now(), report: "Original final", reportId: "original-final",
+    pendingDeliveryRetention: [{ messageId: "11111111-1111-4111-8111-111111111111", record: "Original evidence" }] });
+  const original = readRunnerState(env.home, config.job.id), originalSpec = readPendingRunnerSpec(env.home, config.job.id);
+  const runners = new runnerStore.JobRunners({} as any, env.home, "unused-cli", nullLogger);
+  const job = { ...config.job, controller: new AbortController(), allowedServers: new Set(), queue: [] } as any;
+  expect(() => runners.start(job, config)).toThrow(/retention.*unsettled/i);
+  expect(readRunnerState(env.home, config.job.id)).toEqual(original);
+  expect(readPendingRunnerSpec(env.home, config.job.id)).toEqual(originalSpec);
+  expect(() => publishRunnerSpec(env.home, config.job.id, { ...config, replacement: true })).toThrow(/retention.*unsettled/i);
+  expect(readPendingRunnerSpec(env.home, config.job.id)).toEqual(originalSpec);
+  expect(path).toContain(config.job.id);
+});
 
 it("owns a failed refused-note retention before dispatching or settling the queued final", async () => {
   env = makeEnv(); vi.useFakeTimers(); const config = spec();
@@ -68,7 +159,7 @@ it("owns a failed refused-note retention before dispatching or settling the queu
     await vi.waitFor(() => expect(settled).toBe(true));
     expect(await running).toBe(0);
     expect(retain).toHaveBeenCalledTimes(2);
-    expect(retain.mock.calls[1]).toEqual(retain.mock.calls[0]);
+    expect(retain.mock.calls[1]!.slice(0, 3)).toEqual(retain.mock.calls[0]!.slice(0, 3));
     expect(mocks.node.send).toHaveBeenCalledTimes(2);
     const records = readdirSync(join(env.home, "quarantine")).filter(file => file.endsWith(".txt"));
     expect(records).toHaveLength(1);
@@ -135,17 +226,24 @@ it.each([false, true])("keeps exact pending evidence on %s cancellation/exhausti
     opened.mockRestore();
     // Simulated restart uses real persisted state, not the old in-memory queue.
     // Even a changed current display owner never replays this original note.
-    mocks.delegate.mockClear(); config.owner = "replacement-supervisor";
-    await publishInitialRunnerState(config, log);
+    mocks.delegate.mockClear(); mocks.node.start.mockClear(); mocks.node.send.mockClear(); config.owner = "replacement-supervisor";
+    await expect(publishInitialRunnerState(config, log)).rejects.toMatchObject({ code: "RUNNER_RETENTION_UNSETTLED" });
     expect(readRunnerState(env.home, config.job.id)).toMatchObject({ pendingDeliveryRetention: [item], report: pending.report, reportId: pending.reportId });
-    expect(await runOwnedJobRunner(config, log, null)).toBe(0);
+    // The old generation is proven gone via a controlled liveness boundary,
+    // while all real production spec/state/namespace/CAS checks remain active.
+    writeRunnerStateRecord(env.home, config.job.id, { ...failed, pid: 2147483647, identity: "dead-original-incarnation" });
+    const host = new runnerStore.JobRunners({} as any, env.home, "unused-cli", nullLogger);
+    const job = { ...config.job, controller: new AbortController(), queue: [], allowedServers: new Set() } as any;
+    const start = host.startAsync(job, config);
+    const refused = expect(start).rejects.toMatchObject({ code: "RUNNER_PRIOR_GENERATION_RECOVERED" });
+    await vi.runAllTimersAsync(); await refused;
     expect(mocks.delegate).not.toHaveBeenCalled(); expect(mocks.node.start).not.toHaveBeenCalled(); expect(mocks.node.send).not.toHaveBeenCalled();
     const recovered = readRunnerState(env.home, config.job.id)!;
-    expect(recovered).toMatchObject({ delivered: false, reportId: pending.reportId, report: pending.report, pendingDeliveryRetention: [], retainedDeliveryCount: 1 });
+    expect(recovered).toMatchObject({ delivered: false, reportId: pending.reportId, report: pending.report, pendingDeliveryRetention: [], retainedDeliveryCount: 2 });
     expect(recovered.deliveryRetentionFailure).toBeUndefined();
     const files = readdirSync(join(env.home, "quarantine")).filter(file => file.endsWith(".txt"));
-    expect(files).toHaveLength(1);
-    expect(readFileSync(join(env.home, "quarantine", files[0]!), "utf8")).toBe(item.record);
+    expect(files).toHaveLength(2);
+    expect(files.map(file => readFileSync(join(env.home, "quarantine", file), "utf8"))).toContain(item.record);
   } finally { release(); await vi.advanceTimersByTimeAsync(400_000); await running; vi.clearAllTimers(); }
 });
 
@@ -174,20 +272,26 @@ it("recovers interruption after quarantine publication before confirmation witho
     const files = readdirSync(join(env.home, "quarantine")); expect(files).toHaveLength(1);
     const original = readFileSync(join(env.home, "quarantine", files[0]!), "utf8");
     expect(original).toBe(item.record); expect(opened).toHaveBeenCalledOnce();
-    confirmation.mockRestore(); opened.mockClear(); mocks.delegate.mockClear();
+    confirmation.mockRestore(); opened.mockClear(); mocks.delegate.mockClear(); mocks.node.start.mockClear(); mocks.node.send.mockClear();
     const conflict = [item, { ...item, record: `${item.record} conflicting retained bytes` }];
     actualWrite(env.home, config.job.id, { ...pending, pendingDeliveryRetention: conflict });
     expect(await runOwnedJobRunner(config, nullLogger, null)).toBe(1);
     expect(readRunnerState(env.home, config.job.id)?.pendingDeliveryRetention).toEqual(conflict);
     expect(mocks.node.start).not.toHaveBeenCalled(); expect(mocks.node.send).not.toHaveBeenCalled(); expect(opened).not.toHaveBeenCalled();
-    actualWrite(env.home, config.job.id, pending);
-    await publishInitialRunnerState(config, nullLogger);
-    expect(await runOwnedJobRunner(config, nullLogger, null)).toBe(0);
-    expect(opened).not.toHaveBeenCalled(); expect(mocks.node.send).not.toHaveBeenCalled(); expect(mocks.node.start).not.toHaveBeenCalled(); expect(mocks.delegate).not.toHaveBeenCalled();
+    expect(() => actualWrite(env.home, config.job.id, pending)).toThrow(/unsettled/);
+    // Restore only the fixture-injected conflicting corruption, preserving the
+    // original canonical snapshot; production repair cannot clear it by field.
+    metadataDb(env.home).prepare("UPDATE bridge_metadata SET value=? WHERE domain='job-state' AND key=?").run(JSON.stringify(pending), config.job.id);
+    await expect(publishInitialRunnerState(config, nullLogger)).rejects.toMatchObject({ code: "RUNNER_RETENTION_UNSETTLED" });
+    writeRunnerStateRecord(env.home, config.job.id, { ...pending, pid: 2147483647, identity: "dead-original-incarnation" });
+    const host = new runnerStore.JobRunners({} as any, env.home, "unused-cli", nullLogger);
+    const job = { ...config.job, controller: new AbortController(), queue: [], allowedServers: new Set() } as any;
+    const recovery = host.recoverRetention(job); await vi.runAllTimersAsync(); await recovery;
+    expect(mocks.node.send).not.toHaveBeenCalled(); expect(mocks.node.start).not.toHaveBeenCalled(); expect(mocks.delegate).not.toHaveBeenCalled();
     expect(readFileSync(join(env.home, "quarantine", files[0]!), "utf8")).toBe(original);
-    expect(readdirSync(join(env.home, "quarantine"))).toEqual(files);
+    expect(readdirSync(join(env.home, "quarantine"))).toEqual(expect.arrayContaining(files));
     expect(readRunnerState(env.home, config.job.id)).toMatchObject({ reportId: pending.reportId, report: pending.report, delivered: false,
-      pendingDeliveryRetention: [], retainedDeliveryCount: 1 });
+      pendingDeliveryRetention: [], retainedDeliveryCount: 2 });
   } finally { confirmation.mockRestore(); await vi.advanceTimersByTimeAsync(400_000); await running; vi.clearAllTimers(); }
 });
 
@@ -249,7 +353,7 @@ it("retains a protocol-refused note before releasing its final, without retrying
     const files = readdirSync(join(env.home, "quarantine")).filter(file => file.endsWith(".txt"));
     expect(files).toHaveLength(1);
     const pending = JSON.parse(readFileSync(join(env.home, "quarantine", files[0]!), "utf8"));
-    expect(pending).toMatchObject({ version: 1, kind: "refused-runner-delivery", job: config.job.id, intendedSender: { kind: "job", agent: "codex", id: `job:${config.job.id}` },
+    expect(pending).toMatchObject({ version: 1, kind: "accepted-runner-delivery", job: config.job.id, intendedSender: { kind: "job", agent: "codex", id: `job:${config.job.id}` },
       to: "supervisor", body: "Private exact refused note", dedupeKey: mocks.node.send.mock.calls[0][0].dedupeKey, authority: "evidence-only-no-replay" });
     expect(pending).toMatchObject({ wireBody: mocks.node.send.mock.calls[0][0].body, conversationId: mocks.node.send.mock.calls[0][0].conversationId });
     expect(pending.messageId).toBe(completionMessageId(`send:${config.job.name}`, pending.dedupeKey));
@@ -280,4 +384,40 @@ it("recovers a lost final ACK by its original receipt without replaying a new bo
     expect(accepted).toMatchObject({ body: retained.report, dedupeKey: `${COMPLETION_DEDUPE_PREFIX}${retained.reportId}` });
     expect(mocks.node.send).toHaveBeenCalledOnce();
   } finally { vi.clearAllTimers(); }
+});
+
+it("retains every refused predecessor before admitting the queued turn and dispatching its final exactly once", async () => {
+  env = makeEnv(); vi.useFakeTimers(); const config = spec();
+  let release!: () => void, suspended = false, settled = false;
+  const held = new Promise<void>(resolve => { release = resolve; }), open = asyncFs.open;
+  vi.spyOn(asyncFs, "open").mockImplementation(async (path, flags, mode) => {
+    const handle = await open(path, flags, mode);
+    if (!suspended) vi.spyOn(handle, "sync").mockImplementationOnce(async () => { suspended = true; await held; throw new Error("controlled first retention interruption"); });
+    return handle;
+  });
+  mocks.delegate.mockImplementation(async (ctx, _target, _args, _signal, _progress, _background, job) => {
+    if (mocks.delegate.mock.calls.length === 1) {
+      for (const body of ["one", "two", "three"]) ctx.jobs.fromSubagent(job, body, null, false, true);
+      job.queue.push("Original continuation"); job.usageQueuedControls = [{ cid: "original-cid", body: "Original continuation" }];
+      return { status: "done", text: "first turn result", sessionId: job.sessionId };
+    }
+    const originals = readdirSync(join(env.home, "quarantine")).filter(file => file.endsWith(".txt")).map(file => JSON.parse(readFileSync(join(env.home, "quarantine", file), "utf8")));
+    expect(originals.map(item => item.body).sort()).toEqual(["one", "three", "two"]);
+    expect(readRunnerState(env.home, config.job.id)?.retainedRunnerInputs).toMatchObject({ phase: "provider-admitted", bodies: ["Original continuation"] });
+    return { status: "done", text: "second exact final", sessionId: job.sessionId };
+  });
+  const running = runOwnedJobRunner(config, nullLogger, null).then(code => { settled = true; return code; });
+  mocks.node.send.mockRejectedValueOnce(new BridgeError("protocol_mismatch", "first refused note"))
+    .mockRejectedValueOnce(new BridgeError("protocol_mismatch", "second refused note"))
+    .mockRejectedValueOnce(new BridgeError("protocol_mismatch", "third refused note"));
+  try {
+    await vi.waitFor(() => expect(suspended).toBe(true)); expect(mocks.delegate).toHaveBeenCalledOnce();
+    const original = readRunnerState(env.home, config.job.id)!.deliveryLedger!.entries;
+    release(); await vi.waitFor(() => expect(settled).toBe(true), { timeout: 5_000 }); expect(await running).toBe(0);
+    expect(mocks.delegate).toHaveBeenCalledTimes(2);
+    const records = readdirSync(join(env.home, "quarantine")).filter(file => file.endsWith(".txt")).map(file => readFileSync(join(env.home, "quarantine", file), "utf8"));
+    for (const entry of original) expect(records.filter(record => record === entry.record)).toHaveLength(1);
+    expect(mocks.node.send.mock.calls.filter(([m]: [{ body: string }]) => m.body.includes("second exact final"))).toHaveLength(1);
+    expect(readRunnerState(env.home, config.job.id)).toMatchObject({ delivered: true, retainedDeliveryCount: 3, deliveryLedger: { entries: [] }, retainedRunnerInputs: { phase: "consumed" } });
+  } finally { release(); if (!settled) await vi.advanceTimersByTimeAsync(400_000); await running; vi.clearAllTimers(); }
 });

@@ -97,12 +97,25 @@ describe("background re-election", () => {
   it("keeps retrying with backoff after a failed start and joins once it can", async () => {
     const good = env.node("good");
     await good.start();
+    const stages: { stage: string; code?: string }[] = [];
+    const allowed = new Set(["re-election failed; retrying with backoff", "connect attempt failed", "could not become broker", "became broker", "broker refused this peer", "connected to broker"]);
+    const observe = (stage: string, data?: Record<string, unknown>) => {
+      if (allowed.has(stage) && stages.length < 32) stages.push({ stage, ...(typeof data?.code === "string" && /^(?:E[A-Z_]{1,32}|[a-z_]{1,40})$/.test(data.code) ? { code: data.code } : {}) });
+    };
+    const diagnosticLog = { ...nullLogger, debug: observe, info: observe, warn: observe, error: observe, child: () => diagnosticLog };
     // The running broker refuses this node (other token): start fails, but the node keeps trying.
-    const other = new BridgeNode({ pipePath: env.pipe, token: "other-token", dbPath: env.db, agent: "other", name: "other", cwd: env.home, autoWake: false, log: nullLogger });
+    const other = new BridgeNode({ pipePath: env.pipe, token: "other-token", dbPath: env.db, agent: "other", name: "other", cwd: env.home, autoWake: false, log: diagnosticLog });
     try {
       await expect(other.start()).rejects.toMatchObject({ code: "unauthorized" });
       await good.stop();
-      await until(() => other.isConnected && other.isBroker, 8_000);
+      try { await until(() => other.isConnected && other.isBroker, 8_000); }
+      catch (error) {
+        const state = other as unknown as { electing: unknown; reconnectTimer: unknown; reconnectDelay: number; stopping: boolean; protocolRefusal?: { code: string } };
+        console.error("Background re-election diagnostics", { connected: other.isConnected, broker: other.isBroker, electing: Boolean(state.electing),
+          retryScheduled: Boolean(state.reconnectTimer), retryDelay: state.reconnectDelay, stopping: state.stopping,
+          protocolRefused: Boolean(state.protocolRefusal), stages });
+        throw error;
+      }
     } finally {
       await other.stop();
     }

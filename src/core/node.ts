@@ -191,7 +191,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   private recordStorePresence(delay = 1_000): void {
     const home = dirname(this.opts.dbPath);
     let error: unknown;
-    try { recordStorePeer(home, { pid: process.pid, name: this.currentName, version: APP_VERSION, storeCapabilities: { json: JSON_STORE_VERSION, sqlite: SQLITE_STORE_VERSION, jobArchive: 1 } }); }
+    try { recordStorePeer(home, { pid: process.pid, name: this.currentName, version: APP_VERSION, storeCapabilities: { json: JSON_STORE_VERSION, sqlite: SQLITE_STORE_VERSION, metadata: 2, jobArchive: 1 } }); }
     catch (err) { error = err; }
     let open = false;
     try { open = Boolean(existingMetadataDb(home)); } catch { /* Not open yet. */ }
@@ -587,7 +587,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
         activity: this.activity,
         unavailable: this.unavailable,
         version: APP_VERSION,
-        storeCapabilities: { json: JSON_STORE_VERSION, sqlite: SQLITE_STORE_VERSION, jobArchive: 1 },
+        storeCapabilities: { json: JSON_STORE_VERSION, sqlite: SQLITE_STORE_VERSION, metadata: 2, jobArchive: 1 },
         ...(this.opts.jobAgent ? { jobAgent: this.opts.jobAgent } : {}),
         ...(this.opts.jobOwner ? { jobOwner: this.opts.jobOwner, jobParent: this.opts.jobParent, parentJob: this.opts.parentJob, rootSession: this.opts.rootSession, rootName: this.opts.rootName, jobTitle: this.opts.jobTitle, jobSendTo: this.opts.jobSendTo } : {}),
       },
@@ -1359,6 +1359,6 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   }
 
   private recordOwnStorePeer(): void {
-    if (this.presenceAdmitted && this.opts.dbPath !== ":memory:") recordStorePeer(dirname(this.opts.dbPath), { pid: process.pid, name: this.currentName, version: APP_VERSION, storeCapabilities: { json: JSON_STORE_VERSION, sqlite: SQLITE_STORE_VERSION, jobArchive: 1 } }, { authoritative: true });
+    if (this.presenceAdmitted && this.opts.dbPath !== ":memory:") recordStorePeer(dirname(this.opts.dbPath), { pid: process.pid, name: this.currentName, version: APP_VERSION, storeCapabilities: { json: JSON_STORE_VERSION, sqlite: SQLITE_STORE_VERSION, metadata: 2, jobArchive: 1 } }, { authoritative: true });
   }
 }

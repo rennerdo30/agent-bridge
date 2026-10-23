@@ -12,7 +12,7 @@ import { NetworkDiscovery, type DiscoveredInstance, type DiscoveryDiagnostics } 
 import { decodePairingCode, keyFingerprint, PairingStore, publicIdentitySchema, type NetworkIdentity, type NetworkPair } from "./pairing.js";
 import { receiveTransfer, transferResultSchema, transferSchema, type FileTransfer, type TransferResult } from "./files.js";
 import { FILE_STREAM_CAPABILITY, FILE_STREAM_WINDOW_CAPABILITY, TRANSFER_WINDOW_CHUNKS, TransferManager, type TransferStarted } from "./transfers.js";
-import { REMOTE_JOB_USAGE_CAPABILITY } from "./remote-job-protocol.js";
+import { REMOTE_RUNNER_LEDGER_CAPABILITY, unsupportedRunnerLedger, REMOTE_JOB_USAGE_CAPABILITY } from "./remote-job-protocol.js";
 import { internalSender, nativeOwner, recipientKey, sameMailbox, verifiedNative } from "../core/recipient-ownership.js";
 import type { MailboxProvenance, InternalMessageOrigin } from "../core/recipient-ownership.js";
 
@@ -435,8 +435,8 @@ export class NetworkService {
   extensionHelloCapabilities(): { capabilities: string[]; additionalCapabilities: string[]; t3ThreadRouting: boolean; recipientOwnershipV1: boolean; nativeOwnershipV1: boolean; mailboxProvenanceV1: boolean } {
     const capabilities = this.extensionCapabilities();
     return {
-      capabilities: capabilities.filter(capability => capability !== REMOTE_JOB_USAGE_CAPABILITY),
-      additionalCapabilities: capabilities.filter(capability => capability === REMOTE_JOB_USAGE_CAPABILITY),
+      capabilities: capabilities.filter(capability => capability !== REMOTE_JOB_USAGE_CAPABILITY && capability !== REMOTE_RUNNER_LEDGER_CAPABILITY),
+      additionalCapabilities: capabilities.filter(capability => capability === REMOTE_JOB_USAGE_CAPABILITY || capability === REMOTE_RUNNER_LEDGER_CAPABILITY),
       t3ThreadRouting: true,
       recipientOwnershipV1: true,
       nativeOwnershipV1: true,
@@ -448,6 +448,7 @@ export class NetworkService {
     this.requireAuthority();
     const extension = this.extensions.get(type);
     if (!extension) throw new Error("unsupported network extension");
+    if (type === "remote-job" && !this.peerSupports(remote.id, REMOTE_RUNNER_LEDGER_CAPABILITY)) throw unsupportedRunnerLedger(true);
     return extension.handler(payload, remote);
   }
 
@@ -469,12 +470,16 @@ export class NetworkService {
   peerSupports(instance: string, capability: string): boolean {
     try { return this.instanceLink(instance).supports(capability); } catch { return false; }
   }
+  peerConnected(instance: string): boolean {
+    try { this.instanceLink(instance); return true; } catch { return false; }
+  }
 
   async sendExtension(instance: string, type: NetworkExtensionType, payload: Record<string, unknown>): Promise<void> {
     this.requireAuthority();
     const extension = this.extensions.get(type);
     const link = this.instanceLink(instance);
     if (!extension || !link.supports(extension.capability)) return Promise.reject(new Error("remote broker does not support this extension"));
+    if (type === "remote-job" && !link.supports(REMOTE_RUNNER_LEDGER_CAPABILITY)) throw unsupportedRunnerLedger(payload.kind !== "request");
     // A session can join/reload between periodic refreshes. Advertise it before the remote authorization check.
     if (type === "remote-job" && payload.kind === "request") link.refresh();
     return link.writeExtension(type, payload);

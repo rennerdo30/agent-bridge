@@ -1,3 +1,4 @@
+import { assertRunnerArchiveAdmission, readRunnerStateRecord, runnerLedgerNamespace } from "../core/runner-store.js";
 import { ProjectGroups } from "../core/project-groups.js";
 import { worktreeProcesses, worktreeProcessReport } from "../core/worktree-processes.js";
 import { canControlJob } from "../core/job-ownership.js";
@@ -32,7 +33,7 @@ import { guardRunnerErrors } from "./job-runner-errors.js";
 import { configurePathDisplay } from "../core/display-paths.js";
 import { compatibleDeliveryHandover, deliverFinalResult, permanentDeliveryRefusal, PERMANENT_DELIVERY_CODES } from "./final-result.js";
 import { deliveryFailure, type DeliveryEvidence } from "./delivery-evidence.js";
-import { hasUnsettledRunnerRetention, retainRunnerDelivery, RunnerRetentionUnsettled, type PendingRunnerRetention } from "./runner-delivery-retention.js";
+import { hasUnsettledRunnerRetention, retainRunnerDelivery, runnerLedgerPrincipal, RunnerRetentionUnsettled, RUNNER_LEDGER_MAX_BYTES, RUNNER_LEDGER_MAX_ITEMS, type PendingRunnerRetention, type RunnerDeliveryLedger } from "./runner-delivery-retention.js";
 
 /** Delivering a message to the session: tries for several minutes (the bridge may be changing hands, or no session hosts it). */
 const SEND_ATTEMPTS = 30;
@@ -74,10 +75,11 @@ export async function publishInitialRunnerState(spec: Pick<RunnerSpec, "home" | 
       try {
         // Another runner can publish presence after the asynchronous scan. Keep
         // the compatibility guard authoritative and reverify rather than exit.
-        const retained = readRunnerState(spec.home, spec.job.id);
-        const pending = hasUnsettledRunnerRetention(retained) ? retained! : undefined;
-        writeRunnerState(spec.home, spec.job.id, { ...pending, identity: undefined, pid: process.pid, peer: spec.job.name,
-          status: pending?.status ?? "running", updatedAt: Date.now(), progress: "queued: runner startup admission" });
+        // The actual writer checks existing pending state under its storage
+        // boundary. An early convenience read can create metadata/cache absence
+        // before a newly published reader reaches that first guarded write.
+        writeRunnerState(spec.home, spec.job.id, { pid: process.pid, peer: spec.job.name,
+          status: "running", updatedAt: Date.now(), progress: "queued: runner startup admission" }, true);
         return;
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "STORE_UPGRADE_DEFERRED") throw error;
@@ -159,19 +161,20 @@ export async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: Wi
   /** The final report is decided: messages arriving now are left to the session (it continues the job). */
   let closing = false;
 
-  const previous = readRunnerState(home, job.id);
+  const previous = readRunnerStateRecord(home, job.id) as unknown as RunnerState | null;
   // Only recover evidence. A restart must not regenerate a note/final UUID or
   // execute a new provider turn while an original accepted item is unsettled.
   const recoveringRetention = hasUnsettledRunnerRetention(previous);
-  let extra: Partial<RunnerState> = recoveringRetention ? { ...previous } : { status: "running" };
-  const rows = extra.pendingDeliveryRetention;
-  const validRows = Array.isArray(rows) && rows.every(item => item && typeof item.messageId === "string" && typeof item.record === "string") &&
-    new Set(rows.map(item => item.messageId)).size === rows.length;
-  const malformedRetention = rows !== undefined && !validRows;
-  // Do not collapse conflicting duplicate evidence or replace malformed original
-  // rows. Such state is preserved for explicit recovery, never guessed/imported.
-  const pendingRetention = new Map((validRows ? rows! : []).map(item => [item.messageId, item]));
+  if (recoveringRetention) {
+    log.error("Original runner generation requires owned evidence recovery before admission");
+    return 1;
+  }
+  assertRunnerArchiveAdmission(home, job.id);
+  let extra: Partial<RunnerState> = { status: "running" };
+  const pendingRetention = new Map<string, PendingRunnerRetention>();
   const shutdown = new AbortController();
+  let ledger: RunnerDeliveryLedger = { version: 1, namespace: runnerLedgerNamespace(home, true), generation: randomUUID(), job: job.id, principal: runnerLedgerPrincipal(spec), entries: [] };
+  extra.deliveryLedger = ledger;
   let finalQueued = false;
   const deliveryEvidence = (kind: DeliveryEvidence["kind"], stage: DeliveryEvidence["stage"], messageId: string, attempt = 1, error?: unknown) => {
     extra.deliveryEvidence = { kind, stage, messageId, at: Date.now(), attempt, finalQueued, ...(error ? deliveryFailure(error) : {}) };
@@ -245,15 +248,21 @@ export async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: Wi
       // A separate durable pending copy protects a crash between fsync/rename
       // and confirmation. Original bytes/UUID/intent are never reconstructed.
       save({ pendingDeliveryRetention: [...pendingRetention.values()], deliveryRetentionFailure: undefined }, true);
-      await quarantineTextAsync(home, item.messageId, item.record);
+      await quarantineTextAsync(home, item.messageId, item.record, () => {
+      const beforeLedger = ledger;
+      const nextLedger = { ...ledger, entries: ledger.entries.filter(entry => entry.messageId !== item.messageId) };
       try {
         save({ pendingDeliveryRetention: [...pendingRetention.values()].filter(other => other !== item),
+          deliveryLedger: nextLedger,
           retainedDeliveryCount: Math.min(65_535, count + 1), deliveryRetentionFailure: undefined }, true);
       } catch (error) {
         extra.pendingDeliveryRetention = [...pendingRetention.values()]; extra.retainedDeliveryCount = count;
+        extra.deliveryLedger = beforeLedger;
         throw error;
       }
+      ledger = nextLedger;
       pendingRetention.delete(item.messageId);
+      });
     }, shutdown.signal, ms => new Promise<void>((resolve, reject) => {
       if (shutdown.signal.aborted) { reject(new RunnerRetentionUnsettled("shutdown")); return; }
       const abort = () => { clearTimeout(timer); reject(new RunnerRetentionUnsettled("shutdown")); };
@@ -264,45 +273,74 @@ export async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: Wi
 
   // Messages to the session, in order. Each is tried until the bridge takes it (the session may be offline:
   // then it waits in the store for the session's next server).
-  const deliver = async (body: string, replyTo: string | null, note = false, key?: string, question = false, final = false): Promise<SendResult | null> => {
+  const prepare = (body: string, replyTo: string | null, note = false, key?: string, question = false, final = false) => {
     // One key for all attempts: a send that timed out here may still be queued at a slow broker.
     const dedupeKey = key ?? randomUUID();
     const intendedOwner = owner, originalBody = body;
-    const kind = final ? "final" : question ? "question" : note ? "note" : "message";
+    const kind: DeliveryEvidence["kind"] = final ? "final" : question ? "question" : note ? "note" : "message";
     const terminalCodes = final ? PERMANENT_DELIVERY_CODES : note && !question ? NOTE_TERMINAL_CODES : undefined;
     const messageId = final && dedupeKey.startsWith(COMPLETION_DEDUPE_PREFIX) ? completionMessageId(`job:${job.id}`, dedupeKey.slice(COMPLETION_DEDUPE_PREFIX.length)) : completionMessageId(`send:${node.name}`, dedupeKey);
-    deliveryEvidence(kind, "sending", messageId);
     // AB-380: a body over the message limit can never be sent: once its full text is in a file, send a stub.
     body = quarantineMessage(home, { id: dedupeKey, body }).body;
     const suffix = isPureAcknowledgement(body) ? ACK_CONVERSATION_SUFFIX : question ? QUESTION_CONVERSATION_SUFFIX : note ? NOTE_CONVERSATION_SUFFIX : "";
     const conversationId = `job-${job.id}${suffix}`;
+    const item = { messageId, record: JSON.stringify({ version: 1, kind: "accepted-runner-delivery", authority: "evidence-only-no-replay", generation: ledger.generation, namespace: ledger.namespace, senderName: node.name,
+      job: job.id, intendedSender: { kind: "job", agent: job.agent, id: `job:${job.id}` }, to: intendedOwner, attemptedTo: intendedOwner,
+      body: originalBody, wireBody: body, conversationId, replyTo, note, question, final, dedupeKey, messageId, supervisor: spec.job.supervisor ?? null,
+      parentJob: spec.job.parentJob ?? null, rootSession: spec.job.rootSession ?? null }) };
+    const existing = ledger.entries.find(entry => entry.messageId === messageId);
+    if (existing && existing.record !== item.record) throw new RunnerRetentionUnsettled("invalid-evidence");
+    // Admission is synchronous and durable before returning a queue promise.
+    // Reserve room for the terminal result; rejected backpressure is not queued.
+    if (!existing) {
+      const bytes = ledger.entries.reduce((n, entry) => n + Buffer.byteLength(entry.record), 0) + Buffer.byteLength(item.record);
+      if (ledger.entries.length >= RUNNER_LEDGER_MAX_ITEMS + (final ? 1 : 0) || bytes > RUNNER_LEDGER_MAX_BYTES - (final ? 0 : 2 * 1024 * 1024))
+        throw Object.assign(new Error("Runner delivery admission backpressure; item was not accepted, caller retains its bytes"), { code: "RUNNER_DELIVERY_BACKPRESSURE" });
+      ledger = { ...ledger, entries: [...ledger.entries, item] };
+    }
+    let admissionError: RunnerRetentionUnsettled | undefined;
+    try { save({ deliveryLedger: ledger }, true); } catch { admissionError = new RunnerRetentionUnsettled("attempts-exhausted"); }
+    return { body, replyTo, note, question, final, kind, messageId, dedupeKey, conversationId, intendedOwner, item, terminalCodes, admissionError };
+  };
+  const complete = (item: PendingRunnerRetention) => {
+    const before = ledger;
+    const next = { ...ledger, entries: ledger.entries.filter(entry => entry.messageId !== item.messageId) };
+    try { save({ deliveryLedger: next }, true); ledger = next; }
+    catch { extra.deliveryLedger = before; throw new RunnerRetentionUnsettled("attempts-exhausted"); }
+  };
+  const deliver = async (prepared: ReturnType<typeof prepare>): Promise<SendResult | null> => {
+    const { body, replyTo, note, question, final, kind, messageId, dedupeKey, conversationId, intendedOwner, item, terminalCodes, admissionError } = prepared;
+    if (admissionError) throw admissionError;
+    deliveryEvidence(kind, "sending", messageId);
     // deliverFinalResult retries a final result with bounded attempts; a permanent refusal starts the session fallback at once.
     return deliverWithRetry(() => {
       // A retry may cross a handoff or reload. Routing changes never replace the active delegate.
       refreshOwner();
       // A question is marked so the broker can route it to the project main while the parent is offline (AB-249).
-      return node.send({ to: owner, body, conversationId, ...(replyTo ? { replyTo } : {}), dedupeKey }, { quiet: true });
+      return node.send({ to: intendedOwner, body, conversationId, ...(replyTo ? { replyTo } : {}), dedupeKey }, { quiet: true });
     }, log, owner, final ? FINAL_SEND_ATTEMPTS : SEND_ATTEMPTS, terminalCodes,
     (attempt, error) => deliveryEvidence(kind, (final ? permanentDeliveryRefusal(error) : note && !question && (error as { code?: string })?.code === "protocol_mismatch" && !compatibleDeliveryHandover(error)) ? "refused" : "retrying", messageId, attempt, error))
       .catch(async error => {
-        if (final || !note || question || (error as { code?: string })?.code !== "protocol_mismatch") throw error;
+        if (error instanceof RunnerRetentionUnsettled) throw error;
         // An exact-version/attestation refusal cannot heal by retrying this
         // connection. Preserve accepted bytes and original intent before letting
         // the final settle. This record grants NO replay or new recipient rights.
-        await retain({ messageId, record: JSON.stringify({ version: 1, kind: "refused-runner-delivery", authority: "evidence-only-no-replay",
-          job: job.id, intendedSender: { kind: "job", agent: job.agent, id: `job:${job.id}` }, to: intendedOwner, attemptedTo: owner,
-          body: originalBody, wireBody: body, conversationId, replyTo, note, question, dedupeKey, messageId, supervisor: spec.job.supervisor ?? null,
-          parentJob: spec.job.parentJob ?? null, rootSession: spec.job.rootSession ?? null }) });
+        if (final) complete(item); else await retain(item);
+        if (final || !note || question || (error as { code?: string })?.code !== "protocol_mismatch") throw error;
         return null;
       })
-      .then(result => { if (result) deliveryEvidence(kind, "stored", messageId); return result; });
+      .then(async result => {
+        if (result?.messages.length) { complete(item); deliveryEvidence(kind, "stored", messageId); }
+        else if (ledger.entries.some(entry => entry.messageId === messageId)) { if (final) complete(item); else await retain(item); }
+        return result;
+      });
   };
   const inOrder = inSendOrder(deliver, error => error instanceof RunnerRetentionUnsettled);
   const post = (body: string, replyTo: string | null = null, note = false, key?: string): Promise<undefined> =>
-    inOrder.post(body, replyTo, note, key);
+    inOrder.post(prepare(body, replyTo, note, key));
   /** Send a question and say where the broker put it: the parent, the project main, or a queue. */
   const ask = async (body: string, replyTo: string | null): Promise<ParentRoute> => {
-    const result = await inOrder(body, replyTo, false, undefined, true);
+    const result = await inOrder(prepare(body, replyTo, false, undefined, true));
     return questionRoute(result, owner, async (name) => (await node.peers()).some((p) => p.name === name && p.projectMain === true));
   };
 
@@ -366,13 +404,22 @@ export async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: Wi
       if (closing) return;
       if (!seen.includes(c.cid)) {
         if (job.live) {
+          await inOrder.drain();
+          if (closing || job.controller.signal.aborted || shutdown.signal.aborted) throw new RunnerRetentionUnsettled("shutdown");
           job.awaitingAnswer = true;
           job.live.post(c.body, undefined, c.cid);
         }
-        else { job.queue.push(c.body); job.usageQueuedControls!.push({ cid: c.cid, body: c.body }); }
+        else {
+          if (job.queue.length >= 128 || Buffer.byteLength(JSON.stringify([[...job.queue, c.body], [...job.usageQueuedControls!, { cid: c.cid, body: c.body }]])) > RUNNER_LEDGER_MAX_BYTES)
+            throw new Error("Runner input backpressure; original control remains unread in its owned mailbox");
+          job.queue.push(c.body); job.usageQueuedControls!.push({ cid: c.cid, body: c.body });
+        }
         seen.push(c.cid);
       }
-      save();
+      // Queued input is accepted only after its exact CID/body is owned in the
+      // current generation. A retry of this control reuses the seen CID and
+      // repeats confirmation, never appends/executes a second provider turn.
+      save(job.queue.length ? { retainedRunnerInputs: { generation: ledger.generation, phase: "pending", bodies: [...job.queue], controls: [...job.usageQueuedControls ?? []] } } : {}, true);
     } else if (c.type === "title") {
       job.args = { ...job.args, title: c.title };
       job.retitle?.(c.title);
@@ -422,7 +469,7 @@ export async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: Wi
     job.queue = [];
     job.controller.abort();
     stopTimer ??= setTimeout(() => {
-      if (pendingRetention.size) {
+      if (pendingRetention.size || ledger.entries.length || hasUnsettledRunnerRetention(extra)) {
         save({ pendingDeliveryRetention: [...pendingRetention.values()], deliveryRetentionFailure: "shutdown" });
         log.error("job runner delivery unsettled", { reason: "shutdown", pending: pendingRetention.size });
       }
@@ -449,22 +496,27 @@ export async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: Wi
    * A turn's final report: persisted in the runner state before the first send, then delivered once under a stable
    * completion ID (AB-400). Used by every terminal path, including a pause that holds queued follow-ups (AB-398).
    */
+  let turnReportId: string | undefined;
   const deliverFinal = async (report: string, status: "done" | "failed" | "cancelled" | "paused"): Promise<void> => {
-    const final = { report, reportId: randomUUID(), delivered: false };
+    const final = { report, reportId: turnReportId ??= randomUUID(), delivered: false };
     finalQueued = true;
     const messageId = completionMessageId(`job:${job.id}`, final.reportId);
     deliveryEvidence("final", "queued", messageId);
     const finishedAt = Date.now();
     // Keep the existing bounded persistence retries below if this first write
     // cannot acquire storage. The in-memory final also retains its original ID.
-    save({ status, ...final, finishedAt });
+    save({ status, ...final, finishedAt, ...(extra.retainedRunnerInputs?.phase === "provider-admitted"
+      ? { retainedRunnerInputs: { ...extra.retainedRunnerInputs, phase: "consumed" } } : {}) }, true);
     // Receipt probes and session fallback must not overtake an accepted note.
     // Unlike ordinary send errors, a failed retention remains a queue barrier.
+    const prepared = prepare(report, null, false, `${COMPLETION_DEDUPE_PREFIX}${final.reportId}`, false, true);
     await inOrder.drain();
     const settlement = await deliverFinalResult(final,
       (stored) => save({ status, ...stored, finishedAt }, true),
       async (body, id) => {
-        const result = await inOrder(body, null, false, `${COMPLETION_DEDUPE_PREFIX}${id}`, false, true);
+        // Retrying this result reuses its original immutable captured item.
+        if (!ledger.entries.some(entry => entry.messageId === prepared.messageId)) { ledger = { ...ledger, entries: [...ledger.entries, prepared.item] }; save({ deliveryLedger: ledger }, true); }
+        const result = await inOrder(prepared);
         return result && { stored: result.messages.length > 0 };
       },
       async (ms) => { await delay(ms); },
@@ -477,32 +529,23 @@ export async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: Wi
         } catch (error) { deliveryEvidence("final", "receipt-failed", messageId, 1, error); throw error; }
       });
     extra.finalDelivery = { ...settlement, messageId, at: Date.now() };
+    if (ledger.entries.some(entry => entry.messageId === prepared.messageId)) complete(prepared.item);
     try { log.info("job final delivery settled", extra.finalDelivery); } catch { /* Evidence never changes delivery. */ }
     save(); // Retain the precise exit outcome, including refusal, before this runner exits.
   };
 
   try {
-    if (recoveringRetention) {
-      // Evidence recovery never dispatches mail, changes authority or starts a
-      // delegate. The supervisor can subsequently collect the original final.
-      if (malformedRetention || !pendingRetention.size) throw new RunnerRetentionUnsettled("invalid-evidence");
-      for (const item of pendingRetention.values()) {
-        let record;
-        try { record = JSON.parse(item.record); } catch { throw new RunnerRetentionUnsettled("invalid-evidence"); }
-        if (record?.version !== 1 || record.kind !== "refused-runner-delivery" || record.authority !== "evidence-only-no-replay" ||
-            record.job !== job.id || record.intendedSender?.kind !== "job" || record.intendedSender?.id !== `job:${job.id}` || record.intendedSender?.agent !== job.agent ||
-            typeof record.body !== "string" || typeof record.wireBody !== "string" || typeof record.to !== "string" || !record.to ||
-            typeof record.attemptedTo !== "string" || !record.attemptedTo || record.note !== true || record.question !== false ||
-            record.conversationId !== `job-${job.id}${isPureAcknowledgement(record.wireBody) ? ACK_CONVERSATION_SUFFIX : NOTE_CONVERSATION_SUFFIX}` ||
-            !(record.replyTo === null || typeof record.replyTo === "string") ||
-            typeof record.dedupeKey !== "string" || record.messageId !== item.messageId ||
-            item.messageId !== completionMessageId(`send:${job.name}`, record.dedupeKey)) throw new RunnerRetentionUnsettled("invalid-evidence");
-        await retain(item);
-      }
-      return 0;
-    }
+    try { save({ deliveryLedger: ledger }, true); } catch { throw new RunnerRetentionUnsettled("attempts-exhausted"); }
     let args = spec.args;
     for (;;) {
+      turnReportId = undefined;
+      await inOrder.drain();
+      if (extra.retainedRunnerInputs?.phase === "admitted") {
+        if (shutdown.signal.aborted || job.controller.signal.aborted) throw new RunnerRetentionUnsettled("shutdown");
+        // Admission is not proof of provider completion. A crash at/after this
+        // boundary retains the original input as unconfirmed, never replays it.
+        save({ retainedRunnerInputs: { ...extra.retainedRunnerInputs, phase: "provider-admitted" } }, true);
+      }
       let status: "done" | "failed" | "cancelled" | "paused" = "failed";
       let text = "";
       let cause: string | null = null;
@@ -601,21 +644,32 @@ export async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: Wi
         break;
       }
       const report = jobReport(job, status, Math.round((Date.now() - job.startedAt) / 1000), text, cause, home);
+      if (extra.retainedRunnerInputs?.phase === "provider-admitted") save({ status, report, reportId: turnReportId ??= randomUUID(), delivered: false,
+        retainedRunnerInputs: { ...extra.retainedRunnerInputs, phase: "consumed" } }, true);
       log.info("job turn finished", { status, sessionId: job.sessionId, cause });
       // The supervisor's JobManager emits the finish/fail notification when it settles this
       // result. A detached notifier here would remain inside this runner's owned job scope.
       // Follow-ups that arrived meanwhile go out right away, into the same session, from this runner.
       if (job.queue.length && job.sessionId && !job.controller.signal.aborted && !usageRefused(job) && !job.usagePendingControls?.length) {
+        // Persist the still-unconsumed input and result before waiting. Neither
+        // a suspended predecessor nor cancellation may consume this turn intent.
+        save({ retainedRunnerInputs: { generation: ledger.generation, phase: "pending", bodies: [...job.queue], controls: [...job.usageQueuedControls ?? []] },
+          status, report, reportId: turnReportId ??= randomUUID(), delivered: false, finishedAt: Date.now() }, true);
+        await inOrder.drain();
+        if (job.controller.signal.aborted || shutdown.signal.aborted || job.pausePending) throw new RunnerRetentionUnsettled("shutdown");
+        save({ retainedRunnerInputs: { ...extra.retainedRunnerInputs!, phase: "admitted" } }, true);
+        await post(`${report}\n\n${QUEUED_FOLLOW_UP_NOTE}`);
+        await inOrder.drain();
+        if (job.controller.signal.aborted || shutdown.signal.aborted || job.pausePending) throw new RunnerRetentionUnsettled("shutdown");
         const queued = job.queue.splice(0).join("\n\n");
         job.usagePendingControls = job.usageQueuedControls;
         job.usageQueuedControls = [];
-        void post(`${report}\n\n${QUEUED_FOLLOW_UP_NOTE}`);
         args = resumeArgs(spec.base, job.name, queued, job.sessionId, job.workdir, job.worktree, job.args);
         if (args.model !== undefined) job.model = args.model;
         job.startedAt = Date.now();
         job.progress = null;
-        extra = { status: "running", pendingDeliveryRetention: [...pendingRetention.values()], retainedDeliveryCount: extra.retainedDeliveryCount };
-        save();
+        extra = { status: "running", retainedRunnerInputs: extra.retainedRunnerInputs, deliveryLedger: ledger, pendingDeliveryRetention: [...pendingRetention.values()], retainedDeliveryCount: extra.retainedDeliveryCount };
+        save({}, true);
         continue;
       }
       closing = true;
@@ -630,7 +684,7 @@ export async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: Wi
     return 0;
   } catch (error) {
     if (!(error instanceof RunnerRetentionUnsettled)) throw error;
-    if (!malformedRetention) extra.pendingDeliveryRetention = [...pendingRetention.values()];
+    extra.pendingDeliveryRetention = [...pendingRetention.values()];
     extra.deliveryRetentionFailure = error.reason;
     // If every storage path fails, explicitly fail the runner; never claim a
     // drained queue or successful final settlement. No arbitrary error/payload.

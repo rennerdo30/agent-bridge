@@ -192,6 +192,8 @@ export interface RunnerState {
   retainedDeliveryCount?: number;
   /** Queue barrier and original evidence. No importer may turn these records into sends. */
   pendingDeliveryRetention?: import("./runner-delivery-retention.js").PendingRunnerRetention[];
+  deliveryLedger?: import("./runner-delivery-retention.js").RunnerDeliveryLedger;
+  retainedRunnerInputs?: import("./runner-delivery-retention.js").RunnerInputIntent;
   deliveryRetentionFailure?: "attempts-exhausted" | "shutdown" | "invalid-evidence";
   /** Admission provenance is independent of usage classification and error type. */
   usageSubmission?: import("../core/usage.js").UsageSubmissionReceipt;
@@ -241,6 +243,10 @@ export interface JobHost {
   send(job: Job, control: RunnerControl): void;
   /** Stop the runner and everything it started. */
   kill(job: Job): void;
+  /** Dead original generation only: evidence retention, never delegate startup. */
+  recoverRetention?(job: Job, signal?: AbortSignal, current?: () => boolean): Promise<void>;
+  /** Strict current/archive fence before registry reset or final fallback. */
+  assertTurnAdmission?(job: Job): void;
 }
 
 /** How often running runner-hosted jobs are checked (their result also triggers a check at once). */
@@ -478,6 +484,7 @@ export class JobManager {
   runners: JobHost | null = null;
   private hostTimer: NodeJS.Timeout | null = null;
   private readonly pendingHosts = new Map<string, AbortController>();
+  private readonly retainedRunnerRecoveries = new Map<string, Promise<void>>();
   private readonly explicitCancellations = new WeakSet<AbortController>();
   private restoreResume: ((agent: AgentKind, args: Record<string, unknown>) => Resume | undefined) | null = null;
   private rootWaitTimer: NodeJS.Timeout | null = null;
@@ -1838,6 +1845,7 @@ export class JobManager {
 
   /** Claim the new generation durably BEFORE asynchronous detached startup can yield. */
   private claimTurn(job: Job): boolean {
+    if (!this.runnerTurnAdmitted(job)) return false;
     const initial = job.waitingForStart || job.status === "running" && !this.running.has(job.id);
     const reset = () => {
       const held = job.usagePendingHeld ? job.usagePendingControls ?? [] : [];
@@ -1873,6 +1881,7 @@ export class JobManager {
       if (saved && (saved.startedAt > job.startedAt || saved.status === "running" && !interrupted && (!initial || saved.host || saved.executionOwner))) return false;
       if (saved?.host && this.runners?.alive({ ...job, host: saved.host }, this.runners.state(job))) return false;
       if (saved && !this.lookupAllowed(job)) return false;
+      if (!this.runnerTurnAdmitted(job)) return false;
       job.sessionId ??= saved?.sessionId ?? null;
       job.workdir ??= saved?.workdir ?? null;
       job.worktree ??= saved?.worktree ?? null;
@@ -1913,6 +1922,17 @@ export class JobManager {
       job.queue = pending;
       return true;
     } finally { release(); }
+  }
+
+  private runnerTurnAdmitted(job: Job): boolean {
+    try {
+      this.runners?.assertTurnAdmission?.(job);
+      return !this.runners || !hasUnsettledRunnerRetention(this.runners.state(job));
+    } catch (error) {
+      if (!["RUNNER_RETENTION_UNSETTLED", "STORE_OFFLINE_REQUIRED", "STORE_UPGRADE_DEFERRED", "protocol_mismatch"].includes((error as {code?: string}).code ?? "")) throw error;
+      job.progress = "delivery unsettled: original runner/archive evidence requires owner-coordinated recovery";
+      return false;
+    }
   }
 
   private launchClaimed(job: Job, run: Run): void {
@@ -2147,10 +2167,19 @@ export class JobManager {
       // A dead runner with an accepted, unretained predecessor is NOT drained.
       // Keep its exact report/ID and evidence in runner storage; neither fallback
       // posting nor a queued continuation may overtake the retention barrier.
-      job.progress = "delivery unsettled: retained runner evidence requires recovery";
-      this.schedulePersist();
+      const progress = "delivery unsettled: retained runner evidence requires recovery";
+      if (job.progress !== progress) { job.progress = progress; this.schedulePersist(); }
+      if (this.runners?.recoverRetention && !job.remote && !this.retainedRunnerRecoveries.has(job.id)) {
+        const generation = job.startedAt, controller = job.controller;
+        const current = () => Boolean(!this.dormant && this.running.get(job.id) === job && job.startedAt === generation && job.controller === controller && this.lookupAllowed(job));
+        const work = this.runners.recoverRetention(job, controller.signal, current).catch(() => {
+          this.log.warn("runner evidence recovery remains unsettled", { job: job.id });
+        }).finally(() => { if (this.retainedRunnerRecoveries.get(job.id) === work) this.retainedRunnerRecoveries.delete(job.id); });
+        this.retainedRunnerRecoveries.set(job.id, work);
+      }
       return;
     }
+    if (!this.runnerTurnAdmitted(job)) return;
     const receipt = currentUsage(job, observed?.usageSubmission) ? observed?.usageSubmission : undefined;
     const legacyRetained = currentUsage(job, observed?.providerUsage) ? [...observed?.providerUsage?.retainedControls ?? []] : [];
     if (receipt) confirmUsageAdmission(job, receipt.admitted);

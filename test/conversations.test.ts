@@ -2,8 +2,9 @@ import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync 
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { DatabaseSync } from "node:sqlite";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { readConversation } from "../src/core/conversations.js";
+import * as projectStore from "../src/core/project-store.js";
 import { conversationProject, ensureProjectFolder, projectDatabasePath } from "../src/core/project-store.js";
 import { loadConfig } from "../src/core/config.js";
 import { nullLogger } from "../src/core/logger.js";
@@ -11,12 +12,11 @@ import { CLAUDE_SESSION } from "./transcript-fixtures.js";
 import { env, fixture } from "./conversation-test-fixture.js";
 import { fixturePeer, markOwned, ownedMessage } from "./owned-mail.js";
 
+vi.mock("../src/core/project-store.js", async original => ({ ...await original<typeof import("../src/core/project-store.js")>() }));
+
 it("does not re-resolve and rewrite a conversation whose folder is no project on every tick", () => {
   const f = fixture(true);
-  const changes = () => Number(f.db.prepare("SELECT total_changes() AS n").get()!.n);
-  const idleWrites = () => { const start = changes(); for (let i = 0; i < 5; i++) f.ingest.tick(); return changes() - start; };
   f.tick();
-  const baseline = idleWrites();
   // A leftover worktree folder whose git metadata was removed: it exists but resolves to no project.
   const plain = join(env.home, "plain-folder");
   mkdirSync(plain);
@@ -26,7 +26,18 @@ it("does not re-resolve and rewrite a conversation whose folder is no project on
   f.index.registerChanged([transcript]);
   f.tick();
   expect(f.db.prepare("SELECT project FROM conversations WHERE id='claude:session-plain'").get()).toEqual({ project: "" });
-  expect(idleWrites()).toBe(baseline);
+  // total_changes() also counts source checked/cursor/mirror bookkeeping;
+  // bounded tick deadlines can legitimately reduce that unrelated count.
+  // Observe precisely the resolver and project writes this regression forbids.
+  f.db.exec("CREATE TEMP TABLE no_project_writes(id TEXT); CREATE TEMP TRIGGER count_no_project_writes AFTER UPDATE OF project ON conversations WHEN NEW.id='claude:session-plain' BEGIN INSERT INTO no_project_writes VALUES(NEW.id); END");
+  const resolve = vi.spyOn(projectStore, "conversationProject");
+  vi.useFakeTimers({ toFake: ["Date"] });
+  try {
+    for (let i = 0; i < 5; i++) { vi.setSystemTime(Date.now() + 60_001); f.ingest.tick(); }
+    expect(resolve.mock.calls.filter(([cwd]) => cwd === plain)).toHaveLength(0);
+    expect(f.db.prepare("SELECT * FROM no_project_writes").all()).toEqual([]);
+    expect(f.db.prepare("SELECT project FROM conversations WHERE id='claude:session-plain'").get()).toEqual({ project: "" });
+  } finally { resolve.mockRestore(); vi.useRealTimers(); }
 });
 it("refuses mismatched retained raw bytes during resumable import replay", () => {
   const f = fixture(true);

@@ -1,9 +1,13 @@
 import { z } from "zod";
 import { MODEL_NAME_PATTERN, CLAUDE_PERMISSION_MODES, CODEX_APPROVALS_REVIEWERS, CODEX_SANDBOXES } from "../core/config.js";
 import { MAX_CODEX_SUBAGENTS, MAX_BODY_CHARS, MAX_JOB_TIMEOUT_SEC } from "../core/constants.js";
-import { CODING_AGENTS } from "../core/protocol.js";
+import { BridgeError, CODING_AGENTS } from "../core/protocol.js";
 import { NETWORK_NAME_PATTERN } from "./constants.js";
 
+export const REMOTE_RUNNER_LEDGER_CAPABILITY = "remote-runner-ledger-v1";
+export function unsupportedRunnerLedger(unknownAccepted = false): BridgeError {
+  return new BridgeError("protocol_mismatch", "Remote broker update needed: runner-ledger-v1 contract is unavailable; owner-coordinated compatible host upgrade is required. Pending operations remain unconfirmed; no fallback or automatic reexecution.", { runnerLedgerUnsupported: true, unknownAccepted });
+}
 export const REMOTE_JOB_CAPABILITY = "remote-jobs-v1";
 export const REMOTE_JOB_CANCELLED_CAPABILITY = "remote-jobs-cancelled-v1";
 export const REMOTE_JOB_ANTIGRAVITY_OPTIONS_CAPABILITY = "remote-jobs-antigravity-options-v1";

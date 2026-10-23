@@ -1,6 +1,9 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
+import { APP_VERSION } from "../src/core/constants.js";
+import { SQLITE_STORE_VERSION } from "../src/core/store-version.js";
+import { readRunnerState } from "../src/mcp/job-host.js";
 import { closeMetadataDbs } from "../src/core/metadata-db.js";
 import { DEFAULT_CONFIG } from "../src/core/config.js";
 import { INITIAL_STATE_DEADLINE_MS, runJobRunner } from "../src/mcp/job-runner.js";
@@ -21,7 +24,8 @@ vi.mock("../src/core/node.js", async () => {
     constructor(options: { name: string }) { super(); this.name = options.name; mocks.order.push("node"); }
     async start() {}
     async stop() {}
-    async send() {}
+    async send() { return { messages: [{ id: "accepted" }] }; }
+    async sendState() { return { state: "missing" }; }
   } };
 });
 let home: string | undefined;
@@ -77,7 +81,7 @@ it("reverifies a live reader published between readiness and the first actual st
     // The parent is a real live foreign process. Its newly published capability
     // has not been verified in this runner's cache when the real writer checks it.
     writeFileSync(join(directory, `${process.ppid}.json`), JSON.stringify({ schemaVersion: 1,
-      pid: process.ppid, name: "concurrent-runner", version: "0.30.2", explicit: true, json: 4, sqlite: 9 }));
+      pid: process.ppid, name: "concurrent-runner", version: APP_VERSION, explicit: true, json: 4, sqlite: SQLITE_STORE_VERSION, metadata: 2 }));
     expect(mocks.delegate).not.toHaveBeenCalled();
   });
   mocks.delegate.mockResolvedValue({ text: "continued", sessionId: "native-context", isError: false });
@@ -85,7 +89,7 @@ it("reverifies a live reader published between readiness and the first actual st
   expect(mocks.refresh.mock.calls.length).toBeGreaterThanOrEqual(2);
   expect(mocks.order.slice(0, 3)).toEqual(["state", "state", "node"]);
   expect(mocks.delegate).toHaveBeenCalledOnce();
-  expect(JSON.parse(readFileSync(runnerStatePath(home!, spec.job.id), "utf8")).sessionId).toBe("native-context");
+  expect(readRunnerState(home!, spec.job.id)?.sessionId).toBe("native-context");
 });
 
 it("keeps a genuinely incompatible live reader blocking until owned startup cancellation", async () => {

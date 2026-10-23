@@ -1,3 +1,4 @@
+import { APP_VERSION } from "../src/core/constants.js";
 import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -82,7 +83,7 @@ it("keeps older readers' files and resumes cold retirement after their gate clea
   recordStorePeer(env.home, { pid: process.pid, name: "old-reader", version: "0.30.0", storeCapabilities: { json: 4, sqlite: 9 } });
   expect(await migrateJobArchives(path)).toMatchObject({ deferred: true, moved: 0 });
   expect(readFileSync(file, "utf8")).toBe(raw); expect(readArchivedJobs(path)).toEqual([job]);
-  recordStorePeer(env.home, { pid: process.pid, name: "new-reader", version: "0.30.4", storeCapabilities: { json: 4, sqlite: 9, jobArchive: 1 } }, { authoritative: true });
+  recordStorePeer(env.home, { pid: process.pid, name: "new-reader", version: APP_VERSION, storeCapabilities: { json: 4, sqlite: 9, metadata: 2, jobArchive: 1 } }, { authoritative: true });
   expect(await migrateJobArchives(path)).toMatchObject({ deferred: false, moved: 1 });
 });
 

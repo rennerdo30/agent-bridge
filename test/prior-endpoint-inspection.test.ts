@@ -89,8 +89,8 @@ it("still refuses a pre-lease schema after transient busy without a backup or sc
   expect(inspections).toBe(2); expect(io.connect).not.toHaveBeenCalled(); unchanged();
 });
 
-it("still refuses an active incompatible prior endpoint after inspection recovers", async () => {
-  busy = 1; live = priorEndpoints(home).find(path => /-p2(?:\.sock)?$/.test(path))!;
+it.each([2, 3, 4, 5, 6])("still refuses an active incompatible prior protocol%s endpoint after inspection recovers", async old => {
+  busy = 1; live = priorEndpoints(home).find(path => new RegExp(`-p${old}(?:\\.sock)?$`).test(path))!;
   const close = vi.fn(), request = vi.fn().mockRejectedValue(new BridgeError("protocol_mismatch", "fixture old protocol"));
   const connect = vi.spyOn(BridgeClient, "connect").mockResolvedValue({ request, close } as any);
   await expect(guard()).rejects.toMatchObject({ code: "protocol_mismatch" });
@@ -109,4 +109,12 @@ it("stops actual node admission during a busy prior inspection without discovery
   await node.stop(); const result = await started;
   expect(result.error).toMatchObject({ name: "AbortError" }); expect(discovery).not.toHaveBeenCalled(); expect(launch).not.toHaveBeenCalled();
   expect(readFileSync(file).equals(original)).toBe(true);
+});
+
+it("refuses component1 cached-writer uncertainty before endpoint discovery or metadata/backup mutation", async () => {
+  const db = new DatabaseSync(file);
+  db.exec("CREATE TABLE bridge_components(name TEXT PRIMARY KEY,version INTEGER); INSERT INTO bridge_components VALUES('metadata',1)"); db.close();
+  original = readFileSync(file);
+  await expect(guard()).rejects.toMatchObject({ code: "protocol_mismatch", message: expect.stringContaining("component1") });
+  expect(io.connect).not.toHaveBeenCalled(); unchanged();
 });
