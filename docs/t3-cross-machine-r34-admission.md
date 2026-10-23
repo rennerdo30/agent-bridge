@@ -141,3 +141,44 @@ Git-blob SHA256 plus separate raw/LF-worktree evidence are in the new manifest.
 Parent exact pin review, separate attributable amendment, fresh independent full
 design/correction review and hosted actual-worker/full/lifecycle/Windows gates
 are all outstanding. No merge/release/acceptance is implied by mock passes.
+
+## Later approved attribution and exact490 lifecycle follow-up
+
+Parent reviewed all four normalized methods and nested helpers and independently
+verified each manifest source hash against committed Git blobs. Approval applies
+only to frozen0dec70aa/treefcca0ff5, artifactf81b6758. Separate baseline amendment
+**b7679167e7e5522bef2921ec7773d229bc69796f** changes exactly four method hashes
+and adds attributable approval; other9 methods/UI/normalizer/assertions/prior
+attribution remain unchanged. No new source correctness, merge or live acceptance.
+Static JSON/diff inspection only; no test or runtime launch. The initial static
+inspection command aborted before writes/commit because its property predicate
+compared a literal string; corrected explicit property comparison then verified
+the four-entry scope and existing attribution. This was not a test failure/run.
+
+Exact490 lifecycle run39936288806 Ubuntu120356523683/Mac120356523324 each had
+2 failed/348 passed/44 skipped. The pre-amendment listen pin failure is addressed
+by the separate authorized attribution, not counted as a rerun/pass here.
+
+New daemon-metadata-final-close308 failure is a confirmed fixture injection
+boundary error by source schedule and exact CI symptom: the close spy matches
+every handle at failedFile. metadataDb now calls assertMetadataUpgradeBoundary,
+which creates a read-only inspection and closes it in finally BEFORE allocating
+and recording the intended writable handle. The spy therefore throws the
+expected simulated overflow-close error while unregisteredNative is still empty;
+the test never reaches its129th/130th writable-reference assertions. This does
+not establish a production native-retention defect or prove its acceptance.
+
+The correction binds the close fault to the exact native writer already captured
+by the initialization-exec fault, never to pathname alone. It leaves all original
+128/129/130 census, separate-reference, actual isOpen, close-failure, generation,
+zero-observation-effects and overflow assertions intact. Added assertions prove
+each distinct actual preflight inspection was closed before each writer fault;
+neither inspection is confused with the retained failed writer. Production
+source, approved hashes, UI/normalizer and retention guard remain byte-identical.
+
+This hosted-only actual-native-reference case was NOT launched locally. Exact
+490 CI is qualified red; corrected fixture green remains a hosted acceptance
+gate. No fresh mocked budget is requested for an unrelated substitute test. The
+existing60s ledger remains55.163s used; the amendment/static source inspection
+did not execute tests or noEmit. Current residuals and Windows availability
+blocker remain, with independent full R34 review active on frozen490 unchanged.
