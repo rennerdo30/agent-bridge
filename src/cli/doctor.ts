@@ -8,6 +8,7 @@ import { nullLogger } from "../core/logger.js";
 import { windowsUserPathFindings } from "./windows-env-doctor.js";
 import { packArchivedRuns } from "../core/finished-run-bundles.js";
 import { closeMetadataDb } from "../core/metadata-db.js";
+import { assertUnboundFullRestore } from "../core/store-bootstrap-journal.js";
 
 /** doctor --archive also packs archived finished runs (AB-208); ordinary run archiving never does. */
 function packAllArchivedRuns(home: string, out: (text: string) => void): number {
@@ -52,6 +53,7 @@ export async function runDoctor(args: string[], home: string, out: (text: string
   const yes = args.includes("--yes") || args.includes("-y");
   if (restore) {
     readBackup(restore);
+    assertUnboundFullRestore(home); assertUnboundFullRestore(restore);
     const backupReport = doctor(restore);
     if (backupReport.findings.some((f) => f.severity === "error")) throw new Error("backup contains unsupported or damaged data; restore refused");
     if (!(yes || await ask(`Restore ${restore}? Current data will be preserved in a recovery backup.`))) { out("Restore cancelled; data unchanged."); return 1; }

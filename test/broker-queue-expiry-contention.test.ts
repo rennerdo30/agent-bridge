@@ -3,7 +3,8 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { BridgeClient } from "../src/core/client.js";
 import { PROTOCOL_VERSION, QUEUED_MAIL_MAX_AGE_MS } from "../src/core/constants.js";
 import { nullLogger } from "../src/core/logger.js";
-import type { BridgeMessage } from "../src/core/protocol.js";
+import type { BridgeMessage, PeerInfo } from "../src/core/protocol.js";
+import { fixtureNodePeer, fixturePeer, fixtureRoleMessage, ownedMessage } from "./owned-mail.js";
 import { archiveDbPath } from "../src/core/sqlite-maintenance.js";
 import { MessageStore } from "../src/core/store.js";
 import { loadOrCreateToken } from "../src/core/token.js";
@@ -16,17 +17,19 @@ const queued = (id: string, recipient: string, createdAt: number): BridgeMessage
   id, recipient, from: { id: "sender", name: "sender", agent: "other" }, to: recipient,
   conversationId: id, replyTo: null, hop: 0, body: id, createdAt, readAt: null,
 });
-function seed(conflicts = false) {
+function seed(conflicts = false, identity: Partial<PeerInfo> = { sessionId: "queue-fixture" }) {
   const store = new MessageStore(env.db, nullLogger), now = Date.now();
   try {
+    const owner = fixturePeer(store, "codex-app", { agent: "codex", ...identity }), sender = fixturePeer(store, "seed-sender");
+    const envelope = (message: BridgeMessage) => message.recipient === "agent:codex" ? fixtureRoleMessage(store, sender, "codex", message) : ownedMessage(store, owner, message);
     for (const recipient of ["codex-app", "agent:codex"]) {
-      const old = queued(`old-${recipient}`, recipient, now - QUEUED_MAIL_MAX_AGE_MS - 60_000);
+      const old = envelope(queued(`old-${recipient}`, recipient, now - QUEUED_MAIL_MAX_AGE_MS - 60_000));
       store.insert(old);
       if (conflicts) {
         store.expireQueued(recipient, now);
         store.insert({ ...old, body: `conflict-${recipient}` });
       }
-      store.insert(queued(`fresh-${recipient}`, recipient, now - 60_000));
+      store.insert(envelope(queued(`fresh-${recipient}`, recipient, now - 60_000)));
     }
   } finally { store.close(); }
 }
@@ -47,10 +50,12 @@ async function underOneSecond<T>(operation: Promise<T>): Promise<T> {
 }
 
 it.each(["hello", "rename"])("keeps requests responsive and expires before %s replay while archive storage is busy", async mode => {
-  seed();
-  const host = env.node("host", "other"); await host.start();
   const incoming = env.node(mode === "hello" ? "codex-app" : "initial", "codex");
+  const host = env.node("host", "other"); await host.start();
   if (mode === "rename") await incoming.start();
+  // Seed after the initial hello: an already-owned alias could otherwise be
+  // legitimately claimed before the rename stage acquires its archive lock.
+  seed(false, { sessionId: incoming.currentSessionId });
   const waiting = witnessExpiry(), writer = new DatabaseSync(archiveDbPath(env.db));
   writer.exec("BEGIN IMMEDIATE");
   try {
@@ -73,7 +78,7 @@ it.each(["hello", "rename"])("keeps requests responsive and expires before %s re
 });
 
 it.each([false, true])("does not claim or replay queued mail for a registration whose authenticated session changed during expiry (conflicts=%s)", async conflicts => {
-  seed(conflicts); const host = env.node("host", "other"); await host.start();
+  seed(conflicts, { sessionId: "old-sid" }); const host = env.node("host", "other"); await host.start();
   const waiting = witnessExpiry(), writer = new DatabaseSync(archiveDbPath(env.db));
   const raw = await BridgeClient.connect(env.pipe, nullLogger);
   writer.exec("BEGIN IMMEDIATE");
@@ -103,7 +108,7 @@ it.each([false, true])("does not reopen pending mail when an older same-name/ses
       pid: process.pid, agentPid: null, sessionId: "unchanged-sid", startedAt: Date.now(), autoWake: false } });
   // Drain the initial hello replay before adding the retained inbox.
   await new Promise<void>(resolve => setImmediate(resolve));
-  seed(conflicts);
+  seed(conflicts, { agent: "other", sessionId: "unchanged-sid" });
   let releaseFirst!: () => void, releaseSecond!: () => void, calls = 0;
   const firstGate = new Promise<void>(resolve => { releaseFirst = resolve; });
   const secondGate = new Promise<void>(resolve => { releaseSecond = resolve; });
@@ -134,8 +139,9 @@ it("archives expired explicit stand-in mail before returning fresh claimed mail"
   const incoming = env.node("codex-app", "codex"); await incoming.start();
   const store = new MessageStore(env.db, nullLogger), alias = "codex-app-2", now = Date.now();
   try {
-    store.insert(queued("old-explicit-alias", alias, now - QUEUED_MAIL_MAX_AGE_MS - 60_000));
-    store.insert(queued("fresh-explicit-alias", alias, now - 60_000));
+    const owner = fixtureNodePeer(store, incoming, "codex", alias);
+    store.insert(ownedMessage(store, owner, queued("old-explicit-alias", alias, now - QUEUED_MAIL_MAX_AGE_MS - 60_000)));
+    store.insert(ownedMessage(store, owner, queued("fresh-explicit-alias", alias, now - 60_000)));
   } finally { store.close(); }
   expect(await incoming.claimMail([alias])).toBe(1);
   await incoming.refreshPending();
@@ -155,10 +161,11 @@ it.each([[false, false], [true, false], [false, true], [true, true]])("keeps exp
       pid: process.pid, agentPid: null, sessionId: "explicit-old", startedAt: Date.now(), autoWake: false } });
   const store = new MessageStore(env.db, nullLogger), alias = "codex-app-2", now = Date.now();
   try {
-    const old = queued("old-locked-alias", alias, now - QUEUED_MAIL_MAX_AGE_MS - 60_000);
+    const owner = fixturePeer(store, alias, { agent: "other", sessionId: "explicit-old" });
+    const old = ownedMessage(store, owner, queued("old-locked-alias", alias, now - QUEUED_MAIL_MAX_AGE_MS - 60_000));
     store.insert(old);
     if (conflicts) { store.expireQueued(alias, now); store.insert({ ...old, body: "conflict-old-locked-alias" }); }
-    store.insert(queued("fresh-locked-alias", alias, now - 60_000));
+    store.insert(ownedMessage(store, owner, queued("fresh-locked-alias", alias, now - 60_000)));
   } finally { store.close(); }
   const waiting = witnessExpiry(alias), writer = new DatabaseSync(archiveDbPath(env.db)); writer.exec("BEGIN IMMEDIATE");
   try {
@@ -187,7 +194,7 @@ it.each([[false, false], [true, false], [false, true], [true, true]])("keeps exp
 it.each([false, true])("defers same-session reload replay until expired own-name mail is archived (conflicts=%s)", async conflicts => {
   const host = env.node("host", "other"); await host.start();
   const old = env.node("codex-app", "codex"); await old.setSessionId("same-session"); await old.start();
-  seed(conflicts);
+  seed(conflicts, { sessionId: "same-session" });
   const replacement = env.node("codex-app", "codex"); await replacement.setSessionId("same-session");
   const waiting = witnessExpiry(), writer = new DatabaseSync(archiveDbPath(env.db)); writer.exec("BEGIN IMMEDIATE");
   try {
@@ -209,7 +216,7 @@ it("defers a combined availability/session/rename replay until final-name expiry
   await raw.request("hello", { protocol: PROTOCOL_VERSION, token: loadOrCreateToken(env.home),
     peer: { id: "combined-update", name: "initial", agent: "other", cwd: env.home,
       pid: process.pid, agentPid: null, sessionId: "combined-old", startedAt: Date.now(), autoWake: false } });
-  seed(); const waiting = witnessExpiry(), writer = new DatabaseSync(archiveDbPath(env.db)); writer.exec("BEGIN IMMEDIATE");
+  seed(false, { agent: "other", sessionId: "combined-new" }); const waiting = witnessExpiry(), writer = new DatabaseSync(archiveDbPath(env.db)); writer.exec("BEGIN IMMEDIATE");
   try {
     const changed = raw.request("updatePeer", { unavailable: false, sessionId: "combined-new", name: "codex-app" });
     await until(waiting); await underOneSecond(host.peers());

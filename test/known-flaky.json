@@ -16,8 +16,8 @@
       "issue": "AB-410",
       "owner": "claude-claude-codex-comm",
       "added": "2026-10-16",
-      "recheckBy": "2026-10-22",
-      "seen": "Windows Node 24 shard 5/6 (main run 38852705600); AB325 lifecycle Windows Node 24 (run 38848262390)"
+      "recheckBy": "2026-10-24",
+      "seen": "Windows Node 24 shard 5/6 (main run 38852705600); AB325 lifecycle Windows Node 24 (run 38848262390). Rechecked 2026-10-23: macOS/Linux/Windows Node 24 run 39709742483 fails condition not met in time; see docs/ab458-known-flaky-recheck-2026-10-23.md"
     },
     {
       "file": "test/daemon-lifecycle.test.ts",
@@ -27,15 +27,6 @@
       "added": "2026-10-16",
       "recheckBy": "2026-10-23",
       "seen": "Windows Node 24 shard 5/6 (main run 38852705600)"
-    },
-    {
-      "file": "test/daemon-receipt.test.ts",
-      "test": "source-associated publication UNKNOWN (not controller or durability authority) > SIMULATED reader_native_expiry failure after ORIGINAL COMMIT cannot acknowledge its tentative return value",
-      "issue": "AB-410",
-      "owner": "claude-claude-codex-comm",
-      "added": "2026-10-16",
-      "recheckBy": "2026-10-22",
-      "seen": "Windows Node 22 shard 1/6 (main run 38837368512)"
     },
     {
       "file": "test/dashboard-events.test.ts",
@@ -61,8 +52,8 @@
       "issue": "AB-410",
       "owner": "claude-claude-codex-comm",
       "added": "2026-10-16",
-      "recheckBy": "2026-10-22",
-      "seen": "Windows Node 24 and 22 shard 3/6 (main run 38837368512, run 38846662924)"
+      "recheckBy": "2026-10-25",
+      "seen": "Windows Node 24 and 22 shard 3/6 (main run 38837368512, run 38846662924). Rechecked 2026-10-23: Windows Node 24 main run 38917750344 fails zero-raw-read assertion (3 vs 0); see docs/ab458-known-flaky-recheck-2026-10-23.md"
     },
     {
       "file": "test/dashboard-history-read.test.ts",
@@ -81,15 +72,6 @@
       "added": "2026-10-16",
       "recheckBy": "2026-10-26",
       "seen": "Windows Node 22 and 24 shard 3/6 (runs 38857072165, 38858490705). Rechecked 2026-10-22: Windows Node 24 known-flaky main run 39461554223 still fails expectFileAnswer; see docs/ab410-known-flaky-recheck-2026-10-22.md"
-    },
-    {
-      "file": "test/handoff-runner.test.ts",
-      "test": "hands off a blocking ask without returning results or notes to the old caller",
-      "issue": "AB-410",
-      "owner": "claude-claude-codex-comm",
-      "added": "2026-10-16",
-      "recheckBy": "2026-10-22",
-      "seen": "Windows Node 24 shard 6/6 (main run 38852843323)"
     },
     {
       "file": "test/handoff-subagents.test.ts",
@@ -115,8 +97,8 @@
       "issue": "AB-410",
       "owner": "claude-claude-codex-comm",
       "added": "2026-10-16",
-      "recheckBy": "2026-10-22",
-      "seen": "Windows Node 24 and 22 shard 5/6 (main run 38852705600, run 38852829447)"
+      "recheckBy": "2026-10-26",
+      "seen": "Windows Node 24 and 22 shard 5/6 (main run 38852705600, run 38852829447). Rechecked 2026-10-23: Windows Node 24 run 38877815893 times out reindexHistory; see docs/ab458-known-flaky-recheck-2026-10-23.md"
     },
     {
       "file": "test/hooks.test.ts",
@@ -142,8 +124,8 @@
       "issue": "AB-420",
       "owner": "claude-claude-codex-comm",
       "added": "2026-10-16",
-      "recheckBy": "2026-10-22",
-      "seen": "macOS Node 22 and 24 (runs 38845915331, 38854025601)"
+      "recheckBy": "2026-10-27",
+      "seen": "macOS Node 22 and 24 (runs 38845915331, 38854025601). Rechecked 2026-10-23: macOS Node 24 run 39702972278 repeats archive/jobs-2-new.json ENOENT; AB-420 remains open; see docs/ab458-known-flaky-recheck-2026-10-23.md"
     },
     {
       "file": "test/job-runner.test.ts",
@@ -160,8 +142,8 @@
       "issue": "AB-410",
       "owner": "claude-claude-codex-comm",
       "added": "2026-10-16",
-      "recheckBy": "2026-10-22",
-      "seen": "Windows Node 24 and 22 shard 5/6 (main run 38837368512, run 38846199958)"
+      "recheckBy": "2026-10-28",
+      "seen": "Windows Node 24 and 22 shard 5/6 (main run 38837368512, run 38846199958). Rechecked 2026-10-23: Windows Node 24 main run 39681057277 fails condition not met in time; see docs/ab458-known-flaky-recheck-2026-10-23.md"
     },
     {
       "file": "test/muse-job-contracts.test.ts",
@@ -171,15 +153,6 @@
       "added": "2026-10-16",
       "recheckBy": "2026-10-23",
       "seen": "Windows Node 22 shard 5/6 (runs 38846199958, 38850550770)"
-    },
-    {
-      "file": "test/siblings.test.ts",
-      "test": "sibling job messaging > source-witnessed legacy supervisor assignment > invalidates the assignment on a durable root session change before any skipped import",
-      "issue": "AB-410",
-      "owner": "claude-claude-codex-comm",
-      "added": "2026-10-16",
-      "recheckBy": "2026-10-22",
-      "seen": "Windows Node 24 shard 3/6 (main run 38843335834)"
     },
     {
       "file": "test/ui.test.ts",
@@ -196,8 +169,8 @@
       "issue": "AB-410",
       "owner": "muse-claude-codex-comm",
       "added": "2026-10-16",
-      "recheckBy": "2026-10-22",
-      "seen": "Windows Node 24 shard 6/6 (main run 38871941394): BridgeError database is locked at src/core/client.ts:237 (AB-361 family)"
+      "recheckBy": "2026-10-29",
+      "seen": "Windows Node 24 shard 6/6 (main run 38871941394): BridgeError database is locked at src/core/client.ts:237 (AB-361 family). Rechecked 2026-10-23: macOS/Linux/Windows Node 24 run 39709742483 fails condition not met in time; see docs/ab458-known-flaky-recheck-2026-10-23.md"
     },
     {
       "file": "test/remote-jobs.test.ts",
@@ -205,8 +178,8 @@
       "issue": "AB-410",
       "owner": "muse-claude-codex-comm",
       "added": "2026-10-16",
-      "recheckBy": "2026-10-22",
-      "seen": "Windows Node 24 shard 5/6 (main run 38873872600): expected false to be true at remote-jobs.test.ts:566"
+      "recheckBy": "2026-10-24",
+      "seen": "Windows Node 24 shard 5/6 (main run 38873872600): expected false to be true at remote-jobs.test.ts:566. Rechecked 2026-10-23: macOS/Linux/Windows Node 24 run 39839173808 fails Remote test timed out; see docs/ab458-known-flaky-recheck-2026-10-23.md"
     },
     {
       "file": "test/job-runner.test.ts",

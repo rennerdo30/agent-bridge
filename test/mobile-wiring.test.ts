@@ -15,6 +15,8 @@ import { OwnerQuestionService } from "../src/core/owner-question-service.js";
 import { ownerQuestionVersion } from "../src/core/owner-questions.js";
 import { MessageStore } from "../src/core/store.js";
 import type { PeerInfo } from "../src/core/protocol.js";
+import { nativeOwner } from "../src/core/recipient-ownership.js";
+import { fixtureOwner, unreadOwned } from "./owned-mail.js";
 import { startUi } from "../src/cli/ui.js";
 import { DashboardController, hostDashboard } from "../src/cli/dashboard.js";
 import { MobileClient, type StoredDevice, type WireFetch } from "../apps/mobile/src/client.js";
@@ -42,10 +44,12 @@ function fixture(home = fixtureHome()) {
   const peers: PeerInfo[] = [{ id: "asker-peer", name: "asker", agent: "codex", pid: 1, agentPid: null, cwd: home, sessionId: "asker-session", activity: "busy", autoWake: false, startedAt: 1, subagent: true },
     { id: "main-peer", name: "main", agent: "codex", pid: 2, agentPid: null, cwd: home, sessionId: "main-session", activity: "idle", autoWake: false, startedAt: 1, projectMain: true, wakeAvailable: true, wakeOnDirect: true }];
   const emit = vi.fn(), service = new OwnerQuestionService(home, messages, nullLogger, () => peers, emit);
+  for (const peer of peers) messages.rememberName(peer, Date.now());
   const q = service.store.list()[0] ?? service.store.ask({ title: "Fixture scope", topic: "scope", context: "Synthetic question", options: [
     { id: "keep", label: "Keep", consequence: "Preserves", recommended: true }, { id: "wait", label: "Wait", consequence: "Defers", recommended: false },
   ], blocking: true, blocks: "Synthetic action", meanwhile: "Read source" }, home,
-  { session: "asker", sessionId: "asker-session", main: "main", mainSessionId: "main-session", agent: "codex" }).question;
+  { session: "asker", sessionId: "asker-session", main: "main", mainSessionId: "main-session", agent: "codex",
+    owner: fixtureOwner(messages, peers[0]!), mainOwner: fixtureOwner(messages, peers[1]!) }).question;
   let closed = false;
   const close = () => { if (closed) return; closed = true; service.close(); messages.close(); };
   closers.push(close);
@@ -159,16 +163,16 @@ describe("real owner-question completion and recovery", () => {
     const answered = await mobile.gateway.handle(req("POST", `/questions/${f.q.id}/answer`, c, intent, { "x-mobile-view": displayed.cursor, "idempotency-key": key }));
     expect(answered.status).toBe(200); expect(f.service.store.get(f.q.id)?.status).toBe("answered"); expect(f.emit).not.toHaveBeenCalled(); expect(complete).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(2000);
-    expect(f.emit).toHaveBeenCalledTimes(2); expect(f.messages.unread("asker", 50)).toHaveLength(1);
+    expect(f.emit).toHaveBeenCalledTimes(2); expect(unreadOwned(f.messages, f.peers[0]!)).toHaveLength(1);
     const delivered = f.service.store.get(f.q.id)!, mainDelivery = delivered.deliveries.find(d => d.recipient === "main")!;
-    const readAt = Date.now(); f.messages.markRead("main", [mainDelivery.messageId!], readAt);
+    const readAt = Date.now(); f.messages.markRead("main", [mainDelivery.messageId!], readAt, undefined, undefined, nativeOwner(f.peers[1]!));
     const enriched = await snap(mobile.gateway, c); expect(enriched.questions[0]?.deliveries.find(d => d.recipientLabel === "main")?.consumedAt).toBe(readAt);
     await vi.advanceTimersByTimeAsync(2000); expect(f.service.store.get(f.q.id)?.deliveryComplete).toBe(true); expect(f.emit).toHaveBeenCalledTimes(2);
     await mobile.close(); expect(serviceClose).not.toHaveBeenCalled(); f.close();
     const reopened = fixture(f.home), again = provisionMobile({ ...config(f.home), local: { home: f.home, log: nullLogger, peers: () => reopened.peers }, ownerQuestions: reopened.service, ready: () => true }); closers.push(again.close);
     const fresh = await snap(again.gateway, c), replay = await again.gateway.handle(req("POST", `/questions/${f.q.id}/answer`, c, intent, { "x-mobile-view": fresh.cursor, "idempotency-key": key }));
     expect(replay.status).toBe(200); expect((replay.body as { question: { deliveries: { recipientLabel: string; consumedAt: number | null }[] } }).question.deliveries.find(d => d.recipientLabel === "main")?.consumedAt).toBe(readAt);
-    await vi.advanceTimersByTimeAsync(2000); expect(reopened.emit).not.toHaveBeenCalled(); expect(reopened.messages.unread("asker", 50)).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(2000); expect(reopened.emit).not.toHaveBeenCalled(); expect(unreadOwned(reopened.messages, reopened.peers[0]!)).toHaveLength(1);
   });
 });
 

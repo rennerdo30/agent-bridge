@@ -12,6 +12,7 @@ import { nullLogger } from "../src/core/logger.js";
 import { BridgeNode } from "../src/core/node.js";
 import type { BridgeMessage, PeerInfo } from "../src/core/protocol.js";
 import { MessageStore } from "../src/core/store.js";
+import { removePostV9FixtureOwnership } from "./owned-mail.js";
 import { en } from "../src/core/messages.js";
 import { DEFAULT_NETWORK_CONFIG } from "../src/network/config.js";
 import { DISCOVERY_TTL_MS, NETWORK_REFRESH_MS, NETWORK_TIMEOUT_MS, NETWORK_VERSION, TLS_CIPHER } from "../src/network/constants.js";
@@ -102,6 +103,7 @@ describe("remote reconnect identity and reachability (AB-104)", () => {
       to: "session", conversationId: "chat", replyTo: null, hop: 0, body: "original user data", createdAt: 1, readAt: null });
     store.close();
     const legacy = new DatabaseSync(env.db);
+    removePostV9FixtureOwnership(legacy);
     legacy.exec("DROP TABLE peer_names; DROP TABLE peer_name_owners; PRAGMA user_version=5;"); legacy.close();
     const upgraded = new MessageStore(env.db, nullLogger);
     try {
@@ -135,6 +137,7 @@ describe("remote reconnect identity and reachability (AB-104)", () => {
     store.rememberSession(registration("session-2", { agentPid: 333, sessionId: "two" }), 2);
     store.close();
     const legacy = new DatabaseSync(env.db);
+    removePostV9FixtureOwnership(legacy);
     legacy.exec("DROP TABLE peer_names; DROP TABLE peer_name_owners; PRAGMA user_version=5;"); legacy.close();
     const upgraded = new MessageStore(env.db, nullLogger);
     try {
@@ -156,14 +159,19 @@ describe("remote reconnect identity and reachability (AB-104)", () => {
     };
     const old = node("session"); await old.start(); await old.setSessionId("chat");
     await old.relocate(remoteEnv.home, "session-3");
-    await old.relocate(remoteEnv.home, "session-4"); await old.stop();
+    await old.relocate(remoteEnv.home, "session-4");
     const remoteAdmin = await connect(registration("admin", { agentPid: 998, cwd: remoteEnv.home }), remoteEnv);
     const status = await remoteAdmin.client.request("networkStatus", {});
     await sender.client.request("networkLink", { code: (await remoteAdmin.client.request("networkPair", {})).code, host: "127.0.0.1", port: status.port! });
+    // Capture a real advertised destination before disconnect. Its unread copy
+    // survives under that exact owner; a never-advertised offline name cannot
+    // supply remote ownership merely because a later session has the name.
     const queued = await sender.client.request("send", { to: "mac/session-4", body: "wake after reconnect" });
-    expect(queued.queuedFor).toEqual(["mac/session-4"]);
+    expect(queued.deliveredTo).toEqual(["mac/session-4"]);
+    expect(queued.messages[0]!.recipientNative).toBeTruthy();
+    await old.stop();
     const holder = await connect(registration("session", { agentPid: 777, cwd: remoteEnv.home }), remoteEnv);
-    const fresh = node("session"); await fresh.start();
+    const fresh = node("session"); await fresh.setSessionId("chat"); await fresh.start();
     expect(fresh.name).toBe("session-3");
     expect(fresh.currentSessionId).toBe("chat");
     fresh.setActivity("idle"); await fresh.setWakePolicy(true, true);
@@ -180,6 +188,10 @@ describe("remote reconnect identity and reachability (AB-104)", () => {
       if (receipt === null) await new Promise((resolve) => setTimeout(resolve, 20));
     }
     expect(receipt).toBeTypeOf("number");
+    // Joining another local peer is advertised on the next real wire refresh;
+    // establish that boundary before testing a newly selected remote address.
+    await holder.client.request("send", { to: "windows/sender", body: "fixture advertisement ready" });
+    await until(() => sender.messages.some(m => m.body === "fixture advertisement ready"));
     const held = await sender.client.request("send", { to: "mac/session", body: "for different live CLI" });
     expect(held.deliveredTo).toEqual(["mac/session"]);
     await until(() => holder.messages.some((m) => m.body === "for different live CLI"));
@@ -192,9 +204,13 @@ describe("remote reconnect identity and reachability (AB-104)", () => {
     fresh.setActivity("busy"); fresh.setActivity("idle");
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(fresh.unread().some((m) => m.body === "for different live CLI")).toBe(false);
-    expect((await sender.client.request("send", { to: "mac/session", body: "for disconnected name owner" })).queuedFor).toEqual(["mac/session"]);
+    await expect(sender.client.request("send", { to: "mac/session", body: "for disconnected name owner" })).rejects.toMatchObject({ code: "unknown_target" });
+    expect(fresh.unread().some(m => m.body === "for disconnected name owner")).toBe(false);
     const waking = wait();
-    const redirected = await sender.client.request("send", { to: "mac/session-4", body: "wake retained alias" });
+    // Select the newly advertised exact address for fresh work. Remote aliases
+    // without an authenticated advertisement cannot mint a new destination pin.
+    await expect(sender.client.request("send", { to: "mac/session-4", body: "unadvertised alias withheld" })).rejects.toMatchObject({ code: "unknown_target" });
+    const redirected = await sender.client.request("send", { to: "mac/session-3", body: "wake retained alias" });
     expect(redirected.deliveredTo).toEqual(["mac/session-3"]);
     expect(formatDelivery(redirected).join("\n")).toContain("wake requested on the receiving PC");
     expect((await waking).text).toContain("wake retained alias");

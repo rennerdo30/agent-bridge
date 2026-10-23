@@ -4,10 +4,10 @@ import { writtenBeforeBoot } from "./boot-time.js";
 import { atomicPluginWrite } from "./plugin-runtime.js";
 import type { PeerInfo } from "./protocol.js";
 import { identityStartedAfter, processIdentity, readProcessIdentities, readProcessIdentitiesSync, readProcessNamesSync } from "./process-identity.js";
-import { existingMetadataDb, metadataDb, saveMetadataValue } from "./metadata-db.js";
+import { existingMetadataDb, metadataDb, saveMetadataValue, metadataPresenceRows } from "./metadata-db.js";
 import { importMetadataDomain } from "./metadata-import.js";
 
-export interface StoreCapabilities { json: number; sqlite: number; jobArchive?: number }
+export interface StoreCapabilities { json: number; sqlite: number; metadata?: number; jobArchive?: number }
 interface Presence extends StoreCapabilities { pid: number; name: string; version: string; explicit: boolean; processIdentity?: string; observedAt?: number }
 
 const identities = new Map<string, { identity: string | null; at: number; signature: string }>();
@@ -23,9 +23,8 @@ export { writtenBeforeBoot };
 
 function databasePresence(home: string): {record: Presence; signature: string; at: number}[] | undefined {
   const db = existingMetadataDb(home);
-  if (!db?.prepare("SELECT 1 FROM bridge_components WHERE name='import:storage-capabilities'").get()) return undefined;
-  return db.prepare("SELECT key,value,updated_at FROM bridge_metadata WHERE domain='storage-capabilities'").all()
-    .filter(row => /^\d+$/.test(String(row.key))).map(row => ({record:JSON.parse(String(row.value)) as Presence,signature:String(row.value),at:Number(row.updated_at)}));
+  const records = db ? (db.prepare("SELECT 1 FROM bridge_components WHERE name='import:storage-capabilities'").get() ? db.prepare("SELECT key,value,updated_at FROM bridge_metadata WHERE domain='storage-capabilities'").all() : undefined) : metadataPresenceRows(home);
+  return records?.filter(row => /^\d+$/.test(String(row.key))).map(row => ({record:JSON.parse(String(row.value)) as Presence,signature:String(row.value),at:Number(row.updated_at)}));
 }
 
 /** False only for a PID that no longer exists (ESRCH); EPERM and other answers leave it to the identity query. */
@@ -144,6 +143,7 @@ export function releasedStoreCapabilities(version?: string): StoreCapabilities {
 export function validStoreCapabilities(value: unknown): value is StoreCapabilities {
   const v = value as StoreCapabilities | undefined;
   return Boolean(v && Number.isSafeInteger(v.json) && v.json >= 0 && Number.isSafeInteger(v.sqlite) && v.sqlite >= 0 &&
+    (v.metadata === undefined || Number.isSafeInteger(v.metadata) && v.metadata >= 0) &&
     (v.jobArchive === undefined || Number.isSafeInteger(v.jobArchive) && v.jobArchive >= 0));
 }
 
@@ -159,7 +159,7 @@ export function recordStorePeer(home: string, peer: Pick<PeerInfo, "pid" | "name
       let identity = cachedIdentity(home,peer.pid);
       if (prior?.explicit && (!identity || prior.processIdentity===identity)) {
         if (!explicit) return;
-        if (!options.authoritative && prior.version === (peer.version ?? "unknown") && prior.json === caps.json && prior.sqlite === caps.sqlite) return;
+        if (!options.authoritative && prior.version === (peer.version ?? "unknown") && prior.json === caps.json && prior.sqlite === caps.sqlite && prior.metadata === caps.metadata) return;
         identity ??= prior.processIdentity;
       }
       saveMetadataValue(home,"storage-capabilities",String(peer.pid),{schemaVersion:1,...caps,pid:peer.pid,name:peer.name,version:peer.version ?? "unknown",explicit,observedAt:Date.now(),...(identity ? {processIdentity:identity} : {})});
@@ -182,7 +182,7 @@ export function recordStorePeer(home: string, peer: Pick<PeerInfo, "pid" | "name
       // An observation adds no authority over the process's own identical record.
       // In particular, an unfilled foreign-PID cache must not erase its identity.
       if (previous.explicit && validStoreCapabilities(previous) && previous.pid === peer.pid &&
-          previous.version === (peer.version ?? "unknown") && previous.json === peer.storeCapabilities!.json && previous.sqlite === peer.storeCapabilities!.sqlite && previous.jobArchive === peer.storeCapabilities!.jobArchive &&
+          previous.version === (peer.version ?? "unknown") && previous.json === peer.storeCapabilities!.json && previous.sqlite === peer.storeCapabilities!.sqlite && previous.jobArchive === peer.storeCapabilities!.jobArchive && previous.metadata === peer.storeCapabilities!.metadata &&
           (!identity || previous.processIdentity === identity)) {
         if (!options.authoritative || previous.name === peer.name) return;
         // Authenticated hello/self updates may resolve a new session name while

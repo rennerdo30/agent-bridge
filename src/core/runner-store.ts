@@ -9,6 +9,9 @@ import { retainMetadataFiles } from "./metadata-import.js";
 import { readHistoryJson } from "./run-history.js";
 import { storageLease } from "./storage-lock.js";
 import { legacyStorePeers, refreshStorePeerIdentities } from "./store-compatibility.js";
+import { inspectRunnerArchives, inspectRunnerFileArchives, proveRunnerRetained, runnerEvidenceNamespace } from "./runner-retention-index.js";
+import { hasUnsettledRunnerRetention, runnerInputBatches, runnerInputRecord, RunnerRetentionUnsettled, type RunnerInputIntent } from "../mcp/runner-delivery-retention.js";
+import { assertRemoteOperationAdmission } from "./remote-operation-evidence.js";
 
 /**
  * Job runner specs and states (AB-208). They used to be one `jobs/<id>.json` and `jobs/<id>.spec.json` per job,
@@ -51,6 +54,8 @@ function rows(home: string): DatabaseSync | undefined {
 
 function row(db: DatabaseSync, domain: string, key: string): Record<string, unknown> | null {
   runnerStoreStats.rowReads++;
+  if (domain === STATE && Number(db.prepare("SELECT length(CAST(value AS BLOB)) AS bytes FROM bridge_metadata WHERE domain=? AND key=?").get(domain, key)?.bytes ?? 0) > 32 * 1024 * 1024)
+    throw new RunnerRetentionUnsettled("invalid-evidence"); // preserve oversized rows, never parse them as absence
   const found = db.prepare("SELECT value FROM bridge_metadata WHERE domain=? AND key=?").get(domain, key);
   if (!found) return null;
   try { const value: unknown = JSON.parse(String(found.value)); return isRecord(value) ? value : null; } catch { return null; }
@@ -62,9 +67,11 @@ function put(db: DatabaseSync, domain: string, key: string, value: unknown): voi
    ON CONFLICT(domain,key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`).run(domain, key, JSON.stringify(value), Date.now());
 }
 
-function archive(db: DatabaseSync, domain: string, id: string, value: unknown): void {
+function archive(db: DatabaseSync, domain: string, id: string, value: unknown): string {
+  const key = `${id}/${Date.now()}-${randomUUID()}`;
   db.prepare("INSERT INTO bridge_metadata VALUES (?,?,?,?) ON CONFLICT(domain,key) DO NOTHING")
-    .run(domain, `${id}/${Date.now()}-${randomUUID()}`, JSON.stringify(value), Date.now());
+    .run(domain, key, JSON.stringify(value), Date.now());
+  return key;
 }
 
 function transaction<T>(home: string, db: DatabaseSync, work: () => T): T {
@@ -174,16 +181,21 @@ export function readRunnerStateRecord(home: string, id: string, opts: { preserve
 }
 
 /** Atomic merge of the runner's state; old readers also get the file while they live. */
-export function writeRunnerStateRecord(home: string, id: string, state: Record<string, unknown>): void {
+export function runnerRetentionStamp(state: Record<string, unknown> | null): string {
+  return JSON.stringify([state?.pid, state?.identity, state?.deliveryLedger, state?.pendingDeliveryRetention, state?.retainedRunnerInputs, state?.reportId, state?.report]);
+}
+export function writeRunnerStateRecord(home: string, id: string, state: Record<string, unknown>, initial = false, expectedRetention?: string): void {
   if (!validId(id)) throw new Error(`Invalid job id: ${id}`);
   const path = runnerStatePath(home, id);
   const db = rows(home);
   if (!db) {
-    const previous = readJsonStore(path);
-    writeJsonStore(path, mergeStoreFields(isRecord(previous) ? previous : {}, { ...state }), previous);
-    return;
+    throw Object.assign(new Error("Runner ledger storage admission deferred; original state retained"), { code: "STORE_UPGRADE_DEFERRED" });
   }
   const legacy = legacyRunnerPeers(home);
+  if (expectedRetention !== undefined && legacy) throw new RunnerRetentionUnsettled("invalid-evidence");
+  const retainedBeforeProjection = legacy ? currentState(home, db, id, false) : null;
+  if (expectedRetention !== undefined && runnerRetentionStamp(retainedBeforeProjection ?? currentState(home, db, id, false)) !== expectedRetention) throw new RunnerRetentionUnsettled("invalid-evidence");
+  if (initial && hasUnsettledRunnerRetention(retainedBeforeProjection ?? currentState(home, db, id, false))) throw new RunnerRetentionUnsettled("invalid-evidence");
   // A file of a newer format is never overwritten, nor shadowed by a row.
   if (!legacy && fileMode(home, db)) assertWritableStore(readStateFileRaw(home, id));
   let next: Record<string, unknown> = {};
@@ -197,8 +209,79 @@ export function writeRunnerStateRecord(home: string, id: string, state: Record<s
   }
   transaction(home, db, () => {
     const previous = currentState(home, db, id, true);
+    if (expectedRetention !== undefined && runnerRetentionStamp(previous) !== expectedRetention) throw new RunnerRetentionUnsettled("invalid-evidence");
     assertWritableStore(previous);
-    put(db, STATE, id, mergeStoreFields(stateBase(previous), legacy ? next : { ...state, version: JSON_STORE_VERSION }));
+    if (initial && hasUnsettledRunnerRetention(previous)) throw new RunnerRetentionUnsettled("invalid-evidence");
+    const value = mergeStoreFields(stateBase(previous), legacy ? next : { ...state, version: JSON_STORE_VERSION });
+    const old = retainedBeforeProjection ?? previous;
+    const oldLedger = old?.deliveryLedger as { entries?: { messageId: string; record: string }[] } | undefined;
+    const newLedger = value.deliveryLedger as typeof oldLedger;
+    const before = oldLedger?.entries, after = newLedger?.entries;
+    if (oldLedger && JSON.stringify(oldLedger) !== JSON.stringify(newLedger)) {
+      const { entries: _old, ...oldHeader } = oldLedger, { entries: _new, ...newHeader } = newLedger ?? {};
+      if (JSON.stringify(oldHeader) !== JSON.stringify(newHeader) || !Array.isArray(before) || !Array.isArray(after) ||
+          new Set(after.map(item => item.messageId)).size !== after.length) throw new RunnerRetentionUnsettled("invalid-evidence");
+      let prior = -1, appended = false;
+      for (const item of after) {
+        const index = before.findIndex(entry => entry.messageId === item.messageId);
+        if (index < 0) { appended = true; continue; }
+        if (appended || index <= prior || before[index]!.record !== item.record) throw new RunnerRetentionUnsettled("invalid-evidence");
+        prior = index;
+      }
+    }
+    const pendingBefore = old?.pendingDeliveryRetention, pendingAfter = value.pendingDeliveryRetention;
+    if (pendingBefore !== undefined && !Array.isArray(pendingBefore) && JSON.stringify(pendingBefore) !== JSON.stringify(pendingAfter)) throw new RunnerRetentionUnsettled("invalid-evidence");
+    if (Array.isArray(pendingBefore)) for (const item of pendingBefore) {
+      if (Array.isArray(pendingAfter) && pendingAfter.some(next => JSON.stringify(next) === JSON.stringify(item))) continue;
+      // Missing/ambiguous historical ownership cannot be repaired by clearing a
+      // field. Only an exactly owned ledger entry can complete this transition.
+      if (!Array.isArray(before) || !before.some(next => JSON.stringify(next) === JSON.stringify(item))) throw new RunnerRetentionUnsettled("invalid-evidence");
+    }
+    // Evidence is archived in the SAME transaction before an active ledger item
+    // disappears. A future path mutation cannot erase its sole original bytes.
+    const priorInput = old?.retainedRunnerInputs as RunnerInputIntent | undefined, nextInput = value.retainedRunnerInputs as RunnerInputIntent | undefined;
+    const priorInputs = runnerInputBatches(priorInput), nextInputs = runnerInputBatches(nextInput);
+    if (priorInput && !priorInput.batches && (!nextInput || nextInput.batches || runnerInputRecord(priorInput) !== runnerInputRecord(nextInput)))
+      throw new RunnerRetentionUnsettled("invalid-evidence");
+    if (priorInput?.batches) {
+      if (!nextInput?.batches || nextInput.generation !== priorInput.generation || nextInputs.length < priorInputs.length) throw new RunnerRetentionUnsettled("invalid-evidence");
+      for (let i = 0; i < priorInputs.length; i++) {
+        const a = priorInputs[i]!, b = nextInputs[i]!;
+        const transitions = { pending: ["pending", "admitted", "evidence"], admitted: ["admitted", "provider-admitted", "evidence"],
+          "provider-admitted": ["provider-admitted", "consumed", "evidence"], consumed: ["consumed"], evidence: ["evidence"] };
+        if (runnerInputRecord(a) !== runnerInputRecord(b) || !transitions[a.phase].includes(b.phase) ||
+            a.admission && JSON.stringify(a.admission) !== JSON.stringify(b.admission) || a.result && JSON.stringify(a.result) !== JSON.stringify(b.result))
+          throw new RunnerRetentionUnsettled("invalid-evidence");
+      }
+      if (nextInputs.slice(priorInputs.length).some(b => b.phase !== "pending" || b.admission || b.result)) throw new RunnerRetentionUnsettled("invalid-evidence");
+    }
+    const completedInputs = priorInputs.some(a => !["evidence", "consumed"].includes(a.phase) &&
+      nextInputs.some(b => runnerInputRecord(a) === runnerInputRecord(b) && ["evidence", "consumed"].includes(b.phase)));
+    if (Array.isArray(before) && before.some(entry => !Array.isArray(after) || !after.some(next => next.messageId === entry.messageId)) ||
+        completedInputs) {
+      const key = archive(db, STATE_ARCHIVE, id, old);
+      const completionKey = completedInputs ? archive(db, STATE_ARCHIVE, id, value) : undefined;
+      proveRunnerRetained(db, id, old, value, key, completionKey);
+    }
+    put(db, STATE, id, value);
+  });
+}
+
+/** Persistent store namespace; included in every accepted item and restored with metadata. */
+export function runnerLedgerNamespace(home: string, create = false): string {
+  const db = rows(home);
+  if (!db) throw new RunnerRetentionUnsettled("invalid-evidence");
+  return transaction(home, db, () => runnerEvidenceNamespace(db, create));
+}
+/** Read-only bounded archive proof census at synchronous effect boundaries. */
+export function assertRunnerArchiveAdmission(home: string, id: string): void {
+  assertRemoteOperationAdmission(home, id);
+  inspectRunnerFileArchives(home, id);
+  const db = rows(home);
+  if (!db) throw new RunnerRetentionUnsettled("invalid-evidence");
+  transaction(home, db, () => {
+    if (db.prepare("SELECT 1 FROM bridge_metadata WHERE domain=? AND key=?").get(STATE, id) && !row(db, STATE, id)) throw new RunnerRetentionUnsettled("invalid-evidence");
+    inspectRunnerArchives(db, id);
   });
 }
 
@@ -216,22 +299,32 @@ export function readPendingRunnerSpec(home: string, id: string): Record<string, 
   return isRecord(value) ? value : null;
 }
 
+/** Read the original generation without consuming, resetting or archiving it. */
+export function readOriginalRunnerSpec(home: string, id: string): Record<string, unknown> | null {
+  if (!validId(id)) return null;
+  const db = rows(home), stored = db && row(db, SPEC, id);
+  if (stored) return stored;
+  const file = readLegacyFile(runnerSpecPath(home, id));
+  return isRecord(file) ? file : null;
+}
+
 /**
  * The server's side of a new turn: archive the previous turn's state and spec, then publish the new spec.
  * Returns the path handed to the runner (its file exists only for older readers).
  */
 export function publishRunnerSpec(home: string, id: string, spec: Record<string, unknown>): string {
   if (!validId(id)) throw new Error(`Invalid job id: ${id}`);
+  assertRemoteOperationAdmission(home, id);
+  inspectRunnerFileArchives(home, id);
   const statePath = runnerStatePath(home, id), specPath = runnerSpecPath(home, id);
   const db = rows(home);
-  if (!db || fileMode(home, db)) {
-    // Files of an earlier turn must not count for this one (and stay retained in the archive).
-    archiveFile(statePath);
-    archiveFile(specPath);
-  }
-  if (!db) { writeJsonStore(specPath, { ...spec }, null); return specPath; }
+  if (!db) throw Object.assign(new Error("Runner ledger storage admission deferred; original spec/state retained"), { code: "STORE_UPGRADE_DEFERRED" });
   transaction(home, db, () => {
-    const state = row(db, STATE, id), previous = row(db, SPEC, id);
+    if (db.prepare("SELECT 1 FROM bridge_metadata WHERE domain=? AND key=?").get(STATE, id) && !row(db, STATE, id)) throw new RunnerRetentionUnsettled("invalid-evidence");
+    inspectRunnerArchives(db, id);
+    const state = currentState(home, db, id, false), previous = row(db, SPEC, id);
+    if (hasUnsettledRunnerRetention(state)) throw new RunnerRetentionUnsettled("invalid-evidence");
+    if (fileMode(home, db)) { archiveFile(statePath); archiveFile(specPath); }
     if (hasState(state)) archive(db, STATE_ARCHIVE, id, state);
     put(db, STATE, id, { version: JSON_STORE_VERSION, turnResetAt: Date.now() });
     if (previous) archive(db, SPEC_ARCHIVE, id, previous);

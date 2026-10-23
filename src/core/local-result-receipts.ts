@@ -4,7 +4,8 @@ import { metadataDb } from "./metadata-db.js";
 import { importMetadataDomain } from "./metadata-import.js";
 import { storageLease } from "./storage-lock.js";
 import type { BridgeMessage } from "./protocol.js";
-import { ReadJournal } from "./read-journal.js";
+import { ReadJournal, readJournalIdentities } from "./read-journal.js";
+import { t3BindingSchema } from "./t3-identity.js";
 
 export const RESULT_HEADER = /^Subagent .+ (?:done|failed|cancelled) after \d+s\./;
 export const LOCAL_RESULTS_DIR = "local-result-receipts";
@@ -33,7 +34,12 @@ export function localResultReceipt(home: string, name: string, owner: string | u
     .sort((a, b) => (b.deliveredAt as number) - (a.deliveredAt as number));
   const record = records[0];
   if (!record) return null;
-  const receipt = new ReadJournal(home).receipt(`name:${record.recipient}`, record.id as string);
+  const envelope = isRecord(record.envelope) ? record.envelope : undefined;
+  const binding = envelope?.recipientFrontend === undefined ? undefined : t3BindingSchema.safeParse(envelope.recipientFrontend);
+  // Malformed ownership is not evidence of native consumption.
+  const identity = envelope?.recipientAmbiguous || binding && !binding.success || !binding && !envelope?.recipientNative ? undefined :
+    readJournalIdentities(record.recipient as string, null, binding?.data, typeof envelope?.recipientNative === "string" ? envelope.recipientNative : undefined, envelope?.recipientMailbox as BridgeMessage["recipientMailbox"], envelope?.jobRoute as BridgeMessage["jobRoute"])[0];
+  const receipt = identity ? new ReadJournal(home).receipt(identity, record.id as string) : { read: false, at: null };
   return { status: receipt.read ? "read" : "delivered", messageId: record.id as string, recipient: record.recipient as string,
     deliveredAt: record.deliveredAt as number, readAt: receipt.at };
 }

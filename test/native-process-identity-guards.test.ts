@@ -82,6 +82,26 @@ async function ready() {
   return { worker, host, port: thread.ports.at(-1)! };
 }
 
+it("does not start a cold shared worker or host for a deadline-owned query", async () => {
+  spawned.succeed = true;
+  const controller = new AbortController();
+  const result = native.readNativeIdentities([4], 100, controller.signal);
+  controller.abort();
+  expect(await result).toBeUndefined();
+  expect(thread.workers).toHaveLength(0); expect(spawned.calls).toEqual([]);
+  expect(vi.getTimerCount()).toBe(0);
+});
+it("does not adopt or cancel another owner's suspended cold helper startup", async () => {
+  spawned.succeed = true; const started = native.nativeIdentityHostStarted();
+  const worker = thread.workers[0]!, host = spawned.hosts[0]!;
+  const stop = new AbortController(); expect(native.readNativeIdentities([4], 100, stop.signal)).toBeUndefined();
+  stop.abort(); await vi.advanceTimersByTimeAsync(100);
+  expect(thread.workers).toHaveLength(1); expect(spawned.calls).toHaveLength(1);
+  expect(worker.terminate).not.toHaveBeenCalled(); expect(host.kill).not.toHaveBeenCalled();
+  host.stdout.emit("data", "ready\n"); Atomics.store(worker.state, 1, 1); worker.emit("message", { type: "connected" });
+  expect(await started).toBe(true);
+});
+
 it("never starts a host or worker off the main thread; the PowerShell probe decides there", async () => {
   thread.main = false;
   expect(native.readNativeIdentitiesSync([process.pid], 1_000)).toBeUndefined();
@@ -136,16 +156,24 @@ it("counts sync dispatch time and rejects a response delivered after the deadlin
   vi.spyOn(Atomics, "wait").mockReturnValue("timed-out");
   expect(native.readNativeIdentitiesSync([4], 1_000)).toBeUndefined();
 });
-it("retires a timed-out or aborted request so outstanding work cannot block idle exit", async () => {
-  for (const abort of [false, true]) {
+it("retires its unscoped timed-out request so outstanding work cannot block idle exit", async () => {
     const { worker, host, port } = await ready();
-    const controller = new AbortController();
-    const result = native.readNativeIdentities([4], 1_000, controller.signal);
-    if (abort) controller.abort(); else await vi.advanceTimersByTimeAsync(1_000);
+    const result = native.readNativeIdentities([4], 1_000);
+    await vi.advanceTimersByTimeAsync(1_000);
     expect(await result).toBeUndefined();
     expect(worker.terminate).toHaveBeenCalledTimes(1); expect(host.kill).toHaveBeenCalledTimes(1);
     expect(port.close).toHaveBeenCalledTimes(1); expect(native.nativeIdentityHostReady()).toBe(false);
-  }
+});
+it.each(["abort", "timeout"])("cancels only the bounded shared query on %s, preserving other owners", async phase => {
+  const { worker, host, port } = await ready();
+  const other = native.readNativeIdentities([8], 1_000), otherId = worker.messages.at(-1)!.id;
+  const stop = new AbortController(), query = native.readNativeIdentities([4], 100, stop.signal), id = worker.messages.at(-1)!.id;
+  if (phase === "abort") stop.abort(); else await vi.advanceTimersByTimeAsync(100);
+  expect(await query).toBeUndefined(); expect(worker.messages.at(-1)).toEqual({ type: "cancel", id });
+  expect(worker.terminate).not.toHaveBeenCalled(); expect(host.kill).not.toHaveBeenCalled(); expect(port.close).not.toHaveBeenCalled();
+  worker.emit("message", { id, results: ["4=-"] });
+  worker.emit("message", { id: otherId, results: ["8=638950000000000001"] });
+  expect(await other).toEqual(new Map([[8, "638950000000000001"]]));
 });
 it("ignores a late async response after its deadline even before the timer callback", async () => {
   const { worker } = await ready();

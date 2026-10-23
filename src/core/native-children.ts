@@ -3,10 +3,11 @@ import { isJobSendTarget, DEFAULT_SIBLING_MAX_HOPS, MAX_JOB_SEND_TARGETS } from 
 import type { MessageStore } from "./store.js";
 import { randomUUID } from "node:crypto";
 import { nativeRouteDigest, NATIVE_LIFECYCLE_ROUTE_LIMIT } from "./native-lifecycle-reader.js";
+import { nativeOwner, recipientKey } from "./recipient-ownership.js";
 
 export const NATIVE_AGENT_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 export function isNativeChildAddress(address: unknown): boolean { return typeof address === "string" && address.includes("/sub:"); }
-interface Child extends NativeChildAddress { owner: string; session: string; active: boolean }
+interface Child extends NativeChildAddress { owner: string; session: string; active: boolean; identity: string }
 export interface NativeLifecycleObservation { generation: number; memoryActive: number; durableActive: number; pending: number;
   blocker: "native_routes_active" | "native_writes_pending" | "native_state_unknown" | null }
 
@@ -24,8 +25,8 @@ export class NativeChildren {
   constructor(private readonly store: MessageStore) {}
   private parentKey(peer: PeerInfo): string { return JSON.stringify([peer.id, peer.sessionId, peer.name]); }
 
-  recover(): Promise<void> {
-    return this.recovery ??= this.recoverOrphans().then(() => { this.recoverySettled = true; });
+  recover(check: () => void = () => {}): Promise<void> {
+    check(); return this.recovery ??= this.recoverOrphans(check).then(() => { check(); this.recoverySettled = true; });
   }
   private admitNative(): void { if (this.lifecycleFrozen) throw new BridgeError("bad_request", "Native subagent admission is draining; retry later."); }
   private trackNative<T>(operation: () => Promise<T>): Promise<T> {
@@ -81,9 +82,9 @@ export class NativeChildren {
     const current = await this.observeNativeLifecycle(deadline);
     return !current.blocker && current.generation === observation.generation && current.memoryActive === 0 && current.durableActive === 0 && current.pending === 0;
   }
-  private async recoverOrphans(): Promise<void> {
+  private async recoverOrphans(check: () => void): Promise<void> {
     // No connection survived a broker restart. The retained mapping makes orphan recovery exact.
-    for (const route of this.store.nativeChildRoutes()) await this.store.retryWrite(() => this.store.returnNativeChild(route.address, route.parent));
+    check(); for (const route of this.store.nativeChildRoutes()) { check(); await this.store.retryWrite(() => { check(); return this.store.returnNativeChild(route.address, route.parent); }); check(); }
   }
   private parent(peer: PeerInfo): string {
     if (peer.agent !== "claude" || peer.jobAgent || peer.subagent || !peer.sessionId) throw new BridgeError("unauthorized", "Native child addresses require a registered Claude parent session.");
@@ -121,7 +122,10 @@ export class NativeChildren {
     const address = `${peer.name}/sub:${agentId}`, previous = this.children.get(address);
     if (previous?.owner === peer.id && previous.session === session) return this.public(this.own(peer, agentId)); // A late hook cannot resurrect a stopped child.
     if (previous?.active) throw new BridgeError("unauthorized", "Native child address belongs to another parent session.");
-    const child: Child = { address, agentId, parent: peer.name, owner: peer.id, session, active: true, sendTo: [], maxHops };
+    const parentOwner = recipientKey(peer.frontend, nativeOwner(peer));
+    if (!parentOwner) throw new BridgeError("unauthorized", "Native child parent ownership is unproven.");
+    const identity = JSON.stringify({ kind: "child", owner: peer.id, session, parent: peer.name, agentId, incarnation: randomUUID(), parentOwner });
+    const child: Child = { address, agentId, parent: peer.name, owner: peer.id, session, active: true, sendTo: [], maxHops, identity };
     await this.writeNative(() => this.store.retainNativeChild(address, peer.name));
     this.children.set(address, child);
     return this.public(child);

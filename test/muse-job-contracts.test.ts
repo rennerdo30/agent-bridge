@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import { chmodSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { fixtureRemotePeer } from "./owned-mail.js";
 import { DEFAULT_CONFIG } from "../src/core/config.js";
 import * as delegate from "../src/core/delegate.js";
 import * as museContext from "../src/core/muse-context.js";
@@ -18,7 +19,7 @@ import { runRemoteAsk } from "../src/mcp/remote-ask.js";
 import { registerTools } from "../src/mcp/server.js";
 import { DELEGATION_TARGETS } from "../src/mcp/targets.js";
 import { DEFAULT_NETWORK_CONFIG } from "../src/network/config.js";
-import { remoteSpawnArgsSchema, type RemoteJobRequest } from "../src/network/remote-job-protocol.js";
+import { REMOTE_RUNNER_LEDGER_CAPABILITY, remoteSpawnArgsSchema, type RemoteJobRequest } from "../src/network/remote-job-protocol.js";
 import { RemoteJobs } from "../src/network/remote-jobs.js";
 import { makeEnv, until, type TestEnv } from "./helpers.js";
 
@@ -162,16 +163,17 @@ describe("Muse legacy exec profile persistence", () => {
 });
 
 describe("Muse legacy exec remote profile contracts", () => {
-  function receiver() {
+  function receiver(pair = { id: randomUUID(), name: "paired", fingerprint: "a".repeat(64) }) {
     let receive!: (payload: Record<string, unknown>, pair: any) => Promise<void>;
     const responses: any[] = [];
+    const advertised = fixtureRemotePeer(env.home, pair, { id: "supervisor", name: "sender", sessionId: "supervisor" });
     const remote = new RemoteJobs({ registerExtension: (_frame: string, _capability: string, handler: typeof receive) => { receive = handler; },
-      peers: () => [{ id: "pair/supervisor", name: "paired/sender" }], peerSupports: () => true,
+      peers: () => [advertised], peerSupports: () => true,
       sendExtension: async (_host: string, _frame: string, payload: unknown) => { responses.push(payload); } } as any,
     env.home, nullLogger, async () => {});
     remotes.push(remote);
-    return { remote, request: async (request: RemoteJobRequest, supervisor = "supervisor") => {
-      await receive({ kind: "request", rid: randomUUID(), peer: { id: "supervisor", name: "sender", supervisor }, request }, { id: "pair", name: "paired" });
+    return { remote, pair, request: async (request: RemoteJobRequest, supervisor = "supervisor") => {
+      await receive({ kind: "request", rid: randomUUID(), peer: { id: "supervisor", name: "sender", supervisor }, request }, pair);
       return responses.at(-1);
     } };
   }
@@ -196,7 +198,7 @@ describe("Muse legacy exec remote profile contracts", () => {
     expect((await remote.request(spawn({ permission_profile: "initial" }))).error).toBeUndefined();
     expect(calls()[0]!.args).toEqual(expect.arrayContaining(["--permission-profile", "initial"]));
     expect((await remote.request({ op: "control", job: "abcdef12", control: { type: "settings", settings: { permission_profile: "remote-review" } } })).error).toBeUndefined();
-    remote.remote.close(); remote = receiver();
+    remote.remote.close(); remote = receiver(remote.pair);
     expect((await remote.request(spawn())).error).toBeUndefined();
     expect(calls()[1]!.args).toEqual(expect.arrayContaining(["--permission-profile", "remote-review", "--session-id", "muse-saved-session"]));
     expect((readJsonStore(join(env.home, "remote-jobs.json")) as any).jobs[0].args.permission_profile).toBe("remote-review");
@@ -205,6 +207,9 @@ describe("Muse legacy exec remote profile contracts", () => {
     expect((await remote.request(spawn({ permission_profile: "exact" }))).error).toBeUndefined();
     expect(calls()[3]!.args).toEqual(expect.arrayContaining(["--permission-profile", "exact", "--disable-write"]));
     const count = launch.mock.calls.length;
+    const foreignHost = receiver({ ...remote.pair, id: randomUUID() });
+    expect((await foreignHost.request(spawn())).error).toContain("another supervisor");
+    foreignHost.remote.close();
     expect((await remote.request(spawn(), "another-owner")).error).toContain("another supervisor");
     expect((await remote.request({ ...spawn({ permission_profile: "wrong-agent" }), job: "abcdef13", target: "codex" })).error).toContain("only to muse");
     expect((await remote.request({ ...spawn({ session_id: "unowned" }), job: "abcdef14" })).error).toContain("owned by this supervisor");
@@ -215,7 +220,9 @@ describe("Muse legacy exec remote profile contracts", () => {
     const snapshot = { state: { pid: 0, peer: "muse-job-abcdef12", status: "done", updatedAt: Date.now(), report: "remote done", sessionId: "remote-session" }, alive: false, approvals: [] };
     const remoteJob = vi.fn(async () => snapshot);
     const node = { remoteJob } as unknown as BridgeNode;
-    const job = { id: "abcdef12", name: "muse-job-abcdef12", controller: new AbortController(), workdir: env.home } as Job;
+    const job: Job = { id: "abcdef12", name: "muse-job-abcdef12", agent: "muse", model: null, prompt: "remote", startedAt: Date.now(),
+      owner: "requesting-supervisor", supervisor: "requesting-session", queue: [], controller: new AbortController(), progress: null,
+      status: "running", sessionId: null, workdir: env.home, worktree: null };
     const args = { prompt: "remote", title: "Remote launch", cwd: env.home, host: "paired", permission_profile: "named" };
     const host = new RemoteJobHost(node, env.home, nullLogger);
     host.start(job, "paired", "muse", { ...args, _job: job.name });

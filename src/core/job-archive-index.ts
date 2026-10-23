@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { assertBootstrapAccess } from "./store-bootstrap-journal.js";
 import { existsSync, lstatSync, mkdirSync, realpathSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -72,6 +73,7 @@ CREATE VIEW current_jobs AS SELECT * FROM v_jobs;
 PRAGMA user_version=1;`;
 
 export function openJobArchive(path: string, writable = false, options: { preserveInputs?: boolean } = {}): DatabaseSync | undefined {
+  if (writable) assertBootstrapAccess(dirname(path));
   const file = jobArchivePath(path);
   physicalArchivePath(file);
   physicalArchivePath(`${file}-wal`); physicalArchivePath(`${file}-shm`);

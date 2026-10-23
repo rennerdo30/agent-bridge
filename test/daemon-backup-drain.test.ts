@@ -43,6 +43,18 @@ describe("owned automatic-backup settlement (not whole-core durability)", () => 
   it("timeout and second observer leave the same actual capture alive; completion preserves exact accepted bytes", async () => {
     sourceMail(); backup = new BackupBackground(env.home, nullLogger);
     const worker = startOwnedCapture();
+    const outcomes = { verified: 0, notDue: 0, error: 0, other: 0, exited: false };
+    const count = (value: number) => Math.min(255, value + 1);
+    const observed = (message: unknown) => {
+      if ((message as { type?: unknown } | null)?.type === "backupProgress") return; // Separate source-owned telemetry, not an outcome.
+      const item = message as { path?: unknown; skipped?: unknown; error?: unknown } | null;
+      const kind = item?.error ? "error" : typeof item?.path === "string" ? "verified" :
+        item?.path === null && item?.skipped === "not-due" ? "notDue" : "other";
+      outcomes[kind] = count(outcomes[kind]);
+    };
+    const exited = () => { outcomes.exited = true; };
+    worker.on("message", observed); worker.on("exit", exited);
+    try {
     // Actual IPC pressure reaches the worker at its existing yielded capture checkpoints.
     backup.pressure(true);
     const send = vi.spyOn(worker, "send"), kill = vi.spyOn(worker, "kill");
@@ -53,7 +65,14 @@ describe("owned automatic-backup settlement (not whole-core durability)", () => 
     expect(Reflect.get(backup, "worker")).toBe(worker); expect(worker.exitCode).toBeNull();
     expect(send).not.toHaveBeenCalled(); expect(kill).not.toHaveBeenCalled();
     backup.pressure(false);
-    expect(await backup.settleLifecycleMaintenance(deadline())).toMatchObject({ settled: true, pendingWorkers: 0, unknown: false });
+    const started = performance.now(), completion = await backup.settleLifecycleMaintenance(deadline());
+    if (!completion.settled) process.stderr.write("AB325 backup settlement evidence " + JSON.stringify({ schema: 1,
+      fixture: "backup_completion_after_pressure", outcomes, pendingWorkers: completion.pendingWorkers, unknown: completion.unknown,
+      progress: backup.lifecycleWorkerProgress(),
+      elapsedMs: Math.min(20000, Math.max(0, Math.round(performance.now() - started))), connected: worker.connected,
+      exit: worker.exitCode === null ? "pending" : worker.exitCode === 0 ? "zero" : "nonzero",
+      signal: worker.signalCode === null ? "none" : "present" }) + "\n");
+    expect(completion).toMatchObject({ settled: true, pendingWorkers: 0, unknown: false });
     expect(worker.exitCode).toBe(0); expect(kill).not.toHaveBeenCalled();
     expect(send.mock.calls.some(call => (call[0] as { type?: string }).type === "stop")).toBe(false);
     const snapshots = listMessageBackups(env.home); expect(snapshots).toHaveLength(1);
@@ -65,6 +84,7 @@ describe("owned automatic-backup settlement (not whole-core durability)", () => 
     } finally { copied.close(); original.close(); }
     expect(Reflect.get(backup, "timer")).toBeNull();
     backup.resumeLifecycleMaintenance(); expect(Reflect.get(backup, "timer")).not.toBeNull();
+    } finally { worker.removeListener("message", observed); worker.removeListener("exit", exited); }
   });
   it("an actual foreign coordination lock is not a successful owned checkpoint even when the worker exits zero", async () => {
     sourceMail(); lock = new DatabaseSync(join(env.home, "message-backup-lock.db")); lock.exec("BEGIN IMMEDIATE");

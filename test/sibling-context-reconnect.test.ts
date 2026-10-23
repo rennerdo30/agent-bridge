@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { z } from "zod";
 import { BridgeNode } from "../src/core/node.js";
+import { retainFixtureRunner } from "./owned-mail.js";
 import { BridgeClient } from "../src/core/client.js";
 import { PROTOCOL_VERSION } from "../src/core/constants.js";
 import { nullLogger } from "../src/core/logger.js";
@@ -44,6 +45,7 @@ async function runner(id: string, agent: "codex" | "opencode", supervisor: strin
     agent: "other", jobAgent: agent, jobOwner: "supervisor-session", jobParent: supervisor, id: `job:${id}`,
     cwd: env.home, autoWake: false, canHostBroker: false, log: nullLogger });
   cleanups.push(() => node.stop());
+  retainFixtureRunner(env.home, { id, name: job.name, agent, owner: supervisor, supervisor: "supervisor-session", cwd: env.home });
   await node.start();
   // Exercise replay arriving before the resumed task has its live parent link.
   if (replayId) await until(() => node.hasSeen(replayId));
@@ -64,10 +66,8 @@ it.each(["claude", "codex", "opencode"])("keeps sibling observer copies out of t
     (n) => { notifications.push(JSON.stringify(n.params)); });
   const a = await runner("a", "codex", "supervisor");
   let b = await runner("b", "opencode", "supervisor");
-  writeFileSync(join(env.home, "jobs.json"), JSON.stringify({ version: 4, jobs: [a, b].map(({ job }) => ({
-    id: job.id, name: job.name, agent: job.agent, status: "running", owner: "supervisor", rootName: "supervisor",
-    rootSession: "supervisor-session", supervisor: "supervisor-session", projectRoot: env.home, workdir: env.home,
-  })) }));
+  // runner() has already committed both authorized durable jobs. Keep their
+  // typed delivery owners and incarnations across this simulated disconnect.
   await b.node.stop();
   const child = await connect("codex", "child", { ...a.parent.childEnv(), AGENT_BRIDGE_DELEGATE_DEPTH: "1" });
   const sent = await call(child, "send", { to: b.job.name, message: "SIBLING_ONLY_SECRET" });

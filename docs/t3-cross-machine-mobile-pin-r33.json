@@ -1,0 +1,243 @@
+{
+  "base": "c86286f32f05457f0ed008a51937b6ee54e47be8",
+  "sourceCommit": "1c9876df4ef2f8ff3c9cccfb1dca7fd613bec293",
+  "sourceTree": "3f373864185f9c3c251e360e8adf071b74962708",
+  "status": "Parent exact protected-delta review required; baseline untouched",
+  "reason": "One original outer startup budget, isolated guarded initializer and genuinely fresh final admission. tryBecomeBroker passes the original deadline and closes its owned late store; listen rechecks before activation after services await. Review all nested bootstrap/lock/effect/worker/daemon boundaries, not only the protected bodies.",
+  "normalizedDelta": "t3-cross-machine-mobile-pin-r33.patch",
+  "design": "t3-cross-machine-r33-bootstrap-design.md",
+  "methodNormalizerSha256": "44483a60390a69d21050504d5ebbd59ea8054d170c173e7fd063741b5a0fa971",
+  "normalizerSha256": "19b5fbbccdea0d567510ebca43e4b7d6c9506504375f79d395641c34d6dd4549",
+  "inventory": [
+    {
+      "method": "src/core/broker.ts:constructor",
+      "previous": "942e12b5a088935e829a232a97984c1e67a68baed145cc6e41fc626376972d27",
+      "current": "942e12b5a088935e829a232a97984c1e67a68baed145cc6e41fc626376972d27"
+    },
+    {
+      "method": "src/core/broker.ts:listen",
+      "previous": "bd39e0afecb5a74d76161f26d5923f2c1e41da8cc490ed1448a9260b850ce4b0",
+      "current": "4f8cb41d80881723a281672dabc21821729668d0c896c6d956eb386dc765f4e1"
+    },
+    {
+      "method": "src/core/broker.ts:startServices",
+      "previous": "747bad4009529a7c6c8fb150580ce5ed37d66ba5ac3b6f651a6f06ad865b18d7",
+      "current": "747bad4009529a7c6c8fb150580ce5ed37d66ba5ac3b6f651a6f06ad865b18d7"
+    },
+    {
+      "method": "src/core/broker.ts:abortStartup",
+      "previous": "6132967fa78fd39cff064a581f4f49bb9c1c75b644fba78b291708c58733118c",
+      "current": "6132967fa78fd39cff064a581f4f49bb9c1c75b644fba78b291708c58733118c"
+    },
+    {
+      "method": "src/core/broker.ts:close",
+      "previous": "fb5a92326cac082ae181f38208c0af708a2b342297038d021f67a13bcd8b9b27",
+      "current": "fb5a92326cac082ae181f38208c0af708a2b342297038d021f67a13bcd8b9b27"
+    },
+    {
+      "method": "src/core/node.ts:constructor",
+      "previous": "c70bf3e865405166e195839fd1b315548b5a0a56847db0bba52eba72d0b691f5",
+      "current": "c70bf3e865405166e195839fd1b315548b5a0a56847db0bba52eba72d0b691f5"
+    },
+    {
+      "method": "src/core/node.ts:start",
+      "previous": "b504e47bab8d53e8bb71ad3457594988c38cc78bed67e2b1be3e197bc1f5066a",
+      "current": "b504e47bab8d53e8bb71ad3457594988c38cc78bed67e2b1be3e197bc1f5066a"
+    },
+    {
+      "method": "src/core/node.ts:stop",
+      "previous": "b98b5631cf7643be62bce61fac172fc79c0da09db2c7720abf14502736b57359",
+      "current": "b98b5631cf7643be62bce61fac172fc79c0da09db2c7720abf14502736b57359"
+    },
+    {
+      "method": "src/core/node.ts:tryBecomeBroker",
+      "previous": "0703c468cdaf390be07a5d4015e455a66738b230b86084993718847ea85a116f",
+      "current": "ce203d2b515ceabf13e51a123d81cb1b7cf3c319fcbb47e28284357459f078d4"
+    },
+    {
+      "method": "src/cli/dashboard.ts:constructor",
+      "previous": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "current": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    },
+    {
+      "method": "src/cli/dashboard.ts:open",
+      "previous": "6eacbb835304e2a5d3c303c54c3c674910cbf4f9a5411b3af62a7747fe2d211b",
+      "current": "6eacbb835304e2a5d3c303c54c3c674910cbf4f9a5411b3af62a7747fe2d211b"
+    },
+    {
+      "method": "src/cli/dashboard.ts:ensure",
+      "previous": "d19ca8a9485ccc07d588997e3497bc11545e730a264e9a6f59bf1ceb0dfcda49",
+      "current": "d19ca8a9485ccc07d588997e3497bc11545e730a264e9a6f59bf1ceb0dfcda49"
+    },
+    {
+      "method": "src/cli/dashboard.ts:close",
+      "previous": "534d315c24ff13f59aa4082abf2fb66906e6bee9b979a6348979cbaef89ec7b4",
+      "current": "534d315c24ff13f59aa4082abf2fb66906e6bee9b979a6348979cbaef89ec7b4"
+    }
+  ],
+  "unchangedMethodCount": 11,
+  "uiSha256": "f2a5b28254d4bb467f28bdee139e3b23bd9d4bd0c7c15fee116b4ed85a6ac385",
+  "hashSemantics": {
+    "sourceHashes": "SHA256 of exact committed Git blob bytes via binary cat-file --batch; no decoding, newline conversion or trailing newline added",
+    "methodHashes": "Exact existing mobile-wiring methodBody normalizer, including its CRLF-to-LF conversion",
+    "previousManifest": "sourceHashes hashed decoded worktree text with CRLF normalized to LF; this was insufficiently explicit. See separate raw worktree, normalized worktree and exact Git evidence below."
+  },
+  "sourceHashes": {
+    "src/core/store-bootstrap.ts": "aa05e4e0d65b49b88bf0f550e73ecf74ba0ba9ca6b92c622bed79da1857bdd27",
+    "src/core/store-bootstrap-worker.ts": "c80eb16f638b9690c9b3f3e2d5ba3407ffc9ec0f7a1a541a6bbed2e412a36e87",
+    "src/core/store-bootstrap-journal.ts": "9c2bf7c1adfdada83a28bddd823a656a3286cfb243c38633cfeb3c0118d1a596",
+    "src/core/startup-budget.ts": "82a0145b83a0f2944dea3214c666c6260b04612b1dee1c43b8a06aafca2e7089",
+    "src/core/storage-lock.ts": "412dd1c61e7ddd02460be6738f3004f9b82903480daee87cb8622bab0231f177",
+    "src/core/prior-endpoints.ts": "d0cb58e735f014b96d4fa4e33fd4e199b05c03404ebe15714772211975d46fce",
+    "src/core/store.ts": "f8b26a972c930a732208c1c27b5e2dd06082316febb2264150c9b0729d589231",
+    "src/core/node.ts": "ae7829b2867fa3a0d738d4ed35ecb5a519e01b6005098096ceb0b4b8bf4cd23d",
+    "src/core/broker.ts": "7809eaffef9ac5501ca76d2d6b5f12977ef6a5f67dc59e8ac088ed29a4b47be5",
+    "src/core/daemon-launcher.ts": "eb3824d7492d6a5dddeb831e2f200f6532874342a6ccc9228ffba93d618e64bf",
+    "src/cli/broker-daemon.ts": "e4535591ccc68af2bf35e58adf9ed759d3032db8979955cdc612638d572720dd"
+  },
+  "byteEvidence": {
+    "src/core/store-bootstrap.ts": {
+      "gitBlobOid": "e0c47698083eff1dbdec4662574d44576eca84bd",
+      "gitBlobBytes": 8558,
+      "gitBlobSha256": "aa05e4e0d65b49b88bf0f550e73ecf74ba0ba9ca6b92c622bed79da1857bdd27",
+      "worktreeBytes": 8558,
+      "worktreeRawSha256": "aa05e4e0d65b49b88bf0f550e73ecf74ba0ba9ca6b92c622bed79da1857bdd27",
+      "worktreeLfNormalizedSha256": "aa05e4e0d65b49b88bf0f550e73ecf74ba0ba9ca6b92c622bed79da1857bdd27",
+      "gitEqualsWorktreeBytes": true,
+      "gitEqualsLfNormalizedWorktree": true
+    },
+    "src/core/store-bootstrap-worker.ts": {
+      "gitBlobOid": "39cad5aa9ebc5553c60dd8b3d6a12623c41a75e9",
+      "gitBlobBytes": 3626,
+      "gitBlobSha256": "c80eb16f638b9690c9b3f3e2d5ba3407ffc9ec0f7a1a541a6bbed2e412a36e87",
+      "worktreeBytes": 3626,
+      "worktreeRawSha256": "c80eb16f638b9690c9b3f3e2d5ba3407ffc9ec0f7a1a541a6bbed2e412a36e87",
+      "worktreeLfNormalizedSha256": "c80eb16f638b9690c9b3f3e2d5ba3407ffc9ec0f7a1a541a6bbed2e412a36e87",
+      "gitEqualsWorktreeBytes": true,
+      "gitEqualsLfNormalizedWorktree": true
+    },
+    "src/core/store-bootstrap-journal.ts": {
+      "gitBlobOid": "51c79fba37624ccb4b9e6ec31afeb2fe3147b4ba",
+      "gitBlobBytes": 6408,
+      "gitBlobSha256": "9c2bf7c1adfdada83a28bddd823a656a3286cfb243c38633cfeb3c0118d1a596",
+      "worktreeBytes": 6408,
+      "worktreeRawSha256": "9c2bf7c1adfdada83a28bddd823a656a3286cfb243c38633cfeb3c0118d1a596",
+      "worktreeLfNormalizedSha256": "9c2bf7c1adfdada83a28bddd823a656a3286cfb243c38633cfeb3c0118d1a596",
+      "gitEqualsWorktreeBytes": true,
+      "gitEqualsLfNormalizedWorktree": true
+    },
+    "src/core/startup-budget.ts": {
+      "gitBlobOid": "3460603721f662717f1329213bbbdfdce8503c41",
+      "gitBlobBytes": 1718,
+      "gitBlobSha256": "82a0145b83a0f2944dea3214c666c6260b04612b1dee1c43b8a06aafca2e7089",
+      "worktreeBytes": 1718,
+      "worktreeRawSha256": "82a0145b83a0f2944dea3214c666c6260b04612b1dee1c43b8a06aafca2e7089",
+      "worktreeLfNormalizedSha256": "82a0145b83a0f2944dea3214c666c6260b04612b1dee1c43b8a06aafca2e7089",
+      "gitEqualsWorktreeBytes": true,
+      "gitEqualsLfNormalizedWorktree": true
+    },
+    "src/core/storage-lock.ts": {
+      "gitBlobOid": "dce153739c134c77855a7e9b3cda5adad706a4a6",
+      "gitBlobBytes": 19793,
+      "gitBlobSha256": "412dd1c61e7ddd02460be6738f3004f9b82903480daee87cb8622bab0231f177",
+      "worktreeBytes": 20113,
+      "worktreeRawSha256": "e0d316b0bd158b6fe0bcaf45294a57de1e5ec4e506e8688f07ca28572dc0cd11",
+      "worktreeLfNormalizedSha256": "412dd1c61e7ddd02460be6738f3004f9b82903480daee87cb8622bab0231f177",
+      "gitEqualsWorktreeBytes": false,
+      "gitEqualsLfNormalizedWorktree": true
+    },
+    "src/core/prior-endpoints.ts": {
+      "gitBlobOid": "6b2fff62e170242c5b13700292bfba3981503b9d",
+      "gitBlobBytes": 12392,
+      "gitBlobSha256": "d0cb58e735f014b96d4fa4e33fd4e199b05c03404ebe15714772211975d46fce",
+      "worktreeBytes": 12581,
+      "worktreeRawSha256": "1362d7fdb0f105c994f72bce62e176fbf7fde13453839c22438a335edde3dfd0",
+      "worktreeLfNormalizedSha256": "d0cb58e735f014b96d4fa4e33fd4e199b05c03404ebe15714772211975d46fce",
+      "gitEqualsWorktreeBytes": false,
+      "gitEqualsLfNormalizedWorktree": true
+    },
+    "src/core/store.ts": {
+      "gitBlobOid": "39d966b65393f8fe134c12816c0a9cfbce134180",
+      "gitBlobBytes": 100138,
+      "gitBlobSha256": "f8b26a972c930a732208c1c27b5e2dd06082316febb2264150c9b0729d589231",
+      "worktreeBytes": 101678,
+      "worktreeRawSha256": "4514e4510aa861165afca1b02aef3f8407d7c7f9a9a0331dab688eafc9bfd8a2",
+      "worktreeLfNormalizedSha256": "f8b26a972c930a732208c1c27b5e2dd06082316febb2264150c9b0729d589231",
+      "gitEqualsWorktreeBytes": false,
+      "gitEqualsLfNormalizedWorktree": true
+    },
+    "src/core/node.ts": {
+      "gitBlobOid": "55b1ab4a2131ef9cb5fb77d3e78ae8b198a626f9",
+      "gitBlobBytes": 76551,
+      "gitBlobSha256": "ae7829b2867fa3a0d738d4ed35ecb5a519e01b6005098096ceb0b4b8bf4cd23d",
+      "worktreeBytes": 77935,
+      "worktreeRawSha256": "739a30b72d80cea67e52f8440553dabf9fb38f09524bce9b987236c65a25f127",
+      "worktreeLfNormalizedSha256": "ae7829b2867fa3a0d738d4ed35ecb5a519e01b6005098096ceb0b4b8bf4cd23d",
+      "gitEqualsWorktreeBytes": false,
+      "gitEqualsLfNormalizedWorktree": true
+    },
+    "src/core/broker.ts": {
+      "gitBlobOid": "acff875a40112e6dace35b20cfc62c20fb5391f9",
+      "gitBlobBytes": 237788,
+      "gitBlobSha256": "7809eaffef9ac5501ca76d2d6b5f12977ef6a5f67dc59e8ac088ed29a4b47be5",
+      "worktreeBytes": 237788,
+      "worktreeRawSha256": "7809eaffef9ac5501ca76d2d6b5f12977ef6a5f67dc59e8ac088ed29a4b47be5",
+      "worktreeLfNormalizedSha256": "7809eaffef9ac5501ca76d2d6b5f12977ef6a5f67dc59e8ac088ed29a4b47be5",
+      "gitEqualsWorktreeBytes": true,
+      "gitEqualsLfNormalizedWorktree": true
+    },
+    "src/core/daemon-launcher.ts": {
+      "gitBlobOid": "afca550cc3125d4d1d1ce8a34057a51fd5342bc3",
+      "gitBlobBytes": 9122,
+      "gitBlobSha256": "eb3824d7492d6a5dddeb831e2f200f6532874342a6ccc9228ffba93d618e64bf",
+      "worktreeBytes": 9122,
+      "worktreeRawSha256": "eb3824d7492d6a5dddeb831e2f200f6532874342a6ccc9228ffba93d618e64bf",
+      "worktreeLfNormalizedSha256": "eb3824d7492d6a5dddeb831e2f200f6532874342a6ccc9228ffba93d618e64bf",
+      "gitEqualsWorktreeBytes": true,
+      "gitEqualsLfNormalizedWorktree": true
+    },
+    "src/cli/broker-daemon.ts": {
+      "gitBlobOid": "4bb5200deea63012fc5356621bae17aee3845993",
+      "gitBlobBytes": 8541,
+      "gitBlobSha256": "e4535591ccc68af2bf35e58adf9ed759d3032db8979955cdc612638d572720dd",
+      "worktreeBytes": 8682,
+      "worktreeRawSha256": "29bba03f0174fe9c4ef1f755eb8674748872f44fc909c63368e5a882c4abc590",
+      "worktreeLfNormalizedSha256": "e4535591ccc68af2bf35e58adf9ed759d3032db8979955cdc612638d572720dd",
+      "gitEqualsWorktreeBytes": false,
+      "gitEqualsLfNormalizedWorktree": true
+    },
+    "test/mobile-wiring.test.ts": {
+      "gitBlobOid": "fdce9fba87eefb0caf6b85951ba92ae69b7d0674",
+      "gitBlobBytes": 43312,
+      "gitBlobSha256": "2e1c71e37ce0fd4496414479077b11a2d217e15ed150025d7e1864feeef8c24e",
+      "worktreeBytes": 43312,
+      "worktreeRawSha256": "2e1c71e37ce0fd4496414479077b11a2d217e15ed150025d7e1864feeef8c24e",
+      "worktreeLfNormalizedSha256": "2e1c71e37ce0fd4496414479077b11a2d217e15ed150025d7e1864feeef8c24e",
+      "gitEqualsWorktreeBytes": true,
+      "gitEqualsLfNormalizedWorktree": true
+    },
+    "test/fixtures/mobile-wiring-baseline.json": {
+      "gitBlobOid": "4af752029421257c37c71acbd5eec290d1b59e39",
+      "gitBlobBytes": 36636,
+      "gitBlobSha256": "461a876a0281cfc669b99b4555b41f520074e481d765f4ee918226770d84f998",
+      "worktreeBytes": 37187,
+      "worktreeRawSha256": "ba2b385ec20d025891697be6729387df6a3a4b06a7dcf1f8776e4392b089c480",
+      "worktreeLfNormalizedSha256": "461a876a0281cfc669b99b4555b41f520074e481d765f4ee918226770d84f998",
+      "gitEqualsWorktreeBytes": false,
+      "gitEqualsLfNormalizedWorktree": true
+    },
+    "src/cli/ui.ts": {
+      "gitBlobOid": "a4e41188d73c8dd676140b3231605abe599e4487",
+      "gitBlobBytes": 54053,
+      "gitBlobSha256": "dff4d25a71aeb728ab6ea6cbc5d00ed01ba50e5ef14a25fc2bbfca1c8ba4ab38",
+      "worktreeBytes": 54053,
+      "worktreeRawSha256": "dff4d25a71aeb728ab6ea6cbc5d00ed01ba50e5ef14a25fc2bbfca1c8ba4ab38",
+      "worktreeLfNormalizedSha256": "dff4d25a71aeb728ab6ea6cbc5d00ed01ba50e5ef14a25fc2bbfca1c8ba4ab38",
+      "gitEqualsWorktreeBytes": true,
+      "gitEqualsLfNormalizedWorktree": true
+    }
+  },
+  "baselineAmended": false,
+  "versions": "protocol8 metadata3 runner-ledger-v2 pairing1 SQLite14 JSON4 unchanged",
+  "behavioralAcceptance": "Not granted. Fresh independent full design/correction review and hosted worker/lifecycle/full/native gates remain parent-owned."
+}

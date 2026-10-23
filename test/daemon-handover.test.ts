@@ -14,6 +14,7 @@ import { MessageStore } from "../src/core/store.js";
 import { loadOrCreateToken } from "../src/core/token.js";
 import { daemonIdleExitMs } from "../src/cli/broker-daemon.js";
 import { makeEnv, until, type TestEnv } from "./helpers.js";
+import { retainFixtureRunner } from "./owned-mail.js";
 
 let env: TestEnv, broker: Broker | undefined, clients: BridgeClient[];
 beforeEach(() => { env = makeEnv(); clients = []; broker = undefined; });
@@ -24,7 +25,7 @@ afterEach(async () => {
 });
 
 async function start(handover?: (target: unknown) => void, now: () => number = Date.now) {
-  broker = new Broker(env.pipe, new MessageStore(env.db, nullLogger), nullLogger, loadOrCreateToken(env.home), now);
+  broker = new Broker(env.pipe, new MessageStore(env.db, nullLogger), nullLogger, loadOrCreateToken(env.home), now, join(env.home, "jobs.json"));
   if (handover) { broker.setHostingMode("daemon"); broker.onNewerClient(handover); }
   await broker.listen();
   return broker;
@@ -37,7 +38,12 @@ async function connect(auth = true, canHost = true) {
 // A foreign PID: the idle check deliberately ignores registrations from the broker's own process.
 // canHost: true is what a node that can demand-start its own daemon sends; CLI commands and job runners omit it.
 const hello = (name: string, version = APP_VERSION, extra: Record<string, unknown> = {}, canHost = true) => ({ protocol: PROTOCOL_VERSION, token: loadOrCreateToken(env.home),
-  ...(canHost ? { canHost: true } : {}), peer: { id: randomUUID(), name, agent: "codex" as const, cwd: env.home, pid: 424242, agentPid: null, sessionId: null, startedAt: Date.now(), autoWake: false, version, ...extra } });
+  ...(canHost ? { canHost: true } : {}), peer: { id: randomUUID(), name, agent: "codex" as const, cwd: env.home, pid: 424242, agentPid: null, sessionId: `fixture-session:${name}`, startedAt: Date.now(), autoWake: false, version, ...extra } });
+
+function runnerHello(name: string, version: string) {
+  retainFixtureRunner(env.home, { id: name, name, agent: "codex", owner: "fixture-supervisor", supervisor: "fixture-supervisor-session", cwd: env.home });
+  return hello(name, version, { id: `job:${name}`, agent: "other", jobAgent: "codex", jobOwner: "fixture-supervisor-session" });
+}
 
 describe("release comparison", () => {
   it("treats only a strictly newer x.y.z as newer", () => {
@@ -59,6 +65,8 @@ describe("daemon handover", () => {
     const handover = vi.fn(() => { drained = broker!.drain(); });
     await start(handover);
     const old = await connect(); await old.request("hello", hello("old-session"));
+    const retained = await connect(); await retained.request("hello", hello("offline-retained", APP_VERSION, { sessionId: "retained-native-session" }));
+    retained.close(); await until(() => !(broker as any).localPeers().some((peer: {name: string}) => peer.name === "offline-retained"));
     const events: Array<[string, unknown]> = []; old.on("event", (ev, data) => events.push([ev, data]));
     const newer = await connect();
     // Admitted first: the send must answer and be durable although the handover starts right behind it.
@@ -67,6 +75,7 @@ describe("daemon handover", () => {
     await expect(refused).rejects.toMatchObject({ code: "protocol_mismatch", details: { handover: true, brokerVersion: APP_VERSION } });
     const accepted = await sent;
     expect(accepted.messages[0]!.body).toBe("accepted before handover");
+    expect(accepted.messages[0]!.recipientNative).toBeTruthy(); expect(accepted.messages[0]!.recipientAmbiguous).toBeUndefined();
     expect(handover).toHaveBeenCalledExactlyOnceWith({ version: "999.0.0" });
     expect(broker!.isDraining).toBe(true);
     await until(() => events.some(([ev]) => ev === "handover"));
@@ -79,12 +88,12 @@ describe("daemon handover", () => {
     await broker!.close(); broker = undefined;
     // The endpoint is released before any successor can bind it.
     await expect(BridgeClient.connect(env.pipe, nullLogger)).rejects.toMatchObject({ code: expect.stringMatching(/^(ENOENT|ECONNREFUSED)$/) });
-    const recipient = env.node("offline-retained"); await recipient.start();
+    const recipient = env.node("offline-retained", "codex"); await recipient.setSessionId("retained-native-session"); await recipient.start();
     await until(() => recipient.unread().some(message => message.id === accepted.messages[0]!.id));
     expect(recipient.unread().map(message => message.body)).toEqual(["accepted before handover"]);
   });
 
-  it("a newer protocol hands over only with the right token", async () => {
+  it("a protocol mismatch refuses mailbox authority without handover even with the right token", async () => {
     const handover = vi.fn();
     await start(handover);
     const wrong = await connect(false);
@@ -92,8 +101,9 @@ describe("daemon handover", () => {
       error.code === "protocol_mismatch" && error.details?.handover === undefined);
     expect(handover).not.toHaveBeenCalled();
     const right = await connect(false);
-    await expect(right.request("auth", { protocol: PROTOCOL_VERSION + 1, token: loadOrCreateToken(env.home), canHost: true })).rejects.toMatchObject({ code: "protocol_mismatch", details: { handover: true } });
-    expect(handover).toHaveBeenCalledExactlyOnceWith({ protocol: PROTOCOL_VERSION + 1 });
+    await expect(right.request("auth", { protocol: PROTOCOL_VERSION + 1, token: loadOrCreateToken(env.home), canHost: true })).rejects.toMatchObject({ code: "protocol_mismatch", details: { brokerProtocol: PROTOCOL_VERSION } });
+    await expect(right.request("pending", {})).rejects.toMatchObject({ code: "unauthorized" });
+    expect(handover).not.toHaveBeenCalled(); expect(broker!.isDraining).toBe(false);
   });
 
   it("a client that cannot host a broker (job runner, CLI command) never triggers a handover", async () => {
@@ -109,7 +119,7 @@ describe("daemon handover", () => {
     const cli = await connect(true, false);
     await expect(cli.request("hello", hello("newer-cli", "999.0.0", {}, false))).resolves.toMatchObject({ brokerVersion: APP_VERSION });
     const job = await connect();
-    await expect(job.request("hello", hello("newer-job-runner", "999.0.0", { jobAgent: "codex" }))).resolves.toMatchObject({ brokerVersion: APP_VERSION });
+    await expect(job.request("hello", runnerHello("newer-job-runner", "999.0.0"))).resolves.toMatchObject({ brokerVersion: APP_VERSION });
     expect(handover).not.toHaveBeenCalled(); expect(broker!.isDraining).toBe(false);
     expect(existsSync(join(env.home, HANDOVER_MARKER_FILE))).toBe(false);
   });
@@ -130,10 +140,10 @@ describe("daemon handover", () => {
     const again = await connect();
     await expect(again.request("hello", hello("newer-b", "999.0.0"))).resolves.toMatchObject({ brokerVersion: APP_VERSION });
     expect(second).not.toHaveBeenCalled(); expect(broker!.isDraining).toBe(false);
-    // A different target is not limited.
+    // Protocol boundaries never authorize replacement, regardless of the repeat window.
     const protocolClient = await connect(false);
-    await expect(protocolClient.request("auth", { protocol: PROTOCOL_VERSION + 1, token: loadOrCreateToken(env.home), canHost: true })).rejects.toMatchObject({ details: { handover: true } });
-    expect(second).toHaveBeenCalledExactlyOnceWith({ protocol: PROTOCOL_VERSION + 1 });
+    await expect(protocolClient.request("auth", { protocol: PROTOCOL_VERSION + 1, token: loadOrCreateToken(env.home), canHost: true })).rejects.toMatchObject({ code: "protocol_mismatch", details: { brokerProtocol: PROTOCOL_VERSION } });
+    expect(second).not.toHaveBeenCalled(); expect(broker!.isDraining).toBe(false);
     await broker!.close(); broker = undefined;
     // After the window the same target hands over again.
     writeFileSync(join(env.home, HANDOVER_MARKER_FILE), JSON.stringify({ target: "version:999.0.0", from: APP_VERSION, at: now - HANDOVER_REPEAT_WINDOW_MS }));
@@ -149,7 +159,7 @@ describe("daemon handover", () => {
     await start(handover);
     for (const [name, version, extra] of [["same", APP_VERSION, {}], ["older", "0.1.0", {}], ["newer-job", "999.0.0", { jobAgent: "codex" }]] as const) {
       const client = await connect();
-      await expect(client.request("hello", hello(name, version, extra))).resolves.toMatchObject({ brokerVersion: APP_VERSION });
+      await expect(client.request("hello", "jobAgent" in extra ? runnerHello(name, version) : hello(name, version, extra))).resolves.toMatchObject({ brokerVersion: APP_VERSION });
     }
     expect(handover).not.toHaveBeenCalled(); expect(broker!.isDraining).toBe(false);
     await broker!.close(); broker = undefined;

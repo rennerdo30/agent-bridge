@@ -12,7 +12,7 @@ import { readStore } from "../src/mcp/jobs.js";
 import { parentFromEnv } from "../src/core/parent-link.js";
 import { listPendingApprovals } from "../src/core/relay.js";
 import { pidAlive, killPid } from "../src/core/delegate.js";
-import { readProcessIdentities } from "../src/core/process-identity.js";
+import { ownProcessIdentity, readProcessIdentities } from "../src/core/process-identity.js";
 import { LOG_DIR_NAME, LOG_FILE_NAME } from "../src/core/constants.js";
 import { STARTUP_CAPACITY } from "../src/core/startup-admission.js";
 import { completionMessageId } from "../src/core/completion.js";
@@ -21,6 +21,10 @@ import { unquarantined } from "../src/core/sqlite-maintenance.js";
 import { MessageStore } from "../src/core/store.js";
 import { nullLogger } from "../src/core/logger.js";
 import { ReadJournal } from "../src/core/read-journal.js";
+import { readJournalIdentities } from "../src/core/read-journal.js";
+import { fixturePeer, markOwned, ownedMessage } from "./owned-mail.js";
+import { ownershipFromKey } from "../src/core/recipient-ownership.js";
+import { jobWaitSnapshot } from "./job-wait-diagnostics.js";
 
 const SERVER = join(import.meta.dirname, "..", "plugins", "claude", "dist", "server.mjs");
 function linkReady(path: string): boolean {
@@ -32,11 +36,12 @@ const transports: StdioClientTransport[] = [];
 const clients: Client[] = [], ids: string[] = [], releases: string[] = [];
 /** Failure evidence: which wait a takeover case was in, and since when. */
 let phases: { name: string; at: number }[] = [];
+let failureEvidence: (() => void) | undefined;
 /** Aborted by teardown: a body still running after a test timeout must not start or wait for anything else. */
 let fixture = new AbortController();
 const phase = (name: string) => { phases.push({ name, at: Date.now() }); };
 beforeEach(() => {
-  phases = []; fixture = new AbortController();
+  phases = []; failureEvidence = undefined; fixture = new AbortController();
   env = makeEnv(); const dir = join(env.home, "bin"); mkdirSync(dir);
   const file = join(dir, "fake.mjs");
   writeFileSync(file, `#!/usr/bin/env node
@@ -94,6 +99,7 @@ afterEach(async () => {
   if (phases.length && phases.at(-1)!.name !== "done") {
     const start = phases[0]!.at;
     console.error(`Native takeover phases (ms since start): ${phases.map((p) => `${p.name}+${p.at - start}`).join(", ")}; teardown+${Date.now() - start}`);
+    failureEvidence?.();
   }
   for (const file of releases.splice(0)) { writeFileSync(file, ""); writeFileSync(file + ".approve", ""); }
   // A process is signalled only when a successful query shows the generation it recorded at startup: the PID
@@ -308,6 +314,21 @@ function finalReportDiagnostics(home: string, jobs: readonly TakeoverJob[], prim
       const reads = messageId ? select("SELECT identity,read_at FROM bridge_read_receipts WHERE message_id=? LIMIT 4", messageId) : undefined;
       const identities = [primary, "codex-master"].map(name => ({ label: name, hash: createHash("sha256").update(`name:${name}`).digest("hex") }));
       identities.push({ label: "fixture-thread", hash: createHash("sha256").update("session:takeover-thread").digest("hex") });
+      if (messageId && db) {
+        // Diagnostics identify current receipts from their complete retained
+        // per-copy owner and namespace, rather than inferring read authority
+        // from a name. Historical marks above remain visible as evidence.
+        const proofs = select("SELECT recipient,state,owner,mailbox FROM message_frontends WHERE id=? LIMIT 4", messageId);
+        if ("rows" in proofs) for (const proof of proofs.rows!) {
+          try {
+            const evidence = ownershipFromKey(`${proof.state === "hosted" ? "hosted" : "native"}:${proof.owner}`);
+            const generation = db.prepare("SELECT generation FROM job_mail_succession WHERE id=? AND recipient=? ORDER BY generation DESC LIMIT 1").get(messageId, proof.recipient!);
+            for (const identity of readJournalIdentities(String(proof.recipient), null, evidence.recipientFrontend, evidence.recipientNative, JSON.parse(String(proof.mailbox)),
+              generation ? { grant: messageId, generation: Number(generation.generation) } : undefined))
+              identities.push({ label: String(recipient(proof.recipient)), hash: createHash("sha256").update(identity).digest("hex") });
+          } catch { /* Invalid historical evidence is not current read authority. */ }
+        }
+      }
       return { name: job.name, state: {
         status: state && ["running", "done", "failed", "cancelled", "interrupted"].includes(state.status) ? state.status : "unknown",
         pid: diagnosticPid(state?.pid), alive: state?.pid ? pidAlive(state.pid) : false,
@@ -320,12 +341,13 @@ function finalReportDiagnostics(home: string, jobs: readonly TakeoverJob[], prim
         consumption: reads && ("rows" in reads ? { rows: reads.rows!.map(row => ({ identity: identities.find(identity => identity.hash === row.identity)?.label ?? "other-identity", readAt: row.read_at === null ? null : diagnosticTime(row.read_at) })) } : reads),
       };
     });
-    return { version: 1, mode, observedAt: Date.now(), inboxReads, finalCount: (delivered.match(/Subagent codex-job-[a-f0-9]+ \(codex\) done after/g) ?? []).length, jobs: rows };
+    return { version: 2, mode, phase: phases.at(-1)?.name, observedAt: Date.now(), inboxReads, finalCount: (delivered.match(/Subagent codex-job-[a-f0-9]+ \(codex\) done after/g) ?? []).length, jobs: rows,
+      admission: jobWaitSnapshot(home, jobs.map(job => job.id)), storage: readinessStorage(home) };
   } finally { try { db?.close(); } catch { /* Diagnostics must not mask the original failure. */ } }
 }
 
 function printFinalReportDiagnostics(home: string, jobs: readonly TakeoverJob[], primary: string, mode: string, inboxReads: number, delivered: string): void {
-  try { console.error(`Native takeover final-report diagnostics: ${JSON.stringify(finalReportDiagnostics(home, jobs, primary, mode, inboxReads, delivered)).slice(0, 16_384)}`); }
+  try { console.error(`Native takeover final-report diagnostics: ${JSON.stringify(finalReportDiagnostics(home, jobs, primary, mode, inboxReads, delivered)).slice(0, 65_536)}`); }
   catch { console.error("Native takeover final-report diagnostics unavailable"); }
 }
 function diagnosticProgress(value: unknown): string {
@@ -394,24 +416,30 @@ function readinessEvents(home: string, names: ReadonlySet<string>, runnerPids: R
   finally { try { if (fd !== undefined) closeSync(fd); } catch { /* Keep the original readiness failure. */ } }
 }
 
-it("observes a stored final and consumption receipts on a separate read-only connection before delivery confirmation", () => {
+it("observes a stored final and consumption receipts on a separate read-only connection before delivery confirmation", async () => {
   const job = { id: "00ab0292", name: "codex-job-00ab0292" }, reportId = "11111111-1111-4111-8111-111111111111";
   const report = "Subagent codex-job-00ab0292 (codex) done after 0s.\n\nREPORT_BODY_EXCLUDED_FROM_DIAGNOSTICS";
   const store = new MessageStore(env.db, nullLogger);
   try {
+    // This offline fixture has no node.start/listen admission to warm its own
+    // creation identity. Await the same verified readiness before first metadata
+    // migration; never lend a synthetic identity or steal an unknown lease.
+    expect(await ownProcessIdentity()).toBeTypeOf("string");
+    const recipient = fixturePeer(store, "codex-master", { agent: "codex" });
     writeRunnerState(env.home, job.id, { pid: process.pid, peer: job.name, status: "done", updatedAt: Date.now(), report, reportId, delivered: false });
     expect(finalReportsReady(env.home, [job])).toBe(false);
     const id = completionMessageId(`job:${job.id}`, reportId);
-    store.insertJobDelivery({ id, from: { id: `job:${job.id}`, name: job.name, agent: "codex" }, to: "codex-master", recipient: "codex-master",
-      conversationId: `job-${job.id}:fallback`, replyTo: null, hop: 0, body: report, createdAt: Date.now(), readAt: null });
+    store.insertJobDelivery(ownedMessage(store, recipient, { id, from: { id: `job:${job.id}`, name: job.name, agent: "codex" }, to: "codex-master", recipient: "codex-master",
+      conversationId: `job-${job.id}:fallback`, replyTo: null, hop: 0, body: report, createdAt: Date.now(), readAt: null }));
     expect(readRunnerState(env.home, job.id)?.delivered).toBe(false);
     expect(finalReportsReady(env.home, [job])).toBe(true);
     const pending = finalReportDiagnostics(env.home, [job], "opencode-master", "opencode", 0, "");
     expect(pending.jobs[0]?.envelopes).toEqual({ rows: [{ recipient: "codex-master", readAt: null }] });
     expect(pending.jobs[0]?.routes).toEqual({ rows: [{ recipient: "codex-master", consumedAt: null }] });
     const at = Date.now();
-    store.markRead("codex-master", [id], at);
-    new ReadJournal(env.home).append("name:codex-master", [id]);
+    expect(markOwned(store, recipient, [id], at)).toBe(1);
+    const copy = store.byId(id)!;
+    for (const identity of readJournalIdentities(recipient.name, recipient.sessionId, recipient.frontend, copy.recipientNative, copy.recipientMailbox, copy.jobRoute)) new ReadJournal(env.home).append(identity, [id]);
     const consumed = finalReportDiagnostics(env.home, [job], "opencode-master", "opencode", 1, "");
     expect(consumed.jobs[0]?.envelopes).toEqual({ rows: [{ recipient: "codex-master", readAt: at }] });
     expect(consumed.jobs[0]?.routes).toEqual({ rows: [{ recipient: "codex-master", consumedAt: at }] });
@@ -455,7 +483,10 @@ it.each(["closed", "unavailable", "opencode"])("ten jobs survive a %s primary an
   // requests queued behind each other and the last ones outlived the MCP client's 60 s request timeout on
   // loaded Windows runners. The runners themselves still start concurrently: each spawn returns at once.
   const jobs: { name: string; id: string; release: string; link: string }[] = [];
+  let delivered = "", inboxReads = 0;
+  failureEvidence = () => printFinalReportDiagnostics(env.home, jobs, primaryName, mode, inboxReads, delivered);
   for (let index = 0; index < 10; index++) {
+    phase(`spawn-${index}-rpc`);
     const release = join(env.home, `release-${index}`), link = `${release}.link`; releases.push(release);
     const started = await call(source, "spawn_codex", { prompt: `release=${release} link=${link} ${index === 2 ? "approve=yes" : ""} ${index === 1 ? "instruction=yes" : ""} complete item ${index}`, title: `Takeover item ${index}` });
     expect(started.error, started.text).toBeFalsy();
@@ -515,16 +546,19 @@ it.each(["closed", "unavailable", "opencode"])("ten jobs survive a %s primary an
   expect((await call(target, "peers")).text).toContain(jobs[9]!.name);
   phase("steering");
   expect((await call(target, "message_subagent", { job: jobs[1]!.name, message: "Continue under the project master", title: "Inherited project work" })).error).toBeFalsy();
+  phase("steering-native-instruction");
   await waitFor(() => existsSync(jobs[1]!.release + ".instruction") && readFileSync(jobs[1]!.release + ".instruction", "utf8").includes("Continue under the project master"),
     () => runnerGone(env.home, [jobs[1]!], true));
   expect(readFileSync(jobs[1]!.release + ".instruction", "utf8")).toContain("Continue under the project master");
   phase("notes");
-  for (const [i, child] of children.entries()) await sendThroughLink(() => child.send(`After takeover note ${i}`, undefined, "note"));
+  for (const [i, child] of children.entries()) { phase(`note-${i}-send`); await sendThroughLink(() => child.send(`After takeover note ${i}`, undefined, "note")); }
   phase("approval");
   writeFileSync(jobs[2]!.release + ".approve", "");
   await waitFor(() => listPendingApprovals(env.home).some((a) => a.job === jobs[2]!.name), () => runnerGone(env.home, [jobs[2]!], true));
   const approval = listPendingApprovals(env.home).find((a) => a.job === jobs[2]!.name)!;
+  phase("approval-decision-rpc");
   expect((await call(target, "decide", { approval_id: approval.id, decision: "allow" })).error).toBeFalsy();
+  phase("approval-native-witness");
   await waitFor(() => existsSync(jobs[2]!.release + ".approved") && readFileSync(jobs[2]!.release + ".approved", "utf8") === "true",
     () => runnerGone(env.home, [jobs[2]!], true));
   expect(readFileSync(jobs[2]!.release + ".approved", "utf8")).toBe("true");
@@ -537,8 +571,6 @@ it.each(["closed", "unavailable", "opencode"])("ten jobs survive a %s primary an
   phase("wake");
   await waitFor(() => existsSync(join(env.home, "wake-calls")));
   phase("inbox");
-  let delivered = "";
-  let inboxReads = 0;
   // Every final is stored for the project master now: read until all ten arrived (duplicates are checked below).
   while ((delivered.match(/Subagent codex-job-[a-f0-9]+ \(codex\) done after/g) ?? []).length < 10) {
     delivered += (await call(target, "inbox")).text;

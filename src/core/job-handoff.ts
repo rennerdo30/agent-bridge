@@ -9,6 +9,7 @@ import { assertWritableStore, isRecord, JSON_STORE_VERSION, writeJsonStore } fro
 import { readArchivedJobSnapshot } from "./job-archive.js";
 import type { Job } from "../mcp/jobs.js";
 import { BridgeError, CODING_AGENTS, type PeerInfo } from "./protocol.js";
+import { nativeOwner, recipientKey } from "./recipient-ownership.js";
 
 export const handoffSchema = z.object({
   to: z.string().min(1).max(64),
@@ -25,6 +26,7 @@ export interface OwnershipChange {
 export interface HandoffReceipt {
   reason?: "explicit-handoff" | "group-failover" | "group-restored";
   id: string; at: number; from: string; to: string; rootSession: string; note?: string;
+  fromOwner?: string; toOwner?: string;
   jobs: { id: string; name: string; title: string; status: string; from: string; to: string; oldRoot?: string }[];
 }
 
@@ -65,7 +67,9 @@ export function commitHandoff(path: string, source: PeerInfo, target: PeerInfo, 
     if (jobs.some((j) => j.remote || j.args?.host)) throw new BridgeError("bad_request", "Remote jobs (remote-jobs-v1) cannot be handed off yet. Select only local jobs; no jobs were moved.");
     const existing = records.find((j) => j.owner === target.name && !j.parentJob && j.supervisor);
     const rootSession = existing?.supervisor ?? target.sessionId ?? target.id;
-    const receipt: HandoffReceipt = { id: randomUUID(), at: Date.now(), from: source.name, to: target.name, rootSession, note: args.note, reason: options.reason ?? "explicit-handoff",
+    const receipt: HandoffReceipt = { id: randomUUID(), at: Date.now(), from: source.name, to: target.name,
+      fromOwner: recipientKey(source.frontend, nativeOwner(source)) ?? undefined, toOwner: recipientKey(target.frontend, nativeOwner(target)) ?? undefined,
+      rootSession, note: args.note, reason: options.reason ?? "explicit-handoff",
       jobs: jobs.map((j) => ({ id: j.id, name: j.name, title: String(j.args?.title ?? "Untitled job"), status: j.status,
         from: j.owner ?? source.name, to: j.parentJob ?? target.name, oldRoot: j.rootName })) };
     const updates = new Map(jobs.map((j) => {
@@ -74,7 +78,13 @@ export function commitHandoff(path: string, source: PeerInfo, target: PeerInfo, 
         fromRoot: j.rootSession, fromRootName: j.rootName, rootSession, rootName: target.name, note: args.note, reason: receipt.reason };
       // Grants name the supervisor explicitly in some older records. Other grants are retained verbatim.
       const sendTo = j.args?.send_to;
-      return [j.id, { ...j, owner: change.to, supervisor: rootSession, rootSession, rootName: target.name, masters: [...new Set([target.name, source.name, ...(Array.isArray(j.masters) ? j.masters : [])])],
+      const sourceOwner = recipientKey(source.frontend, nativeOwner(source)), targetOwner = recipientKey(target.frontend, nativeOwner(target));
+      const parent = j.parentJob ? records.find(p => p.id === j.parentJob || p.name === j.parentJob) : undefined;
+      const deliveryOwner = parent ? JSON.stringify({ kind: "job", agent: parent.agent, id: `job:${parent.id}` }) : targetOwner;
+      const deliveryKey = j.parentJob && deliveryOwner ? `native:${deliveryOwner}` : deliveryOwner;
+      return [j.id, { ...j, owner: change.to, deliveryOwner: deliveryKey ?? undefined,
+        deliveryOwners: { ...j.deliveryOwners, ...(sourceOwner ? { [source.name]: sourceOwner } : {}), ...(targetOwner ? { [target.name]: targetOwner } : {}), ...(deliveryKey ? { [change.to]: deliveryKey } : {}) },
+        supervisor: rootSession, rootSession, rootName: target.name, masters: [...new Set([target.name, source.name, ...(Array.isArray(j.masters) ? j.masters : [])])],
         ...(j.status === "running" && !j.host ? { executionOwner: (j as unknown as Record<string, unknown>).executionOwner ?? j.owner } : {}),
         args: { ...j.args, ...(Array.isArray(sendTo) ? { send_to: [...new Set(sendTo.map((name) => name === source.name ? target.name : name))] } : {}) },
         ownershipHistory: [...(Array.isArray(history) ? history : []), change] }];

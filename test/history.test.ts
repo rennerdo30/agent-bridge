@@ -10,7 +10,9 @@ import { historySchema, supportsHistoryFts } from "../src/core/history-schema.js
 import { nullLogger } from "../src/core/logger.js";
 import { migrateSqlite } from "../src/core/sqlite-migrations.js";
 import { BridgeClient } from "../src/core/client.js";
-import { MessageStore } from "../src/core/store.js";
+import { MessageStore, migrateMessageSchema } from "../src/core/store.js";
+import { fixturePeer, ownedMessage, unreadOwned } from "./owned-mail.js";
+import { nativeOwner } from "../src/core/recipient-ownership.js";
 import type { BridgeMessage } from "../src/core/protocol.js";
 import { makeEnv, seedInbox, type TestEnv } from "./helpers.js";
 import { installTranscriptFixtures } from "./transcript-fixtures.js";
@@ -49,6 +51,7 @@ describe("history migration", () => {
     if (version >= 3) db.exec(DECISIONS_SCHEMA);
     db.exec(`PRAGMA user_version=${version}`);
     db.prepare("INSERT INTO messages VALUES (?,?,?,?,?,?,?,?,?,?,?,?)").run("original", "claude-main", "session-one", "codex-job-example", "codex", "claude-main", "c", null, 0, "original walnut", 100, 200);
+    if (version === 2 || version === 3) migrateMessageSchema(db, env.db, true, nullLogger, { kind: "offline-isolated", home: env.home });
     db.close();
     const s = await store(); s.history.tick();
     expect(s.byId("original")).toMatchObject({ body: "original walnut", readAt: 200 });
@@ -112,11 +115,12 @@ describe("incremental source indexing", () => {
     expect(s.byId("new")!.readAt).toBeNull();
   });
   it("captures claimed recipients after the primary cursor has already passed the message", async () => {
-    const s = await store(); s.insert(message("claim", "walnut queue", "agent:claude")); s.history.tick();
+    const s = await store(), owner = fixturePeer(s, "claimed-peer"), alias = fixturePeer(s, "prior-peer", { sessionId: owner.sessionId });
+    s.insert(ownedMessage(s, alias, message("claim", "walnut queue", alias.name))); s.history.tick();
     expect(s.history.search({ query: "walnut", filters: { session: "claimed-peer" } }).hits).toEqual([]);
-    expect(s.claim("agent:claude", "claimed-peer")).toBe(1); s.history.tick();
+    expect(s.claim(alias.name, owner.name, owner.frontend, nativeOwner(owner))).toBe(1); s.history.tick();
     expect(s.history.search({ query: "walnut", filters: { session: "claimed-peer" } }).hits).toHaveLength(1);
-    expect(s.unread("claimed-peer", 10)).toHaveLength(1);
+    expect(unreadOwned(s, owner, 10)).toHaveLength(1);
   });
   it("resumes persisted cursors, indexes decisions and rebuilds without altering sources", async () => {
     const s = await store(); s.insert(message("one"));

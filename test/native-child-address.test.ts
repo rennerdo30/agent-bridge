@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { execFileSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -17,16 +16,19 @@ import { registerTools, type ServerContext } from "../src/mcp/server.js";
 import { ParentLink, parentFromEnv } from "../src/core/parent-link.js";
 import { SiblingLink } from "../src/mcp/siblings.js";
 import type { Job } from "../src/mcp/jobs.js";
-import { makeEnv, until, type TestEnv } from "./helpers.js";
+import { fixtureProject, makeEnv, until, type TestEnv } from "./helpers.js";
+import { fixturePeer, retainFixtureRunner, unreadOwned } from "./owned-mail.js";
+import { localMailbox } from "../src/core/recipient-ownership.js";
 
 let env: TestEnv, parent: BridgeNode, job: BridgeNode, stranger: BridgeNode, ctx: ServerContext;
 const agentId = "opus-1";
 const hook = (event: HookEvent, over = {}) => buildHookResponse(ctx, { event, subagent: true, agentId, sessionId: "root", stopHookActive: false, ...over });
 beforeEach(async () => {
   env = makeEnv();
-  execFileSync("git", ["init", env.home], { windowsHide: true, stdio: "ignore" });
+  fixtureProject(env.home);
   parent = env.node("claude-main");
   await parent.setSessionId("root"); await parent.start();
+  retainFixtureRunner(env.home, { id: "sol", name: "codex-job-sol", agent: "codex", owner: parent.name, supervisor: "root", cwd: env.home });
   job = new BridgeNode({ pipePath: env.pipe, token: loadOrCreateToken(env.home), dbPath: env.db, agent: "other", jobAgent: "codex", jobOwner: "root", jobParent: parent.name, id: "job:sol", name: "codex-job-sol", cwd: env.home, autoWake: false, canHostBroker: false, log: nullLogger });
   await job.start(); stranger = env.node("unrelated", "codex"); await stranger.start();
   ctx = { agent: "claude", node: parent, home: env.home, cfg: DEFAULT_CONFIG, log: nullLogger, cwd: () => env.home, channelActive: () => false,
@@ -110,8 +112,38 @@ it("unconfirmed hook hand-outs return to the parent instead of being acknowledge
   const sent = (await job.sendSibling({ to: address(), body: "Unconfirmed hook context" }, 32)).messages[0]!;
   expect(JSON.stringify(await hook("PostToolUse"))).toContain("Unconfirmed hook context");
   expect((await job.messageReceipt(sent.id)).find(r => r.recipient === address())?.readAt).toBeNull();
+  await expect(stranger.messageReceipt(sent.id)).rejects.toMatchObject({ code: "unauthorized" });
   await hook("SubagentStop"); await parent.refreshPending();
   expect(parent.unread()).toContainEqual(expect.objectContaining({ id: sent.id, body: "Unconfirmed hook context", readAt: null }));
+});
+
+it("authorizes a child-origin receipt only in its original active child incarnation and parent lineage", async () => {
+  await hook("SubagentStart");
+  const sent = (await parent.nativeChildSend(agentId, { to: job.name, body: "Child-owned receipt" })).messages[0]!;
+  expect(JSON.parse(sent.senderOwner!.slice("native:".length))).toMatchObject({ kind: "child", parent: parent.name, session: "root", agentId });
+  const receipt = () => parent.messageReceipt(sent.id, agentId);
+  expect(await receipt()).toContainEqual({ recipient: job.name, readAt: null });
+  await expect(parent.messageReceipt(sent.id)).rejects.toMatchObject({ code: "unauthorized" });
+  const parentMail = (await parent.send({ to: stranger.name, body: "Parent sender proof stays separate" })).messages[0]!;
+  expect(await parent.messageReceipt(parentMail.id)).toContainEqual({ recipient: stranger.name, readAt: null });
+  await expect(parent.messageReceipt(parentMail.id, agentId)).rejects.toMatchObject({ code: "unauthorized" });
+  await expect(parent.messageReceipt(parentMail.id, "")).rejects.toMatchObject({ code: "bad_request" });
+  await parent.nativeChild({ agentId: "other-child", action: "start" });
+  await expect(parent.messageReceipt(sent.id, "other-child")).rejects.toMatchObject({ code: "unauthorized" });
+  await expect(stranger.messageReceipt(sent.id, agentId)).rejects.toMatchObject({ code: "unauthorized" });
+  const foreign = env.node("claude-foreign", "claude", false, "foreign-root"); await foreign.start();
+  await foreign.nativeChild({ agentId, action: "start" });
+  await expect(foreign.messageReceipt(sent.id, agentId)).rejects.toMatchObject({ code: "unauthorized" });
+  await job.refreshPending(); job.markRead([sent.id]);
+  await expect.poll(receipt).toContainEqual({ recipient: job.name, readAt: expect.any(Number) });
+  await hook("SubagentStop");
+  await expect(receipt()).rejects.toMatchObject({ code: "unauthorized" });
+  // Even an explicit reload of the same parent session creates a new child
+  // incarnation; it cannot inherit the previous child's sender authority.
+  await parent.stop();
+  const replacement = env.node("claude-main", "claude", false, "root"); await replacement.start();
+  await replacement.nativeChild({ agentId, action: "start" });
+  await expect(replacement.messageReceipt(sent.id, agentId)).rejects.toMatchObject({ code: "unauthorized" });
 });
 
 it("SubagentStop returns all pending mail to the parent and late hooks cannot resurrect the address", async () => {
@@ -153,10 +185,15 @@ it("parent disconnect durably returns mail for its next connection", async () =>
 it("broker recovery returns orphaned child queues without removing retained rows", async () => {
   const store = new MessageStore(":memory:", nullLogger);
   try {
-    store.retainNativeChild("claude-old/sub:opus", "claude-old");
-    store.insert({ id: "orphan", from: { id: "sol", name: "codex-sol", agent: "codex" }, to: "claude-old/sub:opus", recipient: "claude-old/sub:opus", body: "Retained bytes", conversationId: "thread", replyTo: null, hop: 0, createdAt: Date.now(), readAt: null });
+    const parent = fixturePeer(store, "claude-old", { agent: "claude" });
+    const children = new NativeChildren(store), address = (await children.start(parent, "opus")).address;
+    const identity = children.target(address).identity;
+    store.insert({ id: "orphan", from: { id: "sol", name: "codex-sol", agent: "codex" }, to: address, recipient: address,
+      recipientNative: identity, recipientMailbox: localMailbox(store.namespace), body: "Retained bytes", conversationId: "thread", replyTo: null, hop: 0, createdAt: Date.now(), readAt: null });
     await new NativeChildren(store).recover();
-    expect(store.unread("claude-old", 100)).toContainEqual(expect.objectContaining({ id: "orphan", body: "Retained bytes" }));
+    expect(unreadOwned(store, parent)).toContainEqual(expect.objectContaining({ id: "orphan", body: "Retained bytes" }));
+    expect(unreadOwned(store, fixturePeer(store, parent.name, { agent: "claude" }))).toEqual([]);
+    expect(store.messagesById("orphan").find(m => m.recipient === address)).toMatchObject({ body: "Retained bytes", recipientNative: identity });
     expect(store.nativeChildRoutes()).toEqual([]);
   } finally { store.close(); }
 });

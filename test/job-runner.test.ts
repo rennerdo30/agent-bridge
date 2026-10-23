@@ -467,25 +467,33 @@ describe.skipIf(!existsSync(SERVER))("background subagents in job runners", () =
   });
 
   it("delivers plain messages during a detached approval and requires an explicit decide", async () => {
-    const fake = FAKE_CLAUDE.replace('  const args = process.argv.slice(2);', `
+    // Record the actual first invocation and native init before its approval
+    // wait, matching a real tool approval reached inside an admitted turn.
+    const fake = FAKE_CLAUDE.replace('  const release = ', `
       if (/ask-approval/.test(prompt)) {
         const response = await fetch(process.env.AGENT_BRIDGE_RELAY_URL, { method: "POST", headers: { authorization: "Bearer " + process.env.AGENT_BRIDGE_RELAY_TOKEN }, body: JSON.stringify({ agent: "claude", tool: "shell", detail: "test permission" }) });
         const decision = await response.json();
         if (!decision.allow) throw new Error("Unexpected denial");
       }
-      const args = process.argv.slice(2);`);
+      const release = `);
     writeFileSync(join(home, "bin", "fake-claude.mjs"), "#!/usr/bin/env node\n" + fake);
     const session = await startSession();
     const output = await call(session, "spawn_claude", { prompt: "ask-approval", title: "Approval test", access: "edit" });
     const job = /claude-job-[a-f0-9]+/.exec(output)![0];
     await waitFor(() => listPendingApprovals(home).length === 1);
     const approval = listPendingApprovals(home)[0]!;
+    const seenBefore = new Set(readRunnerState(home, job.split("-").at(-1)!)?.seen ?? []);
     const response = await call(session, "message_subagent", { job, message: "Wind down now" });
     expect(response).toContain("approval is still pending");
+    // Broker storage is not the runner's control acceptance. Hold the explicit
+    // decision until the original runner durably owns this new CID, so its
+    // first staged result cannot race the follow-up out of the fixture window.
+    await waitFor(() => (readRunnerState(home, job.split("-").at(-1)!)?.seen ?? []).some(cid => !seenBefore.has(cid)));
     expect(listPendingApprovals(home)).toHaveLength(1);
+    expect(readFileSync(join(home, "bin", "calls.jsonl"), "utf8").trim().split("\n")).toHaveLength(1);
     expect(await call(session, "decide", { approval_id: approval.id, decision: "allow" })).toBe("Approval answered.");
     await waitFor(() => listPendingApprovals(home).length === 0);
-    await waitFor(() => readRunnerState(home, job.split("-").at(-1)!)?.status === "done");
+    await waitFor(() => { const state = readRunnerState(home, job.split("-").at(-1)!); return state?.status === "done" && state.delivered === true; });
     const calls = readFileSync(join(home, "bin", "calls.jsonl"), "utf8").trim().split("\n");
     expect(calls).toHaveLength(2);
   });

@@ -16,6 +16,7 @@ import { NetworkService } from "../src/network/link.js";
 import { formatDelivery } from "../src/mcp/format.js";
 import { shouldWakeClaudeMessage } from "../src/mcp/rewake.js";
 import { makeEnv, until, type TestEnv } from "./helpers.js";
+import { retainFixtureRunner } from "./owned-mail.js";
 
 let env: TestEnv;
 let cleanup: (() => void | Promise<void>)[];
@@ -32,7 +33,7 @@ async function host(name: string) {
   // Even with macOS's long canonical tmpdir prefix, Unix sockets must fit below 104 bytes.
   const pipe = process.platform === "win32" ? resolvePipePath(dir, {}) : `/tmp/ab-${randomUUID().slice(0, 12)}.sock`;
   const db = join(dir, "bridge.db");
-  const broker = new Broker(pipe, new MessageStore(db, nullLogger), nullLogger, "broadcast-test", Date.now, undefined,
+  const broker = new Broker(pipe, new MessageStore(db, nullLogger), nullLogger, "broadcast-test", Date.now, join(dir, "jobs.json"),
     { home: dir, config: { ...DEFAULT_NETWORK_CONFIG, enabled: true, name, bind: "127.0.0.1", port: 0, discovery: false } });
   cleanup.push(() => broker.close());
   await broker.listen();
@@ -40,8 +41,11 @@ async function host(name: string) {
   cleanup.push(() => admin.close());
   await admin.request("auth", { protocol: PROTOCOL_VERSION, token: "broadcast-test" });
   return { admin, node(peerName: string, job = false) {
+    const session = randomUUID();
+    if (job) retainFixtureRunner(dir, { id: session, name: peerName, agent: "codex", owner: "fixture-supervisor", supervisor: "fixture-root", cwd: dir });
     const node = new BridgeNode({ pipePath: pipe, dbPath: db, token: "broadcast-test", agent: "claude", name: peerName,
-      cwd: dir, autoWake: false, canHostBroker: false, log: nullLogger, ...(job ? { jobAgent: "codex" as const, id: `job:${randomUUID()}` } : {}) });
+      cwd: dir, autoWake: false, canHostBroker: false, log: nullLogger, ...(job ? { agent: "other" as const, jobAgent: "codex" as const, id: `job:${session}`, jobOwner: "fixture-root", jobParent: "fixture-supervisor" } : {}) });
+    if (!job) void node.setSessionId(session);
     cleanup.push(() => node.stop());
     return node;
   } };
@@ -113,8 +117,9 @@ it("queues broadcasts for known offline sessions of every agent, survives restar
   const recipients = [env.node("offline-code", "codex"), env.node("offline-open", "opencode"), env.node("offline-chat", "claude")];
   await sender.start();
   for (const n of recipients) { await n.start(); await n.stop(); }
+  retainFixtureRunner(env.home, { id: "offline", name: "codex-job-offline", agent: "codex", owner: sender.name, supervisor: "fixture-root", cwd: env.home });
   const worker = new BridgeNode({ pipePath: env.pipe, dbPath: env.db, token: loadOrCreateToken(env.home),
-    name: "codex-job-offline", id: "job:offline", agent: "other", jobAgent: "codex", cwd: env.home,
+    name: "codex-job-offline", id: "job:offline", agent: "other", jobAgent: "codex", jobOwner: "fixture-root", cwd: env.home,
     autoWake: false, canHostBroker: false, log: nullLogger });
   await worker.start();
   await expect(worker.send({ to: "*", body: "Unauthorized broadcast" })).rejects.toMatchObject({ code: "unauthorized" });
@@ -125,9 +130,11 @@ it("queues broadcasts for known offline sessions of every agent, survives restar
   expect(new Set(sent.messages.map((m) => m.id)).size).toBe(1);
   await sender.stop();
   const replacement = env.node("sender");
+  await replacement.setSessionId(sender.currentSessionId);
   await replacement.start();
   for (const n of recipients) {
     const live = env.node(n.name, n.name === "offline-open" ? "opencode" : n.name === "offline-code" ? "codex" : "claude");
+    await live.setSessionId(n.currentSessionId);
     await live.start();
     expect(await live.waitForMessage(2_000)).toMatchObject({ id: sent.messages[0]!.id, body: "Offline broadcast", to: "*" });
   }

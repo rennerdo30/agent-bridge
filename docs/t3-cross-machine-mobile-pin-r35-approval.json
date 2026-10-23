@@ -1,0 +1,82 @@
+{
+  "sourceCommit": "7c0538623ef3d6361d80b260e675343aae448012",
+  "sourceTree": "d3dede915a014dc9ae582c966fd27cc536ba9405",
+  "artifactCommit": "74db3bfaf1aed349116602752ade4145dfa4ad9a",
+  "startingHead": "8ed90334f39c6a6e83208273888b2c24e3e16fec",
+  "action": "Parent-approved separate attributable three-method baseline amendment",
+  "changes": [
+    {
+      "method": "src/core/broker.ts:startServices",
+      "previous": "909c6ff546147a804218a57ac04037c8ffe69eb503e4c0b26f8f7660de5cdbc3",
+      "current": "258cf7e8495f1ed376d1a649a72e29732ab4efc13516b51ce32aefa01ae429c7"
+    },
+    {
+      "method": "src/core/broker.ts:abortStartup",
+      "previous": "0bb787b8bf8a024fd53eba53c3f2e1b998fda4748e1f285c43d6c5a99861260a",
+      "current": "7b3dc7bf4af0d58ba0ef819078ca8f795b47e700f7c4d25e8375c9df13c74ac4"
+    },
+    {
+      "method": "src/core/broker.ts:close",
+      "previous": "fb5a92326cac082ae181f38208c0af708a2b342297038d021f67a13bcd8b9b27",
+      "current": "7b3ddeb36b6f4ea009af51c0fb5c1749af388d8d47ef9dc9ad6452d087b33a6c"
+    }
+  ],
+  "unchangedMethods": 10,
+  "uiSha256": "f2a5b28254d4bb467f28bdee139e3b23bd9d4bd0c7c15fee116b4ed85a6ac385",
+  "normalizerSha256": "19b5fbbccdea0d567510ebca43e4b7d6c9506504375f79d395641c34d6dd4549",
+  "sourceHashCount": 43,
+  "sourceVerification": "All exact committed Git-blob SHA256 hashes verified; raw CRLF worktree normalized only for the separately reported equivalence check. No production edits.",
+  "baselineBeforeSha256": "1e2eae1daca61e9a50a06c40a94e2db5d7db747ea33510e44c5e20cd9c8a8d95",
+  "baselineAfterSha256": "9e3c93cffec06066e35b2615d8b6ada6d555a545e1e4263fc4dcdc9c65b24821",
+  "approval": "Parent 2026-10-23 reviewed all three complete normalized deltas and nested serving deferred task/cancel/start/activation/ownership cleanup, journal anchor/provenance/parent chain/worker/final witness and backup/restore helpers; independently verified all manifest source hashes against exact committed Git blobs. Approved only startServices, abortStartup and close preservation-baseline hashes. Other ten methods, UI, normalizer, assertions and prior attributions remain unchanged. This is preservation attribution only, not source correctness, merge or native acceptance. No test rerun or native launch is implied. Frozen tested source remains7c053862; later artifact74db and head8ed are documentation/receipts only. Independent full R35 review and hosted gates remain required. Windows startup, full restore and WMI late creation remain blockers; historical causes unproven. Any subsequent body delta requires renewed exact review.",
+  "verification": "Static approved-source and amendment-scope inspection only. No test/typecheck rerun, native Worker/build/provider/daemon/TLS/full suite launch.",
+  "priorEvidence": "47 distinct mocked checks and noEmit on exact7c053862; R35 batch38.720/60s. Not rerun or claimed at this amendment head.",
+  "acceptance": "Pending independent full R35 review and hosted actual-worker/full/lifecycle/Windows gates. Preservation attribution only.",
+  "staticReceipt": {
+    "pid": 17480,
+    "startUtc": "2026-10-23T20:08:04.0033641+09:00",
+    "endUtc": "2026-10-23T20:08:04.2083466+09:00",
+    "elapsedMs": 204,
+    "exit": 0,
+    "timedOut": false,
+    "timeoutMs": 8000,
+    "stdout": "E:/AgentData/reports/ab458-r35-pin-amendment-static.out",
+    "stderr": "E:/AgentData/reports/ab458-r35-pin-amendment-static.err"
+  },
+  "baselineHashSemantics": "Raw worktree bytes; Git normalizes CRLF independently. Exact committed source hashes are in the reviewed artifact.",
+  "attribution": {
+    "sourceCommit": "7c0538623ef3d6361d80b260e675343aae448012",
+    "sourceTree": "d3dede915a014dc9ae582c966fd27cc536ba9405",
+    "artifactCommit": "74db3bfaf1aed349116602752ade4145dfa4ad9a",
+    "changes": [
+      {
+        "method": "src/core/broker.ts:startServices",
+        "previous": "909c6ff546147a804218a57ac04037c8ffe69eb503e4c0b26f8f7660de5cdbc3",
+        "current": "258cf7e8495f1ed376d1a649a72e29732ab4efc13516b51ce32aefa01ae429c7"
+      },
+      {
+        "method": "src/core/broker.ts:abortStartup",
+        "previous": "0bb787b8bf8a024fd53eba53c3f2e1b998fda4748e1f285c43d6c5a99861260a",
+        "current": "7b3dc7bf4af0d58ba0ef819078ca8f795b47e700f7c4d25e8375c9df13c74ac4"
+      },
+      {
+        "method": "src/core/broker.ts:close",
+        "previous": "fb5a92326cac082ae181f38208c0af708a2b342297038d021f67a13bcd8b9b27",
+        "current": "7b3ddeb36b6f4ea009af51c0fb5c1749af388d8d47ef9dc9ad6452d087b33a6c"
+      }
+    ],
+    "reason": "Parent 2026-10-23 reviewed all three complete normalized deltas and serving deferred task/cancel/start/activation, ownership cleanup, journal anchor/provenance/parent chain/worker/final witness and backup/restore helpers, independently verifying all manifest hashes against committed Git blobs. Approved only these three preservation-baseline hashes at the exact frozen source and artifact above. Other ten methods, UI, normalizer, behavioral assertions and prior attributions remain unchanged. This is preservation attribution ONLY, not correctness, merge or native acceptance. No test rerun or native launch implied. Independent full R35 review and hosted gates remain required; Windows startup, full restore and WMI late creation remain blockers, historical causes unproven. Any further method-body delta requires renewed exact review."
+  },
+  "staticCorrection": "Initial 204ms static mutation changed only the three pins; its LF-only attribution insertion did not match CRLF. Attribution was added explicitly, then full baseline semantics compared to original HEAD: only three pins plus this attributable record differ. No production/test assertion changed.",
+  "finalStaticReceipt": {
+    "pid": 14732,
+    "startUtc": "2026-10-23T11:09:38.1011970+00:00",
+    "endUtc": "2026-10-23T11:09:38.2329495+00:00",
+    "elapsedMs": 131,
+    "exit": 0,
+    "timedOut": false,
+    "timeoutMs": 5000,
+    "stdout": "E:/AgentData/reports/ab458-r35-pin-amendment-final.out",
+    "stderr": "E:/AgentData/reports/ab458-r35-pin-amendment-final.err"
+  }
+}

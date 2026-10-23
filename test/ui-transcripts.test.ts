@@ -41,7 +41,7 @@ describe("session transcript endpoints", () => {
     expect((await fetch(`${base()}${route}/chat`)).status).toBe(403);
   });
   it("distinguishes unknown, remote and not-yet-bound sessions", async () => {
-    const peer = env.node("claude-unbound", "claude"); await peer.start();
+    const peer = env.node("claude-unbound", "claude", false, null); await peer.start();
     expect((await get("/api/sessions/unknown/chat")).status).toBe(404);
     expect((await get("/api/sessions/host%2Fclaude-unbound/chat")).status).toBe(404);
     expect((await get("/api/sessions/claude-unbound/chat")).status).toBe(409);

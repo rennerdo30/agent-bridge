@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { canonicalProjectRoot, projectGroupsEnabled } from "../src/core/project-identity.js";
 import { ProjectGroups } from "../src/core/project-groups.js";
 import { BridgeNode } from "../src/core/node.js";
+import { retainFixtureRunner } from "./owned-mail.js";
 import { nullLogger } from "../src/core/logger.js";
 import { loadOrCreateToken } from "../src/core/token.js";
 import { makeEnv, type TestEnv } from "./helpers.js";
@@ -17,6 +18,7 @@ import { DEFAULT_CONFIG, loadConfig } from "../src/core/config.js";
 import type { ServerContext } from "../src/mcp/server.js";
 import { withDirectoryAlias } from "./directory-alias-fixture.js";
 import { normalizeProject } from "../src/core/decisions.js";
+import { deliveryFailure } from "../src/mcp/delivery-evidence.js";
 
 let env: TestEnv;
 const nodes: BridgeNode[] = [];
@@ -30,10 +32,11 @@ function repo() {
   return path;
 }
 async function node(name: string, cwd: string, job?: { id: string; owner: string; parent: string }) {
+  if (job) retainFixtureRunner(env.home, { id: job.id, name, agent: "codex", owner: job.parent, supervisor: job.owner, cwd });
   const n = new BridgeNode({ pipePath: env.pipe, dbPath: env.db, token: loadOrCreateToken(env.home), name, cwd,
     agent: job ? "other" : name.startsWith("codex") ? "codex" : name.startsWith("antigravity") ? "antigravity" : "claude", autoWake: true, log: nullLogger,
     ...(job ? { id: `job:${job.id}`, jobAgent: "codex" as const, jobOwner: job.owner, jobParent: job.parent, canHostBroker: false } : {}) });
-  nodes.push(n); await n.start(); return n;
+  nodes.push(n); if (!job) await n.setSessionId(`fixture-session:${name}`); await n.start(); return n;
 }
 function registry(project: string) {
   const jobs = ["one", "two"].map((id, i) => ({ id, name: `codex-job-${id}`, agent: "codex", model: null, prompt: "task", startedAt: Date.now(), status: "running", sessionId: null, workdir: project, worktree: null,
@@ -149,8 +152,22 @@ describe("local project permission groups", () => {
     expect((await outsider.send({ to: "project:project", body: "Fallback request" })).deliveredTo).toEqual([a.name]);
     expect((await outsider.send({ to: b.name, body: "Exact session" })).deliveredTo).toEqual([b.name]);
     await expect(outsider.setProjectMain(a.name)).rejects.toThrow("Only a master");
-    await b.stop();
-    await expect.poll(async () => (await a.peers()).find((p) => p.name === a.name)?.projectMain).toBe(true);
+    const began = performance.now();
+    let phase = "secondary-stop", requested = 0, completed = 0, lastMain: boolean | undefined, lastCount: number | undefined;
+    try {
+      await b.stop(); phase = "primary-peers";
+      await expect.poll(async () => {
+        requested++; const peers = await a.peers(); completed++;
+        lastCount = peers.length; lastMain = peers.find(p => p.name === a.name)?.projectMain;
+        return lastMain;
+      }).toBe(true);
+    } catch (error) {
+      console.error("Project main disconnect diagnostics", JSON.stringify({ version: 1, agent, phase,
+        elapsedMs: Math.min(120_000, Math.round(performance.now() - began)), requested: Math.min(255, requested), completed: Math.min(255, completed),
+        primaryConnected: a.isConnected, primaryBroker: a.isBroker, secondaryConnected: b.isConnected, lastMain, lastCount,
+        failure: deliveryFailure(error) }));
+      throw error;
+    }
   });
   it("unifies nested folders and linked worktrees using the common Git root", () => {
     const path = repo(), nested = join(path, "nested"); mkdirSync(nested);

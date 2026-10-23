@@ -3,7 +3,7 @@ import { PROTOCOL_VERSION } from "../core/constants.js";
 import type { Logger } from "../core/logger.js";
 import { resolveDbPath } from "../core/paths.js";
 import type { RequestMap } from "../core/protocol.js";
-import { MessageStore } from "../core/store.js";
+import { MessageStore, openMessageStore } from "../core/store.js";
 import { loadOrCreateToken } from "../core/token.js";
 import { ConversationIngestor } from "../core/conversations.js";
 import { transcriptPaths } from "../core/transcripts/common.js";
@@ -33,7 +33,7 @@ export async function runReindex(home: string, pipe: string, log: Logger, out: (
       batch = (reset) => connected.request("reindexHistory", { reset });
     } else {
       // Same migration/backup executor as broker startup, without chat-peer or purge side effects.
-      store = new MessageStore(resolveDbPath(home), log);
+      store = await openMessageStore(resolveDbPath(home), log, pipe, loadOrCreateToken(home));
       await migrateHistoryStore(store.file, store.history.storageDatabase, undefined, undefined, undefined, true);
       const index = store.history;
       source = new DatabaseSync(store.file,{readOnly:true,timeout:100});

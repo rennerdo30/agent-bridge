@@ -8,6 +8,7 @@ import type { BridgeNode } from "../src/core/node.js";
 import { holdsQueuedFollowUps, runnerTurnOutcome } from "../src/mcp/job-runner.js";
 import { JobManager, PAUSE_HELD_NOTE, PAUSE_RACE_NOTE, pauseReasonText, readStore, type Job, type Run, type RunnerState, type RunResult } from "../src/mcp/jobs.js";
 import { LocalCoordinator } from "../src/mcp/local-coordinator.js";
+import { closeMetadataDb } from "../src/core/metadata-db.js";
 import { RemoteJobHost } from "../src/mcp/remote-job-host.js";
 
 // AB-398 review fixes: restart, race, leftover-process, approval, remote and pause-all behaviour of pause/resume.
@@ -212,15 +213,16 @@ it("sends a remote runner's pause once per turn however often it is requested (L
   const home = mkdtempSync(join(tmpdir(), "ab-remote-pause-"));
   const remoteJob = vi.fn(async () => ({ state: null, alive: true, approvals: [] }));
   const host = new RemoteJobHost({ remoteJob } as unknown as BridgeNode, home, nullLogger);
-  const job = { id: "abc", name: "codex-job-abc", startedAt: 1, remote: { host: "pc2", name: "codex-job-abc" } } as unknown as Job;
+  const job = { id: "1234abcd", name: "codex-job-1234abcd", startedAt: 1, remote: { host: "pc2", name: "codex-job-1234abcd" } } as unknown as Job;
   host.send(job, { type: "pause", reason: "owner build" });
   host.send(job, { type: "pause", reason: "owner build" });
   expect(remoteJob).toHaveBeenCalledOnce();
-  expect(remoteJob).toHaveBeenCalledWith("pc2", { op: "control", job: "abc", control: { type: "pause", reason: "owner build" } });
+  expect(remoteJob).toHaveBeenCalledWith("pc2", { op: "control", job: "1234abcd", control: { type: "pause", reason: "owner build" } });
+  await flush(); // A new turn starts only after the original RPC has settled.
   job.startedAt = 2;
   host.send(job, { type: "pause", reason: "next turn" });
   expect(remoteJob).toHaveBeenCalledTimes(2);
-  await flush();
+  await flush(); closeMetadataDb(home);
 });
 
 it("pauses and resumes only this supervisor's jobs and reports per-job failures (M4)", async () => {
@@ -373,14 +375,14 @@ it("stores a pause reason as one line, capped (N7)", () => {
 
 it("forgets a remote pause once its turn has ended (N8)", async () => {
   const home = mkdtempSync(join(tmpdir(), "ab-remote-pause-prune-"));
-  const remoteJob = vi.fn(async () => ({ state: { pid: 1, peer: "pc2/codex-job-abc", status: "done" as const, updatedAt: Date.now() }, alive: false, approvals: [] }));
+  const remoteJob = vi.fn(async () => ({ state: { pid: 1, peer: "codex-job-1234abcd", status: "done" as const, updatedAt: Date.now() }, alive: false, approvals: [] }));
   const host = new RemoteJobHost({ remoteJob } as unknown as BridgeNode, home, nullLogger);
-  const job = { id: "abc", name: "codex-job-abc", startedAt: 1, remote: { host: "pc2", name: "codex-job-abc" } } as unknown as Job;
+  const job = { id: "1234abcd", name: "codex-job-1234abcd", startedAt: 1, remote: { host: "pc2", name: "codex-job-1234abcd" } } as unknown as Job;
   host.send(job, { type: "pause", reason: "owner build" });
   await flush();
   host.send(job, { type: "pause", reason: "owner build" });
   expect(remoteJob).toHaveBeenCalledTimes(2);
-  await flush();
+  await flush(); closeMetadataDb(home);
 });
 
 it("does not list a failed job's dirty files twice when its report already names them (N8)", async () => {

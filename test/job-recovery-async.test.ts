@@ -1,6 +1,8 @@
 import * as feeds from "../src/core/job-recovery-feed.js";
 import { indexFixtureFile } from "./archive-fixture.js";
 import { archiveJobs } from "../src/core/job-archive.js";
+import { migrateJobArchives } from "../src/core/job-archive-migration.js";
+import { openJobArchive } from "../src/core/job-archive-index.js";
 import * as io from "node:fs/promises";
 import * as history from "../src/core/run-history.js";
 import * as cache from "../src/core/file-cache.js";
@@ -200,26 +202,43 @@ it("rechecks durable authority after the handler's final promise boundary in a p
   expect(await next.jobAuthority(job.name)).toMatchObject({owner:next.name,prompt:"exact context",sessionId:"same-native"});
 });
 it("preserves run context/access omitted by an archive-only legacy record",async()=>{
-  const owner=env.node("archive-owner","other");await owner.start();const f=fixture("full archived task",owner.name,"archivecontext");
+  const owner=env.node("archive-owner","other"),f=fixture("full archived task",owner.name,"archivecontext");
   mkdirSync(join(env.home,"archive"));
   writeFileSync(join(env.home,"jobs.json"),JSON.stringify({version:4,jobs:[]}));
   writeFileSync(join(env.home,"archive","jobs-context.json"),JSON.stringify({version:4,jobs:[{id:"archivecontext",name:f.name,agent:"codex",owner:owner.name,status:"interrupted",sessionId:"retained-native",startedAt:1}]}));
   indexFixtureFile(join(env.home,"archive","jobs-context.json"));
   writeFileSync(f.file.replace(/\.log$/,".json"),JSON.stringify({job:f.name,session:"retained-native",workdir:env.home,rootSession:"retained-root",parentJob:"claude-job-parent",access:"read"}));
+  await owner.start();
   expect(await owner.jobAuthority(f.name)).toMatchObject({prompt:"full archived task",parentJob:"claude-job-parent",rootSession:"retained-root",args:{access:"read"}});
 });
 it("uses newer retained backup authority/context over an older archive when the active registry is empty",async()=>{
-  const old=env.node("retained-old","other"),next=env.node("retained-new","other");await old.start();await next.start();
+  const old=env.node("retained-old","other"),next=env.node("retained-new","other");
   const name="codex-job-backupauthority",base={id:"backupauthority",name,agent:"codex",startedAt:1,status:"interrupted",args:{access:"read"},rootSession:"preserved-root",parentJob:"claude-job-parent"};
-  mkdirSync(join(env.home,"archive"));writeFileSync(join(env.home,"jobs.json"),JSON.stringify({version:4,jobs:[]}));
-  writeFileSync(join(env.home,"archive","jobs-1-original.json"),JSON.stringify({version:4,jobs:[{...base,owner:old.name,rootName:old.name,sessionId:"old-session",prompt:"old exact context",status:"running",host:{pid:process.pid,peer:name,startedAt:Date.now()}}]}));
-  writeFileSync(join(env.home,"jobs.json.backup-2"),JSON.stringify({version:4,jobs:[{id:base.id,name,agent:"codex",owner:next.name,rootName:next.name,masters:[next.name],startedAt:2,sessionId:"new-session",prompt:"new exact context",status:"interrupted"}]}));
-  indexFixtureFile(join(env.home,"archive","jobs-1-original.json"));
-  indexFixtureFile(join(env.home,"jobs.json.backup-2"));
+  const archived={...base,owner:old.name,rootName:old.name,sessionId:"old-session",prompt:"old exact context",status:"running",host:{pid:process.pid,peer:name,startedAt:Date.now()}};
+  const newer={id:base.id,name,agent:"codex",owner:next.name,rootName:next.name,masters:[next.name],startedAt:2,sessionId:"new-session",prompt:"new exact context",status:"interrupted"};
+  const registry=join(env.home,"jobs.json"),empty=JSON.stringify({version:4,jobs:[]}),archiveBytes=JSON.stringify({version:4,jobs:[archived]}),backupBytes=JSON.stringify({version:4,jobs:[newer]});
+  mkdirSync(join(env.home,"archive"));writeFileSync(registry,empty);
+  writeFileSync(join(env.home,"archive","jobs-1-original.json"),archiveBytes);
+  writeFileSync(join(env.home,"jobs.json.backup-2"),backupBytes);
+  // This fixture owns the isolated home, with no live node/archive worker yet.
+  // Complete the real admitted import before publication: a live worker may
+  // retire verified originals between any two root-only fixture imports.
+  expect(await migrateJobArchives(registry)).toMatchObject({imported:2,moved:2,kept:0,deferred:false});
+  const cold=join(env.home,"cold-storage","jobs-v1"),database=openJobArchive(registry)!;
+  try {
+    const versions=database.prepare("SELECT payload FROM job_versions WHERE id=?").all(base.id).map(row=>row.payload);
+    expect(versions.sort()).toEqual([JSON.stringify(archived),JSON.stringify(newer)].sort());
+  } finally { database.close(); }
+  expect(readFileSync(join(cold,"archive-originals","jobs-1-original.json"),"utf8")).toBe(archiveBytes);
+  expect(readFileSync(join(cold,"root-originals","jobs.json.backup-2"),"utf8")).toBe(backupBytes);
+  await old.start();await next.start();
   expect(await old.jobAuthority(name)).toBeNull();
   expect(await next.jobAuthority(name)).toMatchObject({owner:next.name,sessionId:"new-session",prompt:"new exact context",rootSession:"preserved-root",parentJob:"claude-job-parent",args:{access:"read"}});
   expect((await old.projectJobs()).some(job=>job.name===name)).toBe(false);
   expect((await next.projectJobs()).find(job=>job.name===name)).toMatchObject({owner:next.name,sessionId:"new-session",prompt:"new exact context"});
+  expect(readFileSync(registry,"utf8")).toBe(empty);
+  expect(readFileSync(join(cold,"archive-originals","jobs-1-original.json"),"utf8")).toBe(archiveBytes);
+  expect(readFileSync(join(cold,"root-originals","jobs.json.backup-2"),"utf8")).toBe(backupBytes);
 });
 it("uses the final duplicate active row and fails closed when incomplete legacy context cannot be read",async()=>{
   const old=env.node("duplicate-old","other"),next=env.node("duplicate-new","other");await old.start();await next.start();

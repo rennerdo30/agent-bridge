@@ -1,16 +1,18 @@
-import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import * as jobArchive from "../src/core/job-archive.js";
 import { canonicalProjectRoot, projectGroupsEnabled } from "../src/core/project-identity.js";
 import { ProjectGroups } from "../src/core/project-groups.js";
 import { BridgeNode } from "../src/core/node.js";
 import { nullLogger } from "../src/core/logger.js";
 import { loadOrCreateToken } from "../src/core/token.js";
-import { makeEnv, type TestEnv } from "./helpers.js";
-import { ReadJournal } from "../src/core/read-journal.js";
-import { JobManager } from "../src/mcp/jobs.js";
+import { fixtureProject, makeEnv, type TestEnv } from "./helpers.js";
+import { ReadJournal, readJournalIdentities } from "../src/core/read-journal.js";
+import { JobManager, readStore } from "../src/mcp/jobs.js";
+import { fixtureJobReport, fixtureNodePeer, retainFixtureRunner } from "./owned-mail.js";
+import { MessageStore } from "../src/core/store.js";
 import { buildHookResponse } from "../src/mcp/hooks.js";
 import { DEFAULT_CONFIG, loadConfig } from "../src/core/config.js";
 import type { ServerContext } from "../src/mcp/server.js";
@@ -18,19 +20,20 @@ import type { ServerContext } from "../src/mcp/server.js";
 let env: TestEnv;
 const nodes: BridgeNode[] = [];
 beforeEach(() => { env = makeEnv(); });
-afterEach(async () => { for (const n of nodes.splice(0)) await n.stop(); await env.cleanup(); });
-const git = (cwd: string, ...args: string[]) => execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8", windowsHide: true, stdio: ["ignore", "pipe", "ignore"] }).trim();
+afterEach(async () => { vi.restoreAllMocks(); for (const n of nodes.splice(0)) await n.stop(); await env.cleanup(); });
 function repo() {
   const path = join(env.home, "project"); mkdirSync(path);
-  git(path, "init");
-  git(path, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "--allow-empty", "-m", "Initial");
+  // Canonical project discovery reads the ordinary Git layout directly; this
+  // routing fixture needs no repository mutation or Git subprocess.
+  fixtureProject(path);
   return path;
 }
 async function node(name: string, cwd: string, job?: { id: string; owner: string; parent: string }) {
+  if (job) retainFixtureRunner(env.home, { id: job.id, name, agent: "codex", owner: job.parent, supervisor: job.owner, cwd });
   const n = new BridgeNode({ pipePath: env.pipe, dbPath: env.db, token: loadOrCreateToken(env.home), name, cwd,
     agent: job ? "other" : name.startsWith("codex") ? "codex" : "claude", autoWake: true, log: nullLogger,
     ...(job ? { id: `job:${job.id}`, jobAgent: "codex" as const, jobOwner: job.owner, jobParent: job.parent, canHostBroker: false } : {}) });
-  nodes.push(n); await n.start(); return n;
+  nodes.push(n); if (!job) await n.setSessionId(`fixture-session:${name}`); await n.start(); return n;
 }
 function registry(project: string) {
   const jobs = ["one", "two"].map((id, i) => ({ id, name: `codex-job-${id}`, agent: "codex", model: null, prompt: "task", startedAt: Date.now(), status: "running", sessionId: null, workdir: project, worktree: null,
@@ -39,14 +42,96 @@ function registry(project: string) {
 }
 
 describe("durable project job mail", () => {
+  it("leaves no orphan report intent while original supervisor proof is temporarily unavailable", async () => {
+    const path = repo(); registry(path);
+    const source = await node("claude-master", path), secondary = await node("codex-master", path);
+    const runner = await node("codex-job-one", path, { id: "one", owner: "first", parent: source.name });
+    const store = (source as any).broker.store as MessageStore, file = join(env.home, "jobs.json");
+    const original = readFileSync(file, "utf8"), delayed = JSON.parse(original);
+    const record = delayed.jobs.find((row: any) => row.id === "one");
+    expect(record.deliveryOwner).toBeTruthy();
+    // Model a late authority projection without inventing recipient proof. The
+    // original evidence is retained, and only its actual admission restores it.
+    record.pendingOwnerEvidence = { deliveryOwner: record.deliveryOwner, deliveryOwners: record.deliveryOwners };
+    delete record.deliveryOwner; delete record.deliveryOwners;
+    writeFileSync(file, JSON.stringify(delayed));
+    const id = randomUUID(), args = { to: source.name, body: "Exact tenth-stage retained final", conversationId: "job-one", messageId: id };
+    let retainedIntent: string | undefined;
+    try {
+      await expect(runner.send(args)).rejects.toMatchObject({ code: "unauthorized" });
+      expect(store.messagesById(id)).toEqual([]);
+      expect(store.jobRoutingGrant(id)).toBeNull();
+      retainedIntent = store.sendIntentOwner(id);
+    } finally { writeFileSync(file, original); }
+    await source.setUnavailable(true);
+    const accepted = await runner.send(args);
+    expect(retainedIntent).toBeUndefined();
+    expect(accepted.messages).toEqual([expect.objectContaining({ id, body: args.body, recipient: secondary.name })]);
+    expect((await runner.send(args)).storage?.recovered).toBe(true);
+    expect(store.messagesById(id)).toHaveLength(1);
+  });
+  it("refuses a job report before ordinary routing when a transient authority read fails", async () => {
+    const path = repo(); registry(path);
+    const source = await node("claude-master", path), secondary = await node("codex-master", path);
+    const runner = await node("codex-job-one", path, { id: "one", owner: "first", parent: source.name });
+    const store = (source as any).broker.store as MessageStore, original = jobArchive.readArchivedJobSnapshot;
+    await source.setUnavailable(true);
+    const fault = vi.spyOn(jobArchive, "readArchivedJobSnapshot").mockImplementation(() => { throw Object.assign(new Error("injected authority writer busy"), { code: "SQLITE_BUSY" }); });
+    const id = randomUUID(), args = { to: source.name, body: "Retained final during authority recovery", conversationId: "job-one", messageId: id };
+    try {
+      await expect(runner.send(args)).rejects.toMatchObject({ code: "job_index_preparing" });
+      expect(store.messagesById(id)).toEqual([]); expect(store.sendIntentOwner(id)).toBeUndefined();
+    } finally { fault.mockImplementation(original); }
+    expect((await runner.send(args)).messages).toEqual([expect.objectContaining({ id, recipient: secondary.name, body: args.body })]);
+    expect(source.unread().some(m => m.id === id)).toBe(false);
+    expect(store.messagesById(id)).toHaveLength(1);
+  });
+  it("retries a job final after a rolled-back first storage without leaving an orphan send intent", async () => {
+    const path = repo(); registry(path);
+    const source = await node("claude-master", path), secondary = await node("codex-master", path);
+    const runner = await node("codex-job-one", path, { id: "one", owner: "first", parent: source.name });
+    const store = (source as any).broker.store as MessageStore, db = (store as any).db;
+    const accepted = (await source.send({ to: secondary.name, body: "Accepted bytes and ownership survive a later rollback" })).messages[0]!;
+    const original = store.messagesById(accepted.id);
+    const id = randomUUID(), args = { to: source.name, body: "Retained runner final", conversationId: "job-one", messageId: id };
+    db.exec(`CREATE TRIGGER refuse_test_final BEFORE INSERT ON messages WHEN NEW.id='${id}' BEGIN SELECT RAISE(ABORT,'injected final storage failure'); END`);
+    try {
+      await expect((runner as any).client.request("trackedSend", args)).rejects.toThrow(/injected final storage failure/);
+      expect(store.messagesById(id)).toEqual([]);
+      expect(store.jobRoutingGrant(id)).toBeNull();
+      expect(store.messagesById(accepted.id)).toEqual(original);
+    } finally { db.exec("DROP TRIGGER refuse_test_final"); }
+    // No dispatch occurred: the failed transaction must retain neither an
+    // accepted intent nor a grant. A fresh authorized dispatch can choose B.
+    expect(store.sendIntentOwner(id)).toBeUndefined();
+    await source.setUnavailable(true);
+    const retried = await (runner as any).client.request("trackedSend", args);
+    expect(retried.messages).toEqual([expect.objectContaining({ id, recipient: secondary.name, body: args.body })]);
+    expect(store.jobRoutingGrant(id)?.originalRecipient).toBe(secondary.name);
+    expect(store.messagesById(id)).toHaveLength(1);
+    expect((await (runner as any).client.request("trackedSend", args)).storage.recovered).toBe(true);
+    await expect((secondary as any).client.request("trackedSend", args)).rejects.toThrow(/ownership/);
+    expect(store.messagesById(id)).toHaveLength(1);
+  });
   it("keeps pending sibling mail and quiet observer notes at their intended recipients on group changes", async () => {
     const path = repo(); registry(path);
     const source = await node("claude-master", path), secondary = await node("codex-master", path);
     const a = await node("codex-job-one", path, { id: "one", owner: "first", parent: source.name });
     const b = await node("codex-job-two", path, { id: "two", owner: "second", parent: secondary.name });
+    const recipient = b as any, originalEvent = recipient.onEvent.bind(b), held: (() => void)[] = [];
+    const admission = vi.spyOn(recipient, "onEvent").mockImplementation((...args: unknown[]) => {
+      const [event, data] = args as [string, { from?: { name: string }; recipient?: string; conversationId?: string }];
+      if (event === "message" && data.from?.name === a.name && data.recipient === b.name &&
+          data.conversationId?.startsWith("siblings-") && !data.conversationId.endsWith(":note")) held.push(() => originalEvent(...args));
+      else originalEvent(...args);
+    });
     const sent = await a.sendSibling({ to: b.name, body: "Private sibling context" }, 32);
     const id = sent.messages[0]!.id;
-    expect(b.unread().some((m) => m.id === id)).toBe(true);
+    await expect.poll(() => held.length).toBeGreaterThan(0);
+    expect(b.unread().some(m => m.id === id)).toBe(false); // Sender storage ACK is not recipient consumption.
+    admission.mockRestore(); for (const release of held) release(); // Preserve every delayed event, including retries.
+    // Storage ACK is on the sender connection; await recipient event visibility.
+    await expect.poll(() => b.unread().some((m) => m.id === id)).toBe(true);
     const third = await node("claude-third", path);
     await source.setUnavailable(true);
     expect(b.unread().some((m) => m.id === id)).toBe(true);
@@ -86,7 +171,7 @@ describe("durable project job mail", () => {
     const runner = await node("codex-job-one", path, { id: "one", owner: "first", parent: source.name });
     await source.stop();
     const sent = await runner.send({ to: source.name, body: "Final pending note", conversationId: "job-one:note" });
-    writeFileSync(join(env.home, "jobs.json"), JSON.stringify({ version: 4, jobs: [{ ...records[0], status: "done", projectRoot: canonicalProjectRoot(path) }] }));
+    writeFileSync(join(env.home, "jobs.json"), JSON.stringify({ version: 4, jobs: [{ ...readStore(join(env.home, "jobs.json"))[0], status: "done", projectRoot: canonicalProjectRoot(path) }] }));
     const returned = await node("claude-master", path);
     await expect.poll(() => returned.unread().some((m) => m.id === sent.messages[0]!.id)).toBe(true);
     const jobs = new JobManager(returned, nullLogger, join(env.home, "jobs.json"));
@@ -99,10 +184,17 @@ describe("durable project job mail", () => {
   it("does not replay a recovered inline envelope consumed before its broker acknowledgement", async () => {
     const path = repo(), records = registry(path), source = await node("claude-master", path);
     const secondary = await node("codex-master", path);
-    const envelope = { id: randomUUID(), from: { id: "job:one", name: "codex-job-one", agent: "codex" }, to: source.name,
-      recipient: source.name, body: "Already consumed", conversationId: "job-one", hop: 0, replyTo: null, createdAt: Date.now(), readAt: null };
-    new ReadJournal(env.home).append(`name:${source.name}`, [envelope.id]);
-    writeFileSync(join(env.home, "jobs.json"), JSON.stringify({ version: 2, jobs: [{ ...records[0], deliveryHistory: [envelope] }, records[1]] }));
+    retainFixtureRunner(env.home, { id: "one", name: "codex-job-one", agent: "codex", owner: source.name, supervisor: "first", cwd: path });
+    const envelope = source.prepareLocalMessage({ id: randomUUID(), from: { id: "job:one", name: "codex-job-one", agent: "codex" }, to: source.name,
+      recipient: source.name, body: "Already consumed", conversationId: "job-one", hop: 0, replyTo: null, createdAt: Date.now(), readAt: null });
+    const store = new MessageStore(env.db, nullLogger);
+    let report: ReturnType<typeof fixtureJobReport>;
+    const retained = readStore(join(env.home, "jobs.json"));
+    const originalJob = retained.find(job => job.id === "one")!;
+    try { const peer = fixtureNodePeer(store, source, "claude"); report = fixtureJobReport(store, originalJob as unknown as Record<string, unknown>, peer, peer, envelope); }
+    finally { store.close(); }
+    new ReadJournal(env.home).append(readJournalIdentities(source.name, source.currentSessionId, envelope.recipientFrontend, envelope.recipientNative, envelope.recipientMailbox, { grant: envelope.id, generation: 0 })[0]!, [envelope.id]);
+    writeFileSync(join(env.home, "jobs.json"), JSON.stringify({ version: 4, jobs: retained.map(job => job.id === originalJob.id ? { ...job, deliveryHistory: [report.message], reportRouting: { [envelope.id]: report.draft } } : job) }));
     await source.setUnavailable(true);
     expect(secondary.unread().some((m) => m.id === envelope.id)).toBe(false);
     const runner = await node("codex-job-one", path, { id: "one", owner: "first", parent: source.name });

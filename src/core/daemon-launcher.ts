@@ -4,9 +4,10 @@ import { join } from "node:path";
 import { ENV, LATE_RELAUNCH_BACKOFF_MAX_MS, LATE_RELAUNCH_BACKOFF_MIN_MS } from "./constants.js";
 import type { BridgeConfig } from "./config.js";
 import { withoutT3Context } from "./t3-identity.js";
+import { STARTUP_DEADLINE_ENV } from "./startup-budget.js";
 
 export type DaemonLaunch = { kind: "created" } | { kind: "unavailable"; reason: "windows_wmi_unavailable" | "windows_wmi_create_rejected" } | { kind: "unknown"; stage?: "read" | "startup" | "create"; errorCode?: number };
-export interface DaemonOptions { cli: string; home: string; pipe: string; cwd: string; dashboard?: boolean; config?: Pick<BridgeConfig, "network" | "mobile" | "dashboardPort"> }
+export interface DaemonOptions { cli: string; home: string; pipe: string; cwd: string; dashboard?: boolean; config?: Pick<BridgeConfig, "network" | "mobile" | "dashboardPort">; startupDeadline?: number; startupSignal?: AbortSignal }
 const CREATE_TIMEOUT_MS = 5_000;
 /** Hard bound for the creation helper process after the decision budget has passed. */
 const HELPER_LIMIT_MS = 30_000;
@@ -55,6 +56,8 @@ export function daemonEnvironment(options: DaemonOptions): NodeJS.ProcessEnv {
     if (/^AGENT_BRIDGE_(?:PARENT_|ROOT_|JOB_|DELEGATE_|INTERNAL$)/.test(key)) delete env[key];
   }
   delete env.NODE_OPTIONS;
+  if (Number.isFinite(options.startupDeadline)) env[STARTUP_DEADLINE_ENV] = String(options.startupDeadline);
+  else delete env[STARTUP_DEADLINE_ENV];
   env.AGENT_BRIDGE_DAEMON_DASHBOARD = options.dashboard ? "1" : "0";
   if (options.config) env.AGENT_BRIDGE_DAEMON_CONFIG = JSON.stringify(options.config);
   else delete env.AGENT_BRIDGE_DAEMON_CONFIG;
@@ -123,10 +126,17 @@ export function superviseCreateHelper(child: CreateHelper, input: string, late?:
 
 /** A creation receipt is not readiness. Existing authenticated IPC is the readiness check. */
 export async function launchDaemon(options: DaemonOptions, late?: LateDaemonLaunch): Promise<DaemonLaunch> {
+  const admitted = () => {
+    options.startupSignal?.throwIfAborted();
+    if (options.startupDeadline !== undefined && (!Number.isFinite(options.startupDeadline) || Date.now() >= options.startupDeadline))
+      throw new Error("Original daemon startup deadline expired before process creation");
+  };
+  admitted();
   if (!existsSync(options.cli)) throw new Error("broker daemon runtime is unavailable");
   const env = daemonEnvironment(options);
   if (process.platform !== "win32") {
     return new Promise(resolve => {
+      admitted();
       const child = spawn(process.execPath, [options.cli, "broker-daemon"], { cwd: options.cwd, env, detached: true, stdio: "ignore", windowsHide: true });
       child.once("error", () => resolve({ kind: "unknown" }));
       child.once("spawn", () => { child.unref(); resolve({ kind: "created" }); });
@@ -134,6 +144,7 @@ export async function launchDaemon(options: DaemonOptions, late?: LateDaemonLaun
   }
   const powershell = join(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
   if (!existsSync(powershell)) return { kind: "unavailable", reason: "windows_wmi_unavailable" };
+  admitted();
   const child = spawn(powershell, ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(WINDOWS_CREATE, "utf16le").toString("base64")], { env, windowsHide: true, stdio: ["pipe", "pipe", "ignore"] });
   return superviseCreateHelper(child as unknown as CreateHelper, JSON.stringify({ command: [process.execPath, options.cli, "broker-daemon"].map(windowsArgument).join(" "), cwd: options.cwd,
     environment: Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined).map(([key, value]) => `${key}=${value}`) }), late);

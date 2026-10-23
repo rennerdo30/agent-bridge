@@ -1,0 +1,33 @@
+--- fbc10e67:src/core/broker.ts:constructor (normalized)
++++ 9cfa6e73:src/core/broker.ts:constructor (normalized)
+@@
+-inlineJobReport: async (c, m) => {
+-const peer = this.requirePeer(c);
+-const registration = c.mailReady;
+-let fallback = false;
+-await this.store.retryWrite(() => {
+-if (!registration) throw new BridgeError("unauthorized", "Report registration is unavailable");
+-this.assertQueueRegistration(c, peer, registration);
+-const job = this.currentJobAuthority(this.storedJobs().find((j) => `job:${j.id}` === m.from?.id));
+-if (!job || (job.executionOwner !== peer.name && job.owner !== peer.name && job.rootName !== peer.name) || typeof job.owner !== "string" || typeof m.body !== "string") throw new BridgeError("unauthorized", "Invalid inline job delivery.");
+-if (this.jobDeliveryOwner(job, peer.name) !== recipientKey(peer.frontend, nativeOwner(peer))) throw new BridgeError("unauthorized", "Original job reporter identity is unproven or replaced; report remains pending.");
+-const recipient = this.jobRecipient(job);
+-const intended = this.freshJobDeliveryOwner(job, peer, recipient), grant = this.jobReportGrant(job, peer);
+-if (!intended) throw new BridgeError("unauthorized", "Original job recipient binding is unavailable; report remains pending without mailbox settlement.");
+-if (!grant || m.from.agent !== job.agent || m.from.name !== job.name) throw new BridgeError("unauthorized", "Proven local job report grant is unavailable");
+-fallback = recipient !== primaryFor(job);
+-// AB-380: an oversized report from an older sender is stored as a stub with the same id, never rejected.
+-const message = this.wireMessage({ ...m, jobControlAuthorized: undefined, recipientFrontend: undefined, recipientNative: undefined, recipientAmbiguous: undefined,
+-...ownershipFromKey(intended), senderOwner: `native:${grant.principal}`, senderMailbox: localMailbox(this.store.namespace), to: recipient, recipient, conversationId: this.jobConversation(job, recipient, m.conversationId) });
+-if (this.store.insertJobDelivery(message, grant)) {
+-Object.assign(message, this.store.messagesById(message.id).find(copy => copy.recipient === recipient));
+-const target = this.connByName(recipient);
+-if (target && !target.peer?.unavailable) this.emit(target, "message", message);
+-}
+-});
+-// A report parked with a previous owner (the new primary was not live yet, e.g. mid-handoff) moves on by itself
+-// once the primary is live, instead of waiting for an unrelated session to connect.
+-if (fallback) this.scheduleJobMailReroute();
+-return { saved: true };
+-},
++inlineJobReport: (c, m) => this.onInlineJobReport(c, m),

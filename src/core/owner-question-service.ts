@@ -8,6 +8,7 @@ import { loadDashboardKey } from "../cli/dashboard-key.js";
 import { readDashboardInfo } from "../cli/dashboard.js";
 import type { MessageStore } from "./store.js";
 import { normalizeProject, type OwnerDecision } from "./decisions.js";
+import { nativeOwner, ownershipFromKey, recipientKey } from "./recipient-ownership.js";
 
 export const OWNER_ADDRESS = { id: "owner:dashboard", name: "you", agent: "other" as const };
 export class OwnerQuestionService {
@@ -32,7 +33,12 @@ export class OwnerQuestionService {
   }
   list(): OwnerQuestion[] {
     return this.store.list().map(q => ({ ...q, deliveries: q.deliveries.map(d => ({ ...d,
-      readAt: d.messageId ? this.messages.receipts(d.messageId).find(r => r.recipient === d.recipient)?.readAt ?? d.readAt : d.readAt })) }));
+      readAt: this.readAt(d) })) }));
+  }
+  private readAt(delivery: OwnerQuestion["deliveries"][number]): number | null {
+    if (!delivery.messageId || !delivery.owner) return null;
+    const copies = this.messages.messagesById(delivery.messageId).filter(m => this.messages.localCopy(m) && recipientKey(m.recipientFrontend, m.recipientNative) === delivery.owner);
+    return this.messages.receipts(delivery.messageId).find(r => copies.some(m => m.recipient === r.recipient) && r.readAt !== null)?.readAt ?? null;
   }
   complete(q: OwnerQuestion): OwnerQuestion {
     if (!q.answer) return q;
@@ -46,50 +52,70 @@ export class OwnerQuestionService {
     const peers = this.peers();
     const mains = peers.filter(p => !p.jobAgent && !p.subagent && !p.unavailable && normalizeProject(p.projectRoot ?? p.cwd) === normalizeProject(q.project));
     const main = mains.find(p => p.projectMain) ?? mains[0];
-    const destinations=q.askers.flatMap(a => [{ name:a.session,sessionId:a.sessionId,peerId:a.peerId },{name:a.main,sessionId:a.mainSessionId,peerId:a.mainPeerId},...(a.job ? [{name:a.job,sessionId:null,peerId:undefined}] : [])]);
-    const resolveDestination=(name:string) => {
-      const identities=destinations.filter(d => d.name === name && (d.sessionId || d.peerId));
-      return peers.find(p => !p.unavailable && normalizeProject(p.projectRoot ?? p.cwd) === normalizeProject(q.project) && (identities.length ? identities.some(d => d.sessionId ? p.sessionId === d.sessionId : p.id === d.peerId) : p.name === name));
-    };
-    const askerNames=new Set(q.askers.flatMap(a => [resolveDestination(a.session)?.name ?? a.session,...(a.job ? [a.job] : [])]));
-    const mainRead=q.deliveries.some(d => (q.askers.some(a => (resolveDestination(a.main)?.name ?? a.main) === d.recipient) || !askerNames.has(d.recipient)) && d.messageId && this.messages.receipts(d.messageId).some(r => r.readAt !== null));
-    const recipients = new Set(destinations.map(d => resolveDestination(d.name)?.name ?? d.name)); if (main && !mainRead) recipients.add(main.name);
+    const destinations: { name: string; owner?: string; main: boolean }[] = q.askers.flatMap(a => [
+      { name: a.session, owner: a.owner, main: false }, { name: a.main, owner: a.mainOwner, main: true },
+      ...(a.job ? [{ name: a.job, owner: a.jobOwner, main: false }] : [])]);
+    const mainRead = q.deliveries.some(d => d.main && this.readAt(d) !== null);
     let changed = false;
-    for (const recipient of recipients) {
-      const original = resolveDestination(recipient), fallback = !original && main && !mainRead && main.name === recipient ? main : undefined;
-      const live = original ?? fallback;
-      const before = q.deliveries.find(d => d.recipient === recipient);
+    // A fallback is an authorized project role, not permission for a later name
+    // claimant. Capture its actual owner once before the first delivery attempt.
+    if (main && !mainRead && !q.fallbackTargets?.length) {
+      const owner = recipientKey(main.frontend, nativeOwner(main));
+      if (owner && !destinations.some(d => d.owner === owner)) { q.fallbackTargets = [{ name: main.name, owner }]; changed = true; }
+    }
+    destinations.push(...(q.fallbackTargets ?? []).map(d => ({ ...d, main: true })));
+    const targets = new Map<string, { name: string; owner?: string; main: boolean }>();
+    for (const d of destinations) {
+      const key = d.owner ?? `unproven:${d.name}`, previous = targets.get(key);
+      targets.set(key, { ...d, main: d.main || Boolean(previous?.main) });
+    }
+    for (const target of targets.values()) {
+      const evidence = target.owner ? ownershipFromKey(target.owner) : { recipientAmbiguous: true as const };
+      const live = target.owner ? peers.find(p => !p.unavailable && normalizeProject(p.projectRoot ?? p.cwd) === normalizeProject(q.project) && recipientKey(p.frontend, nativeOwner(p)) === target.owner) : undefined;
+      const recipient = live?.name ?? target.name;
+      const before = q.deliveries.find(d => target.owner ? d.owner === target.owner : !d.owner && d.recipient === recipient);
       if (before?.messageId) {
-        const readAt=this.messages.receipts(before.messageId).find(r => r.recipient === recipient)?.readAt;
+        const copy = this.messages.messagesById(before.messageId).find(m => this.messages.localCopy(m) && target.owner && recipientKey(m.recipientFrontend, m.recipientNative) === target.owner);
+        if (!copy) {
+          before.state = "pending"; before.detail = "Retained delivery has no proven matching mailbox copy; original evidence and answer retained for reviewed recovery.";
+          changed = true; continue;
+        }
+        const readAt = this.readAt(before);
         if (!readAt && before.state === "wake-requested" && Date.now()-q.answer.at >= 20000) {
           before.state="unconfirmed"; before.detail="Wake consumption unconfirmed after 20 s. Durable inbox retained; project-main fallback receives the same recorded answer."; changed=true;
         }
         continue;
       }
-      if (!live && (destinations.some(d => d.name === recipient && (d.sessionId || d.peerId)) || peers.some(p => p.name === recipient))) {
-        // Do not send a prior session's answer to a replacement which inherited its display name.
-        const offline = {recipient,state:"offline" as const,detail:"Original session is absent or replaced. Answer retained on the question; current project-main fallback receives it.",readAt:null};
-        if (JSON.stringify(before) !== JSON.stringify(offline)) {q.deliveries=[...q.deliveries.filter(d => d.recipient !== recipient),offline];changed=true;}
+      if (evidence.recipientAmbiguous || !target.owner) {
+        const pending = { recipient, owner: target.owner, main: target.main, state: "pending" as const, detail: "Original recipient binding is unavailable. Answer retained; no mailbox delivery or consumption was attributed.", readAt: null };
+        if (JSON.stringify(before) !== JSON.stringify(pending)) { q.deliveries = [...q.deliveries.filter(d => d !== before), pending]; changed = true; }
         continue;
       }
-      const hash = createHash("sha256").update(`owner-question:${q.id}:${recipient}`).digest("hex");
+      const hash = createHash("sha256").update(`owner-question:v2:${q.id}:${target.owner}`).digest("hex");
       const messageId = `${hash.slice(0,8)}-${hash.slice(8,12)}-4${hash.slice(13,16)}-a${hash.slice(17,20)}-${hash.slice(20,32)}`;
-      const message: BridgeMessage = { id: messageId, from: q.answer.author, to: recipient, recipient,
+      const message: BridgeMessage = { id: messageId, from: q.answer.author, to: recipient, recipient, ...evidence,
         conversationId: `owner-question-${q.id}`, replyTo: q.id, hop: 0, createdAt: q.answer.at, readAt: null,
         body: `Owner answer to question ${q.id}: ${q.title}\n\n${q.answer.text}\n\n${JSON.stringify({ questionId: q.id, option: q.answer.option, author: q.answer.author, at: q.answer.at, source: q.answer.source, decisionId: q.answer.decisionId })}\nAn answer does not bypass native approvals, expand authorization or accept implementation.` };
       // Durable inbox plus the ordinary direct event reaches every CLI's real wake endpoint.
       const inserted = this.messages.insertOnce(message);
+      const durable = this.messages.messagesById(messageId).find(m => this.messages.localCopy(m) && recipientKey(m.recipientFrontend, m.recipientNative) === target.owner);
+      if (!durable) {
+        q.deliveries = [...q.deliveries.filter(d => d !== before), { recipient, owner: target.owner, main: target.main, state: "pending", detail: "A conflicting historical mailbox copy is retained; delivery requires reviewed recovery.", readAt: null }];
+        changed = true; continue;
+      }
       let failed=false;
       if (inserted && live) { try { this.emit(live, message); } catch { failed=true; } }
       const wake = Boolean(live?.wakeAvailable && (live.autoWake || live.wakeOnDirect));
-      const delivery = { recipient, messageId, state: failed ? "failed" as const : !live ? "offline" as const : live.activity === "busy" ? "busy" as const : wake ? "wake-requested" as const : "wake-unavailable" as const,
+      const delivery = { recipient, owner: target.owner, main: target.main, messageId, state: failed ? "failed" as const : !live ? "offline" as const : live.activity === "busy" ? "busy" as const : wake ? "wake-requested" as const : "wake-unavailable" as const,
         detail: failed ? "Direct delivery failed. Durable inbox retained; project-main fallback receives the same answer." : !live ? `Asker offline; retained for reconnection. ${main ? "Also sent to project main " + main.name : "No available project main; fallback pending."}` : live.activity === "busy" ? "Queued for next hook or idle turn; awaiting consumption." : wake ? "Direct wake requested; awaiting consumption." : `Wake unavailable or disabled; durable inbox retained. ${main && main.name !== recipient ? "Also sent to project main " + main.name : "No alternate project main available."}`,
         readAt: null };
-      if (fallback) delivery.detail = "Original session is absent; this answer goes to the current project main as fallback. " + delivery.detail;
-      q.deliveries = [...q.deliveries.filter(d => d.recipient !== recipient), delivery]; changed = true;
+      if (q.fallbackTargets?.some(d => d.owner === target.owner)) delivery.detail = "Original session is absent; this answer goes to the captured project-main owner as fallback. " + delivery.detail;
+      q.deliveries = [...q.deliveries.filter(d => d !== before), delivery]; changed = true;
     }
+    const complete = mainRead && [...targets.values()].every(t => t.owner && q.deliveries.some(d => d.owner === t.owner && d.messageId && this.messages.messagesById(d.messageId).some(m => this.messages.localCopy(m) && recipientKey(m.recipientFrontend, m.recipientNative) === t.owner)));
+    if (q.deliveryComplete && !complete) { q.deliveryComplete = false; changed = true; }
+    if (complete && !q.deliveryComplete) { q.deliveryComplete = true; changed = true; }
     if (changed) this.store.save(q);
-    if (mainRead && !q.deliveryComplete) { q.deliveryComplete=true; this.store.save(q); }
     if (q.mirror?.state !== "saved" && (q.mirror?.nextAttempt ?? 0) <= Date.now() && q.links.some(l => l.kind === "issue") && !this.mirrors.has(q.id)) {
       this.mirrors.add(q.id);
       void this.mirror(q).finally(() => this.mirrors.delete(q.id));

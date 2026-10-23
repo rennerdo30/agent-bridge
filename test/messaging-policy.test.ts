@@ -4,6 +4,7 @@ import { DEFAULT_CONFIG } from "../src/core/config.js";
 import { isPureAcknowledgement } from "../src/core/job-messaging.js";
 import { isQuietMessage, TRANSFER_PROGRESS_PREFIX, type BridgeMessage } from "../src/core/protocol.js";
 import { MessageStore } from "../src/core/store.js";
+import { fixturePeer, ownedMessage, unreadOwned } from "./owned-mail.js";
 import { nullLogger } from "../src/core/logger.js";
 import { JobManager } from "../src/mcp/jobs.js";
 import { buildHookResponse } from "../src/mcp/hooks.js";
@@ -27,7 +28,7 @@ describe("messaging context policy", () => {
     await node.start();
     await node.setAutoWake(true);
     const progress = ["queued", "preparing", "transferring", "paused"].map((status) =>
-      mail(`${TRANSFER_PROGRESS_PREFIX}transfer-id`, `files: 10% · ${status}`));
+      node.prepareLocalMessage(mail(`${TRANSFER_PROGRESS_PREFIX}transfer-id`, `files: 10% · ${status}`)));
     progress.forEach((m) => node.deliverLocal(m));
     expect(progress.every(isQuietMessage)).toBe(true);
     expect(progress.every((m) => !shouldWakeClaudeMessage(node, DEFAULT_CONFIG, m))).toBe(true);
@@ -61,11 +62,12 @@ describe("messaging context policy", () => {
   it("prioritizes active mail over more than a pending page of quiet copies without removing data", () => {
     const store = new MessageStore(env.db, nullLogger);
     try {
-      for (let i = 0; i < 501; i++) store.insert(mail(i % 2 ? `siblings-${i}:note` : `${TRANSFER_PROGRESS_PREFIX}${i}`, `History ${i}`, i));
-      const blocker = mail("job-worker", "Blocked: missing permission", 502);
+      const recipient = fixturePeer(store, "supervisor");
+      for (let i = 0; i < 501; i++) store.insert(ownedMessage(store, recipient, mail(i % 2 ? `siblings-${i}:note` : `${TRANSFER_PROGRESS_PREFIX}${i}`, `History ${i}`, i)));
+      const blocker = ownedMessage(store, recipient, mail("job-worker", "Blocked: missing permission", 502));
       store.insert(blocker);
-      expect(store.unread("supervisor", 500)[0]?.id).toBe(blocker.id);
-      expect(store.unread("supervisor", 1_000)).toHaveLength(502);
+      expect(unreadOwned(store, recipient, 500)[0]?.id).toBe(blocker.id);
+      expect(unreadOwned(store, recipient, 1_000)).toHaveLength(502);
       expect(store.byId(blocker.id)?.readAt).toBeNull();
     } finally { store.close(); }
   });

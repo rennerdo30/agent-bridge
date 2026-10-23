@@ -5,6 +5,8 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { z } from "zod";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { nullLogger } from "../src/core/logger.js";
+import { DEFAULT_CONFIG } from "../src/core/config.js";
+import { nativeOwner } from "../src/core/recipient-ownership.js";
 import { DELEGATE_DEPTH_ENV } from "../src/core/delegate.js";
 import { DELEGATION_METADATA_VERSION, JOBS_FILE } from "../src/core/constants.js";
 import * as jsonStore from "../src/core/json-store.js";
@@ -23,6 +25,8 @@ import { LocalCoordinator } from "../src/mcp/local-coordinator.js";
 import { SiblingLink } from "../src/mcp/siblings.js";
 import type { ServerContext } from "../src/mcp/server.js";
 import { makeEnv, until, type TestEnv } from "./helpers.js";
+import { retainFixtureJob } from "./owned-mail.js";
+import { hookPublicationEvents, jobWaitSnapshot } from "./job-wait-diagnostics.js";
 
 const MAX_HOPS = 3;
 const SERVER = join(import.meta.dirname, "..", "plugins", "claude", "dist", "server.mjs");
@@ -34,6 +38,9 @@ const chats: SiblingLink[] = [];
 
 beforeEach(async () => {
   env = makeEnv();
+  // These tests require explicit cross-session grants, independent of optional
+  // project-team sharing between masters in the same physical fixture folder.
+  writeFileSync(join(env.home, "config.json"), JSON.stringify({ projectGroups: false }));
   supervisor = env.node("claude-supervisor");
   await supervisor.start();
 });
@@ -49,8 +56,12 @@ async function sibling(id: string, agent: CodingAgent, owner = "supervisor-sessi
   const name = `${agent}-job-${id}`;
   const job: Job = { id, name, agent, model: null, prompt: "task", startedAt: Date.now(), controller: new AbortController(),
     progress: null, status: "running", sessionId: null, workdir: null, worktree: null, queue: [], args: { send_to: sendTo } };
+  const saved = readStore(join(env.home, JOBS_FILE)).find(j => j.id === id);
+  if (saved) Object.assign(job, saved);
+  job.args = { ...job.args, send_to: sendTo, title: `Task ${id}` };
+  retainFixtureJob(env.home, job, saved?.owner ?? supervisor.name, saved?.supervisor ?? owner);
   const node = new BridgeNode({ pipePath: env.pipe, token: loadOrCreateToken(env.home), dbPath: env.db,
-    agent: "other", jobAgent: agent, jobOwner: owner, jobParent: supervisor.name, jobTitle: `Task ${id}`,
+    agent: "other", jobAgent: agent, jobOwner: job.supervisor, jobParent: job.owner, jobTitle: `Task ${id}`,
     jobSendTo: sendTo,
     id: `job:${id}`, name, cwd: env.home, autoWake: false, canHostBroker: false, log: nullLogger });
   nodes.push(node);
@@ -131,7 +142,10 @@ describe("sibling job messaging", () => {
     await b.node.updateJob({ jobTitle: "Updated task" });
     expect((await a.chat.peers())[0]!.title).toBe("Updated task");
     await b.node.stop();
-    await expect.poll(() => a.chat.peers()).toEqual([]);
+    // The newly durable fixture keeps offline jobs discoverable too. Session
+    // peers still hide runners; their queued channel keeps its exact job ID.
+    await expect.poll(() => a.chat.peers()).toEqual([{ name: b.job.name, title: "Task b", agent: "opencode", status: "running" }]);
+    expect((await supervisor.peers()).some(p => p.name === b.job.name)).toBe(false);
   });
 
   it("delivers threaded sibling replies and stores quiet supervisor copies without a conversation window", async () => {
@@ -168,8 +182,10 @@ describe("sibling job messaging", () => {
 
   it("lists completed siblings and queues their mail until their next turn", async () => {
     const a = await sibling("a", "codex");
-    writeFileSync(join(env.home, JOBS_FILE), JSON.stringify({ version: 1, jobs: [
-      { id: "past", name: "opencode-job-past", agent: "opencode", status: "done", finishedAt: 123, report: "Saved final report", supervisor: "supervisor-session", args: { title: "Earlier task" } },
+    const past = { id: "past", name: "opencode-job-past", agent: "opencode", status: "done", startedAt: 1, finishedAt: 123, report: "Saved final report", supervisor: "supervisor-session", args: { title: "Earlier task" } };
+    retainFixtureJob(env.home, past as unknown as Job, supervisor.name, "supervisor-session");
+    writeFileSync(join(env.home, JOBS_FILE), JSON.stringify({ version: 4, jobs: [
+      ...readStore(join(env.home, JOBS_FILE)),
       { id: "other", name: "claude-job-other", agent: "claude", status: "failed", supervisor: "other-session" },
     ] }));
     expect(await a.child.siblings.peers()).toEqual([{ name: "opencode-job-past", title: "Earlier task", agent: "opencode", status: "done", finishedAt: 123 }]);
@@ -472,7 +488,12 @@ describe("sibling job messaging", () => {
     await otherOwner.start();
     const a = await sibling("a", "codex", "session-a", true, ["opencode-job-b"]);
     const b = await sibling("b", "opencode", "session-b");
+    await supervisor.handoffSubagents({ to: otherOwner.name, jobs: [b.job.name] });
     await b.node.updateJob({ jobParent: otherOwner.name });
+    // Settle the separate, durable handoff notices before measuring just the
+    // quiet sibling observer copies created by the following send.
+    await until(() => otherOwner.unread().some(m => m.conversationId.startsWith("handoff-")) && supervisor.unread().some(m => m.conversationId.startsWith("handoff-")));
+    otherOwner.markRead(otherOwner.unread().map(m => m.id)); supervisor.markRead(supervisor.unread().map(m => m.id));
     const outsider = await sibling("outsider", "claude", "session-b");
     expect(await a.child.siblings.peers()).toEqual([{ name: b.job.name, title: "Task b", agent: "opencode", status: "running" }]);
     await expect(a.chat.send(outsider.job.name, "Not granted")).rejects.toThrow(/explicit send_to/);
@@ -485,7 +506,7 @@ describe("sibling job messaging", () => {
     expect(supervisor.unread().every(isSiblingNote)).toBe(true);
     await expect(b.chat.send(a.job.name, "No reciprocal grant", first.id)).rejects.toThrow(/explicit send_to/);
     await b.node.stop();
-    await expect.poll(() => a.chat.peers()).toEqual([]);
+    await expect.poll(() => a.chat.peers()).toEqual([expect.objectContaining({ name: b.job.name, status: "running" })]);
     const resumed = await sibling("b", "opencode", "session-b", true, [a.job.name]);
     await resumed.node.updateJob({ jobParent: otherOwner.name });
     const reply = (await resumed.chat.send(a.job.name, "Granted reply", first.id)).messages[0]!;
@@ -557,6 +578,26 @@ describe("sibling job messaging", () => {
     await expect(a.chat.send("opencode-job-missing", "Unknown job")).rejects.toThrow(/explicit send_to/);
   });
 
+  it.each(["claude", "opencode"] as const)("keeps a handed-off pair authorized with quiet %s observer mail", async agent => {
+    const a = await sibling("a", "codex"), b = await sibling("b", "opencode");
+    const observer = env.node(`${agent}-observer`, agent); await observer.start();
+    await supervisor.handoffSubagents({ to: observer.name, jobs: [a.job.name, b.job.name] });
+    await a.node.updateJob({ jobParent: observer.name }); await b.node.updateJob({ jobParent: observer.name });
+    await observer.refreshPending();
+    expect(observer.unread().some(m => m.conversationId.startsWith("handoff-"))).toBe(true);
+    observer.markRead(observer.unread().map(m => m.id));
+    expect(await a.chat.peers()).toContainEqual(expect.objectContaining({ name: b.job.name }));
+    const sent = (await a.chat.send(b.job.name, "Quiet observer copy")).messages[0]!;
+    await expect.poll(() => observer.unread()).toEqual([expect.objectContaining({ body: expect.stringContaining("Quiet observer copy") })]);
+    expect(observer.unread().every(isSiblingNote)).toBe(true);
+    const ctx = { agent, node: observer, home: env.home, cfg: { ...DEFAULT_CONFIG }, log: nullLogger, cwd: () => env.home, channelActive: () => true } as ServerContext;
+    expect(JSON.stringify(await buildHookResponse(ctx, { event: "UserPromptSubmit", sessionId: observer.currentSessionId, stopHookActive: false }))).not.toContain("Quiet observer copy");
+    expect(observer.unread()).toHaveLength(1);
+    expect((await a.node.messageReceipt(sent.id))[0]!.readAt).toBeNull();
+    const outsider = await sibling("outsider", "claude");
+    await expect(a.chat.send(outsider.job.name, "No grant")).rejects.toThrow(/explicit send_to/);
+  });
+
   it.each(["claude", "opencode"] as const)("keeps supervisor copies quiet for a %s notification client", async (agent) => {
     const a = await sibling("a", "codex");
     const b = await sibling("b", "opencode");
@@ -571,14 +612,58 @@ describe("sibling job messaging", () => {
     await client.connect(transport);
     try {
       await client.callTool({ name: "peers", arguments: {} });
+      const started = await client.callTool({ name: "hook_event", arguments: { event: "SessionStart", session_id: `observer-${agent}` } });
+      expect(started.isError).not.toBe(true);
+      // Hooks have a bounded response budget and may return while the real
+      // session update is still queued. Handoff needs the broker's published
+      // binding, not merely a successful tool response from that earlier turn.
+      let publication: Awaited<ReturnType<typeof supervisor.peers>>[number] | undefined;
+      try {
+        await expect.poll(async () => { publication = (await supervisor.peers()).find(p => p.name === name); return publication?.sessionId; }).toBe(`observer-${agent}`);
+      } catch (error) {
+        // Failure-only sanitized evidence, using the original poll's last reply.
+        // No extra RPC, sleep, notification drain or identity substitution.
+        try { console.error("Quiet observer publication diagnostics: " + JSON.stringify({ agent, hookError: started.isError === true,
+          emptyResponse: Array.isArray(started.content) && started.content.some((block: any) => block.type === "text" && typeof block.text === "string" && block.text.slice(0, 4096).trim() === "{}"),
+          peerSeen: Boolean(publication), session: publication?.sessionId === `observer-${agent}` ? "expected" : publication?.sessionId ? "other" : "missing",
+          peerPid: publication && Number.isSafeInteger(publication.pid) && publication.pid > 0 ? publication.pid : undefined,
+          hookEvents: hookPublicationEvents(env.home, publication?.pid),
+          admission: jobWaitSnapshot(env.home, [a.job.id, b.job.id]) })); } catch { /* Original failure wins. */ }
+        throw error;
+      }
+      // Keep the pair in the same authenticated supervisor family. Moving only
+      // A deliberately revokes its implicit sibling access to B.
+      const observer = (await supervisor.peers()).find(p => p.name === name)!;
+      expect(observer).toMatchObject({ agent, sessionId: `observer-${agent}` });
+      const handoff = await supervisor.handoffSubagents({ to: name, jobs: [a.job.name, b.job.name] });
       await a.node.updateJob({ jobParent: name });
+      await b.node.updateJob({ jobParent: name });
+      const handoffId = `${handoff.id}-inherited`, store = (supervisor as any).broker.store;
+      expect(store.byId(handoffId)).toMatchObject({ recipient: name, recipientNative: nativeOwner(observer),
+        recipientMailbox: { kind: "local", namespace: store.namespace }, body: expect.stringContaining("Inherited subagents") });
+      const notificationIds = () => notifications.map(n => {
+        const params = (n as { params: { message_id?: string; meta?: { message_id: string } } }).params;
+        return agent === "claude" ? params.meta?.message_id : params.message_id;
+      });
+      // Both wires attest the same actual handoff ID. Claude pushes the body
+      // and consumes it; opencode sends only an ID and requires an inbox read.
+      await expect.poll(notificationIds).toEqual([handoffId]);
+      if (agent === "claude") expect(JSON.stringify(notifications[0])).toContain("Inherited subagents");
+      else expect(JSON.stringify(await client.callTool({ name: "inbox", arguments: { id: handoffId, mark_read: true } }))).toContain("Inherited subagents");
+      await expect.poll(() => store.receipts(handoffId).find((r: { recipient: string }) => r.recipient === name)?.readAt).toBeTypeOf("number");
+      // Durable ACK follows channel write/explicit consumption. The subsequent
+      // MCP response is a wire barrier; retain all notifications and reject any
+      // unexpected or duplicate event instead of clearing a hidden backlog.
+      await client.callTool({ name: "peers", arguments: {} });
+      expect(notificationIds()).toEqual([handoffId]);
+      const settledNotifications = notifications.slice();
       await a.chat.send(b.job.name, "Quiet observer copy");
       await expect.poll(async () => JSON.stringify(await client.callTool({ name: "inbox", arguments: { mark_read: false } }))).toContain("Quiet observer copy");
-      expect(notifications).toEqual([]);
+      expect(notifications).toEqual(settledNotifications);
       const hook = await client.callTool({ name: "hook_event", arguments: { event: "UserPromptSubmit", session_id: `observer-${agent}` } });
       expect(JSON.stringify(hook)).not.toContain("Quiet observer copy");
       expect(JSON.stringify(await client.callTool({ name: "inbox", arguments: { mark_read: false } }))).toContain("Quiet observer copy");
-      expect(notifications).toEqual([]);
+      expect(notifications).toEqual(settledNotifications);
     } finally {
       await client.close();
     }
@@ -665,7 +750,7 @@ describe("sibling job messaging", () => {
     await supervisor.stop();
     await until(() => host.isBroker && a.node.isConnected && b.node.isConnected);
     await a.chat.send(b.job.name, "Offline handover");
-    const replacement = env.node("claude-supervisor");
+    const replacement = env.node("claude-supervisor", "claude", false, supervisor.currentSessionId!);
     await replacement.start();
     await until(() => replacement.unread().length === 1);
     expect(replacement.unread()[0]!.body).toContain("Offline handover");

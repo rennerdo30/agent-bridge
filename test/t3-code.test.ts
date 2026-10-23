@@ -441,7 +441,7 @@ it("registers explicit host tools in full-profile sessions and preserves depth/n
   vi.stubEnv("AGENT_BRIDGE_MCP_PROFILE", "full");
   const env = makeEnv(), r = replay();
   await r.host.capabilities();
-  const node = env.node("fixture-host", "claude");
+  const node = env.node("fixture-host", "claude", false, null);
   const cfg = loadConfig(env.home, "claude", nullLogger, {});
   const mcp = new McpServer({ name: "fixture-bridge", version: "1" }), client = new Client({ name: "fixture-host", version: "1" });
   const ctx: ServerContext = { agent: "claude", node, cfg, log: nullLogger, home: env.home, cwd: () => env.home, channelActive: () => false, t3Host: r.host };

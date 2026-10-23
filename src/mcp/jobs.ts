@@ -1,5 +1,6 @@
 import { canonicalProjectRoot, migrateProjectJobs } from "../core/project-identity.js";
-import { canControlJob } from "../core/job-ownership.js";
+import { canControlJob, primaryFor } from "../core/job-ownership.js";
+import { jobMailDraftDigest, makeJobMailGrant, type JobMailDraft } from "../core/job-mail-routing.js";
 import { confirmUsageAdmission, currentUsage, holdUsageSubmission, settleUsageAttempt, usageContinuationMessage, usageRefused } from "../core/usage.js";
 import { createHash, randomUUID } from "node:crypto";
 import { worktreeProcesses, worktreeProcessReport } from "../core/worktree-processes.js";
@@ -18,6 +19,7 @@ import { isPureAcknowledgement } from "../core/job-messaging.js";
 import type { Worktree } from "../core/worktree.js";
 import { assertWritableStore, backupPath, isRecord, JSON_STORE_VERSION, mergeStoreFields, readJsonStore, retainBackups, retentionLimit, writeJsonStore } from "../core/json-store.js";
 import { changedJobArgs, JOB_SETTING_KEYS, type JobSettings } from "./job-settings.js";
+import { ownershipFromKey, recipientKey } from "../core/recipient-ownership.js";
 import { assertStoreUpgrade } from "../core/store-compatibility.js";
 import { archiveJobs, readArchivedJobs, readArchivedJobSnapshot } from "../core/job-archive.js";
 import { indexedJobProjectionCurrent, readIndexedJobs } from "../core/job-archive-index.js";
@@ -35,6 +37,7 @@ import { refreshStorePeerIdentities } from "../core/store-compatibility.js";
 import { archivePendingJob, mergePendingJob, readPendingJobs, retainPendingJob, type PendingJobReceipt } from "../core/job-pending-journal.js";
 import { verifiedGoneJobOwners } from "../core/job-restoration.js";
 import { primeRunnerProcessIdentities } from "./job-host.js";
+import { hasUnsettledRunnerRetention } from "./runner-delivery-retention.js";
 
 const JOB_ID_LENGTH = 8;
 const PROMPT_PREVIEW_CHARS = 120;
@@ -54,7 +57,11 @@ export const DEFAULT_FOLLOW_UP = "Continue where you stopped and finish the task
 
 /** A delegated run's result, plus the folder it worked in (a worktree, for example). */
 export type RunResult = DelegateResult & { workdir?: string; worktree?: Worktree; status?: "done" | "failed" | "cancelled" };
-export interface HostedAdmission { signal: AbortSignal; isCurrent(): boolean }
+export interface HostedAdmission {
+  signal: AbortSignal; isCurrent(): boolean;
+  /** Synchronous notification immediately before the actual start/spec effect. Not admission authority. */
+  onStart?(): void;
+}
 /**
  * Runs a subagent turn; `job` is the job it belongs to (its name labels the run in the dashboard).
  * `hosted`, when given, first tries to start the turn in a detached job runner (see job-host.ts) instead.
@@ -94,6 +101,9 @@ export interface Job {
   queuedMessages?: string[];
   /** Append-only inline envelopes: the broker can recover delivery after executor/connection loss. */
   deliveryHistory?: BridgeMessage[];
+  /** Authenticated local producer evidence captured with a fresh durable report;
+   * not a message/wire flag and never inferred for historical drafts. */
+  reportRouting?: Record<string, JobMailDraft>;
   /** Paired PC hosting this job; remote PIDs must never be signalled locally. */
   remote?: { host: string; name: string };
   /** Blocking remote asks forward next-turn settings through the same authenticated control path. */
@@ -125,6 +135,8 @@ export interface Job {
   args?: Record<string, unknown>;
   /** Peer name of the session that started it. */
   owner?: string;
+  deliveryOwner?: string;
+  deliveryOwners?: Record<string, string>;
   /** Stable session identity used to restrict direct sibling chat, including after a server reload. */
   supervisor?: string;
   /** The subagent's own session (Codex thread, Claude session, opencode session) once known. */
@@ -176,6 +188,17 @@ export interface JobHostInfo {
 
 /** What a job runner reports about its job (its state file, written only by the runner). */
 export interface RunnerState {
+  /** Latest bounded delivery phase; diagnostic only, never admission/ACK proof. */
+  deliveryEvidence?: import("./delivery-evidence.js").DeliveryEvidence;
+  /** Diagnostic outcome; never a receipt, replay grant or ownership authority. */
+  finalDelivery?: import("zod").infer<typeof import("./delivery-evidence.js").finalDeliverySettlementSchema>;
+  /** Refused status notes are evidence-only immutable quarantine records. */
+  retainedDeliveryCount?: number;
+  /** Queue barrier and original evidence. No importer may turn these records into sends. */
+  pendingDeliveryRetention?: import("./runner-delivery-retention.js").PendingRunnerRetention[];
+  deliveryLedger?: import("./runner-delivery-retention.js").RunnerDeliveryLedger;
+  retainedRunnerInputs?: import("./runner-delivery-retention.js").RunnerInputIntent;
+  deliveryRetentionFailure?: "attempts-exhausted" | "shutdown" | "invalid-evidence";
   /** Admission provenance is independent of usage classification and error type. */
   usageSubmission?: import("../core/usage.js").UsageSubmissionReceipt;
   providerUsage?: import("../core/usage.js").ProviderUsageState;
@@ -224,6 +247,10 @@ export interface JobHost {
   send(job: Job, control: RunnerControl): void;
   /** Stop the runner and everything it started. */
   kill(job: Job): void;
+  /** Dead original generation only: evidence retention, never delegate startup. */
+  recoverRetention?(job: Job, signal?: AbortSignal, current?: () => boolean): Promise<void>;
+  /** Strict current/archive fence before registry reset or final fallback. */
+  assertTurnAdmission?(job: Job): void;
 }
 
 /** How often running runner-hosted jobs are checked (their result also triggers a check at once). */
@@ -411,6 +438,8 @@ export interface FollowUpResult {
  * job while maxJobs are running waits for a free slot (first come, first served) instead of being refused.
  */
 export interface JobCoordinator {
+  mailboxOwner?(): string | null;
+  prepareLocalMessage?(message: BridgeMessage): BridgeMessage;
   jobAuthority?(job: string): Promise<Job | null>;
   cwd?: string;
   controlInlineJob?(job: string, control: RunnerControl): Promise<unknown>;
@@ -459,6 +488,7 @@ export class JobManager {
   runners: JobHost | null = null;
   private hostTimer: NodeJS.Timeout | null = null;
   private readonly pendingHosts = new Map<string, AbortController>();
+  private readonly retainedRunnerRecoveries = new Map<string, Promise<void>>();
   private readonly explicitCancellations = new WeakSet<AbortController>();
   private restoreResume: ((agent: AgentKind, args: Record<string, unknown>) => Resume | undefined) | null = null;
   private rootWaitTimer: NodeJS.Timeout | null = null;
@@ -638,12 +668,13 @@ export class JobManager {
           const envelopes = [...(Array.isArray(old.deliveryHistory) ? old.deliveryHistory as BridgeMessage[] : [])];
           for (const message of j.deliveryHistory ?? []) if (!envelopes.some(existing => isDeepStrictEqual(existing, message))) envelopes.push(message);
           j.deliveryHistory = envelopes;
+          j.reportRouting = { ...j.reportRouting, ...(isRecord(old.reportRouting) ? old.reportRouting as Record<string, JobMailDraft> : {}) };
           // A late report from an earlier turn may add delivery evidence, but cannot roll back a continuation.
-          if (typeof old.startedAt === "number" && j.startedAt < old.startedAt) return { ...old, deliveryHistory: j.deliveryHistory } as unknown as StoredJob;
+          if (typeof old.startedAt === "number" && j.startedAt < old.startedAt) return { ...old, deliveryHistory: j.deliveryHistory, reportRouting: j.reportRouting } as unknown as StoredJob;
         }
         if (isRecord(old) && Array.isArray(old.ownershipHistory) && old.ownershipHistory.length) {
           // Durable authority wins over a stale manager's in-memory snapshot.
-          Object.assign(j, { owner: old.owner, supervisor: old.supervisor, rootSession: old.rootSession, rootName: old.rootName,
+          Object.assign(j, { owner: old.owner, deliveryOwner: old.deliveryOwner, deliveryOwners: old.deliveryOwners, supervisor: old.supervisor, rootSession: old.rootSession, rootName: old.rootName,
             parentJob: old.parentJob, ownershipHistory: old.ownershipHistory, masters: old.masters });
           if (j.startedAt === old.startedAt) j.executionOwner = old.executionOwner as string | undefined;
           j.args = { ...j.args, ...(isRecord(old.args) ? { send_to: old.args.send_to } : {}) };
@@ -770,7 +801,7 @@ export class JobManager {
       if (job && (s.executionOwner === this.node.name || mine)) {
         const executing = (this.running.get(s.id) === job || this.foreground.get(s.id) === job) &&
           (!job.executionOwner || job.executionOwner === this.node.name) || this.pendingHosts.get(s.id) === job.controller;
-        Object.assign(job, { owner: s.owner, supervisor: legacySupervisor === undefined ? s.supervisor : legacySupervisor, parentJob: s.parentJob, rootSession: s.rootSession, rootName: s.rootName,
+        Object.assign(job, { owner: s.owner, deliveryOwner: s.deliveryOwner, deliveryOwners: s.deliveryOwners, supervisor: legacySupervisor === undefined ? s.supervisor : legacySupervisor, parentJob: s.parentJob, rootSession: s.rootSession, rootName: s.rootName,
           ownershipHistory: s.ownershipHistory, executionOwner: s.executionOwner, masters: s.masters });
         if (!executing && !job.host) {
           Object.assign(job, s, legacySupervisor === undefined ? {} : { supervisor: legacySupervisor });
@@ -1231,7 +1262,7 @@ export class JobManager {
     const existing = this.history.get(saved.id);
     if (existing && (this.running.has(saved.id) || this.foreground.has(saved.id))) {
       // Durable authority may change during a live turn; recovered snapshots cannot replace its controller/facts.
-      Object.assign(existing, { owner: saved.owner, supervisor: saved.supervisor, parentJob: saved.parentJob, rootSession: saved.rootSession,
+      Object.assign(existing, { owner: saved.owner, deliveryOwner: saved.deliveryOwner, deliveryOwners: saved.deliveryOwners, supervisor: saved.supervisor, parentJob: saved.parentJob, rootSession: saved.rootSession,
         rootName: saved.rootName, ownershipHistory: saved.ownershipHistory, masters: saved.masters });
     } else if (existing) Object.assign(existing, saved, { sessionId: saved.sessionId ?? existing.sessionId, workdir: saved.workdir ?? existing.workdir, worktree: saved.worktree ?? existing.worktree });
     else this.history.set(saved.id, { ...saved, recoveredRecord: saved as unknown as Record<string, unknown>, controller: new AbortController(), progress: null, queue: [], resume: this.restoreResume?.(saved.agent, saved.args ?? {}) });
@@ -1293,7 +1324,7 @@ export class JobManager {
     // govern a request, including grants removed while asynchronous IO yielded.
     this.recheckSharedGrant(authority);
     if (durable && durable.startedAt > current.startedAt) return undefined;
-    if (durable) Object.assign(current, cloneJson({ owner: durable.owner, masters: durable.masters, ownershipHistory: durable.ownershipHistory,
+    if (durable) Object.assign(current, cloneJson({ owner: durable.owner, deliveryOwner: durable.deliveryOwner, deliveryOwners: durable.deliveryOwners, masters: durable.masters, ownershipHistory: durable.ownershipHistory,
       parentJob: durable.parentJob, ...(durable.supervisor !== undefined ? { supervisor: durable.supervisor } : {}),
       ...(durable.rootName !== undefined ? { rootName: durable.rootName } : {}), ...(durable.rootSession !== undefined ? { rootSession: durable.rootSession } : {}) }));
     if (!this.sharedGrants.has(current.id) && !permitted) return undefined;
@@ -1367,6 +1398,8 @@ export class JobManager {
       args,
       projectRoot: canonicalProjectRoot(typeof args?.cwd === "string" ? args.cwd : this.node.cwd ?? process.cwd()) ?? undefined,
       owner: this.node.name,
+      deliveryOwner: this.node.mailboxOwner?.() ?? undefined,
+      deliveryOwners: this.node.mailboxOwner?.() ? { [this.node.name]: this.node.mailboxOwner()! } : undefined,
       // Keep the first job's identity when hooks learn the session id later, or a server reload adopts it.
       supervisor: this.supervisorIdentity(),
       metadataVersion: DELEGATION_METADATA_VERSION,
@@ -1730,7 +1763,7 @@ export class JobManager {
       Object.assign(job, saved, { sessionId: saved.sessionId ?? job.sessionId, workdir: saved.workdir ?? job.workdir, worktree: saved.worktree ?? job.worktree });
       this.adoptRecoveredRunner(job);
     } else {
-      Object.assign(job, { owner: saved.owner, supervisor: saved.supervisor, masters: saved.masters, ownershipHistory: saved.ownershipHistory,
+      Object.assign(job, { owner: saved.owner, deliveryOwner: saved.deliveryOwner, deliveryOwners: saved.deliveryOwners, supervisor: saved.supervisor, masters: saved.masters, ownershipHistory: saved.ownershipHistory,
         rootSession: saved.rootSession, rootName: saved.rootName, parentJob: saved.parentJob });
       if (saved.cancellingTurn === job.startedAt) job.cancellingTurn = job.startedAt;
     }
@@ -1816,6 +1849,7 @@ export class JobManager {
 
   /** Claim the new generation durably BEFORE asynchronous detached startup can yield. */
   private claimTurn(job: Job): boolean {
+    if (!this.runnerTurnAdmitted(job)) return false;
     const initial = job.waitingForStart || job.status === "running" && !this.running.has(job.id);
     const reset = () => {
       const held = job.usagePendingHeld ? job.usagePendingControls ?? [] : [];
@@ -1851,6 +1885,7 @@ export class JobManager {
       if (saved && (saved.startedAt > job.startedAt || saved.status === "running" && !interrupted && (!initial || saved.host || saved.executionOwner))) return false;
       if (saved?.host && this.runners?.alive({ ...job, host: saved.host }, this.runners.state(job))) return false;
       if (saved && !this.lookupAllowed(job)) return false;
+      if (!this.runnerTurnAdmitted(job)) return false;
       job.sessionId ??= saved?.sessionId ?? null;
       job.workdir ??= saved?.workdir ?? null;
       job.worktree ??= saved?.worktree ?? null;
@@ -1891,6 +1926,17 @@ export class JobManager {
       job.queue = pending;
       return true;
     } finally { release(); }
+  }
+
+  private runnerTurnAdmitted(job: Job): boolean {
+    try {
+      this.runners?.assertTurnAdmission?.(job);
+      return !this.runners || !hasUnsettledRunnerRetention(this.runners.state(job));
+    } catch (error) {
+      if (!["RUNNER_RETENTION_UNSETTLED", "STORE_OFFLINE_REQUIRED", "STORE_UPGRADE_DEFERRED", "protocol_mismatch"].includes((error as {code?: string}).code ?? "")) throw error;
+      job.progress = "delivery unsettled: original runner/archive evidence requires owner-coordinated recovery";
+      return false;
+    }
   }
 
   private launchClaimed(job: Job, run: Run): void {
@@ -2121,6 +2167,23 @@ export class JobManager {
     const durable = this.storePath && readStoredJobSnapshot(this.storePath, job.id, job.name, this.log);
     if (durable) confirmUsageAdmission(job, durable.usageAdmittedControls ?? []);
     const observed = final ?? this.runners?.state(job);
+    if (hasUnsettledRunnerRetention(observed)) {
+      // A dead runner with an accepted, unretained predecessor is NOT drained.
+      // Keep its exact report/ID and evidence in runner storage; neither fallback
+      // posting nor a queued continuation may overtake the retention barrier.
+      const progress = "delivery unsettled: retained runner evidence requires recovery";
+      if (job.progress !== progress) { job.progress = progress; this.schedulePersist(); }
+      if (this.runners?.recoverRetention && !job.remote && !this.retainedRunnerRecoveries.has(job.id)) {
+        const generation = job.startedAt, controller = job.controller;
+        const current = () => Boolean(!this.dormant && this.running.get(job.id) === job && job.startedAt === generation && job.controller === controller && this.lookupAllowed(job));
+        const work = this.runners.recoverRetention(job, controller.signal, current).catch(() => {
+          this.log.warn("runner evidence recovery remains unsettled", { job: job.id });
+        }).finally(() => { if (this.retainedRunnerRecoveries.get(job.id) === work) this.retainedRunnerRecoveries.delete(job.id); });
+        this.retainedRunnerRecoveries.set(job.id, work);
+      }
+      return;
+    }
+    if (!this.runnerTurnAdmitted(job)) return;
     const receipt = currentUsage(job, observed?.usageSubmission) ? observed?.usageSubmission : undefined;
     const legacyRetained = currentUsage(job, observed?.providerUsage) ? [...observed?.providerUsage?.retainedControls ?? []] : [];
     if (receipt) confirmUsageAdmission(job, receipt.admitted);
@@ -2711,7 +2774,7 @@ export class JobManager {
   }
 
   private post(job: Job, body: string, replyTo: string | null = null, suffix = "", id: string = randomUUID()): string {
-    const m: BridgeMessage = {
+    let m: BridgeMessage = {
       id,
       from: { id: `job:${job.id}`, name: job.name, agent: job.agent },
       to: job.owner ?? this.node.name,
@@ -2723,8 +2786,34 @@ export class JobManager {
       createdAt: Date.now(),
       readAt: null,
     };
+    if (job.deliveryOwner) m = { ...m, ...ownershipFromKey(job.deliveryOwner) };
+    else if (m.recipient === this.node.name && this.node.prepareLocalMessage) m = this.node.prepareLocalMessage(m);
+    const creator = this.node.mailboxOwner?.(), originalOwner = recipientKey(m.recipientFrontend, m.recipientNative);
+    // This local producer reports cancellation/status of its remote proxy. It
+    // has no local native job grant: retain the authenticated supervisor's
+    // exact original copy and namespace before the first persistence/dispatch.
+    if (typeof job.args?.host === "string" && job.args.host && creator && originalOwner === creator &&
+        m.recipient === this.node.name && this.node.prepareLocalMessage) {
+      m = this.node.prepareLocalMessage(m);
+      m = { ...m, senderOwner: creator, senderMailbox: m.recipientMailbox };
+    }
+    if (creator && originalOwner && this.node.prepareLocalMessage &&
+        [job.deliveryOwner, ...Object.values(job.deliveryOwners ?? {})].includes(creator)) {
+      const own = this.node.prepareLocalMessage({ ...m, recipient: this.node.name, recipientFrontend: undefined, recipientNative: undefined, recipientMailbox: undefined });
+      const project = canonicalProjectRoot(job.projectRoot ?? job.workdir ?? this.node.cwd ?? process.cwd());
+      const parent = job.parentJob && this.storePath ? readStoredJob(this.storePath, "", job.parentJob, this.log) : undefined;
+      const grant = project && makeJobMailGrant(job as unknown as Record<string, unknown>, creator, project, primaryFor(job as unknown as Record<string, unknown>), originalOwner, parent as unknown as Record<string, unknown> | undefined);
+      if (grant && own.recipientMailbox?.kind === "local") {
+        m = { ...m, senderOwner: `native:${grant.principal}`, senderMailbox: own.recipientMailbox, recipientMailbox: own.recipientMailbox };
+        job.reportRouting ??= {};
+        job.reportRouting[m.id] ??= { namespace: own.recipientMailbox.namespace, grant, digest: jobMailDraftDigest(m) };
+      }
+    }
     // AB-380: the original is what is stored durably (its flush sends a stub). The local path keeps no other copy,
     // so it gets a stub only once the full text is confirmed written to a file.
+    // Compare the exact JSON wire/persistence representation on replay. Optional
+    // own-inbox fields may be undefined in memory and absent after JSON storage.
+    m = JSON.parse(JSON.stringify(m)) as BridgeMessage;
     if ((job.ownershipHistory?.length || (this.storePath && !this.lineage)) && this.node.reportInlineJob) {
       job.deliveryHistory = [...(job.deliveryHistory ?? []), m];
       this.pendingReports.set(m.id, { jobId: job.id, message: m });
@@ -2793,7 +2882,7 @@ function executorOffline(err: unknown): boolean {
   return (err as { code?: string } | null)?.code === "unknown_target";
 }
 
-type StoredJob = Pick<Job, "usageRunId" | "usagePendingControls" | "usagePendingHeld" | "usageAdmittedControls" | "providerUsage" | "executionPid" | "cancellingTurn" | "continuationFailure" | "waitingForStart" | "projectRoot" | "deliveryHistory" | "ownershipHistory" | "masters" | "executionOwner" | "queuedMessages" | "forwarded" | "id" | "name" | "agent" | "model" | "prompt" | "startedAt" | "status" | "pauseReason" | "pausedAt" | "pausePending" | "resumeRequested" | "sessionId" | "workdir" | "worktree" | "args" | "owner" | "supervisor" | "finishedAt" | "resultStored" | "reportId" | "host" | "remote" | "metadataVersion" | "parentJob" | "rootSession" | "rootName" | "percent" | "progressNote" | "etaAt" | "etaReportedAt">;
+type StoredJob = Pick<Job, "reportRouting" | "deliveryOwner" | "deliveryOwners" | "usageRunId" | "usagePendingControls" | "usagePendingHeld" | "usageAdmittedControls" | "providerUsage" | "executionPid" | "cancellingTurn" | "continuationFailure" | "waitingForStart" | "projectRoot" | "deliveryHistory" | "ownershipHistory" | "masters" | "executionOwner" | "queuedMessages" | "forwarded" | "id" | "name" | "agent" | "model" | "prompt" | "startedAt" | "status" | "pauseReason" | "pausedAt" | "pausePending" | "resumeRequested" | "sessionId" | "workdir" | "worktree" | "args" | "owner" | "supervisor" | "finishedAt" | "resultStored" | "reportId" | "host" | "remote" | "metadataVersion" | "parentJob" | "rootSession" | "rootName" | "percent" | "progressNote" | "etaAt" | "etaReportedAt">;
 
 /** Unknown fields survive upgrades; known next-turn settings also honor deletion. */
 function mergeJobFields(previous: Record<string, unknown>, next: Record<string, unknown>): Record<string, unknown> {
@@ -2833,6 +2922,8 @@ function toStored(j: Job): StoredJob {
     worktree: j.worktree,
     args: j.args,
     owner: j.owner,
+    deliveryOwner: j.deliveryOwner,
+    deliveryOwners: j.deliveryOwners,
     ownershipHistory: j.ownershipHistory,
     masters: j.masters,
     projectRoot: j.projectRoot,
@@ -2841,6 +2932,7 @@ function toStored(j: Job): StoredJob {
     queuedMessages: [...j.queue],
     continuationFailure: j.continuationFailure,
     deliveryHistory: j.deliveryHistory,
+    reportRouting: j.reportRouting,
     forwarded: j.forwarded,
     supervisor: j.supervisor,
     metadataVersion: j.metadataVersion,

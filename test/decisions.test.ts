@@ -9,7 +9,8 @@ import { BridgeClient } from "../src/core/client.js";
 import { DEFAULT_CONFIG } from "../src/core/config.js";
 import { DECISION_MESSAGE_HOP, decisionApplies, formatDecisionSummary, normalizeProject } from "../src/core/decisions.js";
 import { nullLogger } from "../src/core/logger.js";
-import { MessageStore, SQLITE_STORE_VERSION } from "../src/core/store.js";
+import { MessageStore, SQLITE_STORE_VERSION, migrateMessageSchema } from "../src/core/store.js";
+import { fixturePeer, ownedMessage, unreadOwned } from "./owned-mail.js";
 import { buildHookResponse } from "../src/mcp/hooks.js";
 import { makeEnv, until, type TestEnv } from "./helpers.js";
 import { withDirectoryAlias } from "./directory-alias-fixture.js";
@@ -39,6 +40,7 @@ describe("decision schema migrations", () => {
     }
     old.exec("PRAGMA journal_mode = WAL");
     old.exec("UPDATE messages SET body = 'committed WAL mail'");
+    if (version === 2) migrateMessageSchema(old, env.db, true, nullLogger, { kind: "offline-isolated", home: env.home });
     const store = new MessageStore(env.db, nullLogger);
     try {
       expect(store.byId("legacy")).toMatchObject({ body: "committed WAL mail", readAt: 2 });
@@ -87,8 +89,8 @@ describe("decision schema migrations", () => {
   it("rolls back a failed v3 migration without losing earlier tables or their backup", () => {
     const old = new DatabaseSync(env.db);
     old.exec(`${EARLIER_SCHEMA} ${EARLIER_ARCHIVE} CREATE TABLE decisions (body TEXT); INSERT INTO decisions VALUES ('keep me'); PRAGMA user_version = 2;`);
-    old.close();
-    expect(() => new MessageStore(env.db, nullLogger)).toThrow();
+    try { expect(() => migrateMessageSchema(old, env.db, true, nullLogger, { kind: "offline-isolated", home: env.home })).toThrow(); }
+    finally { old.close(); }
     const check = new DatabaseSync(env.db, { readOnly: true });
     try {
       expect(check.prepare("PRAGMA user_version").get()!.user_version).toBe(2);
@@ -185,18 +187,18 @@ describe("shared decision broker", () => {
 
   it("keeps one durable notification per revision and session through identity discovery and reload", async () => {
     const owner = env.node("claude-owner");
-    const first = env.node("codex-peer", "codex");
+    const first = env.node("codex-peer", "codex", false, "stable-session");
     await owner.start(); await first.start();
     await owner.decide({ topic: "render", text: "Keep detail", scope: "all" });
     await until(() => first.unread().length === 1);
     await first.setSessionId("stable-session");
     first.markRead(first.unread().map((m) => m.id));
     await first.stop();
-    const reload = env.node("codex-peer", "codex");
+    const reload = env.node("codex-peer", "codex", false, "stable-session");
     await reload.start(); await reload.setSessionId("stable-session");
     await reload.relocate(join(env.home, "elsewhere"));
     expect(reload.unread()).toEqual([]);
-    const fresh = env.node("codex-fresh", "codex");
+    const fresh = env.node("codex-fresh", "codex", false, "fresh-session");
     await fresh.start(); await fresh.setSessionId("fresh-session");
     await until(() => fresh.unread().length === 1);
     const update = await owner.decide({ topic: "render", text: "Keep near detail", scope: "all" });
@@ -234,7 +236,7 @@ describe("shared decision broker", () => {
     const db = new DatabaseSync(env.db);
     try {
       const decision = store.decisions.record({ topic: "atomic", text: "Preserve data", scope: "all" }, AUTHOR, 1);
-      const message = { id: "notify", from: AUTHOR, to: "peer", recipient: "peer", conversationId: `decision-${decision.id}`, replyTo: null, hop: DECISION_MESSAGE_HOP, body: decision.text, createdAt: 2, readAt: null };
+      const peer = fixturePeer(store, "peer"), message = ownedMessage(store, peer, { id: "notify", from: AUTHOR, to: "peer", recipient: "peer", conversationId: `decision-${decision.id}`, replyTo: null, hop: DECISION_MESSAGE_HOP, body: decision.text, createdAt: 2, readAt: null });
       db.exec("CREATE TRIGGER fail_message BEFORE INSERT ON messages BEGIN SELECT RAISE(ABORT, 'cannot insert'); END;");
       expect(() => store.decisions.enqueue(decision, "session", message, () => store.insert(message))).toThrow("cannot insert");
       expect(db.prepare("SELECT COUNT(*) AS n FROM decision_deliveries").get()!.n).toBe(0);
@@ -242,7 +244,7 @@ describe("shared decision broker", () => {
       db.exec("DROP TRIGGER fail_message");
       expect(store.decisions.enqueue(decision, "session", message, () => store.insert(message))).toBe(true);
       expect(store.decisions.enqueue(decision, "session", message, () => store.insert(message))).toBe(false);
-      expect(store.unread("peer", 10)).toHaveLength(1);
+      expect(unreadOwned(store, peer, 10)).toEqual([message]);
     } finally { db.close(); store.close(); }
   });
 });

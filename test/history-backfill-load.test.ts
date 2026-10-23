@@ -25,8 +25,9 @@ it("keeps sends and ack below 1s p95 with zero lock failures during large CLI ba
   let history: DatabaseSync | undefined;
   try {
     await broker.listen();
-    const worker = (broker as unknown as {historyBackground: HistoryBackground}).historyBackground;
-    await until(() => worker.status().paused,2*HISTORY_TICK_MS);
+    let worker: HistoryBackground | null = null;
+    await until(() => { worker = (broker as unknown as {historyBackground: HistoryBackground | null}).historyBackground; return worker?.status().paused === true; },2*HISTORY_TICK_MS);
+    const admittedWorker = worker!; // The serving turn and config pause share the original bound.
     // Build only the synthetic empty store while its worker is config-paused.
     // This forces schema readiness to precede all durable transcript ingestion.
     await migrateHistoryStore(env.db,store.history.storageDatabase);
@@ -40,7 +41,7 @@ it("keeps sends and ack below 1s p95 with zero lock failures during large CLI ba
     // Direct fixture SQL cannot wake the worker. Enable ingestion and await
     // an actual batch before starting the traffic clock.
     writeFileSync(join(env.home,"config.json"),JSON.stringify({history:{ingest:true}}));
-    await worker.tick();
+    await admittedWorker.tick();
     await until(() => backfillBytes(history!,fixture)>0,HISTORY_TICK_MS);
     for (const name of ["sender","receiver"]) {
       const client = await BridgeClient.connect(env.pipe,log); clients.push(client);
@@ -81,14 +82,15 @@ it("monitors a config-disabled migration and resumes it when ingestion is enable
   let history: DatabaseSync | undefined;
   try {
     await broker.listen();
-    const worker = (broker as unknown as {historyBackground: HistoryBackground}).historyBackground;
-    expect(worker).not.toBeNull();
+    let worker: HistoryBackground | null = null;
+    await until(() => { worker = (broker as unknown as {historyBackground: HistoryBackground | null}).historyBackground; return worker?.status().paused === true; },5000);
+    const admittedWorker = worker!;
     history = new DatabaseSync(historyDbPath(env.db),{timeout:100});
-    await until(() => worker.status().paused,5000);
+    expect(admittedWorker.status().paused).toBe(true);
     expect(history.prepare("SELECT * FROM history_migration").get()).toBeUndefined();
     writeFileSync(join(env.home,"config.json"),JSON.stringify({history:{ingest:true}}));
     await until(() => historyReady(history!),10000);
-    await until(() => worker.status().phase === "verified",5000);
-    expect(worker.status()).toMatchObject({percent:100,paused:false,etaSeconds:0});
+    await until(() => admittedWorker.status().phase === "verified",5000);
+    expect(admittedWorker.status()).toMatchObject({percent:100,paused:false,etaSeconds:0});
   } finally { history?.close(); await broker.close(); await env.cleanup(); }
 });

@@ -1,3 +1,4 @@
+import { assertRunnerArchiveAdmission, readRunnerStateRecord, runnerLedgerNamespace } from "../core/runner-store.js";
 import { ProjectGroups } from "../core/project-groups.js";
 import { worktreeProcesses, worktreeProcessReport } from "../core/worktree-processes.js";
 import { canControlJob } from "../core/job-ownership.js";
@@ -13,13 +14,13 @@ import { failureCause } from "../core/delegate.js";
 import { createLogger } from "../core/logger.js";
 import { BridgeNode } from "../core/node.js";
 import { resolveDbPath, resolvePipePath } from "../core/paths.js";
-import { quarantineMessage } from "../core/oversize.js";
+import { quarantineMessage, quarantineTextAsync } from "../core/oversize.js";
 import { loadOrCreateToken } from "../core/token.js";
 import { ACK_CONVERSATION_SUFFIX, QUESTION_CONVERSATION_SUFFIX, SIBLING_CONVERSATION_PREFIX, type BridgeMessage, type SendResult } from "../core/protocol.js";
 import type { ParentRoute } from "../core/parent-link.js";
 import { isPureAcknowledgement } from "../core/job-messaging.js";
 import { resumeArgs, runDelegate, type JobSink, type RunContext } from "./delegate-run.js";
-import { CONTROL_CONVERSATION_PREFIX, JOB_PEER_PREFIX, RUNNER_HEARTBEAT_MS, writeRunnerState, type RunnerSpec } from "./job-host.js";
+import { CONTROL_CONVERSATION_PREFIX, JOB_PEER_PREFIX, RUNNER_HEARTBEAT_MS, readRunnerState, writeRunnerState, type RunnerSpec } from "./job-host.js";
 import { jobReport, NOTE_CONVERSATION_SUFFIX, PAUSE_HELD_NOTE, PAUSE_RACE_NOTE, pauseReasonText, QUEUED_FOLLOW_UP_NOTE, sessionOfError, waitForApproval, type Job, type RunnerControl, type RunnerState } from "./jobs.js";
 import { changedJobArgs } from "./job-settings.js";
 import { processCleanupReport, establishWindowsJobScope, type WindowsJobScope } from "../core/windows-job-scope.js";
@@ -30,12 +31,16 @@ import { acquireStartup } from "../core/startup-admission.js";
 import { refreshStorePeerIdentities } from "../core/store-compatibility.js";
 import { guardRunnerErrors } from "./job-runner-errors.js";
 import { configurePathDisplay } from "../core/display-paths.js";
-import { deliverFinalResult, PERMANENT_DELIVERY_CODES } from "./final-result.js";
+import { compatibleDeliveryHandover, deliverFinalResult, permanentDeliveryRefusal, PERMANENT_DELIVERY_CODES } from "./final-result.js";
+import { deliveryFailure, type DeliveryEvidence } from "./delivery-evidence.js";
+import { hasUnsettledRunnerRetention, projectRunnerInputs, runnerInputBatches, retainRunnerDelivery, runnerLedgerPrincipal, RunnerRetentionUnsettled, RUNNER_LEDGER_MAX_BYTES, RUNNER_LEDGER_MAX_ITEMS, type PendingRunnerRetention, type RunnerDeliveryLedger, type RunnerInputBatch } from "./runner-delivery-retention.js";
 
 /** Delivering a message to the session: tries for several minutes (the bridge may be changing hands, or no session hosts it). */
 const SEND_ATTEMPTS = 30;
 /** deliverFinalResult retries a final result itself, with backoff, and then leaves it to the session fallback. */
 const FINAL_SEND_ATTEMPTS = 1;
+/** Node latches these compatibility refusals; retries cannot heal that connection. */
+const NOTE_TERMINAL_CODES: ReadonlySet<string> = new Set(["protocol_mismatch"]);
 const SEND_RETRY_MAX_MS = 10_000;
 /** Progress lines come fast: the state file is written at most this often for them. */
 const PROGRESS_SAVE_MS = 1_000;
@@ -70,7 +75,11 @@ export async function publishInitialRunnerState(spec: Pick<RunnerSpec, "home" | 
       try {
         // Another runner can publish presence after the asynchronous scan. Keep
         // the compatibility guard authoritative and reverify rather than exit.
-        writeRunnerState(spec.home, spec.job.id, { pid: process.pid, peer: spec.job.name, status: "running", updatedAt: Date.now(), progress: "queued: runner startup admission" });
+        // The actual writer checks existing pending state under its storage
+        // boundary. An early convenience read can create metadata/cache absence
+        // before a newly published reader reaches that first guarded write.
+        writeRunnerState(spec.home, spec.job.id, { pid: process.pid, peer: spec.job.name,
+          status: "running", updatedAt: Date.now(), progress: "queued: runner startup admission" }, true);
         return;
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "STORE_UPGRADE_DEFERRED") throw error;
@@ -152,7 +161,27 @@ export async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: Wi
   /** The final report is decided: messages arriving now are left to the session (it continues the job). */
   let closing = false;
 
+  const previous = readRunnerStateRecord(home, job.id) as unknown as RunnerState | null;
+  // Only recover evidence. A restart must not regenerate a note/final UUID or
+  // execute a new provider turn while an original accepted item is unsettled.
+  const recoveringRetention = hasUnsettledRunnerRetention(previous);
+  if (recoveringRetention) {
+    log.error("Original runner generation requires owned evidence recovery before admission");
+    return 1;
+  }
+  assertRunnerArchiveAdmission(home, job.id);
   let extra: Partial<RunnerState> = { status: "running" };
+  const pendingRetention = new Map<string, PendingRunnerRetention>();
+  const shutdown = new AbortController();
+  let ledger: RunnerDeliveryLedger = { version: 1, namespace: runnerLedgerNamespace(home, true), generation: randomUUID(), job: job.id, principal: runnerLedgerPrincipal(spec), entries: [] };
+  extra.deliveryLedger = ledger;
+  let finalQueued = false;
+  const deliveryEvidence = (kind: DeliveryEvidence["kind"], stage: DeliveryEvidence["stage"], messageId: string, attempt = 1, error?: unknown) => {
+    extra.deliveryEvidence = { kind, stage, messageId, at: Date.now(), attempt, finalQueued, ...(error ? deliveryFailure(error) : {}) };
+    // The ordinary heartbeat retains this even if a later busy log tail rolls
+    // away. No extra writer/lease on a delivery hot path and no payload/proof.
+    try { log.debug("job delivery evidence", extra.deliveryEvidence); } catch { /* Evidence never changes delivery. */ }
+  };
   const save = (patch: Partial<RunnerState> = {}, required = false) => {
     extra = { ...extra, ...patch };
     try {
@@ -183,6 +212,22 @@ export async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: Wi
       if (required) throw err;
     }
   };
+  const inputs = () => runnerInputBatches(extra.retainedRunnerInputs);
+  const saveInputs = (batches: RunnerInputBatch[], patch: Partial<RunnerState> = {}) => {
+    const retainedRunnerInputs = projectRunnerInputs(ledger.generation, batches);
+    if (batches.length > 128 || Buffer.byteLength(JSON.stringify(retainedRunnerInputs)) > RUNNER_LEDGER_MAX_BYTES)
+      throw new Error("Runner input backpressure; original control remains unread in its owned mailbox");
+    save({ ...patch, retainedRunnerInputs }, true);
+  };
+  // Some in-process providers enqueue directly. Capture that owned queue before
+  // admitting it too; real wire controls capture each immutable batch at ACK.
+  const captureQueuedInputs = () => {
+    const batches = inputs(), pending = batches.filter(b => b.phase === "pending");
+    if (JSON.stringify(pending.flatMap(b => b.bodies)) === JSON.stringify(job.queue) &&
+        JSON.stringify(pending.flatMap(b => b.controls)) === JSON.stringify(job.usageQueuedControls ?? [])) return;
+    if (pending.length) throw new RunnerRetentionUnsettled("invalid-evidence");
+    saveInputs([...batches, { batch: randomUUID(), generation: ledger.generation, phase: "pending", bodies: [...job.queue], controls: [...job.usageQueuedControls ?? []] }]);
+  };
 
   const node = new BridgeNode({
     pipePath: resolvePipePath(home),
@@ -206,32 +251,113 @@ export async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: Wi
     canHostBroker: false,
     log,
   });
+  // Recovery must never republish the old process's creation identity as ours.
+  delete extra.identity; delete extra.pid; delete extra.peer; delete extra.updatedAt;
   save();
   const heartbeat = setInterval(() => save(), RUNNER_HEARTBEAT_MS);
   log.info("job runner started", { pid: process.pid, target, owner });
 
+  const retain = async (item: PendingRunnerRetention) => {
+    pendingRetention.set(item.messageId, item);
+    const count = extra.retainedDeliveryCount ?? 0;
+    await retainRunnerDelivery(async () => {
+      // A separate durable pending copy protects a crash between fsync/rename
+      // and confirmation. Original bytes/UUID/intent are never reconstructed.
+      save({ pendingDeliveryRetention: [...pendingRetention.values()], deliveryRetentionFailure: undefined }, true);
+      await quarantineTextAsync(home, item.messageId, item.record, () => {
+      const beforeLedger = ledger;
+      const nextLedger = { ...ledger, entries: ledger.entries.filter(entry => entry.messageId !== item.messageId) };
+      try {
+        save({ pendingDeliveryRetention: [...pendingRetention.values()].filter(other => other !== item),
+          deliveryLedger: nextLedger,
+          retainedDeliveryCount: Math.min(65_535, count + 1), deliveryRetentionFailure: undefined }, true);
+      } catch (error) {
+        extra.pendingDeliveryRetention = [...pendingRetention.values()]; extra.retainedDeliveryCount = count;
+        extra.deliveryLedger = beforeLedger;
+        throw error;
+      }
+      ledger = nextLedger;
+      pendingRetention.delete(item.messageId);
+      });
+    }, shutdown.signal, ms => new Promise<void>((resolve, reject) => {
+      if (shutdown.signal.aborted) { reject(new RunnerRetentionUnsettled("shutdown")); return; }
+      const abort = () => { clearTimeout(timer); reject(new RunnerRetentionUnsettled("shutdown")); };
+      const timer = setTimeout(() => { shutdown.signal.removeEventListener("abort", abort); resolve(); }, ms);
+      shutdown.signal.addEventListener("abort", abort, { once: true });
+    }));
+  };
+
   // Messages to the session, in order. Each is tried until the bridge takes it (the session may be offline:
   // then it waits in the store for the session's next server).
-  const deliver = async (body: string, replyTo: string | null, note = false, key?: string, question = false, final = false): Promise<SendResult | null> => {
+  const prepare = (body: string, replyTo: string | null, note = false, key?: string, question = false, final = false) => {
     // One key for all attempts: a send that timed out here may still be queued at a slow broker.
     const dedupeKey = key ?? randomUUID();
+    const intendedOwner = owner, originalBody = body;
+    const kind: DeliveryEvidence["kind"] = final ? "final" : question ? "question" : note ? "note" : "message";
+    const terminalCodes = final ? PERMANENT_DELIVERY_CODES : note && !question ? NOTE_TERMINAL_CODES : undefined;
+    const messageId = final && dedupeKey.startsWith(COMPLETION_DEDUPE_PREFIX) ? completionMessageId(`job:${job.id}`, dedupeKey.slice(COMPLETION_DEDUPE_PREFIX.length)) : completionMessageId(`send:${node.name}`, dedupeKey);
     // AB-380: a body over the message limit can never be sent: once its full text is in a file, send a stub.
     body = quarantineMessage(home, { id: dedupeKey, body }).body;
+    const suffix = isPureAcknowledgement(body) ? ACK_CONVERSATION_SUFFIX : question ? QUESTION_CONVERSATION_SUFFIX : note ? NOTE_CONVERSATION_SUFFIX : "";
+    const conversationId = `job-${job.id}${suffix}`;
+    const item = { messageId, record: JSON.stringify({ version: 1, kind: "accepted-runner-delivery", authority: "evidence-only-no-replay", generation: ledger.generation, namespace: ledger.namespace, senderName: node.name,
+      job: job.id, intendedSender: { kind: "job", agent: job.agent, id: `job:${job.id}` }, to: intendedOwner, attemptedTo: intendedOwner,
+      body: originalBody, wireBody: body, conversationId, replyTo, note, question, final, dedupeKey, messageId, supervisor: spec.job.supervisor ?? null,
+      parentJob: spec.job.parentJob ?? null, rootSession: spec.job.rootSession ?? null }) };
+    const existing = ledger.entries.find(entry => entry.messageId === messageId);
+    if (existing && existing.record !== item.record) throw new RunnerRetentionUnsettled("invalid-evidence");
+    // Admission is synchronous and durable before returning a queue promise.
+    // Reserve room for the terminal result; rejected backpressure is not queued.
+    if (!existing) {
+      const bytes = ledger.entries.reduce((n, entry) => n + Buffer.byteLength(entry.record), 0) + Buffer.byteLength(item.record);
+      if (ledger.entries.length >= RUNNER_LEDGER_MAX_ITEMS + (final ? 1 : 0) || bytes > RUNNER_LEDGER_MAX_BYTES - (final ? 0 : 2 * 1024 * 1024))
+        throw Object.assign(new Error("Runner delivery admission backpressure; item was not accepted, caller retains its bytes"), { code: "RUNNER_DELIVERY_BACKPRESSURE" });
+      ledger = { ...ledger, entries: [...ledger.entries, item] };
+    }
+    let admissionError: RunnerRetentionUnsettled | undefined;
+    try { save({ deliveryLedger: ledger }, true); } catch { admissionError = new RunnerRetentionUnsettled("attempts-exhausted"); }
+    return { body, replyTo, note, question, final, kind, messageId, dedupeKey, conversationId, intendedOwner, item, terminalCodes, admissionError };
+  };
+  const complete = (item: PendingRunnerRetention) => {
+    const before = ledger;
+    const next = { ...ledger, entries: ledger.entries.filter(entry => entry.messageId !== item.messageId) };
+    try { save({ deliveryLedger: next }, true); ledger = next; }
+    catch { extra.deliveryLedger = before; throw new RunnerRetentionUnsettled("attempts-exhausted"); }
+  };
+  const deliver = async (prepared: ReturnType<typeof prepare>): Promise<SendResult | null> => {
+    const { body, replyTo, note, question, final, kind, messageId, dedupeKey, conversationId, intendedOwner, item, terminalCodes, admissionError } = prepared;
+    if (admissionError) throw admissionError;
+    deliveryEvidence(kind, "sending", messageId);
     // deliverFinalResult retries a final result with bounded attempts; a permanent refusal starts the session fallback at once.
     return deliverWithRetry(() => {
       // A retry may cross a handoff or reload. Routing changes never replace the active delegate.
       refreshOwner();
       // A question is marked so the broker can route it to the project main while the parent is offline (AB-249).
-      const suffix = isPureAcknowledgement(body) ? ACK_CONVERSATION_SUFFIX : question ? QUESTION_CONVERSATION_SUFFIX : note ? NOTE_CONVERSATION_SUFFIX : "";
-      return node.send({ to: owner, body, conversationId: `job-${job.id}${suffix}`, ...(replyTo ? { replyTo } : {}), dedupeKey }, { quiet: true });
-    }, log, owner, final ? FINAL_SEND_ATTEMPTS : SEND_ATTEMPTS, final ? PERMANENT_DELIVERY_CODES : undefined);
+      return node.send({ to: intendedOwner, body, conversationId, ...(replyTo ? { replyTo } : {}), dedupeKey }, { quiet: true });
+    }, log, owner, final ? FINAL_SEND_ATTEMPTS : SEND_ATTEMPTS, terminalCodes,
+    (attempt, error) => deliveryEvidence(kind, (final ? permanentDeliveryRefusal(error) : note && !question && (error as { code?: string })?.code === "protocol_mismatch" && !compatibleDeliveryHandover(error)) ? "refused" : "retrying", messageId, attempt, error))
+      .catch(async error => {
+        if (error instanceof RunnerRetentionUnsettled) throw error;
+        // An exact-version/attestation refusal cannot heal by retrying this
+        // connection. Preserve accepted bytes and original intent before letting
+        // the final settle. This record grants NO replay or new recipient rights.
+        if (final) complete(item); else await retain(item);
+        if (final || !note || question || (error as { code?: string })?.code !== "protocol_mismatch") throw error;
+        return null;
+      })
+      .then(async result => {
+        if (result !== null && (!result || !Array.isArray(result.messages))) throw new RunnerRetentionUnsettled("invalid-evidence");
+        if (result?.messages.length) { complete(item); deliveryEvidence(kind, "stored", messageId); }
+        else if (ledger.entries.some(entry => entry.messageId === messageId)) { if (final) complete(item); else await retain(item); }
+        return result;
+      });
   };
-  const inOrder = inSendOrder(deliver);
-  const post = (body: string, replyTo: string | null = null, note = false, key?: string): Promise<boolean> =>
-    inOrder(body, replyTo, note, key).then((result) => result !== null);
+  const inOrder = inSendOrder(deliver, error => error instanceof RunnerRetentionUnsettled);
+  const post = (body: string, replyTo: string | null = null, note = false, key?: string): Promise<undefined> =>
+    inOrder.post(prepare(body, replyTo, note, key));
   /** Send a question and say where the broker put it: the parent, the project main, or a queue. */
   const ask = async (body: string, replyTo: string | null): Promise<ParentRoute> => {
-    const result = await inOrder(body, replyTo, false, undefined, true);
+    const result = await inOrder(prepare(body, replyTo, false, undefined, true));
     return questionRoute(result, owner, async (name) => (await node.peers()).some((p) => p.name === name && p.projectMain === true));
   };
 
@@ -248,7 +374,7 @@ export async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: Wi
       const answer = !forceNote && (Boolean(isAnswer) || replyTo !== null || j.awaitingAnswer === true);
       if (!forceNote && !isPureAcknowledgement(body)) j.awaitingAnswer = false;
       if (question && !forceNote && !isPureAcknowledgement(body)) return ask(body, replyTo);
-      void post(body, replyTo, !answer);
+      return post(body, replyTo, !answer);
     },
     note: (j, facts) => {
       if (facts.sessionId) j.sessionId = facts.sessionId;
@@ -295,13 +421,24 @@ export async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: Wi
       if (closing) return;
       if (!seen.includes(c.cid)) {
         if (job.live) {
+          await inOrder.drain();
+          if (closing || job.controller.signal.aborted || shutdown.signal.aborted) throw new RunnerRetentionUnsettled("shutdown");
           job.awaitingAnswer = true;
           job.live.post(c.body, undefined, c.cid);
         }
-        else { job.queue.push(c.body); job.usageQueuedControls!.push({ cid: c.cid, body: c.body }); }
+        else {
+          if (job.queue.length >= 128 || Buffer.byteLength(JSON.stringify([[...job.queue, c.body], [...job.usageQueuedControls!, { cid: c.cid, body: c.body }]])) > RUNNER_LEDGER_MAX_BYTES)
+            throw new Error("Runner input backpressure; original control remains unread in its owned mailbox");
+          job.queue.push(c.body); job.usageQueuedControls!.push({ cid: c.cid, body: c.body });
+        }
         seen.push(c.cid);
       }
-      save();
+      // Queued input is accepted only after its exact CID/body is owned in the
+      // current generation. A retry of this control reuses the seen CID and
+      // repeats confirmation, never appends/executes a second provider turn.
+      if (!job.live && !inputs().some(b => b.controls.some(control => control.cid === c.cid))) {
+        saveInputs([...inputs(), { batch: randomUUID(), generation: ledger.generation, phase: "pending", bodies: [c.body], controls: [{ cid: c.cid, body: c.body }] }]);
+      } else save({}, true);
     } else if (c.type === "title") {
       job.args = { ...job.args, title: c.title };
       job.retitle?.(c.title);
@@ -345,16 +482,23 @@ export async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: Wi
   };
   node.on("message", onControl);
   // Runner shutdown (SIGTERM/SIGINT) ends final-result retries; a turn cancel never does.
-  const shutdown = new AbortController();
+  let stopTimer: NodeJS.Timeout | undefined;
   const stop = () => {
     shutdown.abort();
     job.queue = [];
     job.controller.abort();
-    setTimeout(() => process.exit(1), STOP_DEADLINE_MS).unref();
+    stopTimer ??= setTimeout(() => {
+      if (pendingRetention.size || ledger.entries.length || hasUnsettledRunnerRetention(extra)) {
+        save({ pendingDeliveryRetention: [...pendingRetention.values()], deliveryRetentionFailure: "shutdown" });
+        log.error("job runner delivery unsettled", { reason: "shutdown", pending: pendingRetention.size });
+      }
+      process.exit(1);
+    }, STOP_DEADLINE_MS);
+    stopTimer.unref();
   };
   process.on("SIGTERM", stop);
   process.on("SIGINT", stop);
-  void node.start().catch((err) => log.warn("could not join the bridge yet; retrying in the background", { err: (err as Error).message }));
+  if (!recoveringRetention) void node.start().catch((err) => log.warn("could not join the bridge yet; retrying in the background", { err: (err as Error).message }));
 
   let saveTimer: NodeJS.Timeout | null = null;
   const onProgress = (message: string) => {
@@ -371,151 +515,218 @@ export async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: Wi
    * A turn's final report: persisted in the runner state before the first send, then delivered once under a stable
    * completion ID (AB-400). Used by every terminal path, including a pause that holds queued follow-ups (AB-398).
    */
+  let turnReportId: string | undefined;
   const deliverFinal = async (report: string, status: "done" | "failed" | "cancelled" | "paused"): Promise<void> => {
-    const final = { report, reportId: randomUUID(), delivered: false };
+    const final = { report, reportId: turnReportId ??= randomUUID(), delivered: false };
+    finalQueued = true;
+    const messageId = completionMessageId(`job:${job.id}`, final.reportId);
+    deliveryEvidence("final", "queued", messageId);
     const finishedAt = Date.now();
-    await deliverFinalResult(final,
+    // Keep the existing bounded persistence retries below if this first write
+    // cannot acquire storage. The in-memory final also retains its original ID.
+    save({ status, ...final, finishedAt }, true);
+    if (inputs().some(b => !["consumed", "evidence"].includes(b.phase))) throw new RunnerRetentionUnsettled("shutdown");
+    // Receipt probes and session fallback must not overtake an accepted note.
+    // Unlike ordinary send errors, a failed retention remains a queue barrier.
+    const prepared = prepare(report, null, false, `${COMPLETION_DEDUPE_PREFIX}${final.reportId}`, false, true);
+    await inOrder.drain();
+    const settlement = await deliverFinalResult(final,
       (stored) => save({ status, ...stored, finishedAt }, true),
       async (body, id) => {
-        const result = await inOrder(body, null, false, `${COMPLETION_DEDUPE_PREFIX}${id}`, false, true);
+        // Retrying this result reuses its original immutable captured item.
+        if (!ledger.entries.some(entry => entry.messageId === prepared.messageId)) { ledger = { ...ledger, entries: [...ledger.entries, prepared.item] }; save({ deliveryLedger: ledger }, true); }
+        const result = await inOrder(prepared);
         return result && { stored: result.messages.length > 0 };
       },
       async (ms) => { await delay(ms); },
       shutdown.signal,
-      async (id) => (await node.sendState(completionMessageId(`job:${job.id}`, id))).state === "stored");
+      async (id) => {
+        deliveryEvidence("final", "receipt-probe", messageId);
+        try {
+          const stored = (await node.sendState(completionMessageId(`job:${job.id}`, id))).state === "stored";
+          deliveryEvidence("final", stored ? "stored" : "queued", messageId); return stored;
+        } catch (error) { deliveryEvidence("final", "receipt-failed", messageId, 1, error); throw error; }
+      });
+    extra.finalDelivery = { ...settlement, messageId, at: Date.now() };
+    if (ledger.entries.some(entry => entry.messageId === prepared.messageId)) complete(prepared.item);
+    try { log.info("job final delivery settled", extra.finalDelivery); } catch { /* Evidence never changes delivery. */ }
+    save(); // Retain the precise exit outcome, including refusal, before this runner exits.
   };
 
-  let args = spec.args;
-  for (;;) {
-    let status: "done" | "failed" | "cancelled" | "paused" = "failed";
-    let text = "";
-    let cause: string | null = null;
-    let processesStopped = false;
-    let completed = false;
-    try {
-      const res = await runDelegate(rc, target, args, job.controller.signal, onProgress, true, job);
-      job.workdir = res.workdir ?? job.workdir;
-      job.worktree = res.worktree ?? job.worktree;
-      job.sessionId = res.sessionId ?? job.sessionId;
-      status = res.status ?? (res.isError ? "failed" : "done");
-      completed = status === "done";
-      text = res.text || "(no answer text returned)";
-      cause = res.isError ? failureCause({ result: res }) : null;
-    } catch (err) {
-      job.sessionId = sessionOfError(err) ?? job.sessionId;
-      status = "failed";
-      cause = failureCause({ error: err });
-    } finally {
-      settleUsageAttempt(job, status === "done");
-      save();
-    }
-    // Ordering (AB-398): runDelegate above already made the job's commit or WIP checkpoint, so this cleanup runs
-    // after it. Files that still-running job processes write between that commit and their stop are never
-    // committed; the session only lists them as dirty files when it settles the turn. A paused job keeps its
-    // worktree (closeJobWorktree below is skipped while a pause is pending).
-    if (scope) {
+  try {
+    try { save({ deliveryLedger: ledger }, true); } catch { throw new RunnerRetentionUnsettled("attempts-exhausted"); }
+    let args = spec.args;
+    for (;;) {
+      turnReportId = undefined;
+      await inOrder.drain();
+      const executing = inputs().filter(b => b.phase === "admitted").map(b => b.batch);
+      if (executing.length) {
+        if (shutdown.signal.aborted || job.controller.signal.aborted) throw new RunnerRetentionUnsettled("shutdown");
+        // Admission is not proof of provider completion. A crash at/after this
+        // boundary retains the original input as unconfirmed, never replays it.
+        saveInputs(inputs().map(b => executing.includes(b.batch) ? { ...b, phase: "provider-admitted", admission: { startedAt: job.startedAt, sessionId: job.sessionId } } : b));
+      }
+      let status: "done" | "failed" | "cancelled" | "paused" = "failed";
+      let text = "";
+      let cause: string | null = null;
+      let processesStopped = false;
+      let completed = false;
       try {
-        const cleanup = await scope.cleanup();
-        processesStopped = cleanup.remaining.length === 0;
-        text += "\n\n" + processCleanupReport(cleanup);
-        if (cleanup.remaining.length) {
-          status = "failed";
-          cause = "job-owned background processes did not stop: " + cleanup.remaining.join(", ");
-        }
+        const res = await runDelegate(rc, target, args, job.controller.signal, onProgress, true, job);
+        job.workdir = res.workdir ?? job.workdir;
+        job.worktree = res.worktree ?? job.worktree;
+        job.sessionId = res.sessionId ?? job.sessionId;
+        status = res.status ?? (res.isError ? "failed" : "done");
+        completed = status === "done";
+        text = res.text || "(no answer text returned)";
+        cause = res.isError ? failureCause({ result: res }) : null;
       } catch (err) {
+        job.sessionId = sessionOfError(err) ?? job.sessionId;
         status = "failed";
-        cause = "job process cleanup failed: " + (err as Error).message;
-        log.error("job process cleanup failed", { cause });
-        text += "\n\n" + cause + ". Ownership containment remains active until the runner exits.";
+        cause = failureCause({ error: err });
+      } finally {
+        settleUsageAttempt(job, status === "done");
+        save();
       }
-    }
-    if (!scope && job.worktree?.path) {
-      text += "\n\n" + worktreeProcessReport(await worktreeProcesses(job.worktree.path));
-    }
-    job.etaAt = undefined;
-    if (job.worktree) {
-      try {
-        await recordWorktreeProcessProofWithRetry(home, job.worktree, processesStopped, { log });
-      } catch (err) {
-        log.warn("could not write the worktree process proof; worktree retained", { err: (err as Error).message });
+      // Ordering (AB-398): runDelegate above already made the job's commit or WIP checkpoint, so this cleanup runs
+      // after it. Files that still-running job processes write between that commit and their stop are never
+      // committed; the session only lists them as dirty files when it settles the turn. A paused job keeps its
+      // worktree (closeJobWorktree below is skipped while a pause is pending).
+      if (scope) {
+        try {
+          const cleanup = await scope.cleanup();
+          processesStopped = cleanup.remaining.length === 0;
+          text += "\n\n" + processCleanupReport(cleanup);
+          if (cleanup.remaining.length) {
+            status = "failed";
+            cause = "job-owned background processes did not stop: " + cleanup.remaining.join(", ");
+          }
+        } catch (err) {
+          status = "failed";
+          cause = "job process cleanup failed: " + (err as Error).message;
+          log.error("job process cleanup failed", { cause });
+          text += "\n\n" + cause + ". Ownership containment remains active until the runner exits.";
+        }
       }
-    }
-    if (job.controller.signal.aborted && processesStopped && !job.pausePending) {
-      const cleanup = await closeJobWorktree({ home, job: { ...job, status }, enabled: spec.cfg.jobCloseCleanup, log });
-      text += `\n\nWorktree close: ${cleanup.action}: ${cleanup.reason}`;
-    }
-    job.etaReportedAt = undefined;
-    // Decided after the last await, so a pause arriving meanwhile is seen. A pause that raced a completed turn
-    // never swallows its report; a pause stays a pause even when job-owned processes would not stop (AB-398).
-    const outcome = runnerTurnOutcome({ status, completed, pausePending: job.pausePending === true, scoped: Boolean(scope), processesStopped });
-    if (holdsQueuedFollowUps({ pauseRaced: outcome.pauseRaced, queued: job.queue.length, sessionId: job.sessionId })) {
-      // The turn finished, but follow-ups wait: deliver its report, then hold them. The job is paused with its
-      // queue kept (the session recovers it from usageQueuedControls); no continuation starts here (AB-398).
-      log.info("pause arrived as the turn finished; holding its queued follow-ups", { sessionId: job.sessionId, queued: job.queue.length });
-      job.pausePending = false;
+      if (!scope && job.worktree?.path) {
+        text += "\n\n" + worktreeProcessReport(await worktreeProcesses(job.worktree.path));
+      }
+      job.etaAt = undefined;
+      if (job.worktree) {
+        try {
+          await recordWorktreeProcessProofWithRetry(home, job.worktree, processesStopped, { log });
+        } catch (err) {
+          log.warn("could not write the worktree process proof; worktree retained", { err: (err as Error).message });
+        }
+      }
+      if (job.controller.signal.aborted && processesStopped && !job.pausePending) {
+        const cleanup = await closeJobWorktree({ home, job: { ...job, status }, enabled: spec.cfg.jobCloseCleanup, log });
+        text += `\n\nWorktree close: ${cleanup.action}: ${cleanup.reason}`;
+      }
+      job.etaReportedAt = undefined;
+      // Decided after the last await, so a pause arriving meanwhile is seen. A pause that raced a completed turn
+      // never swallows its report; a pause stays a pause even when job-owned processes would not stop (AB-398).
+      const outcome = runnerTurnOutcome({ status, completed, pausePending: job.pausePending === true, scoped: Boolean(scope), processesStopped });
+      if (holdsQueuedFollowUps({ pauseRaced: outcome.pauseRaced, queued: job.queue.length, sessionId: job.sessionId })) {
+        // The turn finished, but follow-ups wait: deliver its report, then hold them. The job is paused with its
+        // queue kept (the session recovers it from usageQueuedControls); no continuation starts here (AB-398).
+        log.info("pause arrived as the turn finished; holding its queued follow-ups", { sessionId: job.sessionId, queued: job.queue.length });
+        job.pausePending = false;
+        closing = true;
+        if (saveTimer) clearTimeout(saveTimer);
+        const report = jobReport(job, status, Math.round((Date.now() - job.startedAt) / 1000), `${text}\n\n${PAUSE_HELD_NOTE}`, cause, home);
+        // The report is persisted first and delivered once under its completion ID (AB-400): if the bridge does not
+        // take it, the session posts the stored report when it settles the pause.
+        await deliverFinal(report, "paused");
+        log.info("job runner paused with held follow-ups", { delivered: extra.delivered === true });
+        break;
+      }
+      if (outcome.pauseRaced) {
+        log.info("pause arrived after the turn had finished; delivering its report", { sessionId: job.sessionId });
+        job.pausePending = false;
+        job.pauseReason = undefined;
+        job.pausedAt = undefined;
+        text += `\n\n${PAUSE_RACE_NOTE}`;
+        // The pause aborted only a finished turn: later follow-ups of this runner need a live controller.
+        job.controller = new AbortController();
+      }
+      if (outcome.status === "paused") status = "paused";
+      else if (job.controller.signal.aborted) status = "cancelled";
+      if (status === "paused") {
+        closing = true;
+        if (saveTimer) clearTimeout(saveTimer);
+        save({ status: "paused", finishedAt: Date.now() });
+        log.info("job runner paused", { sessionId: job.sessionId, processesStopped: processesStopped || !scope });
+        if (outcome.pausedWithLeftovers) {
+          await post(`Subagent ${job.name} is paused, but its job-owned processes did not all stop; they may still be using the machine. ` +
+            `${cause ?? "Process cleanup did not finish."}\n\n${text.trim()}`);
+        }
+        break;
+      }
+      const report = jobReport(job, status, Math.round((Date.now() - job.startedAt) / 1000), text, cause, home);
+      if (executing.length) {
+        const result = { status, report, reportId: turnReportId ??= randomUUID() };
+        saveInputs(inputs().map(b => executing.includes(b.batch) ? { ...b, phase: "consumed", result } : b), { ...result, delivered: false });
+      }
+      log.info("job turn finished", { status, sessionId: job.sessionId, cause });
+      // The supervisor's JobManager emits the finish/fail notification when it settles this
+      // result. A detached notifier here would remain inside this runner's owned job scope.
+      // Follow-ups that arrived meanwhile go out right away, into the same session, from this runner.
+      if (job.queue.length && job.sessionId && !job.controller.signal.aborted && !usageRefused(job) && !job.usagePendingControls?.length) {
+        // Persist the still-unconsumed input and result before waiting. Neither
+        // a suspended predecessor nor cancellation may consume this turn intent.
+        captureQueuedInputs();
+        save({ status, report, reportId: turnReportId ??= randomUUID(), delivered: false, finishedAt: Date.now() }, true);
+        await inOrder.drain();
+        if (job.controller.signal.aborted || shutdown.signal.aborted || job.pausePending) throw new RunnerRetentionUnsettled("shutdown");
+        const selected = inputs().filter(b => b.phase === "pending"), selectedIds = selected.map(b => b.batch);
+        saveInputs(inputs().map(b => selectedIds.includes(b.batch) ? { ...b, phase: "admitted" } : b));
+        await post(`${report}\n\n${QUEUED_FOLLOW_UP_NOTE}`);
+        await inOrder.drain();
+        if (job.controller.signal.aborted || shutdown.signal.aborted || job.pausePending) throw new RunnerRetentionUnsettled("shutdown");
+        const queued = selected.flatMap(b => b.bodies);
+        if (JSON.stringify(job.queue.slice(0, queued.length)) !== JSON.stringify(queued)) throw new RunnerRetentionUnsettled("invalid-evidence");
+        job.queue.splice(0, queued.length);
+        job.usagePendingControls = selected.flatMap(b => b.controls);
+        const cids = new Set(job.usagePendingControls.map(c => c.cid));
+        job.usageQueuedControls = job.usageQueuedControls?.filter(c => !cids.has(c.cid)) ?? [];
+        args = resumeArgs(spec.base, job.name, queued.join("\n\n"), job.sessionId, job.workdir, job.worktree, job.args);
+        if (args.model !== undefined) job.model = args.model;
+        job.startedAt = Date.now();
+        job.progress = null;
+        extra = { status: "running", retainedRunnerInputs: extra.retainedRunnerInputs, deliveryLedger: ledger, pendingDeliveryRetention: [...pendingRetention.values()], retainedDeliveryCount: extra.retainedDeliveryCount };
+        save({}, true);
+        continue;
+      }
       closing = true;
       if (saveTimer) clearTimeout(saveTimer);
-      const report = jobReport(job, status, Math.round((Date.now() - job.startedAt) / 1000), `${text}\n\n${PAUSE_HELD_NOTE}`, cause, home);
-      // The report is persisted first and delivered once under its completion ID (AB-400): if the bridge does not
-      // take it, the session posts the stored report when it settles the pause.
-      await deliverFinal(report, "paused");
-      log.info("job runner paused with held follow-ups", { delivered: extra.delivered === true });
+      // The state first: once the report arrives, the session must find the job finished.
+      await deliverFinal(report, status);
+      log.info("job runner done", { status, delivered: extra.delivered === true });
       break;
     }
-    if (outcome.pauseRaced) {
-      log.info("pause arrived after the turn had finished; delivering its report", { sessionId: job.sessionId });
-      job.pausePending = false;
-      job.pauseReason = undefined;
-      job.pausedAt = undefined;
-      text += `\n\n${PAUSE_RACE_NOTE}`;
-      // The pause aborted only a finished turn: later follow-ups of this runner need a live controller.
-      job.controller = new AbortController();
-    }
-    if (outcome.status === "paused") status = "paused";
-    else if (job.controller.signal.aborted) status = "cancelled";
-    if (status === "paused") {
-      closing = true;
-      if (saveTimer) clearTimeout(saveTimer);
-      save({ status: "paused", finishedAt: Date.now() });
-      log.info("job runner paused", { sessionId: job.sessionId, processesStopped: processesStopped || !scope });
-      if (outcome.pausedWithLeftovers) {
-        await post(`Subagent ${job.name} is paused, but its job-owned processes did not all stop; they may still be using the machine. ` +
-          `${cause ?? "Process cleanup did not finish."}\n\n${text.trim()}`);
-      }
-      break;
-    }
-    const report = jobReport(job, status, Math.round((Date.now() - job.startedAt) / 1000), text, cause, home);
-    log.info("job turn finished", { status, sessionId: job.sessionId, cause });
-    // The supervisor's JobManager emits the finish/fail notification when it settles this
-    // result. A detached notifier here would remain inside this runner's owned job scope.
-    // Follow-ups that arrived meanwhile go out right away, into the same session, from this runner.
-    if (job.queue.length && job.sessionId && !job.controller.signal.aborted && !usageRefused(job) && !job.usagePendingControls?.length) {
-      const queued = job.queue.splice(0).join("\n\n");
-      job.usagePendingControls = job.usageQueuedControls;
-      job.usageQueuedControls = [];
-      void post(`${report}\n\n${QUEUED_FOLLOW_UP_NOTE}`);
-      args = resumeArgs(spec.base, job.name, queued, job.sessionId, job.workdir, job.worktree, job.args);
-      if (args.model !== undefined) job.model = args.model;
-      job.startedAt = Date.now();
-      job.progress = null;
-      extra = { status: "running" };
-      save();
-      continue;
-    }
-    closing = true;
+    // A pause/continuation path must observe the same owned queue as a final.
+    await inOrder.drain();
+    return 0;
+  } catch (error) {
+    if (!(error instanceof RunnerRetentionUnsettled)) throw error;
+    extra.pendingDeliveryRetention = [...pendingRetention.values()];
+    extra.deliveryRetentionFailure = error.reason;
+    // If every storage path fails, explicitly fail the runner; never claim a
+    // drained queue or successful final settlement. No arbitrary error/payload.
+    save();
+    log.error("job runner delivery unsettled", { reason: error.reason, pending: pendingRetention.size });
+    return 1;
+  } finally {
+    clearInterval(heartbeat);
     if (saveTimer) clearTimeout(saveTimer);
-    // The state first: once the report arrives, the session must find the job finished.
-    await deliverFinal(report, status);
-    log.info("job runner done", { status, delivered: extra.delivered === true });
-    break;
+    if (stopTimer) clearTimeout(stopTimer);
+    for (const timer of controlRetries.values()) clearTimeout(timer);
+    node.off("message", onControl);
+    process.off("SIGTERM", stop);
+    process.off("SIGINT", stop);
+    await node.stop();
   }
-  clearInterval(heartbeat);
-  for (const timer of controlRetries.values()) clearTimeout(timer);
-  node.off("message", onControl);
-  process.off("SIGTERM", stop);
-  process.off("SIGINT", stop);
-  await node.stop();
-  return 0;
 }
 
 /**
@@ -523,13 +734,14 @@ export async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: Wi
  * caller keeps what it sent (a finished report stays in the runner state for the session to collect).
  */
 export async function deliverWithRetry<T>(send: () => Promise<T>, log: Logger, owner: string, attempts = SEND_ATTEMPTS,
-  rethrow?: ReadonlySet<string>): Promise<T | null> {
+  rethrow?: ReadonlySet<string>, failed?: (attempt: number, error: unknown) => void): Promise<T | null> {
   for (let attempt = 1; attempt <= attempts; attempt++) {
     try {
       return await send();
     } catch (err) {
+      try { failed?.(attempt, err); } catch { /* Diagnostics never alter delivery or failure policy. */ }
       // The caller handles these refusals itself (a final result hands over to the session fallback).
-      if (rethrow?.has((err as { code?: string } | null)?.code ?? "")) throw err;
+      if (rethrow?.has((err as { code?: string } | null)?.code ?? "") && !compatibleDeliveryHandover(err)) throw err;
       if ((err as { code?: string } | null)?.code === "too_large") {
         log.error("message too large to deliver; not retried", { owner, err: (err as Error).message });
         return null;
@@ -562,14 +774,28 @@ export function runnerTurnOutcome(o: { status: "done" | "failed" | "cancelled" |
   return { status: "paused", pauseRaced: false, pausedWithLeftovers: o.scoped && !o.processesStopped };
 }
 
-/** Sends one at a time in call order. A failed send never blocks the sends queued after it. */
-export function inSendOrder<A extends unknown[], T>(send: (...args: A) => Promise<T>): (...args: A) => Promise<T> {
+/** Ordinary failures recover; an accepted unretained item is latched until the owner observes drain. */
+export function inSendOrder<A extends unknown[], T>(send: (...args: A) => Promise<T>, blocks?: (error: unknown) => boolean):
+  ((...args: A) => Promise<T>) & { post(...args: A): Promise<undefined>; drain(): Promise<void> } {
   let chain: Promise<unknown> = Promise.resolve();
-  return (...args: A) => {
-    const sent = chain.then(() => send(...args));
-    chain = sent.catch(() => undefined);
+  let blocked: { error: unknown } | undefined;
+  const schedule = <R>(operation: () => Promise<R>): Promise<R> => {
+    const sent = chain.then(() => { if (blocked) throw blocked.error; return operation(); });
+    // This observer owns ignored callback promises as well as awaited ones.
+    // A blocking failure remains in queue state and rejects every later effect
+    // and drain; observing a rejection is never confirmation of retention.
+    chain = sent.catch(error => { if (blocks?.(error)) blocked ??= { error }; });
     return sent;
   };
+  const enqueue = (...args: A) => schedule(() => send(...args));
+  return Object.assign(enqueue, {
+    post: (...args: A) => schedule(async () => { await send(...args); return undefined; }),
+    drain: async () => {
+      let observed;
+      do { observed = chain; await observed; } while (observed !== chain);
+      if (blocked) throw blocked.error;
+    },
+  });
 }
 
 /** Legacy 0.29.10 control mail also carries its original broker timestamp. */

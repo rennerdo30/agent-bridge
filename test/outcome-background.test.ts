@@ -9,6 +9,7 @@ import * as metadata from "../src/core/metadata-db.js";
 import { readDashboard } from "../src/core/dashboard-read.js";
 import { nullLogger } from "../src/core/logger.js";
 import { MessageStore } from "../src/core/store.js";
+import { fixturePeer, markOwned, ownedMessage } from "./owned-mail.js";
 import { RECHECK_MS } from "../src/core/finished-run-bundles.js";
 import { setTimeout as realDelay } from "node:timers/promises";
 import { makeEnv, type TestEnv } from "./helpers.js";
@@ -95,11 +96,12 @@ it("invalidates receipt cache for delivery, read acknowledgement and archived da
   const i = input(), read = () => cachedOutcomes(env.home, [i], nullLogger);
   try {
     await ready(read, value => value[i.key].observation.state === "ready");
-    store.insert({ id: "outcome-cache-result", from: { id: "job:cache", name: i.job.name, agent: "codex" }, recipient: "fixture", to: "fixture", conversationId: "job-cache", replyTo: null, hop: 0,
-      body: "Subagent codex-job-cache (codex) done after 1s.", createdAt: 200, readAt: null });
+    const peer = fixturePeer(store, "fixture");
+    store.insert(ownedMessage(store, peer, { id: "outcome-cache-result", from: { id: "job:cache", name: i.job.name, agent: "codex" }, recipient: "fixture", to: "fixture", conversationId: "job-cache", replyTo: null, hop: 0,
+      body: "Subagent codex-job-cache (codex) done after 1s.", createdAt: 200, readAt: null }));
     const delivered = await ready(read, value => value[i.key].delivery.status === "delivered");
     expect(delivered[i.key].delivery.messageId).toBe("outcome-cache-result");
-    store.markRead("fixture", ["outcome-cache-result"], 300);
+    expect(markOwned(store, peer, ["outcome-cache-result"], 300)).toBe(1);
     const consumed = await ready(read, value => value[i.key].delivery.status === "read");
     expect(consumed[i.key].delivery.readAt).toBe(300);
     store.purgeOlderThan(400);

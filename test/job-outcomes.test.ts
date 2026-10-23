@@ -8,7 +8,8 @@ import { deriveJobOutcome, listJobOutcomes, JOB_OUTCOMES_DIR, MAX_HOLD_REASON_CH
 import { recordLocalResult } from "../src/core/local-result-receipts.js";
 import { closeMetadataDb, metadataDb, metadataValue } from "../src/core/metadata-db.js";
 import { JSON_STORE_VERSION } from "../src/core/json-store.js";
-import { ReadJournal } from "../src/core/read-journal.js";
+import { ReadJournal, readJournalIdentities } from "../src/core/read-journal.js";
+import { fixturePeer, markOwned, ownedMessage } from "./owned-mail.js";
 import { nullLogger } from "../src/core/logger.js";
 import { MessageStore } from "../src/core/store.js";
 import type { BridgeMessage } from "../src/core/protocol.js";
@@ -33,10 +34,10 @@ afterEach(() => { store.close(); closeMetadataDb(home); rmSync(home, { recursive
 describe("finished job delivery", () => {
   it("distinguishes unknown, delivered, and supervisor consumption with times", async () => {
     expect((await deriveJobOutcome(home, job(), nullLogger)).delivery.status).toBe("unknown");
-    const result = message();
+    const peer = fixturePeer(store, "supervisor"), result = ownedMessage(store, peer, message());
     store.insert(result);
     expect((await deriveJobOutcome(home, job(), nullLogger)).delivery).toMatchObject({ status: "delivered", messageId: result.id, deliveredAt: 200, readAt: null });
-    store.markRead("supervisor", [result.id], 300);
+    expect(markOwned(store, peer, [result.id], 300)).toBe(1);
     expect((await deriveJobOutcome(home, job(), nullLogger)).delivery).toMatchObject({ status: "read", readAt: 300 });
     store.purgeOlderThan(400);
     expect((await deriveJobOutcome(home, job(), nullLogger)).delivery).toMatchObject({ status: "read", deliveredAt: 200, readAt: 300 });
@@ -53,19 +54,23 @@ describe("finished job delivery", () => {
     expect((await deriveJobOutcome(home, job(), nullLogger, { before: 400 })).delivery.messageId).toBe(result.id);
   });
 
-  it("retains local result receipts and supports legacy journal reads with unknown time", async () => {
-    const result = message();
+  it("retains legacy journal evidence without attribution and reads only an exact owner journal", async () => {
+    const peer = fixturePeer(store, "supervisor"), result = ownedMessage(store, peer, message());
     const dir = join(home,"read-state"); mkdirSync(dir);
     const path = join(dir, `${createHash("sha256").update("name:supervisor").digest("hex")}.jsonl`);
     writeFileSync(path, `${JSON.stringify([result.id])}\n`);
     recordLocalResult(home, result);
-    expect((await deriveJobOutcome(home, job(), nullLogger)).delivery).toMatchObject({status:"read",readAt:null});
+    expect((await deriveJobOutcome(home, job(), nullLogger)).delivery).toMatchObject({status:"delivered",readAt:null});
     const journal = new ReadJournal(home);
     journal.append("name:supervisor", [result.id]);
+    expect((await deriveJobOutcome(home, job(), nullLogger)).delivery.status).toBe("delivered");
+    const [identity] = readJournalIdentities(peer.name, peer.sessionId, result.recipientFrontend, result.recipientNative, result.recipientMailbox);
+    expect(identity).toBeDefined(); journal.append(identity!, [result.id]);
     const outcome = await deriveJobOutcome(home, job(), nullLogger);
     expect(outcome.delivery.status).toBe("read");
     expect(outcome.delivery.readAt).toBeGreaterThan(0);
     expect(metadataDb(home).prepare("SELECT sha256 FROM bridge_imports WHERE path=?").get(`read-state/${createHash("sha256").update("name:supervisor").digest("hex")}.jsonl`)).toBeDefined();
+    expect(new ReadJournal(home).receipt("name:supervisor", result.id).read).toBe(true);
   });
 });
 
@@ -84,10 +89,10 @@ describe("supervisor decisions and migration", () => {
   });
 
   it("backs up and restores decisions and local receipts under the home maintenance lock", async () => {
+    const peer = fixturePeer(store, "supervisor"), result = ownedMessage(store, peer, message());
     store.close();
-    const result = message();
     recordLocalResult(home, result);
-    new ReadJournal(home).append("name:supervisor", [result.id]);
+    new ReadJournal(home).append(readJournalIdentities(peer.name, peer.sessionId, undefined, result.recipientNative, result.recipientMailbox)[0]!, [result.id]);
     setJobOutcome(home, job(), "supervisor", "held", "original", 400);
     const backup = createBackup(home);
     expect(readBackup(backup).files.some((f) => f.path === "bridge.db")).toBe(true);

@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DEFAULT_CONFIG } from "../src/core/config.js";
 import { nullLogger } from "../src/core/logger.js";
+import { MessageStore } from "../src/core/store.js";
+import { fixtureNodePeer } from "./owned-mail.js";
 import { approvalHint, isAutoApproved, isHandoffToolCall, isOwnServerCall, mcpToolOf } from "../src/core/tool-allow.js";
 import { hookRequest } from "../src/cli/permission-hook.js";
 import { opencodePermissionRequest } from "../src/core/opencode-served.js";
@@ -126,6 +128,7 @@ describe("sessions and native subagents", () => {
     await old.start();
     await old.setSessionId("sess-1");
     const fresh = env.node("claude-app", "claude");
+    await fresh.setSessionId("sess-1");
     await fresh.start();
     // Reload recovery identifies the same CLI immediately, before a new hook or prompt.
     expect(fresh.name).toBe("claude-app");
@@ -205,9 +208,18 @@ describe("sessions and native subagents", () => {
     await until(() => other.unread().length === 1);
     expect(await me.claimMail(["claude-mm-2"])).toBe(0);
     await other.stop();
+    // Keep the exact original session offline while its retained alias is
+    // addressed. A live alias can already route directly and is not a claim.
+    await me.stop();
+    const evidence = new MessageStore(env.db, nullLogger);
+    try { fixtureNodePeer(evidence, me, "claude", "claude-mm-3"); } finally { evidence.close(); }
     await broker.send({ to: "claude-mm-3", body: "result sent to a stand-in" });
-    expect(await me.claimMail(["claude-mm-3", "codex-x"])).toBe(1);
-    await until(() => me.unread().some((m) => m.body === "result sent to a stand-in"));
+    const returned = env.node("claude-mm", "claude", false, me.currentSessionId!);
+    await returned.start();
+    await until(() => returned.unread().some((m) => m.body === "result sent to a stand-in"));
+    expect(await returned.claimMail(["claude-mm-3", "codex-x"])).toBe(0); // hello already reclaimed it once
+    expect(returned.unread().filter(m => m.body === "result sent to a stand-in")).toHaveLength(1);
+    expect(returned.unread().some(m => m.body === "for the other session")).toBe(false);
   });
 
   it("leaves mail for the main agent when a native subagent's tool call fires the hook", async () => {

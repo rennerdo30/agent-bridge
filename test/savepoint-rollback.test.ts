@@ -6,14 +6,16 @@ import { nullLogger } from "../src/core/logger.js";
 import { makeEnv } from "./helpers.js";
 import { HistoryIndex } from "../src/core/history.js";
 import { historySchema } from "../src/core/history-schema.js";
+import { fixturePeer, markOwned, ownedMessage, unreadOwned } from "./owned-mail.js";
 
 it("preserves the original acknowledgement error after SQLite automatically rolls back", async () => {
   const env = makeEnv(), store = new MessageStore(env.db, nullLogger), db = new DatabaseSync(env.db);
   try {
-    for (const id of ["first", "second"]) store.insert({ id, recipient: "receiver", to: "receiver", from: { id: "sender", name: "sender", agent: "codex" }, body: id, conversationId: "fixture", replyTo: null, hop: 0, createdAt: 1, readAt: null });
+    const receiver = fixturePeer(store, "receiver");
+    for (const id of ["first", "second"]) store.insert(ownedMessage(store, receiver, { id, recipient: "receiver", to: "receiver", from: { id: "sender", name: "sender", agent: "codex" }, body: id, conversationId: "fixture", replyTo: null, hop: 0, createdAt: 1, readAt: null }));
     db.exec("CREATE TRIGGER rollback_ack BEFORE UPDATE OF read_at ON messages WHEN new.id='second' BEGIN SELECT RAISE(ROLLBACK, 'original rollback error'); END");
-    expect(() => store.markRead("receiver", ["first", "second"], 2)).toThrow("original rollback error");
-    expect(store.unread("receiver", 10).map(m => m.id)).toEqual(["first", "second"]);
+    expect(() => markOwned(store, receiver, ["first", "second"], 2)).toThrow("original rollback error");
+    expect(unreadOwned(store, receiver).map(m => m.id)).toEqual(["first", "second"]);
   } finally { db.close(); store.close(); await env.cleanup(); }
 });
 it("rethrows the exact operation error when nested savepoints have disappeared", () => {

@@ -28,6 +28,14 @@ export interface BackupLifecycleObservation {
 
 /** Opt-in message-table backups start after bind in a separate low-priority process. */
 export class BackupBackground {
+  private progress: { phase: string; workerMs: number; started: number; records: number; exited: boolean } | undefined;
+  /** Non-authoritative, fixed-cardinality diagnostic only. No success/exit or
+   * complete lifecycle witness can be derived from a progress message. */
+  lifecycleWorkerProgress() {
+    const progress = this.progress;
+    return progress ? { phase: progress.phase, workerMs: progress.workerMs, ownerMs: Math.max(0, Math.min(60000, Math.round(performance.now() - progress.started))),
+      records: progress.records, truncated: progress.records === 32, exited: progress.exited } : undefined;
+  }
   private worker: ChildProcess | null = null;
   private timer: NodeJS.Timeout | null = null;
   private pending = false;
@@ -82,11 +90,21 @@ export class BackupBackground {
       entry = pathToFileURL(path);
     }
     const worker = this.worker = fork(fileURLToPath(entry), [], { stdio: ["ignore", "ignore", "ignore", "ipc"], execArgv: [], windowsHide: true });
+    const nonce = randomUUID(); this.progress = { phase: "forked", workerMs: 0, started: performance.now(), records: 0, exited: false };
     this.lifecycleCapture = worker;
     this.advanceLifecycleGeneration();
     let completed = false;
     worker.on("message", (message: any) => {
       if (this.lifecycleCapture !== worker) return;
+      if (message?.type === "backupProgress") {
+        if (Object.keys(message).sort().join(",") !== "elapsedMs,nonce,phase,type" || message.nonce !== nonce ||
+            !["run-entered", "priority-lowered", "pressure-paused", "checkpoint-yield", "result-ready"].includes(message.phase) ||
+            !Number.isSafeInteger(message.elapsedMs) || message.elapsedMs < 0 || message.elapsedMs > 60000) {
+          this.lifecycleUnknown = true; this.advanceLifecycleGeneration(); return;
+        }
+        if (this.progress && this.progress.records < 32) { this.progress.phase = message.phase; this.progress.workerMs = message.elapsedMs; this.progress.records++; }
+        return; // Typed progress is never an accepted snapshot/result/settlement.
+      }
       if (message.error) {
         this.lifecycleUnknown = true;
         this.advanceLifecycleGeneration();
@@ -109,6 +127,7 @@ export class BackupBackground {
     worker.on("error", error => { if (this.lifecycleCapture !== worker) return; this.lifecycleUnknown = true; this.advanceLifecycleGeneration(); this.failed = true; this.lastError = "worker_failed"; this.log.warn("automatic backup process failed", { err: String(error) }); });
     worker.on("exit", (code, signal) => {
       if (this.lifecycleCapture !== worker) return;
+      if (this.progress) this.progress.exited = true;
       if (this.worker !== worker) { this.lifecycleUnknown = true; this.advanceLifecycleGeneration(); this.lifecycleWaiter?.finish(false); return; }
       if (code !== 0 || signal || !completed) this.lifecycleUnknown = true;
       this.advanceLifecycleGeneration();
@@ -119,7 +138,7 @@ export class BackupBackground {
       this.lifecycleWaiter?.finish(true);
     });
     worker.send({ type: "pressure", pending: this.pending, pauseUntil: this.pauseUntil }, () => {});
-    worker.send({ type: "start", home: this.home }, () => {});
+    worker.send({ type: "start", home: this.home, nonce }, () => {});
     worker.unref();
   }
   /** Inhibit future captures only. An accepted capture is never stopped or rejected here. */

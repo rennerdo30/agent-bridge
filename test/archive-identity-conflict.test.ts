@@ -8,6 +8,8 @@ import type { BridgeMessage } from "../src/core/protocol.js";
 import { archiveDbPath, archiveMessages } from "../src/core/sqlite-maintenance.js";
 import { doctor } from "../src/core/doctor.js";
 import { MessageStore } from "../src/core/store.js";
+import { fixtureJobReport, fixtureOwner, fixturePeer, markOwned, ownedMessage } from "./owned-mail.js";
+import { nativeOwner } from "../src/core/recipient-ownership.js";
 import { loadOrCreateToken } from "../src/core/token.js";
 import { makeEnv, type TestEnv } from "./helpers.js";
 
@@ -19,13 +21,15 @@ const mail = (id: string, body: string, createdAt = Date.now() - QUEUED_MAIL_MAX
   conversationId: id, replyTo: null, hop: 0, body, createdAt, readAt: null,
 });
 function seedConflict(store: MessageStore, id = "poison", sourceCreatedAt?: number) {
-  const original = mail(id, "canonical archive variant");
+  const original = ownedMail(store, mail(id, "canonical archive variant"));
   store.insert(original);
   const { db: source, archiveDb: archive } = store as unknown as { db: DatabaseSync; archiveDb: DatabaseSync };
   expect(archiveMessages(source, archive, "id=?", [id], "fixture canonical")).toBe(1);
   store.insert({ ...original, body: "retained source variant", createdAt: sourceCreatedAt ?? original.createdAt });
   return original;
 }
+const recipient = (store: MessageStore, name = "codex-app") => fixturePeer(store, name, { agent: "codex", sessionId: "new-session", cwd: env.home });
+const ownedMail = (store: MessageStore, message: BridgeMessage) => ownedMessage(store, recipient(store, message.recipient), message);
 async function hello(raw: BridgeClient, sessionId = "new-session") {
   return raw.request("hello", { protocol: PROTOCOL_VERSION, token: loadOrCreateToken(env.home),
     peer: { id: sessionId, name: "codex-app", agent: "codex", cwd: env.home,
@@ -60,8 +64,8 @@ it("registers repeatedly with mixed stale/current mail and bounded durable confl
   try {
     for (const id of ["poison", "poison-2", "poison-3"]) seedConflict(store, id);
     seedConflict(store, "fresh-conflict", Date.now());
-    store.insert(mail("healthy-old", "normal stale mail"));
-    store.insert(mail("fresh", "current mail", Date.now()));
+    store.insert(ownedMail(store, mail("healthy-old", "normal stale mail")));
+    store.insert(ownedMail(store, mail("fresh", "current mail", Date.now())));
   }
   finally { store.close(); }
   const received: BridgeMessage[] = [];
@@ -109,12 +113,12 @@ it("registers repeatedly with mixed stale/current mail and bounded durable confl
 });
 
 it("keeps equal content idempotent while merging mutable read metadata", () => {
-  const store = new MessageStore(env.db, nullLogger), message = mail("equal", "same payload");
+  const store = new MessageStore(env.db, nullLogger), peer = recipient(store), message = ownedMessage(store, peer, mail("equal", "same payload"));
   const primary = new DatabaseSync(env.db), archive = new DatabaseSync(archiveDbPath(env.db));
   try {
     store.insert(message); expect(store.expireQueued("codex-app", Date.now())).toBe(1);
     const before = archive.prepare("SELECT * FROM messages WHERE id='equal'").get()!;
-    store.insert(message); expect(store.markRead("codex-app", [message.id], 123)).toBe(1);
+    store.insert(message); expect(markOwned(store, peer, [message.id], 123)).toBe(1);
     expect(store.purgeOlderThan(Date.now())).toBe(1);
     expect(archive.prepare("SELECT * FROM messages WHERE id='equal'").get()).toEqual({ ...before, read_at: 123 });
     // Legacy archive_reason/archived_at are also receipt metadata, never identity.
@@ -265,11 +269,16 @@ it("preserves separate legacy variants and skips them in later maintenance chunk
 it("reproduces a source origin: job handoff reuses an archived identity with rewritten routing", () => {
   const store = new MessageStore(env.db, nullLogger), primary = new DatabaseSync(env.db), archive = new DatabaseSync(archiveDbPath(env.db));
   try {
-    const original = { ...mail("handoff-id", "unchanged body"), to: "old-owner",
-      from: { id: "job:worker", name: "worker", agent: "other" as const } };
-    store.insert(original); store.expireQueued("codex-app", Date.now());
-    store.insert({ ...original, recipient: "old-owner" });
-    expect(store.handoffMail("old-owner", "codex-app", "worker", Date.now(), true)).toHaveLength(1);
+    const target = recipient(store), previous = fixturePeer(store, "old-owner", { sessionId: "old-owner-session", cwd: env.home });
+    const job = { id: "worker", name: "worker", agent: "codex", owner: previous.name, rootName: previous.name, supervisor: "root", rootSession: "root",
+      startedAt: 1, projectRoot: env.home, deliveryOwner: fixtureOwner(store, previous) };
+    const report = fixtureJobReport(store, job, previous, previous, { ...mail("handoff-id", "unchanged body"), to: "old-owner", recipient: "old-owner",
+      from: { id: "job:worker", name: "worker", agent: "codex" } });
+    store.insertJobDelivery(report.message, report.grant);
+    // Preserve the historical target archive variant before authorized
+    // succession creates a fresh target copy with different routing bytes.
+    store.insert(ownedMessage(store, target, report.message)); store.expireQueued("codex-app", Date.now());
+    expect(store.handoffMail("old-owner", "codex-app", "worker", Date.now(), true, target.frontend, nativeOwner(target), () => report.successor(target))).toHaveLength(1);
     expect(store.expireQueued("codex-app", Date.now())).toBe(1);
     const evidence = primary.prepare("SELECT * FROM message_archive_conflicts WHERE id='handoff-id'").get()!;
     const source = JSON.parse(String(evidence.source_json)), canonical = JSON.parse(String(evidence.archive_json));

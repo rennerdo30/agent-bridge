@@ -6,6 +6,29 @@ import { retainMetadataFiles } from "./metadata-import.js";
 import { storageLease } from "./storage-lock.js";
 import { DatabaseSync } from "node:sqlite";
 import type { Logger } from "./logger.js";
+import { t3BindingSchema, type T3Binding } from "./t3-identity.js";
+import { mailboxSchema, verifiedNative, type MailboxProvenance } from "./recipient-ownership.js";
+import { jobRouteSchema, type JobRouteProof } from "./job-mail-routing.js";
+
+/** Old name/session marks remain ambiguous evidence only. A hosted identity is
+ * independent of registration names and native provider session IDs. No legacy
+ * record contains enough information to infer its complete frontend owner. */
+export function readJournalIdentities(_name: string, _sessionId?: string | null, frontend?: T3Binding, nativeIdentity?: string, mailbox?: MailboxProvenance, jobRoute?: JobRouteProof): string[] {
+ const parsed = mailboxSchema.safeParse(mailbox);
+ if (!parsed.success || parsed.data.kind !== "local") return [];
+ const route = jobRoute === undefined ? undefined : jobRouteSchema.safeParse(jobRoute);
+ if (route && !route.success) return [];
+ const suffix = route?.success ? `:job-route:v1:${route.data.grant}:${route.data.generation}` : "";
+ const prefix = `mailbox:v1:${parsed.data.namespace}:`;
+ if (frontend) {
+  const binding = t3BindingSchema.parse(frontend);
+  return [`${prefix}frontend:v1:${JSON.stringify([binding.kind, binding.scope, binding.threadId, binding.providerInstanceId])}${suffix}`];
+ }
+ // Pre-v11 hosted and native readers shared these namespaces. Retain them for
+ // inspection, but they cannot establish consumption by any successor.
+ const native = verifiedNative(nativeIdentity);
+ return native ? [`${prefix}native-owner:v2:${native}${suffix}`] : [];
+}
 
 /** The metadata store cannot open yet: its fail-closed migration lease needs this process's
  * verified identity (ELEASEBUSY) or an older reader still uses the files (STORE_UPGRADE_DEFERRED). */
@@ -34,6 +57,11 @@ export class ReadJournal {
   if (db.prepare("SELECT 1 FROM bridge_components WHERE name='import:read-state'").get()) return db;
   const dir = join(this.home,"read-state"); physicalMetadataPath(dir);
   const files = existsSync(dir) ? readdirSync(dir).filter(f => /^[a-f0-9]{64}\.jsonl$/.test(f)).map(f=>join(dir,f)) : [];
+  // Inspecting an empty journal is read-only. Publishing an empty import
+  // marker here needlessly takes SQLite's writer during broker recovery and
+  // can block unrelated peers behind a held mailbox write. Do not publish the
+  // marker: a later deferred append may still create a legacy file to import.
+  if (!files.length) return db;
   retainMetadataFiles(this.home,files,(store,path,raw) => {
    const identity = path.slice("read-state/".length,-".jsonl".length);
    for (const line of raw.toString("utf8").split("\n")) {

@@ -1,4 +1,5 @@
 import { readFileSync, readdirSync } from "node:fs";
+import { removePostV9FixtureOwnership } from "./owned-mail.js";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -60,6 +61,7 @@ it("queues recent sessions and known masters without reviving stale aliases or c
 it("backs up v8 before adding last-seen registrations and preserves original registrations", () => {
   const original = new MessageStore(env.db, nullLogger); original.close();
   const old = new DatabaseSync(env.db);
+  removePostV9FixtureOwnership(old);
   old.exec("DROP TABLE peer_last_seen; PRAGMA user_version=8;");
   old.prepare("INSERT INTO peer_names VALUES (?,?,?,?,?)").run("identity", "retained", "native", "codex", 42);
   old.exec("CREATE TABLE retained_owner_data(body TEXT); INSERT INTO retained_owner_data VALUES('original owner bytes');");
@@ -81,7 +83,7 @@ it("backs up v8 before adding last-seen registrations and preserves original reg
     const folder = join(env.home, ".migration-snapshots");
     const snapshots = readdirSync(folder).filter((name) => name.endsWith(".db"));
     expect(snapshots).toHaveLength(1);
-    expect(snapshots[0]).toMatch(/^bridge\.db\.metadata-v8-to-v9-/);
+    expect(snapshots[0]).toMatch(new RegExp(`^bridge\\.db\\.metadata-v8-to-v${SQLITE_STORE_VERSION}-`));
     const path = join(folder, snapshots[0]!);
     const manifest = JSON.parse(readFileSync(`${path}.manifest.json`, "utf8"));
     expect(manifest).toMatchObject({ version: 1, kind: "sqlite-migration-metadata", sourceVersion: 8, targetVersion: SQLITE_STORE_VERSION });

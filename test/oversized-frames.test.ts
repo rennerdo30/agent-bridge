@@ -17,6 +17,7 @@ import { JobManager, jobReport } from "../src/mcp/jobs.js";
 import { LocalCoordinator } from "../src/mcp/local-coordinator.js";
 import { deliverWithRetry } from "../src/mcp/job-runner.js";
 import { makeEnv, seedInbox, until, type TestEnv } from "./helpers.js";
+import { fixtureAck, fixtureJobReport, fixtureOwner, fixturePeer, ownedMessage } from "./owned-mail.js";
 
 /** Over the 4 MiB frame limit, like the 6.1 MB report of the incident. */
 const HUGE = "left on disk: " + "x/".repeat(Math.ceil(MAX_FRAME_BYTES / 2) + 1024);
@@ -34,8 +35,9 @@ afterEach(async () => { vi.restoreAllMocks(); await env.cleanup(); });
 
 async function hello(client: BridgeClient, token: string): Promise<void> {
   await client.request("hello", { protocol: PROTOCOL_VERSION, token, peer: { id: "reader", name: "reader", agent: "opencode", cwd: env.home,
-    pid: process.pid, agentPid: null, sessionId: null, startedAt: Date.now(), autoWake: false } });
+    pid: process.pid, agentPid: null, sessionId: "reader-session", startedAt: Date.now(), autoWake: false } });
 }
+const reader = (store: MessageStore) => fixturePeer(store, "reader", { id: "reader", agent: "opencode", sessionId: "reader-session" });
 
 describe("AB-380 oversized frames", () => {
   it("keeps a worktree report with 50k skipped files small", () => {
@@ -104,7 +106,7 @@ describe("AB-380 oversized frames", () => {
       await hello(client, token);
       const conn = (broker as unknown as { connByName(name: string): unknown }).connByName("reader");
       const emit = (m: BridgeMessage) => (broker as unknown as { emit(conn: unknown, ev: string, data: unknown): void }).emit(conn, "message", m);
-      const big = message(randomUUID(), HUGE), small = message(randomUUID(), "small");
+      const owner = reader(store), big = ownedMessage(store, owner, message(randomUUID(), HUGE)), small = ownedMessage(store, owner, message(randomUUID(), "small"));
       emit(big); emit(small);
       await until(() => seen.includes(small.id));
       expect(seen).not.toContain(big.id);
@@ -114,7 +116,7 @@ describe("AB-380 oversized frames", () => {
 
   it("quarantines a stored >4 MiB message on replay and keeps its id", async () => {
     const token = loadOrCreateToken(env.home), store = new MessageStore(env.db, nullLogger);
-    const big = message(randomUUID(), HUGE, Date.now()), small = message(randomUUID(), "after the big one", Date.now() + 1);
+    const owner = reader(store), big = ownedMessage(store, owner, message(randomUUID(), HUGE, Date.now())), small = ownedMessage(store, owner, message(randomUUID(), "after the big one", Date.now() + 1));
     seedInbox(store, [big, small]);
     const broker = new Broker(env.pipe, store, nullLogger, token, Date.now, join(env.home, JOBS_FILE));
     await broker.listen();
@@ -136,7 +138,7 @@ describe("AB-380 oversized frames", () => {
       expect(pending[0]!.body).toBe(stub);
       expect(store.byId(big.id)?.body).toBe(HUGE);
       // Acknowledging the stub id consumes the stored row: it is not replayed or refilled again.
-      await client.request("ack", { ids: [big.id] });
+      await client.request("ack", fixtureAck([big]));
       expect(store.byId(big.id)?.readAt).not.toBeNull();
       expect((await client.request("pending", { limit: 10 })).map((m) => m.id)).toEqual([small.id]);
       const again = await BridgeClient.connect(env.pipe, nullLogger);
@@ -168,11 +170,14 @@ describe("AB-380 oversized frames", () => {
   });
 
   it("quarantines an oversized stored delivery-history report when rerouting it", async () => {
-    const jobs = join(env.home, JOBS_FILE), big = message(randomUUID(), HUGE);
-    writeFileSync(jobs, JSON.stringify({ version: 4, jobs: [{ id: "big", name: "codex-job-big", agent: "codex", status: "done", owner: "reader", rootName: "reader",
+    const store = new MessageStore(env.db, nullLogger), owner = reader(store);
+    const jobs = join(env.home, JOBS_FILE), big = ownedMessage(store, owner, message(randomUUID(), HUGE));
+    const job = { id: "big", name: "codex-job-big", agent: "codex", startedAt: Date.now(), status: "done", owner: "reader", rootName: "reader",
       workdir: env.home, projectRoot: env.home, rootSession: "fixture-root", supervisor: "fixture-root",
-      ownershipHistory: [{ from: "old", to: "reader" }], deliveryHistory: [big] }] }));
-    const store = new MessageStore(env.db, nullLogger);
+      deliveryOwner: fixtureOwner(store, owner), deliveryOwners: { reader: fixtureOwner(store, owner) },
+      ownershipHistory: [{ from: "old", to: "reader" }] };
+    const report = fixtureJobReport(store, job, owner, owner, big);
+    writeFileSync(jobs, JSON.stringify({ version: 4, jobs: [{ ...job, deliveryHistory: [report.message], reportRouting: { [big.id]: report.draft } }] }));
     const broker = new Broker(env.pipe, store, nullLogger, loadOrCreateToken(env.home), Date.now, jobs);
     await broker.listen();
     try {

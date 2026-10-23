@@ -12,6 +12,7 @@ import { loadOrCreateToken } from "../src/core/token.js";
 import { readProcessIdentity } from "../src/core/process-identity.js";
 import { SHUTDOWN_DEADLINE_MS, watchParent } from "../src/mcp/server-lifecycle.js";
 import { codexHost, makeEnv, until, type TestEnv } from "./helpers.js";
+import { retainFixtureNode } from "./owned-mail.js";
 import { killPid, pidAlive } from "../src/core/delegate.js";
 import { readRunnerState } from "../src/mcp/job-host.js";
 import { readStore } from "../src/mcp/jobs.js";
@@ -71,6 +72,7 @@ describe.skipIf(!existsSync(SERVER))("AB-385 stale MCP servers exit", () => {
     const watcher = env.node("watcher", "other");
     await watcher.start();
     expect(watcher.isBroker).toBe(false);
+    const later = env.node("later", "other"); retainFixtureNode(env.home, later, "other");
     await watcher.send({ to: "later", body: "queued before the reload" });
 
     // The host drops the server's stdin (a reload that does close it): the server must not linger as the broker.
@@ -81,7 +83,6 @@ describe.skipIf(!existsSync(SERVER))("AB-385 stale MCP servers exit", () => {
 
     // A remaining server takes the broker over; the queued mail is still delivered.
     await until(() => watcher.isConnected && watcher.isBroker, 10_000);
-    const later = env.node("later", "other");
     await later.start();
     await until(() => later.unread().length === 1);
     expect(later.unread()[0]!.body).toBe("queued before the reload");
@@ -107,13 +108,13 @@ describe.skipIf(!existsSync(SERVER))("AB-385 stale MCP servers exit", () => {
 
   it("an older server yields and exits when a newer version registers for its session, though its stdin stays open", async () => {
     const { pid, watcher } = await oldServerWithSession("session-ab385");
+    const absent = env.node("absent", "other"); retainFixtureNode(env.home, absent, "other");
     await watcher.send({ to: "absent", body: "mail kept across the yield" });
     await registerReplacement(env, { sessionId: "session-ab385", version: "999.0.0" });
     const took = await exitsWithin(pid, EXIT_BUDGET_MS);
     expect(took).toBeLessThan(EXIT_BUDGET_MS);
     expect(logged(pid, "replaced by newer server v999.0.0 of the same host")).toBe(true);
     await until(() => watcher.isConnected && watcher.isBroker, 10_000);
-    const absent = env.node("absent", "other");
     await absent.start();
     await until(() => absent.unread().length === 1);
     expect(absent.unread()[0]!.body).toBe("mail kept across the yield");

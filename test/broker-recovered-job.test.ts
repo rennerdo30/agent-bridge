@@ -8,6 +8,7 @@ import { JOBS_FILE, PROTOCOL_VERSION } from "../src/core/constants.js";
 import { indexedJobProjectionCurrent, markJobProjection, storeJobRecords } from "../src/core/job-archive-index.js";
 import { nullLogger } from "../src/core/logger.js";
 import { MessageStore } from "../src/core/store.js";
+import { fixtureOwner, fixturePeer } from "./owned-mail.js";
 import { loadOrCreateToken } from "../src/core/token.js";
 import { makeEnv } from "./helpers.js";
 
@@ -19,23 +20,24 @@ import { makeEnv } from "./helpers.js";
 it("routes inline job reports to the stored owner, not a recovery cached before the handoff", async () => {
   const env = makeEnv(), token = loadOrCreateToken(env.home), clients: BridgeClient[] = [];
   const path = join(env.home, JOBS_FILE), startedAt = Date.now();
+  const store = new MessageStore(env.db, nullLogger), sourcePeer = fixturePeer(store, "codex-source", { agent: "codex" }), targetPeer = fixturePeer(store, "claude-target", { agent: "claude" });
   const before = { id: "55c939e2", name: "claude-ask-55c939e2", agent: "claude", status: "running", prompt: "blocking work",
     supervisor: "codex-source", owner: "codex-source", executionOwner: "codex-source", rootSession: "codex-source", rootName: "codex-source",
     projectRoot: env.home, workdir: env.home, startedAt, args: {} };
+  Object.assign(before, { deliveryOwner: fixtureOwner(store, sourcePeer), deliveryOwners: { [sourcePeer.name]: fixtureOwner(store, sourcePeer), [targetPeer.name]: fixtureOwner(store, targetPeer) } });
   const after = { ...before, status: "done", finishedAt: startedAt + 1, supervisor: "claude-target", owner: "claude-target", rootSession: "claude-target",
     rootName: "claude-target", ownershipHistory: [{ from: "codex-source", to: "claude-target", fromRootName: "codex-source", rootName: "claude-target", at: startedAt }] };
+  Object.assign(after, { deliveryOwner: fixtureOwner(store, targetPeer) });
   writeFileSync(path, JSON.stringify({ version: 4, jobs: [after] }));
   storeJobRecords(path, [after]);
   markJobProjection(path, [after]);
   expect(indexedJobProjectionCurrent(path)).toBe(true);
-  const broker = new Broker(env.pipe, new MessageStore(env.db, nullLogger), nullLogger, token, Date.now, path);
+  const broker = new Broker(env.pipe, store, nullLogger, token, Date.now, path);
   try {
     await broker.listen();
-    for (const [name, agent] of [["codex-source", "codex"], ["claude-target", "claude"]] as const) {
+    for (const peer of [sourcePeer, targetPeer]) {
       const client = await BridgeClient.connect(env.pipe, nullLogger); clients.push(client);
-      await client.request("hello", { protocol: PROTOCOL_VERSION, token, peer: {
-        id: `peer-${name}`, name, agent, cwd: env.home, pid: process.pid, agentPid: null, sessionId: null, startedAt, autoWake: false,
-      } });
+      await client.request("hello", { protocol: PROTOCOL_VERSION, token, peer });
     }
     const [source, target] = clients as [BridgeClient, BridgeClient];
     // What jobForControl caches after recovering the job from a history copy written before the handoff.

@@ -298,7 +298,7 @@ it("retains a runner's submitted continuation through late refusal and an explic
   vi.spyOn(BridgeNode.prototype, "stop").mockResolvedValue();
   vi.spyOn(BridgeNode.prototype, "updateJob").mockResolvedValue();
   vi.spyOn(BridgeNode.prototype, "markRead").mockImplementation(() => {});
-  vi.spyOn(BridgeNode.prototype, "send").mockResolvedValue({ deliveredTo: ["owner"], queuedFor: [] } as any);
+  vi.spyOn(BridgeNode.prototype, "send").mockResolvedValue({ messages: [{ id: "stored" }], deliveredTo: ["owner"], queuedFor: [] } as any);
   vi.spyOn(startup, "acquireStartup").mockResolvedValue(() => {});
   vi.spyOn(worktree, "gitDirsOutside").mockResolvedValue([]);
   const check = vi.spyOn(usage, "checkUsagePreflight").mockResolvedValue(block);
@@ -383,7 +383,7 @@ it("keeps submitted remote CIDs pending across refusal and restore until executo
       sessionId: "remote-session", workdir: home, providerUsage: structuredClone(current.providerUsage), usageSubmission: usage.usageSubmissionReceipt(current) };
     return { pid: 0, peer: current.name, startedAt: Date.now() };
   });
-  const executor = new RemoteJobs({ registerExtension() {} } as any, executorHome, nullLogger, async () => {}); remotes.push(executor);
+  const executor = new RemoteJobs({ registerExtension() {}, peerSupports: () => true } as any, executorHome, nullLogger, async () => {}); remotes.push(executor);
   const requests: any[] = [];
   const node = new LocalCoordinator("owner", "owner-session");
   const remoteNode = { remoteJob: async (_host: string, raw: any) => {
@@ -435,7 +435,7 @@ it("retains an internal batch when preparation throws before any admission or us
   vi.spyOn(BridgeNode.prototype, "stop").mockResolvedValue();
   vi.spyOn(BridgeNode.prototype, "updateJob").mockResolvedValue();
   vi.spyOn(BridgeNode.prototype, "markRead").mockImplementation(() => {});
-  vi.spyOn(BridgeNode.prototype, "send").mockResolvedValue({ deliveredTo: ["owner"], queuedFor: [] } as any);
+  vi.spyOn(BridgeNode.prototype, "send").mockResolvedValue({ messages: [{ id: "stored" }], deliveredTo: ["owner"], queuedFor: [] } as any);
   const check = vi.spyOn(usage, "checkUsagePreflight");
   const native = vi.spyOn(DELEGATION_TARGETS.codex, "run");
   let state: RunnerState = { pid: process.pid, peer: "fixture-runner", updatedAt: Date.now(), status: "running" };
@@ -564,7 +564,7 @@ it.each(CODING_AGENTS)("remote %s preflight uses executor context and persists t
   vi.spyOn(worktree, "gitDirsOutside").mockResolvedValue([]);
   const read = vi.spyOn(usage, "checkUsagePreflight").mockResolvedValue(block);
   const start = vi.spyOn(JobRunners.prototype, "startAsync").mockResolvedValue({ pid: null, peer: "runner", startedAt: 1 });
-  const remote = new RemoteJobs({ registerExtension() {} } as any, home, nullLogger, async () => {}); remotes.push(remote);
+  const remote = new RemoteJobs({ registerExtension() {}, peerSupports: () => true } as any, home, nullLogger, async () => {}); remotes.push(remote);
   const request = { op: "spawn", job: "12345678", target, usageTurn: "12345678:100", args: { cwd: home, model: "selected-model", prompt: "task", title: "Fixture" } };
   const snapshot = await (remote as any).handle({ id: "pair", name: "paired" }, { id: "supervisor", name: "sender", supervisor: "session" }, request);
   expect(start).not.toHaveBeenCalled();
@@ -573,7 +573,7 @@ it.each(CODING_AGENTS)("remote %s preflight uses executor context and persists t
   expect(snapshot).toMatchObject({ alive: false, usageTurn: request.usageTurn });
   expect(JSON.parse(readFileSync(join(home, "remote-jobs.json"), "utf8")).jobs[0].usageRefusal.providerUsage.decision).toEqual(block);
   remote.close();
-  const restored = new RemoteJobs({ registerExtension() {} } as any, home, nullLogger, async () => {}); remotes.push(restored);
+  const restored = new RemoteJobs({ registerExtension() {}, peerSupports: () => true } as any, home, nullLogger, async () => {}); remotes.push(restored);
   const state = await (restored as any).handle({ id: "pair", name: "paired" }, { id: "supervisor", name: "sender", supervisor: "session" }, { op: "state", job: "12345678" });
   expect(state.state.providerUsage.decision).toEqual(block);
 });

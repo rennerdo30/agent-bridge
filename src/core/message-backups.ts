@@ -10,7 +10,7 @@ import { storageLease } from "./storage-lock.js";
 export const MESSAGE_BACKUPS_DIR = "message-backups";
 export const AUTO_BACKUP_ENV = "AGENT_BRIDGE_AUTO_BACKUP";
 const TABLES = {
-  "bridge.db": ["messages", "archived_messages", "job_delivery_routes"],
+  "bridge.db": ["messages", "archived_messages", "job_delivery_routes", "job_mail_grants", "job_mail_succession", "job_mail_retirements", "message_frontends", "mailbox_store", "send_intents", "send_destinations", "recipient_registrations", "peer_names", "peer_name_owners", "native_child_routes", "message_archive_conflicts"],
   "archive.db": ["messages"],
   "store-compatibility.db": ["job_delivery_routes"],
 } as const;
@@ -76,6 +76,7 @@ export async function messageBackupIfDue(home: string, control: MessageBackupCon
   const release = storageLease(home);
   let lock: DatabaseSync | undefined;
   let staging: string | undefined;
+  const sources = new Map<string, DatabaseSync>();
   try {
     lock = new DatabaseSync(join(home, "message-backup-lock.db"), { timeout: 0 });
     if (Number(lock.prepare("PRAGMA user_version").get()!.user_version) > 1) throw new Error("Unsupported message backup coordination schema");
@@ -105,17 +106,42 @@ export async function messageBackupIfDue(home: string, control: MessageBackupCon
       } finally { await file.close(); }
       return { bytes, sha256: hash.digest("hex") };
     };
-    // Primary precedes monotonic archives: an archive move cannot omit both copies.
+    // Briefly reserve every source writer, then pin every read snapshot without
+    // yielding. Release the reservations before copying/checkpoints: WAL writers
+    // continue normally while all included tables share the same stable boundary.
+    // Failure to obtain any reservation refuses publication; no partial snapshot.
+    const barriers: DatabaseSync[] = [];
+    const sourceNames: string[] = [];
+    try {
+      for (const sourceName of Object.keys(TABLES)) {
+        const sourcePath = join(home, sourceName);
+        if (!existsSync(sourcePath)) continue;
+        assertPhysical(sourcePath);
+        const barrier = new DatabaseSync(sourcePath, { timeout: 0 }); barriers.push(barrier);
+        barrier.exec("BEGIN IMMEDIATE");
+        sourceNames.push(sourceName);
+      }
+      for (const sourceName of sourceNames) {
+        const sourcePath = join(home, sourceName);
+        const source = new DatabaseSync(sourcePath, { readOnly: true, timeout: 0 }); sources.set(sourceName, source);
+        source.exec("BEGIN");
+        source.prepare("SELECT name FROM sqlite_master LIMIT 1").get(); // Establish the WAL snapshot now.
+      }
+    } finally {
+      let failure: unknown;
+      for (const barrier of barriers.reverse()) {
+        try { try { if (barrier.isTransaction) barrier.exec("ROLLBACK"); } finally { barrier.close(); } }
+        catch (error) { failure ??= error; }
+      }
+      if (failure) throw failure;
+    }
     for (const [sourceName, names] of Object.entries(TABLES)) {
-      const sourcePath = join(home, sourceName);
-      if (!existsSync(sourcePath)) continue;
-      assertPhysical(sourcePath);
+      const source = sources.get(sourceName);
+      if (!source) continue;
       await control.checkpoint();
-      const source = new DatabaseSync(sourcePath, { readOnly: true, timeout: 100 });
       const path = sourceName.replace(/\.db$/, ".messages.db"), targetPath = join(staging, path);
       let target: DatabaseSync | undefined;
       try {
-        source.exec("BEGIN");
         const sourceVersion = Number(source.prepare("PRAGMA user_version").get()!.user_version);
         const schemas = names.flatMap(name => {
           const row = source.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name=?").get(name);
@@ -160,7 +186,7 @@ export async function messageBackupIfDue(home: string, control: MessageBackupCon
         const copied = await checksum(targetPath), verified = await checksum(targetPath);
         if (copied.bytes !== verified.bytes || copied.sha256 !== verified.sha256) throw new Error(`Message backup checksum verification failed: ${sourceName}`);
         manifest.files.push({ path, source: sourceName, sourceVersion, ...verified, tables });
-      } finally { try { target?.close(); } finally { source.close(); } }
+      } finally { try { target?.close(); } finally { source.close(); sources.delete(sourceName); } }
     }
     await control.checkpoint();
     writeFileSync(join(staging, "manifest.json"), JSON.stringify(manifest, null, 2) + "\n", { flag: "wx", mode: 0o600 });
@@ -177,5 +203,8 @@ export async function messageBackupIfDue(home: string, control: MessageBackupCon
   } catch (error) {
     if (staging && existsSync(staging)) writeFileSync(join(staging, "failure.json"), JSON.stringify({ version: 1, at: Date.now(), error: String(error) }) + "\n", { flag: "wx", mode: 0o600 });
     throw error;
-  } finally { try { lock?.close(); } finally { release(); } }
+  } finally {
+    try { for (const source of sources.values()) source.close(); }
+    finally { try { lock?.close(); } finally { release(); } }
+  }
 }

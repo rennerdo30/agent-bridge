@@ -1,4 +1,5 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -14,11 +15,19 @@ import { JobRunners } from "../src/mcp/job-host.js";
 import { runDelegate } from "../src/mcp/delegate-run.js";
 import { DELEGATION_TARGETS } from "../src/mcp/targets.js";
 import { until } from "./helpers.js";
+import { closeMetadataDb } from "../src/core/metadata-db.js";
 
 let home: string;
 const managers: JobManager[] = [];
 beforeEach(() => { home = mkdtempSync(join(tmpdir(), "ab-admission-")); });
-afterEach(() => { managers.splice(0).forEach(j => j.cancelAll()); vi.restoreAllMocks(); rmSync(home, { recursive: true, force: true }); });
+afterEach(async () => {
+  managers.splice(0).forEach(j => j.cancelAll());
+  // The real admission fence opens this fixture's shared metadata handle. The
+  // "live runner" case uses this test PID, not a launched child; cancelling the
+  // managers is not a SQLite close. Close our handle before removing our home.
+  closeMetadataDb(home); vi.restoreAllMocks();
+  await rm(home, { recursive: true, force: true });
+});
 const result = { text: "done", sessionId: "saved", isError: false, details: {} };
 function manager(cap = 2) {
   const jobs = new JobManager(new LocalCoordinator("owner", "owner-session"), nullLogger, join(home, "jobs.json"), cap);

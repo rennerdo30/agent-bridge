@@ -1,0 +1,587 @@
+{
+  "base": "55b2fe19551471823580c664a98d04386fa4b55d",
+  "sourceCommit": "cf5c9a555192c9168aa22a19f5b610daa191ad02",
+  "sourceTree": "e49b051f94a2e4531127bb699df919875b79082b",
+  "status": "Parent exact protected-method review REQUIRED; baseline untouched",
+  "design": "t3-cross-machine-r36-correction.md",
+  "normalizedDelta": "t3-cross-machine-mobile-pin-r36.patch",
+  "reason": "R36: synchronously revoke mobile borrowed authority and start its existing bounded disposer before awaiting serving-maintenance cleanup; no timeout or callback permission change.",
+  "methodNormalizerSha256": "44483a60390a69d21050504d5ebbd59ea8054d170c173e7fd063741b5a0fa971",
+  "normalizerSha256": "19b5fbbccdea0d567510ebca43e4b7d6c9506504375f79d395641c34d6dd4549",
+  "inventory": [
+    {
+      "method": "src/core/broker.ts:constructor",
+      "previous": "942e12b5a088935e829a232a97984c1e67a68baed145cc6e41fc626376972d27",
+      "current": "942e12b5a088935e829a232a97984c1e67a68baed145cc6e41fc626376972d27"
+    },
+    {
+      "method": "src/core/broker.ts:listen",
+      "previous": "dd9b9a4c89eb00cf2a616274884330b7c7e74aafaa8fea6832cbbf264048ecf2",
+      "current": "dd9b9a4c89eb00cf2a616274884330b7c7e74aafaa8fea6832cbbf264048ecf2"
+    },
+    {
+      "method": "src/core/broker.ts:startServices",
+      "previous": "258cf7e8495f1ed376d1a649a72e29732ab4efc13516b51ce32aefa01ae429c7",
+      "current": "258cf7e8495f1ed376d1a649a72e29732ab4efc13516b51ce32aefa01ae429c7"
+    },
+    {
+      "method": "src/core/broker.ts:abortStartup",
+      "previous": "7b3dc7bf4af0d58ba0ef819078ca8f795b47e700f7c4d25e8375c9df13c74ac4",
+      "current": "064ce446840687233b79dea28dbc12219d60ecc10e09729d1d0bd909db99b277"
+    },
+    {
+      "method": "src/core/broker.ts:close",
+      "previous": "7b3ddeb36b6f4ea009af51c0fb5c1749af388d8d47ef9dc9ad6452d087b33a6c",
+      "current": "7b3ddeb36b6f4ea009af51c0fb5c1749af388d8d47ef9dc9ad6452d087b33a6c"
+    },
+    {
+      "method": "src/core/node.ts:constructor",
+      "previous": "c70bf3e865405166e195839fd1b315548b5a0a56847db0bba52eba72d0b691f5",
+      "current": "c70bf3e865405166e195839fd1b315548b5a0a56847db0bba52eba72d0b691f5"
+    },
+    {
+      "method": "src/core/node.ts:start",
+      "previous": "b504e47bab8d53e8bb71ad3457594988c38cc78bed67e2b1be3e197bc1f5066a",
+      "current": "b504e47bab8d53e8bb71ad3457594988c38cc78bed67e2b1be3e197bc1f5066a"
+    },
+    {
+      "method": "src/core/node.ts:stop",
+      "previous": "b98b5631cf7643be62bce61fac172fc79c0da09db2c7720abf14502736b57359",
+      "current": "b98b5631cf7643be62bce61fac172fc79c0da09db2c7720abf14502736b57359"
+    },
+    {
+      "method": "src/core/node.ts:tryBecomeBroker",
+      "previous": "121e78d74aa2198d80bedf8845bf02de5529966d6b6865857a370324c515b8ac",
+      "current": "121e78d74aa2198d80bedf8845bf02de5529966d6b6865857a370324c515b8ac"
+    },
+    {
+      "method": "src/cli/dashboard.ts:constructor",
+      "previous": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "current": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    },
+    {
+      "method": "src/cli/dashboard.ts:open",
+      "previous": "6eacbb835304e2a5d3c303c54c3c674910cbf4f9a5411b3af62a7747fe2d211b",
+      "current": "6eacbb835304e2a5d3c303c54c3c674910cbf4f9a5411b3af62a7747fe2d211b"
+    },
+    {
+      "method": "src/cli/dashboard.ts:ensure",
+      "previous": "d19ca8a9485ccc07d588997e3497bc11545e730a264e9a6f59bf1ceb0dfcda49",
+      "current": "d19ca8a9485ccc07d588997e3497bc11545e730a264e9a6f59bf1ceb0dfcda49"
+    },
+    {
+      "method": "src/cli/dashboard.ts:close",
+      "previous": "534d315c24ff13f59aa4082abf2fb66906e6bee9b979a6348979cbaef89ec7b4",
+      "current": "534d315c24ff13f59aa4082abf2fb66906e6bee9b979a6348979cbaef89ec7b4"
+    }
+  ],
+  "unchangedMethodCount": 12,
+  "uiSha256": "f2a5b28254d4bb467f28bdee139e3b23bd9d4bd0c7c15fee116b4ed85a6ac385",
+  "sourceHashes": {
+    "src/cli/broker-daemon.ts": "c3f5fce0deb34ad8918af7b43173ed404bb681fc8cd6502e614ba1c10fda4fe5",
+    "src/core/broker.ts": "322f7646ebd0c10b6eee95d3217448c37db92470d5abf66642681daf1636d853",
+    "src/core/constants.ts": "0ee18273a5e05c35a4a1fa54b7b42f5cc29ea3b33f628725ede12bd607ba1a97",
+    "src/core/history-store.ts": "a5471c3a20b99f45e1c998b80e6931f01e453febb6514b7924d1279ecc3e588e",
+    "src/core/job-archive-index.ts": "7eb98afd3dd3913c8fd8bcf34f8e3273f50907e82bce9a06470b5a189b0f3663",
+    "src/core/job-run-index.ts": "251cd4bbaf37c47e5aede48732a3812b4caeb66d4257c4bf30d95edce0feb5cf",
+    "src/core/metadata-db.ts": "44d06b089d926e7f290a50a67a32fd0ecaa55a5e2a6c2ca84aa6ea89c5f3634c",
+    "src/core/muse-context.ts": "ffb85220b0c50185ebeec3ab1a46955962674dacf8d7e3ea66f8b3a27786877c",
+    "src/core/native-children.ts": "07fa3e9819e25b145795855e2ba7ec3f46b9d581404825db3bf1700b0e7bff2e",
+    "src/core/node.ts": "02b853dee8e30622e8d528fb27919e4a86080b446bdedb1277091f2b809c29bc",
+    "src/core/prior-endpoints.ts": "ad0da7ad06a8228cd47dbb301cf7131e98fc047b40cdaa87465db417f6aaf21f",
+    "src/core/sqlite-maintenance.ts": "40d1a87d51de983c26ec37faf9edfb83d658e06c429f6851b6773fdde02a9453",
+    "src/core/store-bootstrap-journal.ts": "cccabf9e04f90c0e8fe5dec28a1e15953bfe05cd22628076f2956841a01ff2da",
+    "src/core/store-bootstrap-worker.ts": "bc52dc1cdfd6e88102fd4c2eaac083f714959012316d00a0921dd2e8d2b15a27",
+    "src/core/store-bootstrap.ts": "dc0567da47a52eb1ebdbcae980ba8f4162c47cc47d253c63e1b13b185564c525",
+    "src/core/store.ts": "ff23885601d3d71c0d8563aac59bdea3e1e947f7cee91d16d71600d5c366b9f6",
+    "src/network/link.ts": "fe809a43837285da42dea53f2088732d3cc092719d088a35b8c117f9914871de",
+    "src/core/storage-lock.ts": "412dd1c61e7ddd02460be6738f3004f9b82903480daee87cb8622bab0231f177",
+    "src/core/endpoint-reservation.ts": "4db5b11822d5236e640d940a6a92397fa7626b5f381dca99143b7aad01b4f846",
+    "src/core/startup-budget.ts": "82a0145b83a0f2944dea3214c666c6260b04612b1dee1c43b8a06aafca2e7089",
+    "src/core/protocol.ts": "d1000d5119bbdd088dcc60298fdb2d1b2b9b69626f6650c6fd816f10d334761f",
+    "src/cli/dashboard.ts": "d9aea35b3f14e8f32d24d4c97651e462f96a3f315d9d577b3771340986a88cbb",
+    "src/cli/ui.ts": "dff4d25a71aeb728ab6ea6cbc5d00ed01ba50e5ef14a25fc2bbfca1c8ba4ab38",
+    "test/mobile-wiring.test.ts": "2e1c71e37ce0fd4496414479077b11a2d217e15ed150025d7e1864feeef8c24e",
+    "test/fixtures/mobile-wiring-baseline.json": "b88ff6cd5766733feccdb6af435931007d880006d00cc04b094411fd60705c8a",
+    "src/core/backups.ts": "c4d8a317102c845cd26895f09650ec85b175c8e9751be7a646e27d8c0aad8003",
+    "src/cli/doctor.ts": "cd91aeffa91417fcdc7baa4beca339431d4c193eddc2a7d876bd11135ba91298",
+    "src/core/history-background.ts": "70b54b6559b1eebecbfd083e9af75962388f85c8ca78b54cb38930848a346850",
+    "src/core/job-archive-background.ts": "e5683ca9ec7d969d223c2e555fc8ac9c7dc60018a7d0d68d2aa162a140b39df9",
+    "src/core/message-backups.ts": "f3f86f41c091b5a341044113a59b2019dbc16a78c3a643f6d3a545356985c9c2",
+    "src/core/backup-background.ts": "88479c297864dbfd1d1d154746bab817b19bc4fbd8255c171bd7b454e1ef57fa",
+    "src/core/health.ts": "e759ddf8055e30243e8e6f829ddfabf214995b701d632c9821ceee64860428df",
+    "src/core/store-compatibility.ts": "95ccf1e1b43ff6e4b525ab756c11ea390a1839457bcec18fc5c1424b4c197a66",
+    "src/core/store-compatibility-overlay.ts": "bfd56246f97dd068e49d64d987f77d4a073f1c364d7ca529bfba97d2388e8318",
+    "src/core/daemon-launcher.ts": "eb3824d7492d6a5dddeb831e2f200f6532874342a6ccc9228ffba93d618e64bf",
+    "test/store-bootstrap.test.ts": "45416a649dfd7a0454dc0bad93767bb80ddf4a8b685f3d0ca1ef16fc7507fbb3",
+    "test/broker-startup-admission.test.ts": "a6c5aec0322df24647b88b94e6b6c1b9e9ecffc420b095200a322bc6d9aadf61",
+    "test/remote-supervisor-routing.test.ts": "2b3279e1b556d2ca11331dd6ba380cad25ebaec2a26176d2d2859ae47d1c078d",
+    "test/t3-cross-machine.test.ts": "34842bb75a78290fbc2f5d75b6c58b68e9aa97d9d097afe5acd7cc9372f0dfa4",
+    "test/owned-fixture-rpcs.ts": "ad3311f3df9884dd88243a7f0bbcc2f65758ef791d6eed52579420e78e1c5205",
+    "test/owned-fixture-rpcs.test.ts": "a7acc685852f64b80a3c091ce9db38e5c3ab784bf014ac14575d7681ceed23df",
+    "test/mcp-chat.test.ts": "a0965950a716392b733df490ecd228399b132be55059fb18e16a1fb97aa07a56",
+    "test/daemon-metadata-final-close.test.ts": "db527c6f9a13e14d29e525f3602963832443113b4801048361d3e7ef5dd2008b",
+    "test/history-backfill-load.test.ts": "4c20e874b166bf44bb84a503f5c3f02cc351ac501ed250d363e96bcfca831410",
+    "test/storage-admission-phases.test.ts": "d67f6d9247b192e303b9f45bd1fb07879c80b54b2e426510d2de3b92c767cafd"
+  },
+  "byteEvidence": {
+    "src/cli/broker-daemon.ts": {
+      "gitBlobOid": "150efe35ce7deeb86a9c4b46f44030d239add35e",
+      "gitBlobBytes": 8578,
+      "gitBlobSha256": "c3f5fce0deb34ad8918af7b43173ed404bb681fc8cd6502e614ba1c10fda4fe5",
+      "worktreeBytes": 8719,
+      "worktreeRawSha256": "16d1c1cb77608c8b015b3895eb323ccbf0b8918fd2665d2e1943bdb0325e516e",
+      "worktreeLfNormalizedSha256": "c3f5fce0deb34ad8918af7b43173ed404bb681fc8cd6502e614ba1c10fda4fe5",
+      "gitEqualsWorktreeBytes": false,
+      "gitEqualsLfNormalizedWorktree": true
+    },
+    "src/core/broker.ts": {
+      "gitBlobOid": "c34f58659902c86d786ceb4a39e1980f6f2abf39",
+      "gitBlobBytes": 240564,
+      "gitBlobSha256": "322f7646ebd0c10b6eee95d3217448c37db92470d5abf66642681daf1636d853",
+      "worktreeBytes": 240564,
+      "worktreeRawSha256": "322f7646ebd0c10b6eee95d3217448c37db92470d5abf66642681daf1636d853",
+      "worktreeLfNormalizedSha256": "322f7646ebd0c10b6eee95d3217448c37db92470d5abf66642681daf1636d853",
+      "gitEqualsWorktreeBytes": true,
+      "gitEqualsLfNormalizedWorktree": true
+    },
+    "src/core/constants.ts": {
+      "gitBlobOid": "e7498f408e4a6efefc4683acfc5d395f68904ae3",
+      "gitBlobBytes": 6883,
+      "gitBlobSha256": "0ee18273a5e05c35a4a1fa54b7b42f5cc29ea3b33f628725ede12bd607ba1a97",
+      "worktreeBytes": 6883,
+      "worktreeRawSha256": "0ee18273a5e05c35a4a1fa54b7b42f5cc29ea3b33f628725ede12bd607ba1a97",
+      "worktreeLfNormalizedSha256": "0ee18273a5e05c35a4a1fa54b7b42f5cc29ea3b33f628725ede12bd607ba1a97",
+      "gitEqualsWorktreeBytes": true,
+      "gitEqualsLfNormalizedWorktree": true
+    },
+    "src/core/history-store.ts": {
+      "gitBlobOid": "830afdf45fe14badfc2e2241c764919792483636",
+      "gitBlobBytes": 27181,
+      "gitBlobSha256": "a5471c3a20b99f45e1c998b80e6931f01e453febb6514b7924d1279ecc3e588e",
+      "worktreeBytes": 27577,
+      "worktreeRawSha256": "615ed345e8c36b12df06602699ecb45401de7141c5c6b210310a72885f2951dc",
+      "worktreeLfNormalizedSha256": "a5471c3a20b99f45e1c998b80e6931f01e453febb6514b7924d1279ecc3e588e",
+      "gitEqualsWorktreeBytes": false,
+      "gitEqualsLfNormalizedWorktree": true
+    },
+    "src/core/job-archive-index.ts": {
+      "gitBlobOid": "b28fd14d4989c02116b11c0b21e5a93359174a0b",
+      "gitBlobBytes": 21346,
+      "gitBlobSha256": "7eb98afd3dd3913c8fd8bcf34f8e3273f50907e82bce9a06470b5a189b0f3663",
+      "worktreeBytes": 21346,
+      "worktreeRawSha256": "7eb98afd3dd3913c8fd8bcf34f8e3273f50907e82bce9a06470b5a189b0f3663",
+      "worktreeLfNormalizedSha256": "7eb98afd3dd3913c8fd8bcf34f8e3273f50907e82bce9a06470b5a189b0f3663",
+      "gitEqualsWorktreeBytes": true,
+      "gitEqualsLfNormalizedWorktree": true
+    },
+    "src/core/job-run-index.ts": {
+      "gitBlobOid": "c5677cf8fdca1e3d3973109d4abf7cfdba142555",
+      "gitBlobBytes": 28535,
+      "gitBlobSha256": "251cd4bbaf37c47e5aede48732a3812b4caeb66d4257c4bf30d95edce0feb5cf",
+      "worktreeBytes": 28535,
+      "worktreeRawSha256": "251cd4bbaf37c47e5aede48732a3812b4caeb66d4257c4bf30d95edce0feb5cf",
+      "worktreeLfNormalizedSha256": "251cd4bbaf37c47e5aede48732a3812b4caeb66d4257c4bf30d95edce0feb5cf",
+      "gitEqualsWorktreeBytes": true,
+      "gitEqualsLfNormalizedWorktree": true
+    },
+    "src/core/metadata-db.ts": {
+      "gitBlobOid": "52058fe7fa3abb9758d75b9fc2ad2dab5ff64b96",
+      "gitBlobBytes": 34547,
+      "gitBlobSha256": "44d06b089d926e7f290a50a67a32fd0ecaa55a5e2a6c2ca84aa6ea89c5f3634c",
+      "worktreeBytes": 35102,
+      "worktreeRawSha256": "d9e3dc073570a566017b6e7893556b4c38304a51e7ac9e43bf420df6ab299284",
+      "worktreeLfNormalizedSha256": "44d06b089d926e7f290a50a67a32fd0ecaa55a5e2a6c2ca84aa6ea89c5f3634c",
+      "gitEqualsWorktreeBytes": false,
+      "gitEqualsLfNormalizedWorktree": true
+    },
+    "src/core/muse-context.ts": {
+      "gitBlobOid": "092a78c14d8f609a35b00726dfd28b6d7463da6b",
+      "gitBlobBytes": 14159,
+      "gitBlobSha256": "ffb85220b0c50185ebeec3ab1a46955962674dacf8d7e3ea66f8b3a27786877c",
+      "worktreeBytes": 14159,
+      "worktreeRawSha256": "ffb85220b0c50185ebeec3ab1a46955962674dacf8d7e3ea66f8b3a27786877c",
+      "worktreeLfNormalizedSha256": "ffb85220b0c50185ebeec3ab1a46955962674dacf8d7e3ea66f8b3a27786877c",
+      "gitEqualsWorktreeBytes": true,
+      "gitEqualsLfNormalizedWorktree": true
+    },
+    "src/core/native-children.ts": {
+      "gitBlobOid": "86ca9e7559e4c03a3841b5912532790e2d9359d4",
+      "gitBlobBytes": 11203,
+      "gitBlobSha256": "07fa3e9819e25b145795855e2ba7ec3f46b9d581404825db3bf1700b0e7bff2e",
+      "worktreeBytes": 11203,
+      "worktreeRawSha256": "07fa3e9819e25b145795855e2ba7ec3f46b9d581404825db3bf1700b0e7bff2e",
+      "worktreeLfNormalizedSha256": "07fa3e9819e25b145795855e2ba7ec3f46b9d581404825db3bf1700b0e7bff2e",
+      "gitEqualsWorktreeBytes": true,
+      "gitEqualsLfNormalizedWorktree": true
+    },
+    "src/core/node.ts": {
+      "gitBlobOid": "a8269414c13516cb4ed6bb05c0295609ad62961c",
+      "gitBlobBytes": 76588,
+      "gitBlobSha256": "02b853dee8e30622e8d528fb27919e4a86080b446bdedb1277091f2b809c29bc",
+      "worktreeBytes": 77972,
+      "worktreeRawSha256": "17143d62b99c40d00bd046812fcdb1c26f1bba877a89735f4b8eb4a000a184b9",
+      "worktreeLfNormalizedSha256": "02b853dee8e30622e8d528fb27919e4a86080b446bdedb1277091f2b809c29bc",
+      "gitEqualsWorktreeBytes": false,
+      "gitEqualsLfNormalizedWorktree": true
+    },
+    "src/core/prior-endpoints.ts": {
+      "gitBlobOid": "62747c5e9343e139b743292b705edb529350b18a",
+      "gitBlobBytes": 12381,
+      "gitBlobSha256": "ad0da7ad06a8228cd47dbb301cf7131e98fc047b40cdaa87465db417f6aaf21f",
+      "worktreeBytes": 12570,
+      "worktreeRawSha256": "6ea0e709ec47b119acfcad58a705f67d5604d355d201fe33c0480abfd76a3a04",
+      "worktreeLfNormalizedSha256": "ad0da7ad06a8228cd47dbb301cf7131e98fc047b40cdaa87465db417f6aaf21f",
+      "gitEqualsWorktreeBytes": false,
+      "gitEqualsLfNormalizedWorktree": true
+    },
+    "src/core/sqlite-maintenance.ts": {
+      "gitBlobOid": "e4bf18f70f2fb8a1784bf1b6e136361d65e95f9a",
+      "gitBlobBytes": 12381,
+      "gitBlobSha256": "40d1a87d51de983c26ec37faf9edfb83d658e06c429f6851b6773fdde02a9453",
+      "worktreeBytes": 12591,
+      "worktreeRawSha256": "49c7bc25e3e8ab9e64139986c18ecbabb9a90920fcf0a5eb9befe5b5ef8291eb",
+      "worktreeLfNormalizedSha256": "40d1a87d51de983c26ec37faf9edfb83d658e06c429f6851b6773fdde02a9453",
+      "gitEqualsWorktreeBytes": false,
+      "gitEqualsLfNormalizedWorktree": true
+    },
+    "src/core/store-bootstrap-journal.ts": {
+      "gitBlobOid": "2348d97c1acc16acfdd1e8f92ad9b5062bec66eb",
+      "gitBlobBytes": 34698,
+      "gitBlobSha256": "cccabf9e04f90c0e8fe5dec28a1e15953bfe05cd22628076f2956841a01ff2da",
+      "worktreeBytes": 34698,
+      "worktreeRawSha256": "cccabf9e04f90c0e8fe5dec28a1e15953bfe05cd22628076f2956841a01ff2da",
+      "worktreeLfNormalizedSha256": "cccabf9e04f90c0e8fe5dec28a1e15953bfe05cd22628076f2956841a01ff2da",
+      "gitEqualsWorktreeBytes": true,
+      "gitEqualsLfNormalizedWorktree": true
+    },
+    "src/core/store-bootstrap-worker.ts": {
+      "gitBlobOid": "0e5dcaf9f32ac2677aec7c9d71a040cae7558a3f",
+      "gitBlobBytes": 4815,
+      "gitBlobSha256": "bc52dc1cdfd6e88102fd4c2eaac083f714959012316d00a0921dd2e8d2b15a27",
+      "worktreeBytes": 4815,
+      "worktreeRawSha256": "bc52dc1cdfd6e88102fd4c2eaac083f714959012316d00a0921dd2e8d2b15a27",
+      "worktreeLfNormalizedSha256": "bc52dc1cdfd6e88102fd4c2eaac083f714959012316d00a0921dd2e8d2b15a27",
+      "gitEqualsWorktreeBytes": true,
+      "gitEqualsLfNormalizedWorktree": true
+    },
+    "src/core/store-bootstrap.ts": {
+      "gitBlobOid": "437211471f68a804ba0b290a5d976b829578c8df",
+      "gitBlobBytes": 10521,
+      "gitBlobSha256": "dc0567da47a52eb1ebdbcae980ba8f4162c47cc47d253c63e1b13b185564c525",
+      "worktreeBytes": 10521,
+      "worktreeRawSha256": "dc0567da47a52eb1ebdbcae980ba8f4162c47cc47d253c63e1b13b185564c525",
+      "worktreeLfNormalizedSha256": "dc0567da47a52eb1ebdbcae980ba8f4162c47cc47d253c63e1b13b185564c525",
+      "gitEqualsWorktreeBytes": true,
+      "gitEqualsLfNormalizedWorktree": true
+    },
+    "src/core/store.ts": {
+      "gitBlobOid": "4ede6614eb84f579320ddda56032608586d88b93",
+      "gitBlobBytes": 103340,
+      "gitBlobSha256": "ff23885601d3d71c0d8563aac59bdea3e1e947f7cee91d16d71600d5c366b9f6",
+      "worktreeBytes": 104922,
+      "worktreeRawSha256": "6e79739cbd95d964e8a043514889fc64b968ee420f5166b88985dd99838d0e51",
+      "worktreeLfNormalizedSha256": "ff23885601d3d71c0d8563aac59bdea3e1e947f7cee91d16d71600d5c366b9f6",
+      "gitEqualsWorktreeBytes": false,
+      "gitEqualsLfNormalizedWorktree": true
+    },
+    "src/network/link.ts": {
+      "gitBlobOid": "fcf2b2cd8d517ca566ab3993d1da8f6e2f1b65f5",
+      "gitBlobBytes": 56147,
+      "gitBlobSha256": "fe809a43837285da42dea53f2088732d3cc092719d088a35b8c117f9914871de",
+      "worktreeBytes": 57012,
+      "worktreeRawSha256": "94c61066ea9375e4a883ecf5872b180f38ad9664b5f28a0ac104625aa268fa72",
+      "worktreeLfNormalizedSha256": "fe809a43837285da42dea53f2088732d3cc092719d088a35b8c117f9914871de",
+      "gitEqualsWorktreeBytes": false,
+      "gitEqualsLfNormalizedWorktree": true
+    },
+    "src/core/storage-lock.ts": {
+      "gitBlobOid": "dce153739c134c77855a7e9b3cda5adad706a4a6",
+      "gitBlobBytes": 19793,
+      "gitBlobSha256": "412dd1c61e7ddd02460be6738f3004f9b82903480daee87cb8622bab0231f177",
+      "worktreeBytes": 20113,
+      "worktreeRawSha256": "e0d316b0bd158b6fe0bcaf45294a57de1e5ec4e506e8688f07ca28572dc0cd11",
+      "worktreeLfNormalizedSha256": "412dd1c61e7ddd02460be6738f3004f9b82903480daee87cb8622bab0231f177",
+      "gitEqualsWorktreeBytes": false,
+      "gitEqualsLfNormalizedWorktree": true
+    },
+    "src/core/endpoint-reservation.ts": {
+      "gitBlobOid": "735ad8ff73307704e21e753f5ae3a09426d5b0bb",
+      "gitBlobBytes": 4892,
+      "gitBlobSha256": "4db5b11822d5236e640d940a6a92397fa7626b5f381dca99143b7aad01b4f846",
+      "worktreeBytes": 4892,
+      "worktreeRawSha256": "4db5b11822d5236e640d940a6a92397fa7626b5f381dca99143b7aad01b4f846",
+      "worktreeLfNormalizedSha256": "4db5b11822d5236e640d940a6a92397fa7626b5f381dca99143b7aad01b4f846",
+      "gitEqualsWorktreeBytes": true,
+      "gitEqualsLfNormalizedWorktree": true
+    },
+    "src/core/startup-budget.ts": {
+      "gitBlobOid": "3460603721f662717f1329213bbbdfdce8503c41",
+      "gitBlobBytes": 1718,
+      "gitBlobSha256": "82a0145b83a0f2944dea3214c666c6260b04612b1dee1c43b8a06aafca2e7089",
+      "worktreeBytes": 1718,
+      "worktreeRawSha256": "82a0145b83a0f2944dea3214c666c6260b04612b1dee1c43b8a06aafca2e7089",
+      "worktreeLfNormalizedSha256": "82a0145b83a0f2944dea3214c666c6260b04612b1dee1c43b8a06aafca2e7089",
+      "gitEqualsWorktreeBytes": true,
+      "gitEqualsLfNormalizedWorktree": true
+    },
+    "src/core/protocol.ts": {
+      "gitBlobOid": "9dd3fcc07e5a1cd993c3a785d1f59034c86716b0",
+      "gitBlobBytes": 22464,
+      "gitBlobSha256": "d1000d5119bbdd088dcc60298fdb2d1b2b9b69626f6650c6fd816f10d334761f",
+      "worktreeBytes": 22947,
+      "worktreeRawSha256": "e28b2e9bfa12a5494f457f8668a35a9872937109be79f1a27725b60079f57559",
+      "worktreeLfNormalizedSha256": "d1000d5119bbdd088dcc60298fdb2d1b2b9b69626f6650c6fd816f10d334761f",
+      "gitEqualsWorktreeBytes": false,
+      "gitEqualsLfNormalizedWorktree": true
+    },
+    "src/cli/dashboard.ts": {
+      "gitBlobOid": "4982ac6dd6bb345e408d46af44f60869a9d2f591",
+      "gitBlobBytes": 8322,
+      "gitBlobSha256": "d9aea35b3f14e8f32d24d4c97651e462f96a3f315d9d577b3771340986a88cbb",
+      "worktreeBytes": 8322,
+      "worktreeRawSha256": "d9aea35b3f14e8f32d24d4c97651e462f96a3f315d9d577b3771340986a88cbb",
+      "worktreeLfNormalizedSha256": "d9aea35b3f14e8f32d24d4c97651e462f96a3f315d9d577b3771340986a88cbb",
+      "gitEqualsWorktreeBytes": true,
+      "gitEqualsLfNormalizedWorktree": true
+    },
+    "src/cli/ui.ts": {
+      "gitBlobOid": "a4e41188d73c8dd676140b3231605abe599e4487",
+      "gitBlobBytes": 54053,
+      "gitBlobSha256": "dff4d25a71aeb728ab6ea6cbc5d00ed01ba50e5ef14a25fc2bbfca1c8ba4ab38",
+      "worktreeBytes": 54053,
+      "worktreeRawSha256": "dff4d25a71aeb728ab6ea6cbc5d00ed01ba50e5ef14a25fc2bbfca1c8ba4ab38",
+      "worktreeLfNormalizedSha256": "dff4d25a71aeb728ab6ea6cbc5d00ed01ba50e5ef14a25fc2bbfca1c8ba4ab38",
+      "gitEqualsWorktreeBytes": true,
+      "gitEqualsLfNormalizedWorktree": true
+    },
+    "test/mobile-wiring.test.ts": {
+      "gitBlobOid": "fdce9fba87eefb0caf6b85951ba92ae69b7d0674",
+      "gitBlobBytes": 43312,
+      "gitBlobSha256": "2e1c71e37ce0fd4496414479077b11a2d217e15ed150025d7e1864feeef8c24e",
+      "worktreeBytes": 43312,
+      "worktreeRawSha256": "2e1c71e37ce0fd4496414479077b11a2d217e15ed150025d7e1864feeef8c24e",
+      "worktreeLfNormalizedSha256": "2e1c71e37ce0fd4496414479077b11a2d217e15ed150025d7e1864feeef8c24e",
+      "gitEqualsWorktreeBytes": true,
+      "gitEqualsLfNormalizedWorktree": true
+    },
+    "test/fixtures/mobile-wiring-baseline.json": {
+      "gitBlobOid": "79c538be1167120bafd67bf884feb277435e1535",
+      "gitBlobBytes": 42546,
+      "gitBlobSha256": "b88ff6cd5766733feccdb6af435931007d880006d00cc04b094411fd60705c8a",
+      "worktreeBytes": 43166,
+      "worktreeRawSha256": "9e3c93cffec06066e35b2615d8b6ada6d555a545e1e4263fc4dcdc9c65b24821",
+      "worktreeLfNormalizedSha256": "b88ff6cd5766733feccdb6af435931007d880006d00cc04b094411fd60705c8a",
+      "gitEqualsWorktreeBytes": false,
+      "gitEqualsLfNormalizedWorktree": true
+    },
+    "src/core/backups.ts": {
+      "gitBlobOid": "8fe17a9e6d7e46487d9cc91ab4de635d1772a535",
+      "gitBlobBytes": 23693,
+      "gitBlobSha256": "c4d8a317102c845cd26895f09650ec85b175c8e9751be7a646e27d8c0aad8003",
+      "worktreeBytes": 23693,
+      "worktreeRawSha256": "c4d8a317102c845cd26895f09650ec85b175c8e9751be7a646e27d8c0aad8003",
+      "worktreeLfNormalizedSha256": "c4d8a317102c845cd26895f09650ec85b175c8e9751be7a646e27d8c0aad8003",
+      "gitEqualsWorktreeBytes": true,
+      "gitEqualsLfNormalizedWorktree": true
+    },
+    "src/cli/doctor.ts": {
+      "gitBlobOid": "b41a7def73e051b114951805d35242d4735e19a4",
+      "gitBlobBytes": 5894,
+      "gitBlobSha256": "cd91aeffa91417fcdc7baa4beca339431d4c193eddc2a7d876bd11135ba91298",
+      "worktreeBytes": 5894,
+      "worktreeRawSha256": "cd91aeffa91417fcdc7baa4beca339431d4c193eddc2a7d876bd11135ba91298",
+      "worktreeLfNormalizedSha256": "cd91aeffa91417fcdc7baa4beca339431d4c193eddc2a7d876bd11135ba91298",
+      "gitEqualsWorktreeBytes": true,
+      "gitEqualsLfNormalizedWorktree": true
+    },
+    "src/core/history-background.ts": {
+      "gitBlobOid": "c2972bb8cb30f3604088644f8a0cc37bda8f8e79",
+      "gitBlobBytes": 22046,
+      "gitBlobSha256": "70b54b6559b1eebecbfd083e9af75962388f85c8ca78b54cb38930848a346850",
+      "worktreeBytes": 22046,
+      "worktreeRawSha256": "70b54b6559b1eebecbfd083e9af75962388f85c8ca78b54cb38930848a346850",
+      "worktreeLfNormalizedSha256": "70b54b6559b1eebecbfd083e9af75962388f85c8ca78b54cb38930848a346850",
+      "gitEqualsWorktreeBytes": true,
+      "gitEqualsLfNormalizedWorktree": true
+    },
+    "src/core/job-archive-background.ts": {
+      "gitBlobOid": "66f9ad93281d07aaeaf1f720dbf0d8846635768e",
+      "gitBlobBytes": 11772,
+      "gitBlobSha256": "e5683ca9ec7d969d223c2e555fc8ac9c7dc60018a7d0d68d2aa162a140b39df9",
+      "worktreeBytes": 11772,
+      "worktreeRawSha256": "e5683ca9ec7d969d223c2e555fc8ac9c7dc60018a7d0d68d2aa162a140b39df9",
+      "worktreeLfNormalizedSha256": "e5683ca9ec7d969d223c2e555fc8ac9c7dc60018a7d0d68d2aa162a140b39df9",
+      "gitEqualsWorktreeBytes": true,
+      "gitEqualsLfNormalizedWorktree": true
+    },
+    "src/core/message-backups.ts": {
+      "gitBlobOid": "c45ede6c03d52c44b6e30797d4c9b663900f3dd7",
+      "gitBlobBytes": 12735,
+      "gitBlobSha256": "f3f86f41c091b5a341044113a59b2019dbc16a78c3a643f6d3a545356985c9c2",
+      "worktreeBytes": 12735,
+      "worktreeRawSha256": "f3f86f41c091b5a341044113a59b2019dbc16a78c3a643f6d3a545356985c9c2",
+      "worktreeLfNormalizedSha256": "f3f86f41c091b5a341044113a59b2019dbc16a78c3a643f6d3a545356985c9c2",
+      "gitEqualsWorktreeBytes": true,
+      "gitEqualsLfNormalizedWorktree": true
+    },
+    "src/core/backup-background.ts": {
+      "gitBlobOid": "3718aeeb4888740758151c1e2567ba2bb376c6b5",
+      "gitBlobBytes": 12733,
+      "gitBlobSha256": "88479c297864dbfd1d1d154746bab817b19bc4fbd8255c171bd7b454e1ef57fa",
+      "worktreeBytes": 12733,
+      "worktreeRawSha256": "88479c297864dbfd1d1d154746bab817b19bc4fbd8255c171bd7b454e1ef57fa",
+      "worktreeLfNormalizedSha256": "88479c297864dbfd1d1d154746bab817b19bc4fbd8255c171bd7b454e1ef57fa",
+      "gitEqualsWorktreeBytes": true,
+      "gitEqualsLfNormalizedWorktree": true
+    },
+    "src/core/health.ts": {
+      "gitBlobOid": "2d65485ba91c733e885e679e0d8856d768fc4b73",
+      "gitBlobBytes": 5163,
+      "gitBlobSha256": "e759ddf8055e30243e8e6f829ddfabf214995b701d632c9821ceee64860428df",
+      "worktreeBytes": 5163,
+      "worktreeRawSha256": "e759ddf8055e30243e8e6f829ddfabf214995b701d632c9821ceee64860428df",
+      "worktreeLfNormalizedSha256": "e759ddf8055e30243e8e6f829ddfabf214995b701d632c9821ceee64860428df",
+      "gitEqualsWorktreeBytes": true,
+      "gitEqualsLfNormalizedWorktree": true
+    },
+    "src/core/store-compatibility.ts": {
+      "gitBlobOid": "7eabc534184f9856539fbc69932bd6be3cd9fd48",
+      "gitBlobBytes": 25239,
+      "gitBlobSha256": "95ccf1e1b43ff6e4b525ab756c11ea390a1839457bcec18fc5c1424b4c197a66",
+      "worktreeBytes": 25612,
+      "worktreeRawSha256": "82ba277bfa80afd7e85d058eb01defb2e9ee74c36cef4c2f02bbf2b163dd2509",
+      "worktreeLfNormalizedSha256": "95ccf1e1b43ff6e4b525ab756c11ea390a1839457bcec18fc5c1424b4c197a66",
+      "gitEqualsWorktreeBytes": false,
+      "gitEqualsLfNormalizedWorktree": true
+    },
+    "src/core/store-compatibility-overlay.ts": {
+      "gitBlobOid": "57f8a0da59e6266865e9960baa041768ecf38255",
+      "gitBlobBytes": 6669,
+      "gitBlobSha256": "bfd56246f97dd068e49d64d987f77d4a073f1c364d7ca529bfba97d2388e8318",
+      "worktreeBytes": 6780,
+      "worktreeRawSha256": "ccd13856c11b1baf7f53783509430f6ee70b456cc51765e3e215ba0130b3ea72",
+      "worktreeLfNormalizedSha256": "bfd56246f97dd068e49d64d987f77d4a073f1c364d7ca529bfba97d2388e8318",
+      "gitEqualsWorktreeBytes": false,
+      "gitEqualsLfNormalizedWorktree": true
+    },
+    "src/core/daemon-launcher.ts": {
+      "gitBlobOid": "afca550cc3125d4d1d1ce8a34057a51fd5342bc3",
+      "gitBlobBytes": 9122,
+      "gitBlobSha256": "eb3824d7492d6a5dddeb831e2f200f6532874342a6ccc9228ffba93d618e64bf",
+      "worktreeBytes": 9122,
+      "worktreeRawSha256": "eb3824d7492d6a5dddeb831e2f200f6532874342a6ccc9228ffba93d618e64bf",
+      "worktreeLfNormalizedSha256": "eb3824d7492d6a5dddeb831e2f200f6532874342a6ccc9228ffba93d618e64bf",
+      "gitEqualsWorktreeBytes": true,
+      "gitEqualsLfNormalizedWorktree": true
+    },
+    "test/store-bootstrap.test.ts": {
+      "gitBlobOid": "4b6c8a4e9e6fafaf6b2fc2a25d5be9c24c16f471",
+      "gitBlobBytes": 43766,
+      "gitBlobSha256": "45416a649dfd7a0454dc0bad93767bb80ddf4a8b685f3d0ca1ef16fc7507fbb3",
+      "worktreeBytes": 43766,
+      "worktreeRawSha256": "45416a649dfd7a0454dc0bad93767bb80ddf4a8b685f3d0ca1ef16fc7507fbb3",
+      "worktreeLfNormalizedSha256": "45416a649dfd7a0454dc0bad93767bb80ddf4a8b685f3d0ca1ef16fc7507fbb3",
+      "gitEqualsWorktreeBytes": true,
+      "gitEqualsLfNormalizedWorktree": true
+    },
+    "test/broker-startup-admission.test.ts": {
+      "gitBlobOid": "5a9ca2cc3f1455ce81b3c3462e1a72fbc757185e",
+      "gitBlobBytes": 10413,
+      "gitBlobSha256": "a6c5aec0322df24647b88b94e6b6c1b9e9ecffc420b095200a322bc6d9aadf61",
+      "worktreeBytes": 10413,
+      "worktreeRawSha256": "a6c5aec0322df24647b88b94e6b6c1b9e9ecffc420b095200a322bc6d9aadf61",
+      "worktreeLfNormalizedSha256": "a6c5aec0322df24647b88b94e6b6c1b9e9ecffc420b095200a322bc6d9aadf61",
+      "gitEqualsWorktreeBytes": true,
+      "gitEqualsLfNormalizedWorktree": true
+    },
+    "test/remote-supervisor-routing.test.ts": {
+      "gitBlobOid": "52aa4102f4ae5c988107c7de294b5926df0f4119",
+      "gitBlobBytes": 22081,
+      "gitBlobSha256": "2b3279e1b556d2ca11331dd6ba380cad25ebaec2a26176d2d2859ae47d1c078d",
+      "worktreeBytes": 22081,
+      "worktreeRawSha256": "2b3279e1b556d2ca11331dd6ba380cad25ebaec2a26176d2d2859ae47d1c078d",
+      "worktreeLfNormalizedSha256": "2b3279e1b556d2ca11331dd6ba380cad25ebaec2a26176d2d2859ae47d1c078d",
+      "gitEqualsWorktreeBytes": true,
+      "gitEqualsLfNormalizedWorktree": true
+    },
+    "test/t3-cross-machine.test.ts": {
+      "gitBlobOid": "7620ac621b71a80e04d15f629174e301ab613754",
+      "gitBlobBytes": 182232,
+      "gitBlobSha256": "34842bb75a78290fbc2f5d75b6c58b68e9aa97d9d097afe5acd7cc9372f0dfa4",
+      "worktreeBytes": 182232,
+      "worktreeRawSha256": "34842bb75a78290fbc2f5d75b6c58b68e9aa97d9d097afe5acd7cc9372f0dfa4",
+      "worktreeLfNormalizedSha256": "34842bb75a78290fbc2f5d75b6c58b68e9aa97d9d097afe5acd7cc9372f0dfa4",
+      "gitEqualsWorktreeBytes": true,
+      "gitEqualsLfNormalizedWorktree": true
+    },
+    "test/owned-fixture-rpcs.ts": {
+      "gitBlobOid": "ee92f53b967623859455e21ebc4024a0ac96d9da",
+      "gitBlobBytes": 1141,
+      "gitBlobSha256": "ad3311f3df9884dd88243a7f0bbcc2f65758ef791d6eed52579420e78e1c5205",
+      "worktreeBytes": 1141,
+      "worktreeRawSha256": "ad3311f3df9884dd88243a7f0bbcc2f65758ef791d6eed52579420e78e1c5205",
+      "worktreeLfNormalizedSha256": "ad3311f3df9884dd88243a7f0bbcc2f65758ef791d6eed52579420e78e1c5205",
+      "gitEqualsWorktreeBytes": true,
+      "gitEqualsLfNormalizedWorktree": true
+    },
+    "test/owned-fixture-rpcs.test.ts": {
+      "gitBlobOid": "f9becc09ac2ef9cd558f6e70b3333d96b1a71a5b",
+      "gitBlobBytes": 762,
+      "gitBlobSha256": "a7acc685852f64b80a3c091ce9db38e5c3ab784bf014ac14575d7681ceed23df",
+      "worktreeBytes": 762,
+      "worktreeRawSha256": "a7acc685852f64b80a3c091ce9db38e5c3ab784bf014ac14575d7681ceed23df",
+      "worktreeLfNormalizedSha256": "a7acc685852f64b80a3c091ce9db38e5c3ab784bf014ac14575d7681ceed23df",
+      "gitEqualsWorktreeBytes": true,
+      "gitEqualsLfNormalizedWorktree": true
+    },
+    "test/mcp-chat.test.ts": {
+      "gitBlobOid": "bbf200f9c4ce6631ad417c05e3675e4bda4aa485",
+      "gitBlobBytes": 18440,
+      "gitBlobSha256": "a0965950a716392b733df490ecd228399b132be55059fb18e16a1fb97aa07a56",
+      "worktreeBytes": 18440,
+      "worktreeRawSha256": "a0965950a716392b733df490ecd228399b132be55059fb18e16a1fb97aa07a56",
+      "worktreeLfNormalizedSha256": "a0965950a716392b733df490ecd228399b132be55059fb18e16a1fb97aa07a56",
+      "gitEqualsWorktreeBytes": true,
+      "gitEqualsLfNormalizedWorktree": true
+    },
+    "test/daemon-metadata-final-close.test.ts": {
+      "gitBlobOid": "fe78635b8bf15ece3fcb2560ecad668f91bed66c",
+      "gitBlobBytes": 30612,
+      "gitBlobSha256": "db527c6f9a13e14d29e525f3602963832443113b4801048361d3e7ef5dd2008b",
+      "worktreeBytes": 30612,
+      "worktreeRawSha256": "db527c6f9a13e14d29e525f3602963832443113b4801048361d3e7ef5dd2008b",
+      "worktreeLfNormalizedSha256": "db527c6f9a13e14d29e525f3602963832443113b4801048361d3e7ef5dd2008b",
+      "gitEqualsWorktreeBytes": true,
+      "gitEqualsLfNormalizedWorktree": true
+    },
+    "test/history-backfill-load.test.ts": {
+      "gitBlobOid": "4ca61bf52623ce4f084f5b9ffa0f1e6c2ba1f391",
+      "gitBlobBytes": 6813,
+      "gitBlobSha256": "4c20e874b166bf44bb84a503f5c3f02cc351ac501ed250d363e96bcfca831410",
+      "worktreeBytes": 6813,
+      "worktreeRawSha256": "4c20e874b166bf44bb84a503f5c3f02cc351ac501ed250d363e96bcfca831410",
+      "worktreeLfNormalizedSha256": "4c20e874b166bf44bb84a503f5c3f02cc351ac501ed250d363e96bcfca831410",
+      "gitEqualsWorktreeBytes": true,
+      "gitEqualsLfNormalizedWorktree": true
+    },
+    "test/storage-admission-phases.test.ts": {
+      "gitBlobOid": "7407d746caceaec29065ce0defe4bfca011a7058",
+      "gitBlobBytes": 12297,
+      "gitBlobSha256": "d67f6d9247b192e303b9f45bd1fb07879c80b54b2e426510d2de3b92c767cafd",
+      "worktreeBytes": 12482,
+      "worktreeRawSha256": "9dc4100738407953446144cc8886b9cab311f3f46e0cefffb2ea98ded8140a76",
+      "worktreeLfNormalizedSha256": "d67f6d9247b192e303b9f45bd1fb07879c80b54b2e426510d2de3b92c767cafd",
+      "gitEqualsWorktreeBytes": false,
+      "gitEqualsLfNormalizedWorktree": true
+    }
+  },
+  "hashSemantics": {
+    "source": "Exact committed binary Git blobs; no newline conversion",
+    "methods": "Existing unchanged mobile-wiring normalizer",
+    "worktree": "Raw and LF-normalized worktree hashes are separate evidence"
+  },
+  "baselineAmended": false,
+  "versions": "protocol10 metadata5 parent approved source-only; pairing1 SQLite14 JSON4 runner-ledger-v2 unchanged",
+  "qualification": "No native Worker or Windows directory durability acceptance. Unsupported directory sync remains a cold-start availability blocker; fresh R36 design review and hosted gates required."
+}

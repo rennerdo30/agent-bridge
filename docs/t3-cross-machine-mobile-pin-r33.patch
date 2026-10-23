@@ -1,0 +1,216 @@
+--- c86286f3:src/core/broker.ts:listen (normalized)
++++ 1c9876df:src/core/broker.ts:listen (normalized)
+@@
+-{
+-if (reservation) return this.listenReserved(reservation);
+-return new Promise((resolve, reject) => {
+-const server = createServer((socket) => this.accept(socket));
+-const onError = (err: Error) => {
+-server.removeListener("listening", listening);
+-reject(err);
+-};
+-/** Optional services: a failure is logged and the broker keeps serving without them (AB-223, AB-239). */
+-const optional = (what: string, step: () => void) => {
+-try { step(); } catch (err) { this.log.warn(`broker startup: ${what} failed; continuing without it`, { err: String(err) }); }
+-};
+-const onListening = async () => {
+-server.removeListener("error", onError);
+-server.on("error", (err) => this.log.error("broker server error", { err }));
+-this.server = server;
+-try {
+-await this.startServices(optional);
+-this.tcpReady = this.startTcpFallback();
+-await this.tcpReady.catch(err => this.log.warn("broker TCP fallback unavailable", { err: String(err) }));
+-resolve();
+-} catch (err) {
+-// Never leave a bound, half-started broker behind or an unhandled rejection: release the endpoint and let
+-// election retry. The caller owns (and closes) the store.
+-this.log.error("broker startup failed; releasing the endpoint", { err: String(err) });
+-await this.abortStartup().catch((closeErr) => this.log.warn("broker startup cleanup failed", { err: String(closeErr) }));
+-reject(err);
+-}
+-};
+-const listening = () => { void onListening(); };
+-server.once("error", onError);
+-server.once("listening", listening);
+-ensurePrivateSocketDirectory(this.pipePath);
+-server.listen(this.pipePath);
+-});
+-}
++{
++beforeActivate?.();
++if (reservation) return this.listenReserved(reservation, beforeActivate);
++return new Promise((resolve, reject) => {
++const server = createServer((socket) => this.accept(socket));
++const onError = (err: Error) => {
++server.removeListener("listening", listening);
++reject(err);
++};
++/** Optional services: a failure is logged and the broker keeps serving without them (AB-223, AB-239). */
++const optional = (what: string, step: () => void) => {
++try { step(); } catch (err) { this.log.warn(`broker startup: ${what} failed; continuing without it`, { err: String(err) }); }
++};
++const onListening = async () => {
++server.removeListener("error", onError);
++server.on("error", (err) => this.log.error("broker server error", { err }));
++this.server = server;
++try {
++await this.startServices(optional);
++this.tcpReady = this.startTcpFallback();
++await this.tcpReady.catch(err => this.log.warn("broker TCP fallback unavailable", { err: String(err) }));
++resolve();
++} catch (err) {
++// Never leave a bound, half-started broker behind or an unhandled rejection: release the endpoint and let
++// election retry. The caller owns (and closes) the store.
++this.log.error("broker startup failed; releasing the endpoint", { err: String(err) });
++await this.abortStartup().catch((closeErr) => this.log.warn("broker startup cleanup failed", { err: String(closeErr) }));
++reject(err);
++}
++};
++const listening = () => { void onListening(); };
++server.once("error", onError);
++server.once("listening", listening);
++ensurePrivateSocketDirectory(this.pipePath);
++server.listen(this.pipePath);
++});
++}
+
+--- c86286f3:src/core/node.ts:tryBecomeBroker (normalized)
++++ 1c9876df:src/core/node.ts:tryBecomeBroker (normalized)
+@@
+-{
+-if (this.broker) return true;
+-if (this.stopping) return false;
+-const [{ Broker }, { openMessageStore }] = await Promise.all([import("./broker.js"), import("./store.js")]);
+-const { EndpointReservation } = await import("./endpoint-reservation.js");
+-let reservation: import("./endpoint-reservation.js").EndpointReservation;
+-try { reservation = await EndpointReservation.bind(this.opts.pipePath); }
+-catch (error) {
+-if (errCode(error) !== "EADDRINUSE") throw error;
+-if (!this.opts.daemon && (this.opts.platform ?? process.platform) !== "win32") await this.clearStaleSocket();
+-return false;
+-}
+-let store: MessageStore;
+-try {
+-// Unverified living readers conservatively defer upgrades; process
+-// discovery must not delay hosting their existing compatible schema.
+-if (this.opts.dbPath !== ":memory:") void refreshStorePeerIdentities(dirname(this.opts.dbPath)).catch(error => this.log.debug("store reader identity refresh deferred", { err: String(error) }));
+-const admission = new AbortController();
+-const cancelled = () => admission.abort(); this.once("stopped", cancelled);
+-if (this.stopping) admission.abort();
+-try { store = await openMessageStore(this.opts.dbPath, this.log.child("store"), this.opts.pipePath, this.opts.token, admission.signal); }
+-finally { this.off("stopped", cancelled); }
+-if (this.opts.dbPath !== ":memory:") { this.presenceAdmitted = true; this.recordStorePresence(); }
+-} catch (err) {
+-await reservation.close();
+-if (["EBUSY", "SQLITE_BUSY", "STORE_UPGRADE_DEFERRED"].includes(errCode(err)) || /database is locked/.test(String((err as Error).message))) {
+-this.log.info("another session is preparing the store; retrying broker election", { db: this.opts.dbPath });
+-return false;
+-}
+-this.log.error("cannot open message store", { err, db: this.opts.dbPath });
+-throw err;
+-}
+-try {
+-const broker = new Broker(this.opts.pipePath, store, this.log.child("broker"), this.opts.token, Date.now, join(dirname(this.opts.dbPath), JOBS_FILE), this.opts.network);
+-if (this.degradedReason) broker.setHostingMode("embedded_degraded", this.degradedReason);
+-await broker.listen(reservation);
+-if (this.stopping) {
+-// stop() ran while this node was opening the store or listening: never keep a broker nobody will close.
+-await broker.close();
+-return false;
+-}
+-this.broker = broker;
+-this.log.info("became broker", { pipe: this.opts.pipePath });
+-return true;
+-} catch (err) {
+-store.close();
+-await reservation.close();
+-const code = errCode(err);
+-if (code === "EADDRINUSE" && (this.opts.platform ?? process.platform) !== "win32") {
+-if (this.opts.daemon) return false;
+-// A Unix socket file can outlive its process. If connecting failed, the file is stale.
+-try {
+-await BridgeClient.connect(this.opts.pipePath, this.log).then((c) => c.close());
+-return false; // someone is alive after all
+-} catch (probeErr) {
+-if (errCode(probeErr) === "ECONNREFUSED") {
+-this.log.warn("removing stale broker socket", { pipe: this.opts.pipePath });
+-await this.clearStaleSocket();
+-}
+-}
+-} else {
+-this.log.debug("could not become broker", { code });
+-}
+-return false;
+-}
+-}
++{
++startup.remaining();
++if (this.broker) return true;
++if (this.stopping) return false;
++const [{ Broker }, { openMessageStore }] = await Promise.all([import("./broker.js"), import("./store.js")]);
++const { EndpointReservation } = await import("./endpoint-reservation.js");
++let reservation: import("./endpoint-reservation.js").EndpointReservation;
++try { reservation = await EndpointReservation.bind(this.opts.pipePath); }
++catch (error) {
++if (errCode(error) !== "EADDRINUSE") throw error;
++if (!this.opts.daemon && (this.opts.platform ?? process.platform) !== "win32") await this.clearStaleSocket(startup);
++return false;
++}
++let store: MessageStore | undefined;
++try {
++// Unverified living readers conservatively defer upgrades; process
++// discovery must not delay hosting their existing compatible schema.
++if (this.opts.dbPath !== ":memory:") void refreshStorePeerIdentities(dirname(this.opts.dbPath)).catch(error => this.log.debug("store reader identity refresh deferred", { err: String(error) }));
++const admission = new AbortController();
++const cancelled = () => admission.abort(); this.once("stopped", cancelled);
++if (this.stopping) admission.abort();
++try { store = await openMessageStore(this.opts.dbPath, this.log.child("store"), this.opts.pipePath, this.opts.token, AbortSignal.any([admission.signal, startup.signal]), startup.deadline); }
++finally { this.off("stopped", cancelled); }
++startup.remaining();
++if (this.opts.dbPath !== ":memory:") { this.presenceAdmitted = true; this.recordStorePresence(); }
++} catch (err) {
++try { store?.close(); } finally { await reservation.close(); }
++if (["EBUSY", "SQLITE_BUSY", "STORE_UPGRADE_DEFERRED"].includes(errCode(err)) || /database is locked/.test(String((err as Error).message))) {
++this.log.info("another session is preparing the store; retrying broker election", { db: this.opts.dbPath });
++return false;
++}
++this.log.error("cannot open message store", { err, db: this.opts.dbPath });
++throw err;
++}
++if (!store) throw new BridgeError("internal", "Store startup did not return its owned handle.");
++try {
++startup.remaining();
++const broker = new Broker(this.opts.pipePath, store, this.log.child("broker"), this.opts.token, Date.now, join(dirname(this.opts.dbPath), JOBS_FILE), this.opts.network);
++if (this.degradedReason) broker.setHostingMode("embedded_degraded", this.degradedReason);
++await broker.listen(reservation, () => startup.remaining());
++if (this.stopping || startup.signal.aborted || Date.now() >= startup.deadline) {
++// stop() ran while this node was opening the store or listening: never keep a broker nobody will close.
++await broker.close();
++return false;
++}
++this.broker = broker;
++this.log.info("became broker", { pipe: this.opts.pipePath });
++return true;
++} catch (err) {
++store.close();
++await reservation.close();
++const code = errCode(err);
++if (code === "EADDRINUSE" && (this.opts.platform ?? process.platform) !== "win32") {
++if (this.opts.daemon) return false;
++// A Unix socket file can outlive its process. If connecting failed, the file is stale.
++try {
++await BridgeClient.connect(this.opts.pipePath, this.log, Math.min(CONNECT_TIMEOUT_MS, startup.remaining()), { signal: startup.signal }).then((c) => c.close());
++return false; // someone is alive after all
++} catch (probeErr) {
++if (errCode(probeErr) === "ECONNREFUSED") {
++this.log.warn("removing stale broker socket", { pipe: this.opts.pipePath });
++await this.clearStaleSocket(startup);
++}
++}
++} else {
++this.log.debug("could not become broker", { code });
++}
++return false;
++}
++}

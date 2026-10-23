@@ -1,0 +1,5 @@
+--- 6f9e464:src/core/broker.ts:constructor (normalized)
++++ working source:src/core/broker.ts:constructor (normalized)
+@@
+-messageReceipt: (c, a) => this.messageReceipt(c, a.id),
++messageReceipt: (c, a) => this.messageReceipt(c, a.id, a.nativeChild),

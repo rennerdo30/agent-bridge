@@ -1,4 +1,5 @@
 import { readdirSync } from "node:fs";
+import { removePostV9FixtureOwnership } from "./owned-mail.js";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -41,6 +42,7 @@ describe("session reload recovery", () => {
       to: "session", conversationId: "chat", replyTo: null, hop: 0, body: "owner history", createdAt: 1, readAt: null });
     original.close();
     const old = new DatabaseSync(env.db);
+    removePostV9FixtureOwnership(old);
     old.exec("DROP TABLE session_bindings; PRAGMA user_version=4;"); old.close();
     const upgraded = new MessageStore(env.db, nullLogger);
     try {

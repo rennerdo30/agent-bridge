@@ -1,13 +1,19 @@
+import { admissionSqliteBusy, storageAdmissionRemaining, storageAdmissionTimeout } from "./storage-admission.js";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { metadataFileLease } from "./metadata-file-lease.js";
-import { liveStorePeers, metadataRelease } from "./store-compatibility.js";
-import { storageLease } from "./storage-lock.js";
+import { assertStoreUpgrade, liveStorePeers, metadataRelease } from "./store-compatibility.js";
+import { maintenanceLock, storageLease } from "./storage-lock.js";
+import { physicalPath } from "./project-identity.js";
+import { assertBootstrapAccess, initializeBootstrapProvenance, syncBootstrapHomeChain } from "./store-bootstrap-journal.js";
 import { snapshotMetadataTables } from "./metadata-snapshot.js";
+import { assertCurrentMailboxEnvelope } from "./mailbox-layout.js";
+import { initializeDatafileCatalog } from "./store-bootstrap-journal.js";
 
-const VERSION = 1;
+export const METADATA_STORE_VERSION = 6;
+const VERSION = METADATA_STORE_VERSION;
 const connections = new Map<string, DatabaseSync>();
 type MetadataAdmissionIdentity = { home: string; file: string };
 const lifecycleAdmissions = new WeakMap<DatabaseSync, MetadataAdmissionIdentity | null>();
@@ -126,7 +132,7 @@ CREATE TABLE IF NOT EXISTS bridge_imports (
  path TEXT PRIMARY KEY, sha256 TEXT NOT NULL, bytes INTEGER NOT NULL,
  bundle TEXT NOT NULL, cold_path TEXT NOT NULL, imported_at INTEGER NOT NULL
 );
-INSERT INTO bridge_components(name,version) VALUES ('metadata',1)
+INSERT INTO bridge_components(name,version) VALUES ('metadata',${VERSION})
  ON CONFLICT(name) DO UPDATE SET version=excluded.version;
 `;
 
@@ -144,59 +150,115 @@ export function physicalMetadataPath(path: string): void {
 
 /** Observe an already admitted component without starting a competing migration. */
 export function existingMetadataDb(home: string): DatabaseSync | undefined {
+ assertBootstrapAccess(home);
+ // A legacy component is observable by the capability census through its old
+ // read-only path, never exported as an admitted writable handle. Explicit
+ // offline migration must still be able to run that census before upgrading.
+ try { if (assertMetadataUpgradeBoundary(home) !== VERSION) return undefined; }
+ catch (error) { if ((error as NodeJS.ErrnoException).code === "STORE_OFFLINE_REQUIRED") return undefined; throw error; }
  const file = join(resolve(home),"bridge.db"), cached = connections.get(handleKey(file));
- if (cached) return escapeMetadataReference(cached);
+ if (cached) { admissionSqliteBusy(cached); return escapeMetadataReference(cached); }
  if (!existsSync(file)) return undefined;
  physicalMetadataPath(file);
  const admission = observeExistingMetadataAdmission(file);
- const db = new DatabaseSync(file,{timeout:5_000});
+ const db = new DatabaseSync(file,{timeout:storageAdmissionTimeout(5_000)});
  recordMetadataAdmission(db, file, admission);
  try {
   if (!db.prepare("SELECT 1 FROM sqlite_master WHERE name='bridge_components'").get() ||
     Number(db.prepare("SELECT version FROM bridge_components WHERE name='metadata'").get()?.version ?? 0) !== VERSION) { legacyMetadataClose(db); return undefined; }
-  db.exec("PRAGMA busy_timeout=5000; PRAGMA synchronous=FULL;"); connections.set(handleKey(file),db); changeLifecycleRegistry(); return escapeMetadataReference(db);
+  admissionSqliteBusy(db,5000,true); db.exec("PRAGMA synchronous=FULL;"); connections.set(handleKey(file),db); changeLifecycleRegistry(); return escapeMetadataReference(db);
  } catch (error) { legacyMetadataClose(db); throw error; }
+}
+
+/** Read old component presence without granting its handle to a writer. The
+ * capability census must not disappear merely because this reader is newer. */
+export function metadataPresenceRows(home: string): Record<string, unknown>[] | undefined {
+ assertBootstrapAccess(home);
+ const file = join(resolve(home), "bridge.db");
+ if (!existsSync(file)) return undefined;
+ physicalMetadataPath(file);
+ const db = new DatabaseSync(file, { readOnly: true, timeout: 0 });
+ try {
+  if (!db.prepare("SELECT 1 FROM sqlite_master WHERE name='bridge_components'").get() ||
+      !db.prepare("SELECT 1 FROM bridge_components WHERE name='import:storage-capabilities'").get()) return undefined;
+  return db.prepare("SELECT key,value,updated_at FROM bridge_metadata WHERE domain='storage-capabilities'").all();
+ } finally { db.close(); }
 }
 
 /** Old readers must finish naturally before their file-backed domains change authority. */
 export function assertMetadataAdmission(home: string): void {
  const blockers = liveStorePeers(home).filter(peer => !metadataRelease(peer.version));
  if (blockers.length) throw Object.assign(new Error(`Waiting for metadata upgrade: ${blockers.map(p => `${p.name} (v${p.version}, pid ${p.pid})`).join(", ")}. Existing readers keep their files.`), { code: "STORE_UPGRADE_DEFERRED" });
+ assertStoreUpgrade(home, "metadata", 0, VERSION);
 }
 
 /** Additive component versioning leaves AB-206's global user_version untouched. */
-export function metadataDb(home: string): DatabaseSync {
+/** An operator attestation, never inferred from endpoints or an environment flag.
+ * All readers stopped; the named home is explicitly isolated from old releases. */
+export interface OfflineMetadataAdmission { kind: "offline-isolated"; home: string }
+/** Read-only preflight before any writable opener or schema/backup publication. */
+export function assertMetadataUpgradeBoundary(home: string, offline?: OfflineMetadataAdmission): number {
+ const file = join(resolve(home), "bridge.db"); if (!existsSync(file)) return 0;
+ const inspection = new DatabaseSync(file, { readOnly: true, timeout: 0 });
+ try {
+  assertCurrentMailboxEnvelope(inspection);
+  const version = inspection.prepare("SELECT 1 FROM sqlite_master WHERE name='bridge_components'").get()
+   ? Number(inspection.prepare("SELECT version FROM bridge_components WHERE name='metadata'").get()?.version ?? 0) : 0;
+  if (version > 0 && version < VERSION && (!offline || offline.kind !== "offline-isolated" || handleKey(physicalPath(resolve(offline.home))) !== handleKey(physicalPath(resolve(home)))))
+   throw Object.assign(new Error(`Metadata component${version} cached writers cannot be excluded automatically. Owner-coordinated offline migration into an explicitly isolated home is required; originals retained.`), { code: "STORE_OFFLINE_REQUIRED" });
+  if (!Number.isSafeInteger(version) || version < 0 || version > VERSION) throw new Error("Metadata component is unproven or newer; originals retained.");
+  return version;
+ } finally { inspection.close(); }
+}
+export function metadataDb(home: string, offline?: OfflineMetadataAdmission): DatabaseSync {
+ assertBootstrapAccess(home);
+ storageAdmissionRemaining();
+ assertMetadataUpgradeBoundary(home, offline);
  const file = join(resolve(home), "bridge.db");
  const cached = connections.get(handleKey(file));
- if (cached) return escapeMetadataReference(cached);
+ if (cached) { admissionSqliteBusy(cached); return escapeMetadataReference(cached); }
  physicalMetadataPath(file);
  mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
  const existed = existsSync(file);
+ if (!existed) syncBootstrapHomeChain(home, () => { storageAdmissionRemaining(); });
  const admission = observeExistingMetadataAdmission(file);
- const db = new DatabaseSync(file, { timeout: 5_000 });
+ const db = new DatabaseSync(file, { timeout: storageAdmissionTimeout(5_000) });
  recordMetadataAdmission(db, file, admission);
  try {
-  db.exec("PRAGMA busy_timeout=5000; PRAGMA synchronous=FULL;");
   const version = () => db.prepare("SELECT 1 FROM sqlite_master WHERE name='bridge_components'").get()
    ? Number(db.prepare("SELECT version FROM bridge_components WHERE name='metadata'").get()?.version ?? 0) : 0;
+  if (!Number.isSafeInteger(version()) || version() < 0) throw new Error("Metadata component version is unproven; originals retained for owner-coordinated offline recovery.");
+  if (version() > 0 && version() < VERSION && (!offline || offline.kind !== "offline-isolated" || handleKey(physicalPath(resolve(offline.home))) !== handleKey(physicalPath(resolve(home)))))
+    throw Object.assign(new Error(`Metadata component${version()} cached writers cannot be excluded automatically. Stop old readers through the owner and explicitly admit offline migration into an isolated home; originals remain unchanged.`), { code: "STORE_OFFLINE_REQUIRED" });
+  admissionSqliteBusy(db,5000,true); db.exec("PRAGMA synchronous=FULL;");
   if (version() > VERSION) throw new Error("Metadata store is newer than this reader; retained unchanged.");
   if (version() < VERSION) {
    assertMetadataAdmission(home);
    const release = observedMetadataLease(`${file}.metadata-migration`, "migration", () => metadataFileLease(`${file}.metadata-migration`, 5_000));
+   let exclusive: (() => void) | undefined;
    try {
+    // Lease-aware old writers share this lock. Check capabilities again under
+    // exclusion, before snapshot/schema effects. A cached old handle cannot be
+    // made safe by changing a component number; live/unknown readers must exit.
+    try { exclusive = maintenanceLock(home, true); }
+    catch (error) { throw Object.assign(error as Error, { code: "STORE_UPGRADE_DEFERRED" }); }
+    assertMetadataAdmission(home);
     if (version() < VERSION) {
+     syncBootstrapHomeChain(home, () => { storageAdmissionRemaining(); });
      if (existed) {
       const dir = join(home, ".migration-snapshots");
       physicalMetadataPath(dir);
+      storageAdmissionRemaining();
       mkdirSync(dir, { recursive: true, mode: 0o700 });
       const backup = join(dir, `metadata-v${VERSION}-${randomUUID()}.db`);
       snapshotMetadataTables(db,backup,["bridge_components","worktree_leases","worktree_lease_archive","bridge_metadata","bridge_read_receipts","bridge_imports","job_checklist","project_checklist"],"metadata",VERSION);
      }
+     storageAdmissionRemaining();
      db.exec("BEGIN IMMEDIATE");
-     try { db.exec(SCHEMA); db.exec("COMMIT"); }
+     try { storageAdmissionRemaining(); const previous = version(); db.exec(SCHEMA); storageAdmissionRemaining(); initializeBootstrapProvenance(db,home,previous); initializeDatafileCatalog(db, home, !existed); storageAdmissionRemaining(); db.exec("COMMIT"); }
      catch (error) { db.exec("ROLLBACK"); throw error; }
     }
-   } finally { release(); }
+   } finally { exclusive?.(); release(); }
   }
   connections.set(handleKey(file), db);
   changeLifecycleRegistry();

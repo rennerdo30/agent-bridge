@@ -9,6 +9,7 @@ import { DEFAULT_CONFIG } from "../src/core/config.js";
 import { PROTOCOL_VERSION } from "../src/core/constants.js";
 import { nullLogger } from "../src/core/logger.js";
 import { BridgeNode } from "../src/core/node.js";
+import { retainFixtureRunner } from "./owned-mail.js";
 import { BridgeError, type AgentKind, type ModeSendArgs, type SendModeReport } from "../src/core/protocol.js";
 import { loadOrCreateToken } from "../src/core/token.js";
 import { JobManager } from "../src/mcp/jobs.js";
@@ -120,10 +121,11 @@ it.each(["idle", "busy"] as const)("native-role 25-pair matrix at %s uses only r
 it("delegated registrations and job-owner DTO labels cannot create a new queue issuer", async () => {
   const { parent, address, childId } = await native();
   for (const kind of kinds) {
+    retainFixtureRunner(env.home, { id: `mode-${kind}`, name: `${kind}-job-mode-fixture`, agent: kind, owner: parent.name, supervisor: "native-root", cwd: env.home });
     const job = new BridgeNode({ pipePath: env.pipe, token: loadOrCreateToken(env.home), dbPath: env.db,
       agent: "other", jobAgent: kind, jobOwner: "native-root", jobParent: parent.name,
       id: `job:mode-${kind}`, name: `${kind}-job-mode-fixture`, cwd: env.home, autoWake: false, canHostBroker: false, log: nullLogger });
-    await job.start(); closes.push(async () => { await job.stop(); });
+    closes.push(async () => { await job.stop(); }); await job.start();
     // Even an explicit grant cannot substitute for the unimplemented job issuer generation.
     await parent.nativeChild({ agentId: childId, action: "grant", sendTo: [job.name] });
     await expect(job.sendWithMode({ mode: "queue", to: address, body: "DTO cannot authorize queue" })).rejects.toMatchObject({ code: "bad_request" });

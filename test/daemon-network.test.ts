@@ -64,8 +64,9 @@ describe("tentative network authority during owned daemon initialization", () =>
     const id = randomUUID();
     expect(await remote.send({ id, from: { id: peer.id, name: peer.name, agent: peer.agent }, to: "owned-fixture/local-peer", recipient: "owned-fixture/local-peer",
       conversationId: randomUUID(), replyTo: null, hop: 0, body: "Actual authenticated fixture delivery", createdAt: Date.now(), readAt: null })).toMatchObject({ storage: { id, state: "stored" } });
-    await until(() => store.unread("local-peer", 100).some(message => message.id === id));
-    expect(store.unread("local-peer", 100).filter(message => message.id === id)).toHaveLength(1);
+    const owner = store.recipientOwnership("local-peer").recipientNative!;
+    await until(() => store.unread("local-peer", 100, undefined, owner).some(message => message.id === id));
+    expect(store.unread("local-peer", 100, undefined, owner).filter(message => message.id === id)).toHaveLength(1);
   });
   it("reconfiguration while tentative refuses before any config write or replacement listener", async () => {
     const { listening, release, network } = await delayedStartup();

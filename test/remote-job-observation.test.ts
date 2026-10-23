@@ -7,11 +7,14 @@ import type { BridgeNode } from "../src/core/node.js";
 import { JobRunners } from "../src/mcp/job-host.js";
 import { JobManager, readStore, type Job, type Run } from "../src/mcp/jobs.js";
 import { LocalCoordinator } from "../src/mcp/local-coordinator.js";
+import { closeMetadataDb } from "../src/core/metadata-db.js";
+import { remoteJobSnapshotSchema } from "../src/network/remote-job-protocol.js";
 import { RemoteJobHost } from "../src/mcp/remote-job-host.js";
 import type { RemoteJobRequest } from "../src/network/remote-job-protocol.js";
 import type { RemoteJobSnapshot } from "../src/network/remote-jobs.js";
 
 const managers: JobManager[] = [];
+const homes: string[] = [];
 beforeEach(() => {
   vi.useFakeTimers();
   vi.setSystemTime(new Date("2026-10-20T00:00:00Z"));
@@ -19,20 +22,22 @@ beforeEach(() => {
 afterEach(() => {
   for (const jobs of managers.splice(0)) jobs.setDormant(true);
   vi.useRealTimers();
+  for (const home of homes.splice(0)) { closeMetadataDb(home); rmSync(home, { recursive: true, force: true }); }
 });
 
-function snapshot(status: "running" | "done" | "failed" | "cancelled" = "running", alive = status === "running"): RemoteJobSnapshot {
-  return { alive, approvals: [], state: { pid: 123, peer: "pc2/codex-job-12345678", status,
+function snapshot(id: string, status: "running" | "done" | "failed" | "cancelled" = "running", alive = status === "running"): RemoteJobSnapshot {
+  return { alive, approvals: [], state: { pid: 123, peer: `codex-job-${id}`, status,
     updatedAt: Date.now(), sessionId: "remote-session", progress: "last authoritative progress",
     ...(status === "running" ? {} : { report: `remote ${status} report`, finishedAt: Date.now(), delivered: true }) } };
 }
 
 function fixture() {
   const home = mkdtempSync(join(tmpdir(), "ab-remote-observation-"));
+  homes.push(home);
   const path = join(home, "jobs.json");
-  let observe = async (): Promise<RemoteJobSnapshot> => snapshot();
+  let observe = async (request: RemoteJobRequest): Promise<RemoteJobSnapshot> => snapshot(request.job);
   const remoteJob = vi.fn((_host: string, request: RemoteJobRequest): Promise<RemoteJobSnapshot> =>
-    request.op === "spawn" ? Promise.resolve(snapshot()) : observe());
+    (request.op === "spawn" ? Promise.resolve(snapshot(request.job)) : observe(request)).then(value => remoteJobSnapshotSchema.parse(value)));
   const resume = vi.fn((): Run => async () => { throw new Error("Unexpected continuation"); });
   function reopen() {
     const node = Object.assign(new LocalCoordinator("owner", "owner-session"), { remoteJob });
@@ -71,11 +76,26 @@ it.each(["done", "failed", "cancelled"] as const)("keeps a running job across fa
   expect(f.run).not.toHaveBeenCalled();
   expect(f.resume).not.toHaveBeenCalled();
 
-  f.observe(async () => snapshot(status));
+  f.observe(async () => snapshot(f.job.id, status));
   await vi.advanceTimersByTimeAsync(4_000);
   expect(f.job).toMatchObject({ status, host: null, report: `remote ${status} report` });
   expect(f.stored()).toMatchObject({ status, host: null });
   expect(f.operations().filter(op => op !== "state")).toEqual(["spawn"]);
+  expect(f.resume).not.toHaveBeenCalled();
+});
+
+it("keeps remote retention refusal pending instead of treating the failed observation as a drained runner", async () => {
+  const f = fixture();
+  await vi.advanceTimersByTimeAsync(0);
+  const originalHost = f.job.host;
+  f.observe(async () => { throw new Error("Remote runner retention is unsettled; recover original evidence on its execution host before continuation."); });
+  await vi.advanceTimersByTimeAsync(4_000);
+  expect(f.job.status).toBe("running"); expect(f.job.host).toBe(originalHost);
+  expect(f.job.report).toBeUndefined(); expect(f.node.unread()).toEqual([]);
+  expect(f.resume).not.toHaveBeenCalled(); expect(f.operations().filter(op => op !== "state")).toEqual(["spawn"]);
+  f.observe(async () => snapshot(f.job.id, "done"));
+  await vi.advanceTimersByTimeAsync(4_000);
+  expect(f.job).toMatchObject({ status: "done", host: null, report: "remote done report" });
   expect(f.resume).not.toHaveBeenCalled();
 });
 
@@ -143,7 +163,7 @@ it.each(["done", "failed", "cancelled"] as const)("retains an expired %s observa
   const f = fixture();
   await vi.advanceTimersByTimeAsync(0);
   f.jobs.setDormant(true);
-  f.observe(async () => snapshot(status));
+  f.observe(async () => snapshot(f.job.id, status));
   // Fetch terminal evidence without letting the dormant manager consume it yet.
   await vi.advanceTimersByTimeAsync(2_000);
   f.jobs.runners!.state(f.job);

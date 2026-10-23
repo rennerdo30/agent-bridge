@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_CONFIG, loadConfig } from "../src/core/config.js";
@@ -16,6 +16,8 @@ import { MessageWaitStore, resumeWaitHint, SINGLE_WAIT_SEC, singleWaitTimeoutMs,
 import { shouldWakeClaudeMessage } from "../src/mcp/rewake.js";
 import type { ServerContext } from "../src/mcp/server.js";
 import { makeEnv, until, type TestEnv } from "./helpers.js";
+import { fixturePeer, ownedMessage, retainFixtureNode, retainFixtureRunner, unreadOwned } from "./owned-mail.js";
+import { nativeOwner } from "../src/core/recipient-ownership.js";
 
 let env: TestEnv;
 let extraNodes: BridgeNode[] = [];
@@ -75,8 +77,8 @@ describe("delivery and reload recovery", () => {
     expect((await broker.messageReceipt(id))[0]!.readAt).toBeNull();
     await old.stop();
     const replacement = env.node("recipient");
-    await replacement.start();
     await replacement.setSessionId("recipient-session");
+    await replacement.start();
     await until(() => replacement.hasSeen(id));
     expect(replacement.unread()).toEqual([]);
     let acked = false;
@@ -88,16 +90,18 @@ describe("delivery and reload recovery", () => {
   });
 
   it("retains finished job notes for explicit reads and injects only final results", async () => {
-    const sender = env.node("sender");
+    const sender = env.node("sender", "other");
     await sender.start();
     const id = randomUUID();
-    writeFileSync(join(env.home, JOBS_FILE), JSON.stringify({ version: 1, jobs: [{ id, status: "done" }] }));
-    const job = new BridgeNode({ pipePath: env.pipe, dbPath: env.db, token: loadOrCreateToken(env.home), id: `job:${id}`, jobAgent: "codex", agent: "other", name: "codex-job-old", cwd: env.home, autoWake: false, log: nullLogger, canHostBroker: false });
+    const recipient = env.node("recipient"); retainFixtureNode(env.home, recipient, "claude");
+    retainFixtureRunner(env.home, { id, name: "codex-job-old", agent: "codex", owner: recipient.name, supervisor: "fixture-root", cwd: env.home });
+    const records = JSON.parse(readFileSync(join(env.home, JOBS_FILE), "utf8")); records.jobs[0].status = "done";
+    writeFileSync(join(env.home, JOBS_FILE), JSON.stringify(records));
+    const job = new BridgeNode({ pipePath: env.pipe, dbPath: env.db, token: loadOrCreateToken(env.home), id: `job:${id}`, jobAgent: "codex", jobOwner: "fixture-root", jobParent: recipient.name, agent: "other", name: "codex-job-old", cwd: env.home, autoWake: false, log: nullLogger, canHostBroker: false });
     extraNodes.push(job);
     await job.start();
     const note = await job.send({ to: "recipient", body: "reserve a slot", conversationId: `job-${id}:note` });
     const final = await job.send({ to: "recipient", body: "completed", conversationId: `job-${id}` });
-    const recipient = env.node("recipient");
     await recipient.start();
     await until(() => recipient.unread().length === 2);
     expect(recipient.unread().some(m => m.id === final.messages[0]!.id)).toBe(true);
@@ -115,14 +119,15 @@ describe("delivery and reload recovery", () => {
   it("merges reload aliases without replaying or conflicting with a broadcast copy", () => {
     const store = new MessageStore(":memory:", nullLogger);
     try {
+      const alias = fixturePeer(store, "recipient-2", { sessionId: "broadcast-session" }), recipient = fixturePeer(store, "recipient", { sessionId: "broadcast-session" });
       const m: BridgeMessage = { id: randomUUID(), from: { id: randomUUID(), name: "sender", agent: "claude" }, to: "*", recipient: "recipient-2", conversationId: randomUUID(), replyTo: null, hop: 0, body: "broadcast", createdAt: Date.now(), readAt: null };
-      store.insert(m);
-      store.insert({ ...m, recipient: "recipient" });
-      expect(store.claim("recipient-2", "recipient")).toBe(1);
-      expect(store.unread("recipient-2", 10)).toEqual([]);
-      expect(store.unread("recipient", 10)).toHaveLength(1);
-      expect(store.claim("recipient", "recipient")).toBe(0);
-      expect(store.unread("recipient", 10)).toHaveLength(1);
+      store.insert(ownedMessage(store, alias, m));
+      store.insert(ownedMessage(store, recipient, { ...m, recipient: "recipient" }));
+      expect(store.claim("recipient-2", "recipient", undefined, nativeOwner(recipient))).toBe(1);
+      expect(unreadOwned(store, alias)).toEqual([]);
+      expect(unreadOwned(store, recipient)).toHaveLength(1);
+      expect(store.claim("recipient", "recipient", undefined, nativeOwner(recipient))).toBe(0);
+      expect(unreadOwned(store, recipient)).toHaveLength(1);
     } finally { store.close(); }
   });
 

@@ -1,0 +1,610 @@
+{
+  "base": "a0c27f1f6f9cc40278481ac07b87f11eceeab6c5",
+  "sourceCommit": "7c0538623ef3d6361d80b260e675343aae448012",
+  "sourceTree": "d3dede915a014dc9ae582c966fd27cc536ba9405",
+  "artifactCommit": "74db3bfaf1aed349116602752ade4145dfa4ad9a",
+  "artifactTree": "63d6c72e270b6dc078909eff30a8dc569e9c5676",
+  "exactTestedHead": "7c0538623ef3d6361d80b260e675343aae448012",
+  "laterCommits": "Documentation/artifacts/receipt only; not labeled exact tested. No pin amendment has been made.",
+  "incrementalInventoryAt": "74db3bfaf1aed349116602752ade4145dfa4ad9a",
+  "incrementalFileCount": 23,
+  "incrementalFiles": [
+    "docs/t3-cross-machine-mobile-pin-r35.json",
+    "docs/t3-cross-machine-mobile-pin-r35.patch",
+    "docs/t3-cross-machine-r35-ci-failures.json",
+    "docs/t3-cross-machine-r35-correction.md",
+    "docs/t3-cross-machine-r35-design.md",
+    "src/cli/doctor.ts",
+    "src/core/backups.ts",
+    "src/core/broker.ts",
+    "src/core/constants.ts",
+    "src/core/metadata-db.ts",
+    "src/core/prior-endpoints.ts",
+    "src/core/store-bootstrap-journal.ts",
+    "src/core/store-bootstrap-worker.ts",
+    "src/core/store-bootstrap.ts",
+    "src/core/store.ts",
+    "test/broker-startup-admission.test.ts",
+    "test/daemon-metadata-final-close.test.ts",
+    "test/mcp-chat.test.ts",
+    "test/owned-fixture-rpcs.test.ts",
+    "test/owned-fixture-rpcs.ts",
+    "test/remote-supervisor-routing.test.ts",
+    "test/store-bootstrap.test.ts",
+    "test/t3-cross-machine.test.ts"
+  ],
+  "sourceFreezeFileCount": 19,
+  "sourceFreezeFiles": [
+    "docs/t3-cross-machine-r35-design.md",
+    "src/cli/doctor.ts",
+    "src/core/backups.ts",
+    "src/core/broker.ts",
+    "src/core/constants.ts",
+    "src/core/metadata-db.ts",
+    "src/core/prior-endpoints.ts",
+    "src/core/store-bootstrap-journal.ts",
+    "src/core/store-bootstrap-worker.ts",
+    "src/core/store-bootstrap.ts",
+    "src/core/store.ts",
+    "test/broker-startup-admission.test.ts",
+    "test/daemon-metadata-final-close.test.ts",
+    "test/mcp-chat.test.ts",
+    "test/owned-fixture-rpcs.test.ts",
+    "test/owned-fixture-rpcs.ts",
+    "test/remote-supervisor-routing.test.ts",
+    "test/store-bootstrap.test.ts",
+    "test/t3-cross-machine.test.ts"
+  ],
+  "cumulativeBase": "b2066633584490360c4b722b916c19d0bd77246b",
+  "cumulativeInventoryAt": "74db3bfaf1aed349116602752ade4145dfa4ad9a",
+  "cumulativeFileCount": 149,
+  "cumulativeFiles": [
+    ".github/workflows/ab319-archive-profile.yml",
+    "docs/ab458-known-flaky-recheck-2026-10-23.md",
+    "docs/t3-cross-machine-mobile-pin-r29-approval.json",
+    "docs/t3-cross-machine-mobile-pin-r29.json",
+    "docs/t3-cross-machine-mobile-pin-r29.patch",
+    "docs/t3-cross-machine-mobile-pin-r33.json",
+    "docs/t3-cross-machine-mobile-pin-r33.patch",
+    "docs/t3-cross-machine-mobile-pin-r34.json",
+    "docs/t3-cross-machine-mobile-pin-r34.patch",
+    "docs/t3-cross-machine-mobile-pin-r35.json",
+    "docs/t3-cross-machine-mobile-pin-r35.patch",
+    "docs/t3-cross-machine-r20-retention.md",
+    "docs/t3-cross-machine-r21-retention.md",
+    "docs/t3-cross-machine-r22-operations.md",
+    "docs/t3-cross-machine-r24-residuals.md",
+    "docs/t3-cross-machine-r25-cancellation.md",
+    "docs/t3-cross-machine-r26-reservation.md",
+    "docs/t3-cross-machine-r27-reader-admission.md",
+    "docs/t3-cross-machine-r28-deadline.md",
+    "docs/t3-cross-machine-r29-admission.md",
+    "docs/t3-cross-machine-r30-admission.md",
+    "docs/t3-cross-machine-r31-admission.md",
+    "docs/t3-cross-machine-r32-evidence.md",
+    "docs/t3-cross-machine-r33-bootstrap-design.md",
+    "docs/t3-cross-machine-r33-verification.md",
+    "docs/t3-cross-machine-r33-worker-correction.md",
+    "docs/t3-cross-machine-r34-admission.md",
+    "docs/t3-cross-machine-r34-receipt.json",
+    "docs/t3-cross-machine-r35-ci-failures.json",
+    "docs/t3-cross-machine-r35-correction.md",
+    "docs/t3-cross-machine-r35-design.md",
+    "docs/t3-cross-machine.md",
+    "scripts/build.mjs",
+    "src/cli/broker-daemon.ts",
+    "src/cli/doctor.ts",
+    "src/cli/reindex.ts",
+    "src/core/admission-observation.ts",
+    "src/core/backup-background.ts",
+    "src/core/backup-worker.ts",
+    "src/core/backups.ts",
+    "src/core/broker.ts",
+    "src/core/client.ts",
+    "src/core/constants.ts",
+    "src/core/daemon-launcher.ts",
+    "src/core/history-store.ts",
+    "src/core/job-archive-index.ts",
+    "src/core/job-run-index.ts",
+    "src/core/metadata-db.ts",
+    "src/core/metadata-file-lease.ts",
+    "src/core/metadata-snapshot.ts",
+    "src/core/migration-lock.ts",
+    "src/core/muse-context.ts",
+    "src/core/native-children.ts",
+    "src/core/node.ts",
+    "src/core/oversize.ts",
+    "src/core/prior-endpoints.ts",
+    "src/core/process-identity.ts",
+    "src/core/protocol.ts",
+    "src/core/remote-operation-evidence.ts",
+    "src/core/runner-retention-index.ts",
+    "src/core/runner-store.ts",
+    "src/core/sqlite-maintenance.ts",
+    "src/core/sqlite-migrations.ts",
+    "src/core/sqlite-policy.ts",
+    "src/core/startup-budget.ts",
+    "src/core/storage-admission.ts",
+    "src/core/storage-lock.ts",
+    "src/core/store-bootstrap-journal.ts",
+    "src/core/store-bootstrap-worker.ts",
+    "src/core/store-bootstrap.ts",
+    "src/core/store-compatibility-overlay.ts",
+    "src/core/store-compatibility.ts",
+    "src/core/store.ts",
+    "src/core/windows-process-identity.ts",
+    "src/mcp/delivery-evidence.ts",
+    "src/mcp/hooks.ts",
+    "src/mcp/job-host.ts",
+    "src/mcp/job-runner.ts",
+    "src/mcp/jobs.ts",
+    "src/mcp/remote-job-host.ts",
+    "src/mcp/runner-delivery-retention.ts",
+    "src/mcp/runner-ledger-recovery.ts",
+    "src/mcp/server-lifecycle.ts",
+    "src/mcp/server.ts",
+    "src/network/link.ts",
+    "src/network/remote-job-protocol.ts",
+    "src/network/remote-jobs.ts",
+    "test/ab428-checklists.test.ts",
+    "test/admission-observation.test.ts",
+    "test/backup-settlement-schedule.test.ts",
+    "test/bridge.test.ts",
+    "test/broker-startup-admission.test.ts",
+    "test/client-protocol-observation.test.ts",
+    "test/completion-dedup.test.ts",
+    "test/conversations.test.ts",
+    "test/daemon-backup-drain.test.ts",
+    "test/daemon-lifecycle.test.ts",
+    "test/daemon-metadata-final-close.test.ts",
+    "test/daemon-readiness-wire.test.ts",
+    "test/daemon-readiness.test.ts",
+    "test/daemon-readiness.ts",
+    "test/daemon-store-final-close.test.ts",
+    "test/daemon-windows-paths.test.ts",
+    "test/delivery-evidence.test.ts",
+    "test/final-result-delivery.test.ts",
+    "test/fixtures/mobile-wiring-baseline.json",
+    "test/hook-publication-evidence.test.ts",
+    "test/job-admission.test.ts",
+    "test/job-archive-index.test.ts",
+    "test/job-pause-review.test.ts",
+    "test/job-runner-continuity.test.ts",
+    "test/job-runner-delivery-settlement.test.ts",
+    "test/job-runner-startup.test.ts",
+    "test/job-runner.test.ts",
+    "test/job-start-readiness.test.ts",
+    "test/job-wait-diagnostics.test.ts",
+    "test/job-wait-diagnostics.ts",
+    "test/jobs.test.ts",
+    "test/known-flaky.json",
+    "test/mcp-chat.test.ts",
+    "test/muse-job-contracts.test.ts",
+    "test/muse-msp.test.ts",
+    "test/native-process-identity-guards.test.ts",
+    "test/native-process-identity-semantics.test.ts",
+    "test/network-ui.test.ts",
+    "test/network.test.ts",
+    "test/owned-fixture-rpcs.test.ts",
+    "test/owned-fixture-rpcs.ts",
+    "test/prior-endpoint-inspection.test.ts",
+    "test/project-group-mail.test.ts",
+    "test/project-groups.test.ts",
+    "test/provider-admission.test.ts",
+    "test/quarantine-owned.test.ts",
+    "test/remote-job-observation.test.ts",
+    "test/remote-jobs.test.ts",
+    "test/remote-operation-ownership.test.ts",
+    "test/remote-runner-ledger.test.ts",
+    "test/remote-start-admission.test.ts",
+    "test/remote-supervisor-routing.test.ts",
+    "test/runner-ledger-archive.test.ts",
+    "test/server-lifecycle.test.ts",
+    "test/siblings.test.ts",
+    "test/storage-admission-phases.test.ts",
+    "test/storage-overlay-admission.test.ts",
+    "test/store-bootstrap.test.ts",
+    "test/store-deferred-hosting.test.ts",
+    "test/store-peer-publication.test.ts",
+    "test/store-startup-contention.test.ts",
+    "test/t3-cross-machine.test.ts"
+  ],
+  "receiptAddition": "docs/t3-cross-machine-r35-receipt.json (this final receipt is additional to the anchored inventories)",
+  "budget": {
+    "originalBudgetMs": 60000,
+    "usedMs": 38720,
+    "runs": [
+      {
+        "name": "qualified-red-a0c-source",
+        "kind": "mock",
+        "head": "a5461b0b8674f622891ebaa88820c4679155219b",
+        "tree": "6295596b03058aad1db9d8fa68520d0e400bf164",
+        "pid": 4320,
+        "startUtc": "2026-10-23T19:25:31.1819208+09:00",
+        "endUtc": "2026-10-23T19:25:35.1185322+09:00",
+        "originalStepDeadlineUtc": "2026-10-23T19:25:41.1819208+09:00",
+        "elapsedMs": 3933,
+        "exit": 1,
+        "timedOut": false,
+        "selection": [
+          "test/store-bootstrap.test.ts",
+          "test/broker-startup-admission.test.ts",
+          "-t",
+          "parent-directory publication failure|expected whole-journal identity|missing whole journal on restart|actual file-store archive maintenance"
+        ]
+      },
+      {
+        "name": "qualified-red-directory-schedules",
+        "kind": "mock",
+        "head": "a486e51eb524ae49249dd319c0de7c30c9363603",
+        "tree": "41b16ae819d9249c52a6c3916b2a4d21a173efe0",
+        "pid": 65344,
+        "startUtc": "2026-10-23T19:25:59.7265859+09:00",
+        "endUtc": "2026-10-23T19:26:01.6255938+09:00",
+        "originalStepDeadlineUtc": "2026-10-23T19:26:06.2265859+09:00",
+        "elapsedMs": 1896,
+        "exit": 1,
+        "timedOut": false,
+        "selection": [
+          "test/store-bootstrap.test.ts",
+          "-t",
+          "parent-directory publication failure|expected whole-journal identity"
+        ]
+      },
+      {
+        "name": "candidate-noEmit",
+        "kind": "typecheck",
+        "head": "3f1084d17760e470438f0125d26c97edc7dcc09a",
+        "tree": "4ce4cb118a9af38553eec0187c6f99bb1755d690",
+        "pid": 67292,
+        "startUtc": "2026-10-23T19:35:15.6207838+09:00",
+        "endUtc": "2026-10-23T19:35:16.9628069+09:00",
+        "originalStepDeadlineUtc": "2026-10-23T19:35:22.6207838+09:00",
+        "elapsedMs": 1339,
+        "exit": 1,
+        "timedOut": false,
+        "selection": null
+      },
+      {
+        "name": "anchor-mocked-candidate",
+        "kind": "mock",
+        "head": "2a0dbf43f5f55c6747b7ff5fcc8f097ce73ccb3e",
+        "tree": "9d6fbc9742b0ff377873ff59510dc37f72ba26d9",
+        "pid": 12536,
+        "startUtc": "2026-10-23T19:35:39.3237319+09:00",
+        "endUtc": "2026-10-23T19:35:47.8787399+09:00",
+        "originalStepDeadlineUtc": "2026-10-23T19:35:47.8237319+09:00",
+        "elapsedMs": 8552,
+        "exit": -1,
+        "timedOut": true,
+        "selection": [
+          "test/store-bootstrap.test.ts"
+        ]
+      },
+      {
+        "name": "narrow-anchor-phases",
+        "kind": "mock",
+        "head": "2a0dbf43f5f55c6747b7ff5fcc8f097ce73ccb3e",
+        "tree": "9d6fbc9742b0ff377873ff59510dc37f72ba26d9",
+        "pid": 47752,
+        "startUtc": "2026-10-23T19:36:21.8824562+09:00",
+        "endUtc": "2026-10-23T19:36:24.5980275+09:00",
+        "originalStepDeadlineUtc": "2026-10-23T19:36:27.8824562+09:00",
+        "elapsedMs": 2713,
+        "exit": 0,
+        "timedOut": false,
+        "selection": [
+          "test/store-bootstrap.test.ts",
+          "-t",
+          "admits slow preparation|parent-directory publication failure|missing whole journal on restart",
+          "--reporter=verbose"
+        ]
+      },
+      {
+        "name": "candidate-preservation-noEmit",
+        "kind": "typecheck",
+        "head": "f6120223d5f81b592b5922078f3f57099d0fb12e",
+        "tree": "9a7d599d3f3d109c0efa2ca17592c0fa5a2ffd4b",
+        "pid": 71236,
+        "startUtc": "2026-10-23T19:51:45.9212206+09:00",
+        "endUtc": "2026-10-23T19:51:47.2258374+09:00",
+        "originalStepDeadlineUtc": "2026-10-23T19:51:50.9212206+09:00",
+        "elapsedMs": 1303,
+        "exit": 0,
+        "timedOut": false,
+        "selection": null
+      },
+      {
+        "name": "preservation-and-upgrade",
+        "kind": "mock",
+        "head": "f6120223d5f81b592b5922078f3f57099d0fb12e",
+        "tree": "9a7d599d3f3d109c0efa2ca17592c0fa5a2ffd4b",
+        "pid": 54708,
+        "startUtc": "2026-10-23T19:51:54.9589944+09:00",
+        "endUtc": "2026-10-23T19:51:59.1279932+09:00",
+        "originalStepDeadlineUtc": "2026-10-23T19:52:02.9589944+09:00",
+        "elapsedMs": 4167,
+        "exit": 1,
+        "timedOut": false,
+        "selection": [
+          "test/store-bootstrap.test.ts",
+          "-t",
+          "full backup|copied journal proof|automatic component|current component|partially published anchor|bounded supported-directory",
+          "--reporter=verbose"
+        ]
+      },
+      {
+        "name": "deferred-producers-and-offline-upgrade",
+        "kind": "mock",
+        "head": "7c0538623ef3d6361d80b260e675343aae448012",
+        "tree": "d3dede915a014dc9ae582c966fd27cc536ba9405",
+        "pid": 22860,
+        "startUtc": "2026-10-23T19:52:31.1730846+09:00",
+        "endUtc": "2026-10-23T19:52:34.2406543+09:00",
+        "originalStepDeadlineUtc": "2026-10-23T19:52:39.1730846+09:00",
+        "elapsedMs": 3065,
+        "exit": 0,
+        "timedOut": false,
+        "selection": [
+          "test/broker-startup-admission.test.ts",
+          "test/store-bootstrap.test.ts",
+          "test/owned-fixture-rpcs.test.ts",
+          "-t",
+          "automatic component|suspended|directly bound|compatible direct|protocol9 authentication|actual file-store|deferred producer|owns delayed",
+          "--reporter=verbose"
+        ]
+      },
+      {
+        "name": "anchored-final-mock",
+        "kind": "mock",
+        "head": "7c0538623ef3d6361d80b260e675343aae448012",
+        "tree": "d3dede915a014dc9ae582c966fd27cc536ba9405",
+        "pid": 49000,
+        "startUtc": "2026-10-23T19:52:54.3265824+09:00",
+        "endUtc": "2026-10-23T19:53:04.6450607+09:00",
+        "originalStepDeadlineUtc": "2026-10-23T19:53:08.8265824+09:00",
+        "elapsedMs": 10316,
+        "exit": 0,
+        "timedOut": false,
+        "selection": [
+          "test/store-bootstrap.test.ts",
+          "--reporter=verbose"
+        ]
+      },
+      {
+        "name": "final-source-noEmit",
+        "kind": "typecheck",
+        "head": "7c0538623ef3d6361d80b260e675343aae448012",
+        "tree": "d3dede915a014dc9ae582c966fd27cc536ba9405",
+        "pid": 9152,
+        "startUtc": "2026-10-23T19:53:37.418665+09:00",
+        "endUtc": "2026-10-23T19:53:38.6799744+09:00",
+        "originalStepDeadlineUtc": "2026-10-23T19:53:42.418665+09:00",
+        "elapsedMs": 1259,
+        "exit": 0,
+        "timedOut": false,
+        "selection": null
+      },
+      {
+        "name": "frozen-pin-inventory",
+        "kind": "inspect",
+        "head": "7c0538623ef3d6361d80b260e675343aae448012",
+        "tree": "d3dede915a014dc9ae582c966fd27cc536ba9405",
+        "pid": 77312,
+        "startUtc": "2026-10-23T19:54:42.0032165+09:00",
+        "endUtc": "2026-10-23T19:54:42.1827361+09:00",
+        "originalStepDeadlineUtc": "2026-10-23T19:54:45.5032165+09:00",
+        "elapsedMs": 177,
+        "exit": 0,
+        "timedOut": false,
+        "selection": [
+          "./.agent-bridge-test/ab458-ci-review/pins/r35-inventory.mjs"
+        ]
+      }
+    ]
+  },
+  "rawReceipts": [
+    {
+      "path": "E:/AgentData/reports/ab458-r35-qualified-red-a0c-source.out",
+      "bytes": 1151,
+      "sha256": "66e8dfd26b2fd42e65d2d4203bb23f47fa0f2a8da532529d1050b5c073a2c865"
+    },
+    {
+      "path": "E:/AgentData/reports/ab458-r35-qualified-red-a0c-source.err",
+      "bytes": 3237,
+      "sha256": "40eed1b05aee6e4f451c6431b106ca17351f40f1ea3e3951e5c5fe8d3f10af3e"
+    },
+    {
+      "path": "E:/AgentData/reports/ab458-r35-qualified-red-directory-schedules.out",
+      "bytes": 866,
+      "sha256": "c61650f3f47b1c7bd16a8decfa9b226ae45449cfbf25ef3d973e6922f3382322"
+    },
+    {
+      "path": "E:/AgentData/reports/ab458-r35-qualified-red-directory-schedules.err",
+      "bytes": 1914,
+      "sha256": "77828737d05249c79e382de3436bf38e66d0612650fc6cede348bc5c2b247393"
+    },
+    {
+      "path": "E:/AgentData/reports/ab458-r35-candidate-noEmit.out",
+      "bytes": 2964,
+      "sha256": "8e8d2ab004287085ae32ba03863bf851c1e6d7da1d60a7115ea282bd1ee90b75"
+    },
+    {
+      "path": "E:/AgentData/reports/ab458-r35-candidate-noEmit.err",
+      "bytes": 266,
+      "sha256": "39295148a0616b8683f263e81aa20b6943d79a95ed5c9b9fd8eb1dffc43b631e"
+    },
+    {
+      "path": "E:/AgentData/reports/ab458-r35-anchor-mocked-candidate.out",
+      "bytes": 412,
+      "sha256": "d1bc8cf51bbd9b1e4de77ad9969afc854cab0ae9219b132b8c942b7455d52d04"
+    },
+    {
+      "path": "E:/AgentData/reports/ab458-r35-anchor-mocked-candidate.err",
+      "bytes": 338,
+      "sha256": "073e9cc9eef3d4e2d1dee08894f84825682cbf2ba5852c3a033cfdf29cf2b432"
+    },
+    {
+      "path": "E:/AgentData/reports/ab458-r35-narrow-anchor-phases.out",
+      "bytes": 4183,
+      "sha256": "118230e2722a7a0dfdfe936ebcb17dbf061ca51f6d959cb35172753cb89cf3cb"
+    },
+    {
+      "path": "E:/AgentData/reports/ab458-r35-narrow-anchor-phases.err",
+      "bytes": 698,
+      "sha256": "fed1905ae22d196623802719161fe88fdf8f9a7aa26a86f8b5756732314ea3f7"
+    },
+    {
+      "path": "E:/AgentData/reports/ab458-r35-candidate-preservation-noEmit.out",
+      "bytes": 279,
+      "sha256": "84cc9f50feea2233c88109950b5a3441c33dcc095976c8bf2ad8f2ba817b1c6f"
+    },
+    {
+      "path": "E:/AgentData/reports/ab458-r35-candidate-preservation-noEmit.err",
+      "bytes": 279,
+      "sha256": "84cc9f50feea2233c88109950b5a3441c33dcc095976c8bf2ad8f2ba817b1c6f"
+    },
+    {
+      "path": "E:/AgentData/reports/ab458-r35-preservation-and-upgrade.out",
+      "bytes": 6389,
+      "sha256": "93fbe772b00af50a336033a5abb7fc740f7b1f31ee41eadb17f0fb51fb2fca32"
+    },
+    {
+      "path": "E:/AgentData/reports/ab458-r35-preservation-and-upgrade.err",
+      "bytes": 4894,
+      "sha256": "322548e91e9afac521589c2c8248bfe7f0bf0e40e00fc2ae827f58b23cc86b8f"
+    },
+    {
+      "path": "E:/AgentData/reports/ab458-r35-deferred-producers-and-offline-upgrade.out",
+      "bytes": 6841,
+      "sha256": "0349c9efcfbf36e4d5c90e4628812876f660b9d521b642bd5c647f41d4e44c4d"
+    },
+    {
+      "path": "E:/AgentData/reports/ab458-r35-deferred-producers-and-offline-upgrade.err",
+      "bytes": 368,
+      "sha256": "25e27d37b102234b97c8db6f18714d777ecf7ad28c850b59803af41a7f9241c5"
+    },
+    {
+      "path": "E:/AgentData/reports/ab458-r35-anchored-final-mock.out",
+      "bytes": 5793,
+      "sha256": "6c6cc238bf0928bdce47f7add1b162aa73b409da00c4ef1129f51a695402a269"
+    },
+    {
+      "path": "E:/AgentData/reports/ab458-r35-anchored-final-mock.err",
+      "bytes": 3010,
+      "sha256": "c4598be75ccb9de72e19572f93a8ce6bf770d5af459df3f194ce4815e4709a3e"
+    },
+    {
+      "path": "E:/AgentData/reports/ab458-r35-final-source-noEmit.out",
+      "bytes": 268,
+      "sha256": "a0d3cf7c340298fa3ca114f33ca532023edc4c82248970df3412e4ece2e39c38"
+    },
+    {
+      "path": "E:/AgentData/reports/ab458-r35-final-source-noEmit.err",
+      "bytes": 268,
+      "sha256": "a0d3cf7c340298fa3ca114f33ca532023edc4c82248970df3412e4ece2e39c38"
+    },
+    {
+      "path": "E:/AgentData/reports/ab458-r35-frozen-pin-inventory.out",
+      "bytes": 1183,
+      "sha256": "1cab116900683de72c2f46469776e3bebe4d38807db6fd4af6e58d3c1ba14ce3"
+    },
+    {
+      "path": "E:/AgentData/reports/ab458-r35-frozen-pin-inventory.err",
+      "bytes": 450,
+      "sha256": "42eb7b9370caaad993a973797f95c9210bd6d22db2a148dd6e0f35db8a76cff0"
+    }
+  ],
+  "redQualification": [
+    "a5461b0b: production source unchanged a0, tests/design only; actual producer started while TCP suspended and cached metadata accepted missing whole journal are meaningful red. Initial native matcher/leaked admitted store and its polluted subsequent assertion are HARNESS failures, not red proof.",
+    "a486e51e: corrected cleanup on unchanged a0 production; parent-chain failure and entire journal disappearance during final construction are meaningful red. Replaced directory already refused and is negative-preservation coverage."
+  ],
+  "green": {
+    "head": "7c0538623ef3d6361d80b260e675343aae448012",
+    "bootstrap": "39 passed, no exclusions in test/store-bootstrap.test.ts",
+    "broker": "7 passed in test/broker-startup-admission.test.ts",
+    "ownedRpc": "1 passed in test/owned-fixture-rpcs.test.ts",
+    "uniqueFocusedPasses": 47,
+    "noEmit": "exit0; own PID9152;1259ms",
+    "transports": "Explicit fake Worker, filesystem directory-durability transport, socket/server scheduling and process identity; production storage/ownership/metadata/admission/journal/backup paths",
+    "qualification": "Source/mock/offline evidence only; not native Worker, Windows fsync or actual hosted acceptance"
+  },
+  "failedAttempts": [
+    "qualified-red-a0c-source:4failed1passed/30excluded; two meaningful defect failures, two harness/pollution failures separately qualified.",
+    "qualified-red-directory-schedules:2failed1passed/26excluded meaningful red plus already-protected replacement case.",
+    "candidate-noEmit:contract literal typing failure; fixed in2a0dbf43.",
+    "anchor-mocked-candidate:original 8552ms owned timeout, no completed test-file result; INCOMPLETE.",
+    "preservation-and-upgrade:f612 source6passed4failed29excluded; actual legacy census was blocked by a too-early existingMetadataDb guard. Corrected in7c053862; four explicit offline cases green."
+  ],
+  "olderAggregate": "Earlier R33 aggregate NOT RECONSTRUCTED; retained. R34 batch55.163s remains separate. No retrospective acceptance or unused-budget inference.",
+  "parentApproval": [
+    "Protocol10/metadata5 source-only gate approved after d18a6e75 design. Pairing1/SQLite14/JSON4/runner-ledger-v2 unchanged. Metadata1/2/3/4 automatic shared-home upgrades refuse before effects.",
+    "Conservative provenance-bound full restore refusal before any maintenance/rename/write approved; separate AB-461 restore-generation design, no implementation authorized here."
+  ],
+  "compatibilityImpact": "Observed 5e3fa8aa and b206 metadata source VERSION=1. Such existing homes require explicit owner-coordinated isolated offline admission; gate does not force unsupported inactive or old manual tools to cooperate. No installed store scanned/migrated.",
+  "protectedGate": {
+    "artifact": "docs/t3-cross-machine-mobile-pin-r35.json",
+    "patch": "docs/t3-cross-machine-mobile-pin-r35.patch",
+    "approval": "Parent exact review REQUIRED before any separate attributable pin amendment",
+    "changed": [
+      {
+        "method": "src/core/broker.ts:startServices",
+        "previous": "909c6ff546147a804218a57ac04037c8ffe69eb503e4c0b26f8f7660de5cdbc3",
+        "current": "258cf7e8495f1ed376d1a649a72e29732ab4efc13516b51ce32aefa01ae429c7"
+      },
+      {
+        "method": "src/core/broker.ts:abortStartup",
+        "previous": "0bb787b8bf8a024fd53eba53c3f2e1b998fda4748e1f285c43d6c5a99861260a",
+        "current": "7b3dc7bf4af0d58ba0ef819078ca8f795b47e700f7c4d25e8375c9df13c74ac4"
+      },
+      {
+        "method": "src/core/broker.ts:close",
+        "previous": "fb5a92326cac082ae181f38208c0af708a2b342297038d021f67a13bcd8b9b27",
+        "current": "7b3ddeb36b6f4ea009af51c0fb5c1749af388d8d47ef9dc9ad6452d087b33a6c"
+      }
+    ],
+    "unchanged": 10,
+    "uiSha256": "f2a5b28254d4bb467f28bdee139e3b23bd9d4bd0c7c15fee116b4ed85a6ac385",
+    "normalizerSha256": "19b5fbbccdea0d567510ebca43e4b7d6c9506504375f79d395641c34d6dd4549",
+    "baselineAmended": false
+  },
+  "preserved": {
+    "knownFlaky": "No diff to80e16783ea1f6090811999ab671d0871ed403a38 for test/known-flaky.json and approved evidence doc",
+    "retentionGuard": "test/data-retention.test.ts unchanged from a0; no new delete/allowlist exception",
+    "mobile": "test/mobile-wiring.test.ts, baseline and UI unchanged from a0; exact blob manifest reconciles raw CRLF and committed LF independently",
+    "overflow": "Object.is fixture identity correction and actual129th/130th refs preserved; fresh scaffold uses canonical minting instead of a static current stamp"
+  },
+  "ci": {
+    "matrix": "docs/t3-cross-machine-r35-ci-failures.json",
+    "exactHead": "a0c27f1f6f9cc40278481ac07b87f11eceeab6c5",
+    "reportedFailedTests": 786,
+    "rawErrorHeaders": 893,
+    "distinctPerJobHeaders": 789,
+    "extraSuiteSetupHeaders": 3,
+    "repeatedHeaders": 104,
+    "unhandled": "Winshard6 two MCP-32000 rejections: coverage UNKNOWN, not acceptance",
+    "classification": "Every header retained. Fixed root corrections: dependency-free lease graph; unstarted injected network fixture; stale current-protocol assertions. Windows generic failure and remaining timing/security-before-setup failures do not establish exact cause."
+  },
+  "followup": "AB-461: durable owner-coordinated isolated offline restore generation; new inodes/namespace/generation, original evidence, crash-safe transition and no fabricated ownership/consumption",
+  "unresolved": [
+    "Windows directory durability support UNVERIFIED; unsupported new cold/ordinary initialization explicitly unavailable, portable reviewed solution required before product completion.",
+    "Provenance-bound full restore unavailable. Archive verification preserves evidence; it is not restorable authority.",
+    "WMI late Create still unresolved: helper30s lifetime versus original10s startup, no-start not proven by child refusal/unknown latch.",
+    "Actual-worker kernel failures in prior Windows CI cannot be attributed to fsync from generic old IPC; new bounded stage forwarding awaits hosted evidence.",
+    "Separate archive identity/broadcast timing,1491 dashboard rawSourceReads8vs0, cancellation host-null report history absence and notify original expiry remain UNPROVEN.",
+    "Historical takeover exit/fairness/quiet session publication/HTTP500/alias disconnect and lease classification causes remain UNPROVEN.",
+    "Standalone helper bundling, transport fixture recovery, MCP pending cleanup and overflow native lifecycle corrections require hosted gates; not run locally."
+  ],
+  "notRun": [
+    "native Worker",
+    "provider",
+    "daemon",
+    "TLS",
+    "build",
+    "full local suite",
+    "stress",
+    "installed update/migration/restore",
+    "release"
+  ],
+  "acceptance": "Pending parent exact three-method pin review/amendment, independent R35 full design/correction review and hosted actual-worker/full/lifecycle/Windows/native gates. No merge or owner acceptance claimed."
+}

@@ -1,0 +1,52 @@
+--- 55b2fe19551471823580c664a98d04386fa4b55d:src/core/broker.ts:abortStartup (normalized)
++++ cf5c9a555192c9168aa22a19f5b610daa191ad02:src/core/broker.ts:abortStartup (normalized)
+@@
+-{
+-await this.cancelServingMaintenance();
+-this.healthMonitor.close();
+-if (this.purgeTimer) clearInterval(this.purgeTimer);
+-this.purgeTimer = null;
+-this.questions?.close(); this.questions = null;
+-const jobs = this.jobsPath ? stopJobRunBackfill(dirname(this.jobsPath)) : undefined;
+-const historyOwner = this.historyBackground, archiveOwner = this.jobArchiveBackground, networkOwner = this.network;
+-const history = historyOwner?.close().then(() => { if (this.historyBackground === historyOwner) this.historyBackground = null; });
+-const archive = archiveOwner?.close().then(() => { if (this.jobArchiveBackground === archiveOwner) this.jobArchiveBackground = null; });
+-const backups = this.store.closeBackups(), network = networkOwner?.close().then(() => { if (this.network === networkOwner) this.network = null; }), tcp = this.stopTcpFallback();
+-const results = await Promise.allSettled([jobs, history, archive, backups, network, tcp]);
+-this.remoteDashboard?.close(); this.remoteDashboard = null;
+-this.remoteJobs?.close(); this.remoteJobs = null;
+-this.decisionSync?.close(); this.decisionSync = null;
+-for (const c of this.conns) c.socket.destroy();
+-this.conns.clear();
+-const server = this.server;
+-this.server = null;
+-if (server) await new Promise<void>((r) => server.close(() => r()));
+-if (results.some(result => result.status === "rejected")) throw new Error("Partial broker service cleanup is unproven; exact startup owner retained.");
+-}
++{
++// Revoke borrowed mobile authority synchronously, before any owned cleanup
++// await. Start its existing bounded disposer clock at the same boundary.
++this.mobileRetiring = true;
++const mobile = this.mobileResources ? this.disposeMobileResources().catch(() => this.mobileDisposalDiagnostic("mobile_disposal_failed")) : undefined;
++await this.cancelServingMaintenance();
++this.healthMonitor.close();
++if (this.purgeTimer) clearInterval(this.purgeTimer);
++this.purgeTimer = null;
++await mobile;
++this.questions?.close(); this.questions = null;
++const jobs = this.jobsPath ? stopJobRunBackfill(dirname(this.jobsPath)) : undefined;
++const historyOwner = this.historyBackground, archiveOwner = this.jobArchiveBackground, networkOwner = this.network;
++const history = historyOwner?.close().then(() => { if (this.historyBackground === historyOwner) this.historyBackground = null; });
++const archive = archiveOwner?.close().then(() => { if (this.jobArchiveBackground === archiveOwner) this.jobArchiveBackground = null; });
++const backups = this.store.closeBackups(), network = networkOwner?.close().then(() => { if (this.network === networkOwner) this.network = null; }), tcp = this.stopTcpFallback();
++const results = await Promise.allSettled([jobs, history, archive, backups, network, tcp]);
++this.remoteDashboard?.close(); this.remoteDashboard = null;
++this.remoteJobs?.close(); this.remoteJobs = null;
++this.decisionSync?.close(); this.decisionSync = null;
++for (const c of this.conns) c.socket.destroy();
++this.conns.clear();
++const server = this.server;
++this.server = null;
++if (server) await new Promise<void>((r) => server.close(() => r()));
++if (results.some(result => result.status === "rejected")) throw new Error("Partial broker service cleanup is unproven; exact startup owner retained.");
++}

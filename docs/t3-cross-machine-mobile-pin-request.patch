@@ -1,0 +1,174 @@
+diff --git a/baseline/src_core_broker.ts_constructor.txt b/current/src_core_broker.ts_constructor.txt
+index 4ae717f2..d5a102e9 100644
+--- a/baseline/src_core_broker.ts_constructor.txt
++++ b/current/src_core_broker.ts_constructor.txt
+@@ -16,12 +16,18 @@ askOwner: (c,a) => {
+ const peer = this.requirePeer(c);
+ if (peer.jobAgent || peer.subagent || peer.agent === "other") throw new BridgeError("unauthorized", "Delegated jobs ask their main; only project sessions file owner questions.");
+ const args = askOwnerSchema.parse(a), root = this.groups.root(peer.cwd);
+-if (!root || args.project && !this.groups.same(args.project, peer.cwd)) throw new BridgeError("unauthorized", "File questions only for your own project.");
+-if (args.job && !this.storedJobs().some(j => j.name === args.job && this.groups.canControl(peer,j,this.localPeers()))) throw new BridgeError("unauthorized", "Linked job must belong to this project session.");
++if (!root || args.project && !this.groups.sameProject(args.project, peer.cwd)) throw new BridgeError("unauthorized", "File questions only for your own project.");
++const linkedJob = args.job ? this.mailboxJob(args.job) : undefined;
++if (args.job && (!linkedJob || !this.groups.canControl(peer, linkedJob, this.localPeers()))) throw new BridgeError("unauthorized", "Linked job must belong to this project session.");
+ const main = this.localPeers().find(p => this.groups.same(p.cwd, peer.cwd) && this.projectPeer(p).projectMain);
+ let deskProject: string | undefined=args.deskProject;
+ try { const linked=readJsonSnapshot(join(root,".pair-desk.json")).value; if (isRecord(linked) && typeof linked.project === "string") deskProject=linked.project; } catch { /* Desk linking is optional. */ }
+-return this.ownerQuestions().store.ask(args, root, { session: peer.name, sessionId: peer.sessionId, peerId:peer.id, agent: peer.agent, main: main?.name ?? peer.name, mainSessionId:main ? main.sessionId : peer.sessionId, mainPeerId:main?.id ?? peer.id, ...(args.job ? {job:args.job} : {}) }, this.now(),deskProject);
++const owner = recipientKey(peer.frontend, nativeOwner(peer)) ?? undefined, selectedMain = main ?? peer;
++const linkedOwner = linkedJob && this.durableRecipient(linkedJob, peer);
++return this.ownerQuestions().store.ask(args, root, { session: peer.name, sessionId: peer.sessionId, peerId:peer.id, agent: peer.agent, owner,
++main: selectedMain.name, mainSessionId:selectedMain.sessionId, mainPeerId:selectedMain.id,
++mainOwner: recipientKey(selectedMain.frontend, nativeOwner(selectedMain)) ?? undefined,
++...(args.job ? {job:args.job, jobOwner: linkedOwner ? recipientKey(undefined, linkedOwner) ?? undefined : undefined} : {}) }, this.now(),deskProject);
+ },
+ ownerQuestions: () => this.ownerQuestions().list(),
+ answerOwner: (c,a) => {
+@@ -33,7 +39,7 @@ return this.ownerQuestions().complete(this.ownerQuestions().store.answer(args.id
+ dismissOwner: (c,a) => {
+ const args = z.object({ id: z.uuid(), status: z.enum(["cancelled","superseded"]), reason: z.string().trim().min(1).max(1000), supersededBy: z.uuid().optional() }).strict().parse(a);
+ const q = this.ownerQuestions().store.get(args.id);
+-if (c.peer && (c.peer.jobAgent || c.peer.subagent || !q?.askers.some(asker => asker.sessionId && c.peer!.sessionId ? asker.agent === c.peer!.agent && asker.sessionId === c.peer!.sessionId : asker.peerId ? asker.peerId === c.peer!.id : asker.session === c.peer!.name))) throw new BridgeError("unauthorized", "Only an asker or the owner may dismiss this question.");
++if (c.peer && (c.peer.jobAgent || c.peer.subagent || !q?.askers.some(asker => asker.owner && asker.owner === recipientKey(c.peer!.frontend, nativeOwner(c.peer!))))) throw new BridgeError("unauthorized", "Only a proven original asker or the owner may dismiss this question.");
+ return this.ownerQuestions().store.dismiss(args.id,args.status,args.reason,args.supersededBy);
+ },
+ dashboardJobSend: (c, a) => {
+@@ -174,15 +180,24 @@ return { sent: true };
+ },
+ inlineJobReport: async (c, m) => {
+ const peer = this.requirePeer(c);
++const registration = c.mailReady;
+ let fallback = false;
+ await this.store.retryWrite(() => {
+-const job = this.storedJobs().find((j) => `job:${j.id}` === m.from?.id);
++if (!registration) throw new BridgeError("unauthorized", "Report registration is unavailable");
++this.assertQueueRegistration(c, peer, registration);
++const job = this.currentJobAuthority(this.storedJobs().find((j) => `job:${j.id}` === m.from?.id));
+ if (!job || (job.executionOwner !== peer.name && job.owner !== peer.name && job.rootName !== peer.name) || typeof job.owner !== "string" || typeof m.body !== "string") throw new BridgeError("unauthorized", "Invalid inline job delivery.");
++if (this.jobDeliveryOwner(job, peer.name) !== recipientKey(peer.frontend, nativeOwner(peer))) throw new BridgeError("unauthorized", "Original job reporter identity is unproven or replaced; report remains pending.");
+ const recipient = this.jobRecipient(job);
++const intended = this.freshJobDeliveryOwner(job, peer, recipient), grant = this.jobReportGrant(job, peer);
++if (!intended) throw new BridgeError("unauthorized", "Original job recipient binding is unavailable; report remains pending without mailbox settlement.");
++if (!grant || m.from.agent !== job.agent || m.from.name !== job.name) throw new BridgeError("unauthorized", "Proven local job report grant is unavailable");
+ fallback = recipient !== primaryFor(job);
+ // AB-380: an oversized report from an older sender is stored as a stub with the same id, never rejected.
+-const message = this.wireMessage({ ...m, jobControlAuthorized: undefined, to: recipient, recipient, conversationId: this.jobConversation(job, recipient, m.conversationId) });
+-if (this.store.insertJobDelivery(message)) {
++const message = this.wireMessage({ ...m, jobControlAuthorized: undefined, recipientFrontend: undefined, recipientNative: undefined, recipientAmbiguous: undefined,
++...ownershipFromKey(intended), senderOwner: `native:${grant.principal}`, senderMailbox: localMailbox(this.store.namespace), to: recipient, recipient, conversationId: this.jobConversation(job, recipient, m.conversationId) });
++if (this.store.insertJobDelivery(message, grant)) {
++Object.assign(message, this.store.messagesById(message.id).find(copy => copy.recipient === recipient));
+ const target = this.connByName(recipient);
+ if (target && !target.peer?.unavailable) this.emit(target, "message", message);
+ }
+@@ -204,7 +219,7 @@ const result = await this.onHello(c, a);
+ void this.routePendingJobMail().catch((err) => this.log.warn("pending job reroute deferred", { err: String(err) }));
+ this.store.history.rememberPeer(c.peer!); this.afterRegistration(c); return result;
+ },
+-send: (c, a) => this.onSend(c, { ...a, messageId: undefined }),
++send: (c, a) => a.messageId ? this.onTrackedSend(c, { ...a, messageId: a.messageId }) : this.onSend(c, a),
+ trackedSend: (c, a) => this.onTrackedSend(c, a),
+ sendState: (c, a) => this.sendState(c, z.uuid().parse(a.id).toLowerCase()),
+ decide: (c, a) => this.onDecide(c, a),
+@@ -241,10 +256,15 @@ await this.nativeChildren.end(peer, a.agentId);
+ this.replayMail(c, peer);
+ return null;
+ },
+-nativeChildPending: (c, a) => this.pendingMail(this.nativeChildren.own(this.requirePeer(c), a.agentId).address, HOOK_MAX_MESSAGES),
++nativeChildPending: (c, a) => { const child = this.nativeChildren.own(this.requirePeer(c), a.agentId); return this.pendingMail(child.address, HOOK_MAX_MESSAGES, child.identity); },
+ nativeChildAck: async (c, a) => {
+ const peer = this.requirePeer(c);
+-return { acked: await this.store.retryWrite(() => this.store.markRead(this.nativeChildren.own(peer, a.agentId).address, a.ids, this.now())) };
++const child = this.nativeChildren.own(peer, a.agentId), registration = { id: peer.id, name: peer.name, sessionId: peer.sessionId, generation: c.mailGeneration, owner: recipientKey(peer.frontend, nativeOwner(peer)), namespace: this.store.namespace };
++return { acked: await this.store.retryWrite(() => {
++this.assertQueueRegistration(c, peer, registration);
++if (this.nativeChildren.own(peer, a.agentId) !== child) throw new BridgeError("unauthorized", "Native child incarnation changed.");
++return this.store.markRead(child.address, a.ids.filter(id => sameMailbox(a.mailboxProofs?.[id], localMailbox(this.store.namespace))), this.now(), undefined, undefined, child.identity);
++}) };
+ },
+ nativeChildSend: (c, a) => {
+ const child = this.nativeChildren.own(this.requirePeer(c), a.agentId);
+@@ -255,7 +275,13 @@ if (!a.ifNoNewerThan) throw new BridgeError("bad_request", "guardedSend requires
+ return this.onSend(c, a);
+ },
+ messageReceipt: (c, a) => this.messageReceipt(c, a.id),
+-ack: async (c, a) => ({ acked: await this.store.retryWrite(() => this.store.markRead(this.requirePeer(c).name, a.ids ?? [], this.now())) }),
++ack: async (c, a) => {
++const peer = this.requirePeer(c), registration = { id: peer.id, name: peer.name, sessionId: peer.sessionId, generation: c.mailGeneration, owner: recipientKey(peer.frontend, nativeOwner(peer)), namespace: this.store.namespace };
++return { acked: await this.store.retryWrite(() => {
++this.assertQueueRegistration(c, peer, registration);
++return this.store.markRead(registration.name, (a.ids ?? []).filter(id => sameMailbox(a.mailboxProofs?.[id], localMailbox(this.store.namespace))), this.now(), peer.frontend, a.nativeOwners ?? {}, nativeOwner(peer), a.jobRoutes);
++}) };
++},
+ pending: (c, a) => {
+ const peer = this.requirePeer(c);
+ return this.queueReady(c, peer) ? this.pendingMail(peer.name, Math.min(Math.max(1, a.limit ?? PENDING_DEFAULT_LIMIT), PENDING_MAX_LIMIT)) : [];
+diff --git a/baseline/src_core_broker.ts_startServices.txt b/current/src_core_broker.ts_startServices.txt
+index ee7ece7d..31322eec 100644
+--- a/baseline/src_core_broker.ts_startServices.txt
++++ b/current/src_core_broker.ts_startServices.txt
+@@ -25,8 +25,12 @@ if (this.networking?.config.enabled) {
+ try {
+ this.network = new NetworkService(this.networking.home, this.networking.config, {
+ peers: () => this.dashboardPeers(),
+-receive: (message) => this.receiveRemote(message),
+-receipt: (id, sender, recipient) => this.remoteReceipt(id, sender, recipient),
++receive: (message, destination) => this.receiveRemote(message, destination),
++notify: (message, origin) => this.receiveNotification(message, origin),
++captureNotification: name => this.captureNotificationRecipient(name),
++pinDestination: (message, destination) => this.store.pinDestination(message, destination),
++pinnedDestinations: id => this.store.pinnedDestinations(id),
++receipt: (id, sender, recipient, source) => this.remoteReceipt(id, sender, recipient, source),
+ recipientReceipts: true,
+ }, this.log);
+ this.installRemoteJobs(this.network);
+diff --git a/baseline/src_core_node.ts_constructor.txt b/current/src_core_node.ts_constructor.txt
+index b659345b..0bd5fba4 100644
+--- a/baseline/src_core_node.ts_constructor.txt
++++ b/current/src_core_node.ts_constructor.txt
+@@ -1,12 +1,14 @@
+ {
+ super();
++this.agentHostPid = opts.agent === "other" && !opts.jobAgent ? process.pid : process.ppid ?? null;
++// Registration and journal ownership share an immutable, validated binding.
++this.opts = { ...opts, frontend: opts.frontend ? Object.freeze(t3BindingSchema.parse(opts.frontend)) : undefined };
+ this.id = opts.id ?? randomUUID();
+ this.currentName = opts.name;
+ this.currentCwd = opts.cwd;
+ this.autoWake = opts.autoWake;
+ this.log = opts.log.child("node");
+-if (opts.dbPath !== ":memory:") this.recordStorePresence();
+ if (opts.dbPath !== ":memory:") this.releaseMetadata = retainMetadataReader(dirname(opts.dbPath));
+ this.readJournal = new ReadJournal(opts.dbPath === ":memory:" ? ":memory:" : dirname(opts.dbPath), this.log);
+-this.restoreReadState(`name:${this.currentName}`);
++this.restoreReadState();
+ }
+diff --git a/baseline/src_core_node.ts_start.txt b/current/src_core_node.ts_start.txt
+index ee7c22f3..f99108a7 100644
+--- a/baseline/src_core_node.ts_start.txt
++++ b/current/src_core_node.ts_start.txt
+@@ -2,6 +2,6 @@
+ if (!this.releaseMetadata && this.opts.dbPath !== ":memory:") this.releaseMetadata = retainMetadataReader(dirname(this.opts.dbPath));
+ // Registration needs the host CLI's creation identity (a PowerShell query on Windows). Start the shared,
+ // memoized read now so it overlaps discovery and daemon creation instead of following broker readiness.
+-if (!this.opts.jobAgent) void parentProcessIdentity();
++if (!this.opts.jobAgent) void (this.opts.agent === "other" ? ownProcessIdentity() : parentProcessIdentity());
+ await this.ensureConnected();
+ }
+diff --git a/baseline/src_core_node.ts_tryBecomeBroker.txt b/current/src_core_node.ts_tryBecomeBroker.txt
+index d2080aa9..d1986980 100644
+--- a/baseline/src_core_node.ts_tryBecomeBroker.txt
++++ b/current/src_core_node.ts_tryBecomeBroker.txt
+@@ -16,10 +16,12 @@ return false;
+ await identity;
+ let store: MessageStore;
+ try {
++if (this.opts.dbPath !== ":memory:") await guardPriorEndpoints(dirname(this.opts.dbPath), this.opts.pipePath, this.opts.token, this.log);
+ // Unverified living readers conservatively defer upgrades; process
+ // discovery must not delay hosting their existing compatible schema.
+ if (this.opts.dbPath !== ":memory:") void refreshStorePeerIdentities(dirname(this.opts.dbPath)).catch(error => this.log.debug("store reader identity refresh deferred", { err: String(error) }));
+ store = new MessageStore(this.opts.dbPath, this.log.child("store"));
++if (this.opts.dbPath !== ":memory:") { this.presenceAdmitted = true; this.recordStorePresence(); }
+ } catch (err) {
+ await reservation.close();
+ if (["EBUSY", "SQLITE_BUSY", "STORE_UPGRADE_DEFERRED"].includes(errCode(err)) || /database is locked/.test(String((err as Error).message))) {

@@ -319,6 +319,8 @@ function withinHook<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
     if (signal.aborted) abort();
   });
 }
+type HookPublication = { stage: "prepare" | "launch-inspection" | "session-update" | "learn-cwd" | "connect" | "refresh" | "response";
+  sessionUpdate: "not-started" | "pending" | "returned" | "failed" };
 export async function buildHookResponse(ctx: ServerContext, input: HookInput): Promise<HookOutput> {
   // An authoritative native-child flag must be checked before prepare can observe its metadata.
   // Hosts without that flag still need a separate lineage solution; thread ids alone are not proof.
@@ -332,6 +334,10 @@ export async function buildHookResponse(ctx: ServerContext, input: HookInput): P
   const busyAtIngress = main && !input.signal?.aborted && (input.event === "UserPromptSubmit" || input.event === "PostToolUse");
   if (busyAtIngress) ctx.activity?.("busy");
   const controller = new AbortController();
+  const publication: HookPublication | undefined = input.event === "SessionStart" && input.sessionId && !input.subagent
+    ? { stage: "prepare", sessionUpdate: "not-started" } : undefined;
+  const started = performance.now();
+  let failed = false;
   let deadlineExpired = false;
   const timer = setTimeout(() => { deadlineExpired = true; controller.abort(); }, HOOK_BUDGET_MS);
   const abort = () => controller.abort();
@@ -344,9 +350,10 @@ export async function buildHookResponse(ctx: ServerContext, input: HookInput): P
       if (ctx.agent === "claude" && node && !node.wasReplaced && node.currentSessionId === input.sessionId) await withinHook(node.nativeChildrenEnd(), controller.signal);
       return {};
     }
-    return await runHook(ctx, { ...input, signal: controller.signal }, current, busyAtIngress);
+    return await runHook(ctx, { ...input, signal: controller.signal }, current, busyAtIngress, publication);
   }
   catch (err) {
+    failed = true;
     if (!controller.signal.aborted) throw err;
     // The host accepts {} as turn end. Only the owning main Stop's own deadline can
     // recover idle; cancellation, a newer hook, or a replaced session must retain activity.
@@ -354,26 +361,41 @@ export async function buildHookResponse(ctx: ServerContext, input: HookInput): P
     ctx.log.debug("hook deferred slow work", { event: input.event });
     return {};
   }
-  finally { clearTimeout(timer); input.signal?.removeEventListener("abort", abort); }
+  finally {
+    clearTimeout(timer); input.signal?.removeEventListener("abort", abort);
+    // Default logging excludes debug hook records. Retain one fixed-shape
+    // incomplete-publication observation, without session/body/error strings.
+    // This is not a publication receipt, retry, or identity admission grant.
+    if (publication && (failed || ctx.headless || !current() || node?.currentSessionId !== input.sessionId || publication.sessionUpdate === "failed")) {
+      ctx.log.warn("hook publication incomplete", { event: "SessionStart", stage: publication.stage,
+        reason: deadlineExpired ? "deadline" : input.signal?.aborted ? "cancelled" : ctx.headless ? "headless" : !current() ? "superseded" : failed ? "error" : "incomplete",
+        sessionUpdate: publication.sessionUpdate, localSession: !node?.currentSessionId ? "missing" : node.currentSessionId === input.sessionId ? "expected" : "other",
+        connected: node?.isConnected === true, elapsedMs: Math.max(0, Math.min(60_000, Math.round(performance.now() - started))) });
+    }
+  }
 }
-async function runHook(ctx: ServerContext, input: HookInput, current: () => boolean, busyAtIngress: boolean): Promise<HookOutput> {
+async function runHook(ctx: ServerContext, input: HookInput, current: () => boolean, busyAtIngress: boolean, publication?: HookPublication): Promise<HookOutput> {
   if (input.prepare) await withinHook(input.prepare(() => current() && !input.signal?.aborted), input.signal!);
   if (!current()) return {};
   const node = ctx.node;
   if (!node) return subagentHook(ctx, input);
   // A headless `claude -p` run is not a session: its hooks must not join the bridge or take mail.
+  if (publication) publication.stage = "launch-inspection";
   await withinHook(ctx.launchKnown ?? Promise.resolve(), input.signal!);
   if (ctx.headless || !current()) return {};
   ctx.log.debug("hook event", { event: input.event, sessionId: input.sessionId, stopHookActive: input.stopHookActive });
   if (input.sessionId) {
-    await withinHook(node.setSessionId(input.sessionId).catch(() => {}), input.signal!);
+    if (publication) { publication.stage = "session-update"; publication.sessionUpdate = "pending"; }
+    await withinHook(node.setSessionId(input.sessionId).then(() => { if (publication) publication.sessionUpdate = "returned"; }, () => { if (publication) publication.sessionUpdate = "failed"; }), input.signal!);
     if (!current()) return {};
     ctx.onSessionId?.(input.sessionId);
   }
   // The MCP server may have been started outside the project (e.g. in the plugin folder).
+  if (publication) publication.stage = "learn-cwd";
   if (input.cwd && ctx.learnCwd) await withinHook(ctx.learnCwd(input.cwd), input.signal!);
   if (!current()) return {};
   // Joining may have been deferred until the project dir was known.
+  if (publication) publication.stage = "connect";
   await withinHook(node.ensureConnected().catch((err) => ctx.log.warn("bridge not reachable from hook", { err: (err as Error).message })), input.signal!);
   if (!current()) return {};
   // The host discards StopFailure output. Never read/confirm mail that it cannot deliver.
@@ -385,6 +407,7 @@ async function runHook(ctx: ServerContext, input: HookInput, current: () => bool
     else releaseAntigravityStopDelivery(ctx);
   }
   const stopJobsRunning = input.event === "Stop" ? ctx.jobs?.runningCount() ?? 0 : 0;
+  if (publication) publication.stage = "refresh";
   const replay = node.refreshPending().catch((err) => ctx.log.warn("pending mail refresh failed; retained for retry", { err: String(err) }));
   // Stop can deliver buffered mail or arm a child-result notification immediately. A slow
   // broker replay must not hide that mail behind the hook deadline; later arrivals still
@@ -393,6 +416,7 @@ async function runHook(ctx: ServerContext, input: HookInput, current: () => bool
   if (!stopReady) await withinHook(replay, input.signal!);
   // No stale main hook may confirm wake delivery, consume newer-turn mail or report activity.
   if (!current()) return {};
+  if (publication) publication.stage = "response";
   // A wake-up's messages reached the session if a turn is running (tool calls, turn end); if a prompt or a new
   // session comes first, the wake-up was lost and they are shown again below.
   // The wake-up's own turn starts with a prompt carrying its text: that is delivery, not a new user prompt.

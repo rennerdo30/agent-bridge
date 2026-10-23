@@ -1,3 +1,4 @@
+import { METADATA_STORE_VERSION } from "../src/core/metadata-db.js";
 import { EventEmitter } from "node:events";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -43,7 +44,7 @@ afterEach(() => { closeMetadataDbs(); vi.restoreAllMocks(); rmSync(home, { recur
 function peer(json = 4) {
   const pid = ++nextPid;
   mkdirSync(join(home, "storage-capabilities"), { recursive: true });
-  const value = { schemaVersion: 1, pid, name: `runner-${pid}`, version: APP_VERSION, explicit: true, json, sqlite: 9, processIdentity: `generation-${pid}` };
+  const value = { schemaVersion: 1, pid, name: `runner-${pid}`, version: APP_VERSION, explicit: true, json, sqlite: 9, metadata: METADATA_STORE_VERSION, processIdentity: `generation-${pid}` };
   writeFileSync(join(home, "storage-capabilities", `${pid}.json`), JSON.stringify(value));
   return value;
 }
@@ -56,7 +57,7 @@ function runners() { return new JobRunners({} as BridgeNode, home, "fixture-cli"
 
 it("primes a cold identical explicit observation without rewriting its authoritative bytes", async () => {
   const value = peer(); const path = join(home, "storage-capabilities", `${value.pid}.json`), bytes = readFileSync(path);
-  recordStorePeer(home, { pid: value.pid, name: value.name, version: value.version, storeCapabilities: { json: 4, sqlite: 9 } });
+  recordStorePeer(home, { pid: value.pid, name: value.name, version: value.version, storeCapabilities: { json: 4, sqlite: 9, metadata: METADATA_STORE_VERSION } });
   await refreshStorePeerIdentities(home);
   expect(identity.readProcessIdentities).toHaveBeenCalledWith([value.pid]);
   expect(liveStorePeers(home)).toMatchObject([{ pid: value.pid, json: 4 }]);
@@ -92,6 +93,7 @@ it("a reused PID's newly published incompatible reader cannot disappear behind t
   await refreshStorePeerIdentities(home); expect(liveStorePeers(home)[0]?.json).toBe(4);
   let release!: (value: Map<number, string>) => void;
   vi.mocked(identity.readProcessIdentities).mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
+  vi.spyOn(identity, "readProcessIdentitiesSync").mockReturnValue(undefined);
   const replacement = { ...value, json: 3, version: "0.29.12", processIdentity: `reused-generation-${value.pid}` };
   writeFileSync(path, JSON.stringify(replacement));
   expect(liveStorePeers(home)).toMatchObject([{ pid: value.pid, json: 0 }]);

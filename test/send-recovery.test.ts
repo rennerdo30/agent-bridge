@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { BridgeClient, brokerConnectionClosedError } from "../src/core/client.js";
 import { BridgeNode } from "../src/core/node.js";
+import { retainFixtureRunner } from "./owned-mail.js";
 import { nullLogger } from "../src/core/logger.js";
 import { loadOrCreateToken } from "../src/core/token.js";
 import { makeEnv, until, type TestEnv } from "./helpers.js";
@@ -45,6 +46,7 @@ it("recovers a sibling response without another note or supervisor observer copy
   const records = ["one", "two"].map((id) => ({ id, name: `opencode-job-${id}`, agent: "opencode", status: "running", owner: "owner", rootName: "owner", rootSession: "root", supervisor: "root", workdir: env.home }));
   writeFileSync(join(env.home, "jobs.json"), JSON.stringify({ version: 4, jobs: records }));
   for (const record of records) {
+    retainFixtureRunner(env.home, { id: record.id, name: record.name, agent: "opencode", owner: owner.name, supervisor: "root", cwd: env.home });
     const node = new BridgeNode({ pipePath: env.pipe, dbPath: env.db, token: loadOrCreateToken(env.home),
       id: `job:${record.id}`, name: record.name, agent: "other", jobAgent: "opencode", jobOwner: "root", jobParent: owner.name,
       cwd: env.home, autoWake: false, canHostBroker: false, log: nullLogger });

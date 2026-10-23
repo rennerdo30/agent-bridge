@@ -1,4 +1,5 @@
 import { spawn, execFileSync, type ChildProcess } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { setTimeout as delay } from "node:timers/promises";
 import { copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
@@ -6,7 +7,7 @@ import { join } from "node:path";
 import { createServer } from "node:net";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BridgeNode } from "../src/core/node.js";
-import { launchDaemon, type LateDaemonLaunch } from "../src/core/daemon-launcher.js";
+import { launchDaemon, RelaunchBackoff, type LateDaemonLaunch } from "../src/core/daemon-launcher.js";
 import { Broker } from "../src/core/broker.js";
 import { BridgeClient, CLIENT_TRANSPORT_DIAGNOSTIC_COUNT_LIMIT, CLIENT_TRANSPORT_DIAGNOSTIC_RECORD_LIMIT,
   type ClientConnectionClosedDiagnostic } from "../src/core/client.js";
@@ -18,8 +19,12 @@ import { readProcessIdentity } from "../src/core/process-identity.js";
 import { startWindowsJobScope, type WindowsJobScope } from "../src/core/windows-job-scope.js";
 import { fixtureProcessGeneration, fixtureProcessExists } from "./fixture-process-generation.js";
 import { makeEnv, until, type TestEnv } from "./helpers.js";
+import { retainFixtureNode } from "./owned-mail.js";
 import { startUi, type UiOptions } from "../src/cli/ui.js";
 import { readDashboardInfo } from "../src/cli/dashboard.js";
+import { deliveryFailure } from "../src/mcp/delivery-evidence.js";
+import { httpFailureEvidence } from "./http-failure-evidence.js";
+import { fixtureDaemonProbe, fixtureDaemonReadiness, type FixtureReadinessBudget } from "./daemon-readiness.js";
 
 const cli = join(import.meta.dirname, "../plugins/codex/dist/cli.mjs");
 let env: TestEnv, nodes: BridgeNode[], children: ChildProcess[], owned: Map<number, string>;
@@ -189,7 +194,11 @@ async function client(token = loadOrCreateToken(env.home)) {
   try { await c.request("auth", { protocol: PROTOCOL_VERSION, token }); return c; }
   catch (error) { c.close(); throw error; }
 }
-async function remember() {
+async function remember(budget?: FixtureReadinessBudget) {
+  if (budget) {
+    const result = await fixtureDaemonProbe(env.pipe, loadOrCreateToken(env.home), budget);
+    budget.remaining(); expect(result.identity).toBeTruthy(); owned.set(result.pid, result.identity!); return result.pid;
+  }
   const c = await client();
   try {
     const ping = await c.request("ping", {}), identity = await readProcessIdentity(ping.brokerPid);
@@ -309,14 +318,31 @@ function fixtureStartupLogger(diagnostics?: UiUnknownDiagnostics): typeof nullLo
   const record = (phase: string, code?: string | number, stage?: string) => {
     const previous = evidence.find(event => event.phase === phase && event.code === code && event.stage === stage);
     if (previous) { previous.count++; previous.elapsedMs = Math.round(performance.now() - started); }
-    else evidence.push({ phase, ...(code === undefined ? {} : { code }), ...(stage ? { stage } : {}), elapsedMs: Math.round(performance.now() - started), count: 1 });
+    else if (evidence.length < 31) evidence.push({ phase, ...(code === undefined ? {} : { code }), ...(stage ? { stage } : {}), elapsedMs: Math.round(performance.now() - started), count: 1 });
+    else {
+      const capped = evidence.find(event => event.phase === "diagnostic_overflow");
+      if (capped) capped.count++; else evidence.push({ phase: "diagnostic_overflow", elapsedMs: Math.round(performance.now() - started), count: 1 });
+    }
   };
   const fixtureLog: typeof nullLogger = { ...nullLogger, child: scope => { if (scope === "node") diagnostics?.constructorLogger(); return fixtureLog; },
+    error: (message, data) => {
+      if (message === "broker refused this peer" || message === "could not join the bridge" || message === "cannot open message store") {
+        const failure = message === "cannot open message store" ? deliveryFailure(data?.err) : deliveryFailure({ code: data?.code, message: data?.message ?? data?.err });
+        record(message === "cannot open message store" ? "store_open_refused" : "admission_refused", failure.code, failure.protocol?.source ?? failure.reason);
+      }
+    },
     debug: (message, data) => { if (message === "connect attempt failed" && ["ENOENT", "ECONNREFUSED", "ETIMEDOUT", "EUNSAFESOCKETDIR"].includes(String(data?.code))) {
       record("discovery", String(data!.code)); diagnostics?.discovery(data?.code);
     } },
     info: (message, data) => {
       if (message === "connected to broker") record("authenticated_ready");
+      else if (message === "another session is preparing the store; retrying broker election") record("store_preparation_deferred");
+      else if (message === "client protocol refusal observation") {
+        const protocol = deliveryFailure({ code: "protocol_mismatch", details: { protocolObservation: data?.protocolObservation } }).protocol;
+        if (protocol?.connectionGeneration !== undefined) record("protocol_connection", protocol.connectionGeneration, protocol.operation);
+        if (protocol?.clientProtocol !== undefined) record("client_protocol", protocol.clientProtocol);
+        if (protocol?.brokerProtocol !== undefined) record("broker_protocol", protocol.brokerProtocol);
+      }
       else if (message === "daemon creation observation; authenticated readiness still required" && ["created", "unknown", "unavailable"].includes(String(data?.kind))) {
         record("creation_" + String(data!.kind), Number.isSafeInteger(data?.errorCode) ? Number(data!.errorCode) : undefined,
           ["read", "startup", "create"].includes(String(data?.stage)) ? String(data!.stage) : undefined);
@@ -327,6 +353,7 @@ function fixtureStartupLogger(diagnostics?: UiUnknownDiagnostics): typeof nullLo
 function node(name: string, launch?: NonNullable<ConstructorParameters<typeof BridgeNode>[0]["daemon"]>["launch"]) {
   const n = new BridgeNode({ pipePath: env.pipe, dbPath: env.db, token: loadOrCreateToken(env.home), name, agent: "codex", cwd: env.home, autoWake: false, log: fixtureStartupLogger(),
     daemon: { cli, launch } });
+  void n.setSessionId(randomUUID());
   nodes.push(n); return n;
 }
 async function port() {
@@ -350,17 +377,21 @@ function dashboardSender(url: string, cookie: string, diagnostics?: UiUnknownDia
 }
 function observeUiSender(diagnostics?: UiUnknownDiagnostics) {
   const starts: BridgeNode[] = [], metadataAtStart: boolean[] = [];
+  const failures: Array<ReturnType<typeof deliveryFailure>> = [];
   const original = BridgeNode.prototype.start;
   const start = vi.spyOn(BridgeNode.prototype, "start").mockImplementation(function (this: BridgeNode) {
     // The existing constructor records metadata/read state before election.
     // Presence here is evidence about that path, not an elected broker.
     starts.push(this); metadataAtStart.push(existsSync(env.db));
     diagnostics?.start(starts, this);
-    return diagnostics ? diagnostics.observe("start", () => original.call(this)) : original.call(this);
+    const pending = diagnostics ? diagnostics.observe("start", () => original.call(this)) : original.call(this);
+    // Observe the original rejection without replacing its promise or error.
+    void pending.then(() => {}, error => { if (failures.length < 8) failures.push(deliveryFailure(error)); });
+    return pending;
   });
   // Pass through every attempted listen, including attempts that reject.
   const listen = vi.spyOn(Broker.prototype, "listen");
-  return { starts, metadataAtStart, listen, close: () => { start.mockRestore(); listen.mockRestore(); } };
+  return { starts, metadataAtStart, failures, listen, close: () => { start.mockRestore(); listen.mockRestore(); } };
 }
 // Parser-only fixtures use synthetic lines below. This helper provides no
 // ownership authority; the actual reader brackets it with creation checks.
@@ -424,15 +455,7 @@ async function cliCreationEvidence(child: ChildProcess, identity: string | null)
   } catch { return unavailable(); }
 }
 async function httpFailureCategory(response: Response): Promise<string> {
-  if (response.ok) return "none";
-  try {
-    const data = await response.clone().json() as { error?: unknown }, error = typeof data.error === "string" ? data.error : "";
-    if (error.includes("could not connect to or start")) return "discovery_unavailable";
-    if (error.includes("connection to broker closed")) return "connection_closed";
-    if (error.includes("timed out")) return "timeout";
-    if (/unauthorized|authentication/i.test(error)) return "auth_rejection";
-    return "unclassified";
-  } catch { return "invalid_response"; }
+  return (await httpFailureEvidence(response)).category;
 }
 function copyFixtureRuntime(source: string, target: string): void {
   // Node's native cpSync has Windows Unicode regressions (nodejs/node#59636).
@@ -507,6 +530,7 @@ describe("SIMULATED fixed log parser inputs (no process ownership authority)", (
 
 describe("standalone demand-start broker", () => {
   it.each([false, true])("actual CLI ui authorized sends use a daemon before/after crash (mobile-configured=%s)", async mobile => {
+    const recipient = node("ui-retained"); await recipient.setSessionId(randomUUID()); retainFixtureNode(env.home, recipient, "codex");
     const selected = await port();
     if (mobile) writeFileSync(join(env.home, "config.json"), JSON.stringify({ dashboard: false, mobile: { enabled: true } }));
     const child = spawn(process.execPath, [cli, "ui", "--no-open", `--port=${selected}`], { cwd: env.home, windowsHide: true, stdio: "ignore",
@@ -518,6 +542,10 @@ describe("standalone demand-start broker", () => {
     expect((await fetch(new URL("/api/send", info!.url), { method: "POST", signal: AbortSignal.timeout(10_000), headers: { "x-agent-bridge": "1", "content-type": "application/json" }, body: '{"to":"ui-retained","body":"unauthorized"}' })).status).toBe(403);
     const send = dashboardSender(info!.url, cookie);
     const replies = await Promise.all(Array.from({ length: 5 }, (_, index) => send(`before-crash-${index}`)));
+    if (replies.some(reply => reply.status !== 200)) process.stderr.write("Daemon UI first-send diagnostics " + JSON.stringify({
+      stage: "first-five-sends", mobile, childExited: child.exitCode !== null || child.signalCode !== null,
+      responses: await Promise.all(replies.map(reply => httpFailureEvidence(reply))),
+    }) + "\n");
     expect(replies.map(reply => reply.status)).toEqual([200, 200, 200, 200, 200]);
     const accepted = await replies[0]!.json() as { id: string }, first = await remember(); expect(first).not.toBe(child.pid);
     const status = await client(); try { expect(await status.request("coreStatus", {})).toMatchObject({ mode: "daemon", pid: first }); } finally { status.close(); }
@@ -536,7 +564,7 @@ describe("standalone demand-start broker", () => {
     }) + "\n");
     expect(after.status).toBe(200);
     const nextPid = await remember(); expect(nextPid).not.toBe(first); expect(nextPid).not.toBe(child.pid);
-    const recipient = node("ui-retained"); await recipient.start();
+    await recipient.start();
     await until(() => recipient.unread().some(message => message.id === accepted.id));
     expect(recipient.unread().find(message => message.id === accepted.id)!.body).toBe("before-crash-0");
   });
@@ -544,7 +572,12 @@ describe("standalone demand-start broker", () => {
     const observed = observeUiSender();
     try {
       const send = await dashboard();
-      expect((await send("embedded-by-default", { brokerDaemon: { cli }, daemon: { enabled: true } })).status).toBe(200);
+      const response = await send("embedded-by-default", { brokerDaemon: { cli }, daemon: { enabled: true } });
+      if (response.status !== 200) process.stderr.write("Embedded UI admission diagnostics " + JSON.stringify({
+        ...await httpFailureEvidence(response), stages: startupEvidence, startCount: observed.starts.length,
+        embedded: observed.starts.map(node => node.isBroker), listenCount: observed.listen.mock.calls.length, failures: observed.failures,
+      }) + "\n");
+      expect(response.status).toBe(200);
       expect(observed.starts).toHaveLength(1); expect(observed.starts[0]!.isBroker).toBe(true);
       expect(observed.listen).toHaveBeenCalledOnce();
       process.stderr.write("AB325 UI pre-election metadata evidence " + JSON.stringify(observed.metadataAtStart) + "\n");
@@ -610,6 +643,7 @@ describe("standalone demand-start broker", () => {
     } finally { renameSync(retainedToken, token); }
   });
   it("ten concurrent starts share one broker, keep accepted mail and reject wrong credentials", async () => {
+    const later = node("offline-retained"); await later.setSessionId(randomUUID()); retainFixtureNode(env.home, later, "codex");
     observeConcurrentClientCount();
     const peers = Array.from({ length: 10 }, (_, i) => node(`daemon-${i}`));
     await Promise.all(peers.map(peer => peer.start()));
@@ -638,13 +672,14 @@ describe("standalone demand-start broker", () => {
     expect(accepted.messages[0]!.body).toBe("accepted fixture bytes");
     await expect(client("wrong-fixture-token")).rejects.toMatchObject({ code: "unauthorized" });
     for (const peer of peers) await peer.stop();
-    const later = node("offline-retained"); await later.start();
+    await later.start();
     await until(() => later.unread().some(message => message.id === accepted.messages[0]!.id));
     expect((await later.health()).brokerPid).toBe(pid);
     expect(later.unread()[0]!.body).toBe("accepted fixture bytes");
     expect(existsSync(join(env.home, "state-core.db"))).toBe(false);
   });
   it("verified broker crash re-elects without losing accepted offline mail", async () => {
+    const recipient = node("after-crash"); await recipient.setSessionId(randomUUID()); retainFixtureNode(env.home, recipient, "codex");
     const a = node("crash-client"); await a.start(); const first = await remember();
     const accepted = await a.send({ to: "after-crash", body: "retained across process loss" });
     expect(await fixtureProcessGeneration(first, owned.get(first)!, "wrong crash fixture")).toBe(true);
@@ -653,7 +688,7 @@ describe("standalone demand-start broker", () => {
     await disconnected;
     await until(() => !fixtureProcessExists(first, "crash visibility unknown")); owned.delete(first);
     await until(() => a.isConnected, 8_000); const next = await remember(); expect(next).not.toBe(first);
-    const recipient = node("after-crash"); await recipient.start();
+    await recipient.start();
     await until(() => recipient.unread().some(message => message.id === accepted.messages[0]!.id));
     expect(recipient.unread()[0]!.body).toBe("retained across process loss");
   });
@@ -697,9 +732,10 @@ describe("standalone demand-start broker", () => {
     expect(a.isBroker).toBe(false);
   });
   it("late definite failures un-latch an unknown attempt only after a doubling backoff", async () => {
-    // Only the clock is fake: elections, sockets and timers run for real.
-    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(1_000_000);
-    try {
+    // Only the actual backoff policy's supported clock is controlled. Startup
+    // deadlines cross a real Worker boundary and must use the same wall clock
+    // on both sides; faking parent Date alone sends a past absolute deadline.
+    let backoffNow = 1_000_000;
       const reports: LateDaemonLaunch[] = [];
       const daemonHost = env.node("late-host");
       const launch = vi.fn<NonNullable<NonNullable<ConstructorParameters<typeof BridgeNode>[0]["daemon"]>["launch"]>>()
@@ -707,25 +743,25 @@ describe("standalone demand-start broker", () => {
         .mockImplementationOnce(async (_options, report) => { reports.push(report!); return { kind: "unknown" }; })
         .mockImplementationOnce(async () => { await daemonHost.start(); return { kind: "created" }; });
       const a = node("late-failure", launch);
+      Reflect.set(a, "relaunchBackoff", new RelaunchBackoff(() => backoffNow));
       await expect(a.start()).rejects.toThrow("could not connect");
       expect(launch).toHaveBeenCalledOnce();
-      const first = Date.now();
+      const first = backoffNow;
       reports[0]!({ kind: "unavailable", reason: "windows_wmi_create_rejected" });
-      vi.setSystemTime(first + 4_999);
+      backoffNow = first + 4_999;
       await expect(a.ensureConnected()).rejects.toThrow("could not connect");
       expect(launch).toHaveBeenCalledOnce(); // Un-latched, but still inside the 5 s backoff.
-      vi.setSystemTime(first + 5_000);
+      backoffNow = first + 5_000;
       await expect(a.ensureConnected()).rejects.toThrow("could not connect");
       expect(launch).toHaveBeenCalledTimes(2);
-      const second = Date.now();
+      const second = backoffNow;
       reports[1]!({ kind: "unavailable", reason: "windows_wmi_create_rejected" });
-      vi.setSystemTime(second + 9_999);
+      backoffNow = second + 9_999;
       await expect(a.ensureConnected()).rejects.toThrow("could not connect");
       expect(launch).toHaveBeenCalledTimes(2); // The second backoff doubled to 10 s.
-      vi.setSystemTime(second + 10_000);
+      backoffNow = second + 10_000;
       await a.ensureConnected();
       expect(launch).toHaveBeenCalledTimes(3); expect(a.isBroker).toBe(false);
-    } finally { vi.useRealTimers(); }
   });
   it("an unknown creation that did start a daemon is relaunched after that daemon crashes", async () => {
     // The real creation runs, but its receipt is reported after the decision budget ("unknown").
@@ -743,6 +779,7 @@ describe("standalone demand-start broker", () => {
     expect(launch).toHaveBeenCalledTimes(2);
   });
   it("hands over to a newer release's client: drains, releases the endpoint, keeps accepted mail", async () => {
+    const recipient = node("after-handover"); await recipient.setSessionId(randomUUID()); retainFixtureNode(env.home, recipient, "codex");
     const launch = vi.fn(launchDaemon);
     const a = node("handover-old", launch); await a.start(); const first = await remember();
     const accepted = await a.send({ to: "after-handover", body: "kept across the handover" });
@@ -760,7 +797,7 @@ describe("standalone demand-start broker", () => {
     await until(() => a.isConnected, 15_000);
     expect((await a.health()).brokerPid).toBe(next);
     expect(launch).toHaveBeenCalledOnce();
-    const recipient = node("after-handover"); await recipient.start();
+    await recipient.start();
     await until(() => recipient.unread().some(message => message.id === accepted.messages[0]!.id));
     expect(recipient.unread()[0]!.body).toBe("kept across the handover");
   });
@@ -816,14 +853,7 @@ describe("standalone demand-start broker", () => {
       await once(parent, "message");
       if (process.platform === "win32") scope = await startWindowsJobScope(nullLogger, parent.pid!);
       parent.send({ cli: parentCli });
-      let pid: number | undefined;
-      for (const deadline = Date.now() + 10_000; !pid && Date.now() < deadline;) {
-        try { pid = await remember(); }
-        catch (error) {
-          if (!["ENOENT", "ECONNREFUSED"].includes((error as NodeJS.ErrnoException).code ?? "")) throw error;
-          await new Promise(resolve => setTimeout(resolve, 100));
-        }
-      }
+      const pid = await fixtureDaemonReadiness(remember, Date.now() + 10_000);
       const observations = () => {
         try { return readFileSync(join(env.home, "logs", "agent-bridge.log"), "utf8").split("\n")
           .filter(line => line.includes("daemon creation observation"))

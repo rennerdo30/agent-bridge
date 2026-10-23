@@ -17,11 +17,14 @@ import * as metadataImport from "../src/core/metadata-import.js";
 import * as jobClose from "../src/core/job-close.js";
 import { instructionsFor, registerTools, startServer, type ServerContext } from "../src/mcp/server.js";
 
-const boundary = vi.hoisted(() => ({ hello: vi.fn(), usage: vi.fn(), run: vi.fn(), remote: vi.fn(), slotsRead: vi.fn(), slotsClose: vi.fn() }));
+const boundary = vi.hoisted(() => ({ hello: vi.fn(), probe: vi.fn(async () => {}), usage: vi.fn(), run: vi.fn(), remote: vi.fn(), slotsRead: vi.fn(), slotsClose: vi.fn() }));
 vi.mock("node:child_process", () => ({ spawn: () => { throw Error("Unexpected subprocess"); }, execFile: () => { throw Error("Unexpected exec"); }, execFileSync: () => { throw Error("Unexpected exec"); }, spawnSync: () => { throw Error("Unexpected exec"); } }));
 vi.mock("node:net", async original => ({ ...await original<typeof import("node:net")>(), connect: () => { throw Error("Unexpected socket"); }, createServer: () => { throw Error("Unexpected server"); } }));
 vi.mock("node:worker_threads", async original => ({ ...await original<typeof import("node:worker_threads")>(), Worker: class { constructor() { throw Error("Unexpected production worker"); } } }));
 vi.mock("../src/core/node.js", () => ({ BridgeNode: class { constructor(options: unknown) { boundary.hello(options); throw Error("STOP before broker"); } } }));
+// Startup's separately tested read-only prior-endpoint guard has no real
+// network in this host-negotiation fixture. All unapproved socket APIs still throw.
+vi.mock("../src/core/prior-endpoints.js", async original => ({ ...await original<typeof import("../src/core/prior-endpoints.js")>(), guardPriorEndpoints: boundary.probe }));
 vi.mock("../src/core/token.js", () => ({ loadOrCreateToken: () => "fixture-only" }));
 vi.mock("../src/core/project-identity.js", async original => ({ ...await original<typeof import("../src/core/project-identity.js")>(), canonicalProjectRoot: () => null }));
 vi.mock("../src/core/config.js", async original => ({ ...await original<typeof import("../src/core/config.js")>(), loadConfig: () => structuredClone(DEFAULT_CONFIG) }));
@@ -363,6 +366,10 @@ it("validates host before constructing a Bridge registration; inherited delegate
   await expect(startServer(["--agent=codex"])).rejects.toThrow("STOP before broker");
   expect(handshake).toHaveBeenCalledOnce(); expect(boundary.hello).toHaveBeenCalledWith(expect.objectContaining({ frontend: negotiated.binding }));
   expect(handshake.mock.invocationCallOrder[0]!).toBeLessThan(boundary.hello.mock.invocationCallOrder[0]!);
+  expect(boundary.probe).toHaveBeenCalledOnce();
+  // A read-only prior-endpoint probe may precede host negotiation. Neither
+  // probe nor negotiation may construct a mailbox registration first.
+  expect(boundary.probe.mock.invocationCallOrder[0]!).toBeLessThan(boundary.hello.mock.invocationCallOrder[0]!);
   boundary.hello.mockClear(); handshake.mockRejectedValue(new T3HostError("refused", "capabilities"));
   await expect(startServer(["--agent=codex"])).rejects.toThrow(T3HostError); expect(boundary.hello).not.toHaveBeenCalled();
   for (const [key, value] of [["AGENT_BRIDGE_DELEGATE_DEPTH", "1"], ["AGENT_BRIDGE_INTERNAL", "1"]]) {

@@ -6,6 +6,9 @@ import { join } from "node:path";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { z } from "zod";
 import { BridgeNode } from "../src/core/node.js";
+import { fixturePeer, ownedMessage, retainFixtureJob, retainFixtureRunner } from "./owned-mail.js";
+import { ownProcessIdentity } from "../src/core/process-identity.js";
+import type { AgentKind } from "../src/core/protocol.js";
 import { BridgeClient } from "../src/core/client.js";
 import { PROTOCOL_VERSION } from "../src/core/constants.js";
 import { nullLogger } from "../src/core/logger.js";
@@ -43,6 +46,7 @@ async function connect(agent: string, name: string, extra = {}) {
 async function runner(id: string, agent: "codex" | "opencode", supervisor: string) {
   const job: Job = { id, name: `${agent}-job-${id}`, agent, model: null, prompt: "fixture", startedAt: Date.now(),
     controller: new AbortController(), status: "running", sessionId: null, workdir: null, worktree: null, progress: null, queue: [] };
+  retainFixtureJob(env.home, job, supervisor, "supervisor-session");
   const node = new BridgeNode({ pipePath: env.pipe, dbPath: env.db, token: loadOrCreateToken(env.home), name: job.name,
     agent: "other", jobAgent: agent, jobOwner: "supervisor-session", jobParent: supervisor, id: `job:${id}`,
     cwd: env.home, autoWake: false, canHostBroker: false, log: nullLogger });
@@ -80,13 +84,15 @@ it.each(["claude", "codex", "opencode", "antigravity"])("delivers the last real 
 });
 
 it.each(["opencode", "antigravity"])("%s drains 550 queued results across the replay limit while retaining 159 quiet copies", async (agent) => {
+  const creation = await ownProcessIdentity(); expect(creation).toBeTruthy();
   const store = new MessageStore(env.db, nullLogger);
   try {
+    const owner = fixturePeer(store, "supervisor", { agent: agent as AgentKind, sessionId: null, agentPid: process.pid, agentStartedAt: creation });
     seedInbox(store, Array.from({ length: 709 }, (_, i) => {
       const quiet = i < 159;
-      return { id: randomUUID(), recipient: "supervisor", to: "supervisor", from: { id: `job:${i}`, name: `codex-job-${i}`, agent: "codex" as const },
+      return ownedMessage(store, owner, { id: randomUUID(), recipient: "supervisor", to: "supervisor", from: { id: `job:${i}`, name: `codex-job-${i}`, agent: "codex" as const },
         body: quiet ? `OBSERVER_${i}` : `RESULT_${i - 159}_END`, conversationId: quiet ? `siblings-${i}:note` : `job-${i}`,
-        replyTo: null, hop: 0, createdAt: Date.now() + i, readAt: null };
+        replyTo: null, hop: 0, createdAt: Date.now() + i, readAt: null });
     }));
   } finally { store.close(); }
   const sup = await connect(agent, "supervisor");
@@ -111,10 +117,11 @@ it("warns the supervisor when aggregate jobs exceed the measured broker load", a
   const sup = await connect("opencode", "supervisor");
   expect(await call(sup, "peers")).not.toContain("Broker load warning");
   for (let i = 0; i < 51; i++) {
+    retainFixtureRunner(env.home, { id: `load-${i}`, name: `codex-job-load-${i}`, agent: "codex", owner: "supervisor", supervisor: "supervisor-session", cwd: env.home });
     const client = await BridgeClient.connect(env.pipe, nullLogger);
     cleanups.push(() => client.close());
     await client.request("hello", { protocol: PROTOCOL_VERSION, token: loadOrCreateToken(env.home), peer: {
-      id: `job:load-${i}`, name: `codex-job-load-${i}`, agent: "other", jobAgent: "codex", cwd: env.home,
+      id: `job:load-${i}`, name: `codex-job-load-${i}`, agent: "other", jobAgent: "codex", jobOwner: "supervisor-session", jobParent: "supervisor", cwd: env.home,
       pid: process.pid, agentPid: null, sessionId: null, startedAt: Date.now(), autoWake: false,
     } });
   }
@@ -124,11 +131,13 @@ it("warns the supervisor when aggregate jobs exceed the measured broker load", a
 });
 
 it("delivers a final result ahead of more than500 retained job status notes", async () => {
+  const creation = await ownProcessIdentity(); expect(creation).toBeTruthy();
   const store = new MessageStore(env.db, nullLogger);
   try {
-    for (let i = 0; i <= 600; i++) store.insert({ id: randomUUID(), recipient: "supervisor", to: "supervisor",
+    const owner = fixturePeer(store, "supervisor", { agent: "claude", sessionId: null, agentPid: process.pid, agentStartedAt: creation });
+    for (let i = 0; i <= 600; i++) store.insert(ownedMessage(store, owner, { id: randomUUID(), recipient: "supervisor", to: "supervisor",
       from: { id: `job:${i}`, name: `opencode-job-${i}`, agent: "opencode" }, replyTo: null, hop: 0,
-      conversationId: i < 600 ? `job-${i}:note` : "job-600", body: i < 600 ? `STATUS_${i}` : "FINAL_AFTER_NOTES", createdAt: Date.now() + i, readAt: null });
+      conversationId: i < 600 ? `job-${i}:note` : "job-600", body: i < 600 ? `STATUS_${i}` : "FINAL_AFTER_NOTES", createdAt: Date.now() + i, readAt: null }));
   } finally { store.close(); }
   const sup = await connect("claude", "supervisor");
   // Wait for cross-process replay without consuming the completion or quiet copies.

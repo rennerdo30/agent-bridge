@@ -12,6 +12,12 @@ import { readStore } from "../src/mcp/jobs.js";
 import { makeEnv, until, type TestEnv } from "./helpers.js";
 import { codexHost } from "./helpers.js";
 import type { BridgeNode } from "../src/core/node.js";
+import { BridgeClient } from "../src/core/client.js";
+import { PROTOCOL_VERSION } from "../src/core/constants.js";
+import { guardPriorEndpoints, priorEndpoints } from "../src/core/prior-endpoints.js";
+import { resolvePipePath } from "../src/core/paths.js";
+import { nullLogger } from "../src/core/logger.js";
+import { loadOrCreateToken } from "../src/core/token.js";
 
 let env: TestEnv, source: BridgeNode, target: BridgeNode;
 const clients: Client[] = [], releases: (() => void)[] = [];
@@ -36,17 +42,17 @@ function heldReadiness() {
   releases.push(release); vi.spyOn(compatibility, "refreshStorePeerIdentities").mockImplementation(() => { entered(); return ready; });
   return { started, release };
 }
-async function server(name: string, released = false) {
+async function server(name: string, released = false, home = env.home) {
   const file = released ? join(env.home, "released-server.mjs") : join(import.meta.dirname, "../plugins/codex/dist/server.mjs");
   if (released) writeFileSync(file, execFileSync("git", ["show", "v0.29.12:plugins/codex/dist/server.mjs"], {
     cwd: join(import.meta.dirname, ".."), maxBuffer: 20 * 1024 * 1024,
   }));
   const childEnv = { ...process.env } as Record<string, string>;
   for (const key of Object.keys(childEnv)) if (key.startsWith("AGENT_BRIDGE_")) delete childEnv[key];
-  Object.assign(childEnv, { AGENT_BRIDGE_HOME: env.home, AGENT_BRIDGE_NAME: name, AGENT_BRIDGE_DELIVERY: "hooks", AGENT_BRIDGE_DASHBOARD: "off", AGENT_BRIDGE_DAEMON: "0",
-    CLAUDE_PROJECT_DIR: env.home, CLAUDE_CONFIG_DIR: join(env.home, "claude"), CODEX_HOME: join(env.home, "codex"), XDG_DATA_HOME: env.home });
+  Object.assign(childEnv, { AGENT_BRIDGE_HOME: home, AGENT_BRIDGE_NAME: name, AGENT_BRIDGE_DELIVERY: "hooks", AGENT_BRIDGE_DASHBOARD: "off", AGENT_BRIDGE_DAEMON: "0",
+    CLAUDE_PROJECT_DIR: home, CLAUDE_CONFIG_DIR: join(home, "claude"), CODEX_HOME: join(home, "codex"), XDG_DATA_HOME: home });
   const client = new Client({ name: `fixture-${name}`, version: "1" }); clients.push(client);
-  childEnv.CODEX_HOME = codexHost(client, env.home, "codex", name);
+  childEnv.CODEX_HOME = codexHost(client, home, "codex", name);
   const transport = new StdioClientTransport({ command: process.execPath, args: [file, "--agent=codex"], env: childEnv, stderr: "pipe" });
   let stderr = ""; transport.stderr?.on("data", chunk => { stderr += String(chunk); });
   try { await client.connect(transport); await client.callTool({ name: "peers", arguments: {} }); }
@@ -72,12 +78,29 @@ it("waits for a genuine cold current process identity, preserves original bytes,
   expect(JSON.parse(readFileSync(seeded.path, "utf8")).futureEnvelope).toEqual({ keep: "exact original" });
 });
 
-it("keeps the genuine released JSON3 reader as a blocker without changing source data or taking a backup", async () => {
-  const child = await server("old-reader", true); await compatibility.refreshStorePeerIdentities(env.home);
-  expect(compatibility.liveStorePeers(env.home).find(peer => peer.pid === child.transport.pid)).toMatchObject({ name: "old-reader", version: "0.29.12", json: 3 });
-  const seeded = seed(); await expect(source.handoffSubagents({ to: target.name })).rejects.toThrow(/Waiting to upgrade json store 2→4:.*old-reader.*v0\.29\.12/);
+it("refuses the genuine released JSON3 broker before effects in an explicitly isolated home", async () => {
+  // Protocol2 cannot be admitted to current Core. Never launch it against the
+  // already-running current broker's data home just to manufacture coexistence.
+  const home = join(env.home, "isolated-old-release"); mkdirSync(home);
+  const child = await server("old-reader", true, home); await compatibility.refreshStorePeerIdentities(home);
+  // v0.29.12 predates store-compatibility.ts/presence advertisements. Its actual
+  // common lease plus authenticated protocol2 server are the positive evidence;
+  // do not manufacture a capability record this released binary never wrote.
+  const leases = readdirSync(join(home, ".storage-users")).filter(file => file.startsWith(`${child.transport.pid}-`));
+  expect(leases.length).toBeGreaterThan(0);
+  for (const lease of leases) expect(readFileSync(join(home, ".storage-users", lease)).length).toBe(0);
+  const seeded = seed(), file = join(home, "bridge.db"), before = readFileSync(file);
+  await expect(guardPriorEndpoints(home, resolvePipePath(home, {}), loadOrCreateToken(home), nullLogger)).rejects.toMatchObject({ code: "protocol_mismatch" });
+  const endpoint = priorEndpoints(home).find(path => /-p2(?:\.sock)?$/.test(path))!;
+  const probe = await BridgeClient.connect(endpoint, nullLogger);
+  try { await expect(probe.request("auth", { protocol: PROTOCOL_VERSION, token: loadOrCreateToken(home) })).rejects.toMatchObject({ code: "protocol_mismatch" }); }
+  finally { probe.close(); }
+  expect(readFileSync(file).equals(before)).toBe(true);
   expect(readFileSync(seeded.path, "utf8")).toBe(seeded.bytes);
   expect(readdirSync(env.home).filter(name => name.startsWith("jobs.json.backup-"))).toEqual([]);
+  expect(compatibility.liveStorePeers(env.home).some(peer => peer.pid === child.transport.pid)).toBe(false);
+  expect((await child.client.callTool({ name: "peers", arguments: {} })).isError).not.toBe(true);
+  expect(child.client.getServerVersion()!.version).toBe("0.29.12");
 });
 
 it("keeps peers and ordinary sends responsive while a slow identity query holds no metadata lock", async () => {

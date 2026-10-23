@@ -18,6 +18,7 @@ import { RemoteDashboard } from "../src/network/remote-dashboard.js";
 import { drainOutcomeInspections } from "../src/core/outcome-background.js";
 import { DASHBOARD_CAPABILITY, DASHBOARD_FRAME, DASHBOARD_RATE_LIMIT, DASHBOARD_TIMEOUT_MS, dashboardRequestSchema } from "../src/network/dashboard-protocol.js";
 import { CODEX_SESSION, CODEX_CHILD, installTranscriptFixtures } from "./transcript-fixtures.js";
+import { retainFixtureRunner } from "./owned-mail.js";
 
 export let root: string, aHome: string, bHome: string;
 export let cleanup: (() => Promise<unknown> | void)[];
@@ -60,10 +61,11 @@ export async function links(mode: "current" | "legacy" | "silent" = "current") {
 }
 
 export async function node(home: string, name: string, runner = false, config = cfg(home === aHome ? "alpha" : "beta"), identify = true) {
-  const bridge = new BridgeNode({ pipePath: resolvePipePath(home, {}), token: loadOrCreateToken(home), dbPath: resolveDbPath(home), agent: runner ? "other" : "codex", name, cwd: "/project/example", autoWake: false, log: nullLogger,
-    ...(runner ? { jobAgent: "codex", jobOwner: CODEX_SESSION, jobParent: "session", rootName: "session", rootSession: CODEX_SESSION, jobTitle: "Worker" } : {}),
+  if (runner) retainFixtureRunner(home, { id: "abcd", name, agent: "codex", owner: "session", supervisor: CODEX_SESSION, cwd: home });
+  const bridge = new BridgeNode({ pipePath: resolvePipePath(home, {}), token: loadOrCreateToken(home), dbPath: resolveDbPath(home), agent: runner ? "other" : "codex", name, cwd: home, autoWake: false, log: nullLogger,
+    ...(runner ? { id: "job:abcd", jobAgent: "codex", jobOwner: CODEX_SESSION, jobParent: "session", rootName: "session", rootSession: CODEX_SESSION, jobTitle: "Worker" } : {}),
     network: { home, config } });
-  await bridge.start(); cleanup.push(() => bridge.stop()); if (identify) await bridge.setSessionId(CODEX_SESSION); return bridge;
+  cleanup.push(() => bridge.stop()); if (identify && !runner) await bridge.setSessionId(CODEX_SESSION); await bridge.start(); return bridge;
 }
 export async function admin(home: string) {
   const client = await BridgeClient.connect(resolvePipePath(home, {}), nullLogger);

@@ -1,8 +1,12 @@
 import { EventEmitter } from "node:events";
-import { writeFileSync, rmSync } from "node:fs";
+import { writeFileSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { Worker } from "node:worker_threads";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { ReadJournal, readJournalIdentities } from "../src/core/read-journal.js";
+import { metadataDb } from "../src/core/metadata-db.js";
+import { nativeOwner, localMailbox } from "../src/core/recipient-ownership.js";
+import { readRetainedMetadataFile } from "../src/core/metadata-import.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Broker } from "../src/core/broker.js";
 import { BridgeNode } from "../src/core/node.js";
@@ -13,6 +17,7 @@ import { MessageStore } from "../src/core/store.js";
 import { loadOrCreateToken } from "../src/core/token.js";
 import { JobManager, readStore } from "../src/mcp/jobs.js";
 import { makeEnv, seedInbox, until, type TestEnv } from "./helpers.js";
+import { fixtureAck, fixtureConnection, fixtureJobReport, fixtureNodePeer, fixtureOwner, fixturePeer, ownedMessage, retainFixtureNode, unreadOwned } from "./owned-mail.js";
 
 let env: TestEnv;
 let extraNodes: BridgeNode[];
@@ -20,17 +25,37 @@ beforeEach(() => { env = makeEnv(); extraNodes = []; });
 afterEach(async () => { vi.restoreAllMocks(); for (const node of extraNodes) await node.stop(); await env.cleanup(); });
 
 describe("broker overload survival", () => {
+  it("reads an empty per-copy journal without taking a metadata writer, but never skips retained marks", () => {
+    const store = new MessageStore(env.db, nullLogger);
+    try {
+      const peer = fixturePeer(store, "journal-reader"), identity = readJournalIdentities(peer.name, peer.sessionId, peer.frontend, nativeOwner(peer), localMailbox(store.namespace))[0]!;
+      const db = metadataDb(env.home), prepare = db.prepare.bind(db), id = randomUUID();
+      const writes = vi.spyOn(db, "prepare").mockImplementation(sql => {
+        if (/^\s*(?:INSERT|UPDATE|DELETE|REPLACE)/i.test(sql)) throw Object.assign(new Error("fixture metadata writer held"), { code: "SQLITE_BUSY" });
+        return prepare(sql);
+      });
+      const journal = new ReadJournal(env.home);
+      try { expect(journal.receipt(identity, id)).toEqual({ read: false, at: null }); }
+      finally { writes.mockRestore(); }
+      const dir = join(env.home, "read-state"); mkdirSync(dir);
+      const file = join(dir, `${createHash("sha256").update(identity).digest("hex")}.jsonl`), bytes = JSON.stringify({ ids: [id], at: 123 }) + "\n";
+      writeFileSync(file, bytes);
+      expect(journal.receipt(identity, id)).toEqual({ read: true, at: 123 });
+      const retained = `read-state/${file.split(/[\\/]/).at(-1)}`;
+      expect(readRetainedMetadataFile(env.home, retained)?.toString("utf8")).toBe(bytes);
+      expect(readFileSync(String(db.prepare("SELECT cold_path FROM bridge_imports WHERE path=?").get(retained)!.cold_path), "utf8")).toBe(bytes);
+    } finally { store.close(); }
+  });
   it("defers job replay if the master becomes unavailable before the scheduled callback", async () => {
     const store = new MessageStore(env.db, nullLogger);
     const broker = new Broker(env.pipe, store, nullLogger, loadOrCreateToken(env.home));
     const job = { id: randomUUID(), from: { id: "job:worker", name: "codex-job-worker", agent: "codex" as const }, recipient: "reader", to: "reader",
       conversationId: "job-worker", body: "Retained report", replyTo: null, hop: 0, createdAt: Date.now(), readAt: null };
     const direct = { ...job, id: randomUUID(), from: { id: "master", name: "master", agent: "codex" as const }, conversationId: "ordinary", body: "Direct peer note" };
-    seedInbox(store, [job, direct]);
-    const peer = { id: "reader", name: "reader", sessionId: null, unavailable: false };
+    const peer = fixturePeer(store, "reader", { unavailable: false });
+    seedInbox(store, [job, direct].map(message => ownedMessage(store, peer, message)));
     const write = vi.fn((_frame: unknown) => true);
-    const conn = { peer, socket: { destroyed: false, writableLength: 0, write }, mailGeneration: 1,
-      mailReady: { id: peer.id, name: peer.name, sessionId: peer.sessionId, generation: 1 } };
+    const conn = { ...fixtureConnection(store, peer), socket: { destroyed: false, writableLength: 0, write } };
     const connections = (broker as unknown as { conns: Set<unknown> }).conns;
     connections.add(conn);
     const replay = () => (broker as unknown as { replayMail(conn: unknown, peer: unknown): void }).replayMail(conn, peer);
@@ -51,49 +76,54 @@ describe("broker overload survival", () => {
       to: "reader", recipient: "reader", conversationId: "job-deferred", replyTo: null, hop: 0, body: "DEFERRED_RESULT", createdAt: Date.now(), readAt: null };
     const jobs = join(env.home, JOBS_FILE);
     const store = new MessageStore(env.db, nullLogger);
+    const owner = fixturePeer(store, "reader"), ownerKey = fixtureOwner(store, owner);
     const broker = new Broker(env.pipe, store, nullLogger, loadOrCreateToken(env.home), Date.now, jobs);
     await broker.listen();
     await broker.routePendingJobMail();
-    writeFileSync(jobs, JSON.stringify({ version: 4, jobs: [{ id: "deferred", name: "opencode-job-deferred", agent: "opencode", status: "done", owner: "reader", rootName: "reader",
+    const job = { id: "deferred", name: "opencode-job-deferred", agent: "opencode", startedAt: Date.now(), status: "done", owner: "reader", rootName: "reader",
       workdir: env.home, projectRoot: env.home, rootSession: "fixture-root", supervisor: "fixture-root",
-      ownershipHistory: [{ from: "old", to: "reader" }], deliveryHistory: [message] }] }));
+      deliveryOwner: ownerKey, deliveryOwners: { reader: ownerKey }, ownershipHistory: [{ from: "old", to: "reader" }] };
+    const report = fixtureJobReport(store, job, owner, owner, message);
+    writeFileSync(jobs, JSON.stringify({ version: 4, jobs: [{ ...job, deliveryHistory: [report.message], reportRouting: { [message.id]: report.draft } }] }));
     try {
       vi.spyOn(store, "retryWrite").mockRejectedValueOnce(new Error("database is locked"));
       await expect(broker.routePendingJobMail()).rejects.toThrow("database is locked");
       expect(store.byId(message.id)).toBeNull();
       await until(() => store.byId(message.id) !== null);
-      expect(store.unread("reader", 10)).toEqual([message]);
+      expect(unreadOwned(store, owner, 10)).toEqual([{ ...report.message, jobRoute: { grant: message.id, generation: 0 } }]);
       await broker.routePendingJobMail();
-      expect(store.unread("reader", 10)).toHaveLength(1);
+      expect(unreadOwned(store, owner, 10)).toHaveLength(1);
     } finally { await broker.close(); }
   });
   it("bounds pending frames by bytes without losing the large-message tail", async () => {
     const token = loadOrCreateToken(env.home), store = new MessageStore(env.db, nullLogger);
     const body = "large result ".repeat(10_000);
+    const owner = fixturePeer(store, "reader", { id: "reader", agent: "opencode", sessionId: "reader-session" });
     seedInbox(store, Array.from({ length: 50 }, (_, i) => ({ id: randomUUID(), from: { id: "job:large", name: "opencode-job-large", agent: "opencode" as const },
-      recipient: "reader", to: "reader", conversationId: "job-large", replyTo: null, hop: 0, body, createdAt: Date.now() + i, readAt: null })));
+      recipient: "reader", to: "reader", conversationId: "job-large", replyTo: null, hop: 0, body, createdAt: Date.now() + i, readAt: null })).map(message => ownedMessage(store, owner, message)));
     const broker = new Broker(env.pipe, store, nullLogger, token);
     await broker.listen();
     const client = await BridgeClient.connect(env.pipe, nullLogger);
     try {
       await client.request("hello", { protocol: PROTOCOL_VERSION, token, peer: { id: "reader", name: "reader", agent: "opencode", cwd: env.home,
-        pid: process.pid, agentPid: null, sessionId: null, startedAt: Date.now(), autoWake: false } });
+        pid: process.pid, agentPid: null, sessionId: owner.sessionId, startedAt: Date.now(), autoWake: false } });
       const batch = await client.request("pending", { limit: 500 });
       expect(batch.length).toBeGreaterThan(0);
       expect(batch.length).toBeLessThan(50);
       expect(client.isClosed).toBe(false);
-      await client.request("ack", { ids: batch.map((m) => m.id) });
+      await client.request("ack", fixtureAck(batch));
       expect((await client.request("pending", { limit: 500 })).length).toBe(50 - batch.length);
       expect(store.byId(batch[0]!.id)?.body).toBe(body);
     } finally { client.close(); await broker.close(); }
   });
   it("refills a consuming node past 500 queued messages without any hook or inbox calls", async () => {
+    const reader = env.node("reader", "opencode"); retainFixtureNode(env.home, reader, "opencode");
     const store = new MessageStore(env.db, nullLogger);
     try {
+      const owner = fixtureNodePeer(store, reader, "opencode");
       seedInbox(store, Array.from({ length: 550 }, (_, i) => ({ id: randomUUID(), from: { id: "job:worker", name: "opencode-job-worker", agent: "opencode" as const },
-        recipient: "reader", to: "reader", conversationId: "job-worker", replyTo: null, hop: 0, body: `result-${i}`, createdAt: Date.now() + i, readAt: null })));
+        recipient: "reader", to: "reader", conversationId: "job-worker", replyTo: null, hop: 0, body: `result-${i}`, createdAt: Date.now() + i, readAt: null })).map(message => ownedMessage(store, owner, message)));
     } finally { store.close(); }
-    const reader = env.node("reader", "opencode");
     const received = new Set<string>();
     const consumed: string[] = [];
     reader.on("message", (m) => {
@@ -112,8 +142,18 @@ describe("broker overload survival", () => {
     const savedJob = {
       id: "inline", name: "opencode-job-inline", agent: "opencode", status: "done", owner: recipient.name,
       rootName: recipient.name, rootSession: "fixture-root", supervisor: "fixture-root", workdir: env.home, projectRoot: env.home, executionOwner: sender.name, startedAt: Date.now(), prompt: "fixture",
+      deliveryOwner: recipient.mailboxOwner()!, deliveryOwners: { [recipient.name]: recipient.mailboxOwner()!, [sender.name]: sender.mailboxOwner()! },
       ...(operation.endsWith("result") && operation !== "inline result" ? { ownershipHistory: [{ from: sender.name, to: recipient.name, fromRootName: sender.name, rootName: recipient.name }], deliveryHistory: operation.includes("runner") ? [] : [inline] } : {}),
     };
+    if (operation.endsWith("result") && !operation.includes("runner")) {
+      const store = new MessageStore(env.db, nullLogger);
+      try {
+        const from = fixtureNodePeer(store, sender, "claude"), to = fixtureNodePeer(store, recipient, "opencode");
+        const report = fixtureJobReport(store, savedJob, from, to, inline);
+        Object.assign(inline, report.message);
+        Object.assign(savedJob, { deliveryHistory: [inline], reportRouting: { [inline.id]: report.draft } });
+      } finally { store.close(); }
+    }
     if (operation !== "send") writeFileSync(join(env.home, JOBS_FILE), JSON.stringify({ version: 3, jobs: [savedJob] }));
     let runner: BridgeNode | undefined;
     if (operation.includes("runner")) {
@@ -143,8 +183,8 @@ describe("broker overload survival", () => {
       // A primary can disappear during the lock. Pending replay must recompute the live fallback.
       if (operation === "pending result") await recipient.stop();
       if (operation.startsWith("reassigned")) writeFileSync(join(env.home, JOBS_FILE), JSON.stringify({ version: 3, jobs: [{
-        ...savedJob, owner: sender.name, rootName: sender.name,
-        ownershipHistory: [...savedJob.ownershipHistory!, { from: recipient.name, to: sender.name, fromRootName: recipient.name, rootName: sender.name }],
+        ...savedJob, owner: sender.name, rootName: sender.name, deliveryOwner: sender.mailboxOwner()!,
+        ownershipHistory: [...savedJob.ownershipHistory!, { from: recipient.name, to: sender.name, fromRoot: savedJob.supervisor, fromRootName: recipient.name, rootSession: savedJob.supervisor, rootName: sender.name }],
       }] }));
       await expect.poll(async () => (await sender.peers()).some((p) => p.name === "recipient")).toBe(operation !== "pending result");
       expect(settled).toBe(false);
@@ -182,12 +222,13 @@ describe("broker overload survival", () => {
     const token = loadOrCreateToken(env.home), store = new MessageStore(env.db, nullLogger);
     const broker = new Broker(env.pipe, store, nullLogger, token);
     const message = { id: "retained", from: { id: "sender", name: "sender", agent: "codex" as const }, to: "reader", recipient: "reader", conversationId: "chat", replyTo: null, hop: 0, body: "preserved", createdAt: Date.now(), readAt: null };
-    store.insert(message);
+    const owner = fixturePeer(store, "reader", { id: "reader", agent: "other", sessionId: "retained-reader" });
+    store.insert(ownedMessage(store, owner, message));
     const unread = vi.spyOn(store, "unread").mockImplementationOnce(() => { throw new Error("database is locked"); });
     await broker.listen();
     const client = await BridgeClient.connect(env.pipe, nullLogger);
     try {
-      await client.request("hello", { protocol: PROTOCOL_VERSION, token, peer: { id: "reader", name: "reader", agent: "other", cwd: env.home, pid: process.pid, agentPid: null, sessionId: null, startedAt: Date.now(), autoWake: false } });
+      await client.request("hello", { protocol: PROTOCOL_VERSION, token, peer: owner });
       await until(() => unread.mock.calls.length > 0);
       expect(await client.request("ping", {})).toHaveProperty("brokerPid");
       expect(await client.request("pending", {})).toMatchObject([{ id: "retained", body: "preserved" }]);
