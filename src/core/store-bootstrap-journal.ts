@@ -347,7 +347,7 @@ function preservationGroup(home: string) {
       if (mailbox) {
         if (!tables.includes("messages") || !tables.includes("mailbox_store")) throw bootstrapUnknown();
         const namespace = db.prepare("SELECT namespace FROM mailbox_store WHERE id=1").get()?.namespace;
-        if (!digest(namespace)) throw bootstrapUnknown();
+        if (typeof namespace !== "string" || !digest(namespace)) throw bootstrapUnknown();
         mailboxes.push({ path: name, namespace });
       }
       if (mailbox || GROUP_DATABASES.includes(name)) { databases.push(name); sources[name] = before; }

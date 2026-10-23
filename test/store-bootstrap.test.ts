@@ -359,6 +359,20 @@ it("preserves a proven existing provenance row byte-for-byte through explicit co
   closeMetadataDbs(); expect(metadataDb(env.home).prepare("SELECT value,updated_at FROM bridge_metadata WHERE domain='store-bootstrap' AND key='provenance'").get()).toEqual(row);
 });
 
+it("refuses a partial legacy mailbox before metadata effects while retaining the exact original and a readable recovery snapshot", () => {
+  const seed = new DatabaseSync(env.db); seed.exec("CREATE TABLE messages(body BLOB); INSERT INTO messages VALUES(x'00ff01')"); seed.close();
+  const before = readFileSync(env.db);
+  expect(() => new MessageStore(env.db, nullLogger)).toThrow(/Unsupported mailbox layout/);
+  expect(readFileSync(env.db)).toEqual(before);
+  const original = new DatabaseSync(env.db, { readOnly: true });
+  try { expect(original.prepare("SELECT name FROM sqlite_master WHERE type='index'").all()).toEqual([]); expect(original.prepare("SELECT hex(body) AS body FROM messages").all()).toEqual([{ body: "00FF01" }]); }
+  finally { original.close(); }
+  const names = readdirSync(env.home).filter(name => name.startsWith("bridge.db.backup-")); expect(names).toHaveLength(1);
+  const snapshot = new DatabaseSync(join(env.home, names[0]!), { readOnly: true });
+  try { expect(snapshot.prepare("SELECT hex(body) AS body FROM messages").all()).toEqual([{ body: "00FF01" }]); expect(snapshot.prepare("PRAGMA user_version").get()!.user_version).toBe(0); }
+  finally { snapshot.close(); }
+});
+
 it("retains a partially published anchor across restart and never reexecutes it as fresh or ordinary", async () => {
   schemaMs = 0; const anchor = join(env.home, ".store-bootstrap.expected.json");
   directoryIo.onSync = () => { if (existsSync(anchor)) throw new Error("Controlled post-anchor publication failure"); };

@@ -98,6 +98,7 @@ it.each(["snapshot", "schema"])("fences metadata component migration after a slo
 });
 
 it.each(["begin", "schema"])("rolls back the actual history constructor after a slow %s without committing another phase", stage => {
+  metadataDb(home); // Establish canonical ordinary provenance before the injected history phase.
   const file = join(home, "history.db"), seed = new DatabaseSync(file);
   seed.exec("CREATE TABLE accepted_original(id TEXT,body BLOB); INSERT INTO accepted_original VALUES('original-uuid',x'00ff0a')"); seed.close();
   const traces: string[] = [], schema = historyStoreV2Schema(), exec = DatabaseSync.prototype.exec;
@@ -162,7 +163,7 @@ it.each([0, 41])("preserves a legitimate reentrant policy update to %s instead o
 });
 
 it("establishes ordinary policy on new returned archive/history handles after nested admission", () => {
-  mkdirSync(join(home, "stores")); let archive!: DatabaseSync, history!: DatabaseSync;
+  mkdirSync(join(home, "stores")); metadataDb(join(home, "stores")); let archive!: DatabaseSync, history!: DatabaseSync;
   withStorageAdmission(check, () => {
     withStorageAdmission(check, () => {
       archive = openArchive(join(home, "stores", "archive.db")); handles.add(archive);

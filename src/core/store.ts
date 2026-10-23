@@ -1,7 +1,7 @@
-import { admissionSqliteBusy } from "./storage-admission.js";
+import { admissionSqliteBusy, storageAdmissionRemaining } from "./storage-admission.js";
 import { observeAdmissionPhase } from "./admission-observation.js";
 import { guardPriorEndpoints } from "./prior-endpoints.js";
-import { assertBootstrapAccess, assertBootstrapWitness } from "./store-bootstrap-journal.js";
+import { assertBootstrapAccess, assertBootstrapWitness, syncBootstrapHomeChain } from "./store-bootstrap-journal.js";
 import { assertMetadataUpgradeBoundary, metadataDb } from "./metadata-db.js";
 import { existsSync, mkdirSync, realpathSync } from "node:fs";
 import { createHash } from "node:crypto";
@@ -15,6 +15,7 @@ import type { Logger } from "./logger.js";
 import { isQuietMessage, SIBLING_CONVERSATION_PREFIX, type AgentKind, type BridgeMessage, type PeerInfo } from "./protocol.js";
 import { migrateSqlite } from "./sqlite-migrations.js";
 import { archiveDbPath, archiveMessages, ensureMessageQuarantine, openArchive, unquarantined } from "./sqlite-maintenance.js";
+import { backupPath } from "./json-store.js";
 import { assertCompatibleMailboxReaders, maintenanceLock, storageLease, storageLeaseObservation } from "./storage-lock.js";
 import { BackupBackground } from "./backup-background.js";
 import { historySchema } from "./history-schema.js";
@@ -36,6 +37,19 @@ import { localMailbox, mailboxSchema, nativeOwner, nativeIdentitySchema, ownersh
 
 import { SQLITE_STORE_VERSION } from "./store-version.js";
 export { SQLITE_STORE_VERSION } from "./store-version.js";
+
+/** All supported mailbox versions share this original recipient-copy key and
+ * envelope shape. A partial/foreign layout is not permission to initialize
+ * metadata in the same database before its mailbox migration fails. */
+function supportedMailboxLayout(db: DatabaseSync): boolean {
+  const object = db.prepare("SELECT type FROM sqlite_master WHERE name='messages'").get();
+  if (!object) return true;
+  if (object.type !== "table") return false;
+  const columns = db.prepare("PRAGMA table_info(messages)").all();
+  const required = ["id", "recipient", "from_id", "from_name", "from_agent", "to_target", "conversation_id", "reply_to", "hop", "body", "created_at", "read_at"];
+  return required.every(name => columns.some(column => column.name === name)) &&
+    columns.find(column => column.name === "id")?.pk === 1 && columns.find(column => column.name === "recipient")?.pk === 2;
+}
 
 /** Offline broadcasts retain recently observed sessions for one day. */
 export const BROADCAST_RECENT_MS = 24 * 60 * 60 * 1_000;
@@ -462,17 +476,37 @@ export class MessageStore {
     let unlockUpgrade: (() => void) | undefined;
     if (file !== ":memory:") {
       observeAdmissionPhase("constructor-readers", () => assertCompatibleMailboxReaders(dirname(file)));
-      let version = 0;
+      let version = 0, supported = true;
       if (existed) {
         const inspection = new DatabaseSync(file, { readOnly: true });
         this.captureHandle("admission", inspection);
-        try { version = Number(inspection.prepare("PRAGMA user_version").get()!.user_version); }
+        try { version = Number(inspection.prepare("PRAGMA user_version").get()!.user_version); supported = supportedMailboxLayout(inspection); }
         finally { this.closeCapturedHandle(inspection); }
       }
       // A refusal must precede canonical metadata initialization as well as
       // mailbox DDL: metadata shares this exact database file.
       if (version > SQLITE_STORE_VERSION) throw new Error(`unsupported SQLite store version: ${version}; newer schema retained unchanged.`);
       if (version === 2 || version === 3) throw Object.assign(new Error("Pre-lease schema2/3 requires owner-coordinated shutdown and explicit offline migration into an isolated home; automatic shared-home migration is refused."), { code: "STORE_OFFLINE_REQUIRED" });
+      if (!supported) {
+        const release = maintenanceLock(dirname(file), false, true);
+        try {
+          assertCompatibleMailboxReaders(dirname(file));
+          const original = new DatabaseSync(file, { readOnly: true, timeout: 0 });
+          this.captureHandle("admission", original);
+          try {
+            if (!supportedMailboxLayout(original)) {
+              // Read-only WAL-inclusive snapshot under the real common lock;
+              // neither metadata nor mailbox schema has been written.
+              syncBootstrapHomeChain(dirname(file), () => { storageAdmissionRemaining(); });
+              const snapshot = backupPath(file); storageAdmissionRemaining(); original.prepare("VACUUM INTO ?").run(snapshot); storageAdmissionRemaining();
+              const copy = new DatabaseSync(snapshot, { readOnly: true, timeout: 0 }); this.captureHandle("admission", copy);
+              try { if (copy.prepare("PRAGMA integrity_check").all().some(row => row.integrity_check !== "ok")) throw new Error("Unproven mailbox recovery snapshot; all original bytes retained."); }
+              finally { this.closeCapturedHandle(copy); }
+              throw new Error("Unsupported mailbox layout; original database and recovery snapshot retained unchanged.");
+            }
+          } finally { this.closeCapturedHandle(original); }
+        } finally { release(); }
+      }
       metadataDb(dirname(file));
       if (version < SQLITE_STORE_VERSION) {
         try { unlockUpgrade = observeAdmissionPhase("leases", () => maintenanceLock(dirname(file), false, true)); }
