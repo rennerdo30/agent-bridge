@@ -346,13 +346,13 @@ function readDatafileCatalog(db: DatabaseSync): DatafileCatalog {
     !text(h.home) || !identity(h.homeIdentity) || !identity(h.metadataIdentity) || !uuid(h.generation) || !["fresh", "legacy-unproven"].includes(h.origin)) throw bootstrapUnknown();
   const rows = db.prepare("SELECT key,value FROM bridge_metadata WHERE domain='backup-datafiles' ORDER BY key LIMIT 65").all();
   if (rows.length > 64) throw bootstrapUnknown();
-  const files: Record<string, DatafileRegistration> = Object.create(null);
+  const files: Record<string, DatafileRegistration> = {};
   for (const row of rows) {
     if (!text(row.key, 255) || !text(row.value, 16384)) throw bootstrapUnknown();
     const v = JSON.parse(row.value);
     if (!object(v) || !strict(v, ["version", "home", "name", "identity", "namespace", "generation"]) || v.version !== 1 || v.name !== row.key ||
       !text(v.name, 255) || basename(v.name) !== v.name || /[\\/\0]/.test(v.name) || v.home !== h.home || v.generation !== h.generation || !identity(v.identity) || !digest(v.namespace)) throw bootstrapUnknown();
-    files[v.name] = v as DatafileRegistration;
+    Object.defineProperty(files, v.name, { value: v as DatafileRegistration, enumerable: true, writable: true, configurable: true });
   }
   if (h.count !== rows.length || h.filesDigest !== catalogDigest(files)) throw bootstrapUnknown();
   return { header: h as DatafileHeader, files };
@@ -366,11 +366,11 @@ export function registerMailboxDatafile(db: DatabaseSync, home: string, file: st
     if (!provenance || !sameBootstrapIdentity(catalog.header.homeIdentity, bootstrapHomeIdentity(home)) || catalog.header.home !== home ||
       !sameBootstrapIdentity(catalog.header.metadataIdentity, bootstrapFileIdentity(join(home, DB_FILE_NAME))) || catalog.header.generation !== provenance.generation) throw bootstrapUnknown();
     const name = basename(file), value: DatafileRegistration = { version: 1, home, name, identity: bootstrapFileIdentity(file), namespace, generation: provenance.generation };
-    const retained = catalog.files[name];
+    const retained = Object.hasOwn(catalog.files, name) ? catalog.files[name] : undefined;
     if (retained && !sameBootstrapIdentity(retained, value) || !retained && Object.keys(catalog.files).length >= 64) throw bootstrapUnknown();
     if (!retained) {
       db.prepare("INSERT INTO bridge_metadata(domain,key,value,updated_at) VALUES('backup-datafiles',?,?,?)").run(name, JSON.stringify(value), Date.now());
-      catalog.files[name] = value;
+      Object.defineProperty(catalog.files, name, { value, enumerable: true, writable: true, configurable: true });
       db.prepare("UPDATE bridge_metadata SET value=?,updated_at=? WHERE domain='backup-inputs' AND key='home'").run(JSON.stringify({ ...catalog.header, count: catalog.header.count + 1, filesDigest: catalogDigest(catalog.files) }), Date.now());
     }
     if (!sameBootstrapIdentity(value.identity, bootstrapFileIdentity(file))) throw bootstrapUnknown();

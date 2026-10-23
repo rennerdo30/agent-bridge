@@ -165,7 +165,10 @@ it("R37 refuses whole ordinary mailbox removal even when every editable inventor
 
 it.each(["anchor", "exited"])("R37 checks the original cold proof chain independently of reweighted copy manifests: %s", async stage => {
   schemaMs = 0; opened = await open(); const { createBackup, readBackup } = await import("../src/core/backups.js");
-  const { verifyBootstrapPreservationCopy } = await import("../src/core/store-bootstrap-journal.js"), backup = createBackup(env.home, clock, false);
+  const { verifyBootstrapPreservationCopy } = await import("../src/core/store-bootstrap-journal.js");
+  let backup: string;
+  try { backup = createBackup(env.home, clock, false); }
+  catch (error) { console.error("R37 synthetic fixture capture refused", { entries: readdirSync(env.home).slice(0, 32) }); throw error; }
   const path = stage === "anchor" ? ".store-bootstrap.expected.json" : `.store-bootstrap/${readdirSync(join(backup, ".store-bootstrap")).find(name => name.endsWith(".exited.json"))!}`;
   const original = readFileSync(join(env.home, path));
   if (stage === "anchor") writeFileSync(join(backup, path), "{}");
@@ -191,7 +194,7 @@ it.each(["unregistered", "private-registered", "partial-catalog"])("R37 refuses 
   schemaMs = 0; opened = new MessageStore(env.db, nullLogger);
   const { createBackup } = await import("../src/core/backups.js");
   const name = kind === "private-registered" ? "token" : "unknown.sqlite", path = join(env.home, name);
-  if (kind === "private-registered") { const alternative = new MessageStore(path, nullLogger); alternative.close(); }
+  if (kind === "private-registered") { opened.close(); opened = undefined; const alternative = new MessageStore(path, nullLogger); alternative.close(); }
   else if (kind === "unregistered") writeFileSync(path, "synthetic unknown data: no format read is authorized");
   else metadataDb(env.home).prepare("DELETE FROM bridge_metadata WHERE domain='backup-datafiles'").run();
   const boundary = wire.databasePaths.length; directoryIo.opened = [];
@@ -229,7 +232,12 @@ it.each(["missing-envelope", "missing-namespace", "missing-owner-table"])("R37 r
   const seed = new DatabaseSync(env.db); seed.exec("CREATE TABLE owner_original(body BLOB); INSERT INTO owner_original VALUES(x'00ff01'); PRAGMA user_version=14;");
   if (kind === "missing-namespace") seed.exec("DROP TABLE mailbox_store");
   if (kind === "missing-owner-table") seed.exec("DROP TABLE message_frontends"); seed.close();
-  const before = readFileSync(env.db), names = readdirSync(env.home), metadata = await import("../src/core/metadata-db.js"), initialize = vi.spyOn(metadata, "metadataDb");
+  const before = readFileSync(env.db);
+  // Hold an explicit nonauthorizing WAL reader before the inventory baseline.
+  // SQLite may publish its transient WAL/SHM observation sidecars even for a
+  // read-only connection; neither metadata nor recovery/schema may change.
+  const observer = new DatabaseSync(env.db, { readOnly: true }); observer.prepare("PRAGMA user_version").get();
+  const names = readdirSync(env.home), metadata = await import("../src/core/metadata-db.js"), initialize = vi.spyOn(metadata, "metadataDb");
   const ownBoundary = wire.databaseHandles.length;
   try {
     let failure: unknown;
@@ -240,7 +248,7 @@ it.each(["missing-envelope", "missing-namespace", "missing-owner-table"])("R37 r
     const retained = new DatabaseSync(env.db, { readOnly: true });
     try { expect(retained.prepare("SELECT hex(body) AS body FROM owner_original").all()).toEqual([{ body: "00FF01" }]); } finally { retained.close(); }
   } finally {
-    opened?.close(); opened = undefined; closeMetadataDbs();
+    opened?.close(); opened = undefined; closeMetadataDbs(); observer.close();
     // The broken constructor may throw before returning its store. These are
     // exact actual native refs minted by THIS fixture boundary, never a path-
     // based reopen or a foreign handle. Close only those still owned/open.
