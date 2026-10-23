@@ -50,8 +50,9 @@ export const sameBootstrapIdentity = (a: unknown, b: unknown) => isDeepStrictEqu
 export const bootstrapDigest = (record: BootstrapRecord) => createHash("sha256").update(JSON.stringify(record)).digest("hex");
 const signature = (stat: BigIntStats) => ({ dev: String(stat.dev), ino: String(stat.ino), size: String(stat.size), mtime: String(stat.mtimeNs), ctime: String(stat.ctimeNs) });
 export function readBootstrapEvidence(path: string): BootstrapEvidence {
-  const before = bootstrapFileIdentity(path), fd = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+  let fd: number | undefined;
   try {
+    const before = bootstrapFileIdentity(path); fd = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
     const stat = fstatSync(fd, { bigint: true });
     if (!stat.isFile() || stat.nlink !== 1n || stat.size > 16384n || stat.size < 2n || String(stat.dev) !== before.dev || String(stat.ino) !== before.ino) throw bootstrapUnknown();
     const initial = signature(stat);
@@ -61,7 +62,7 @@ export function readBootstrapEvidence(path: string): BootstrapEvidence {
     if (!parsed.success || !parsed.data.workerThread || !sameBootstrapIdentity(initial, signature(fstatSync(fd, { bigint: true }))) ||
         !sameBootstrapIdentity(initial, signature(lstatSync(path, { bigint: true })))) throw bootstrapUnknown();
     return { record: parsed.data, signature: initial, digest: createHash("sha256").update(bytes).digest("hex") };
-  } catch { throw bootstrapUnknown(); } finally { closeSync(fd); }
+  } catch { throw bootstrapUnknown(); } finally { if (fd !== undefined) closeSync(fd); }
 }
 export const readBootstrapRecord = (path: string) => readBootstrapEvidence(path).record;
 export function syncBootstrapDirectory(path: string): void {

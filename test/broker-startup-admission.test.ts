@@ -4,6 +4,7 @@ import { Broker } from "../src/core/broker.js";
 import { MessageStore } from "../src/core/store.js";
 import { NativeChildren } from "../src/core/native-children.js";
 import { nullLogger } from "../src/core/logger.js";
+import { PROTOCOL_VERSION } from "../src/core/constants.js";
 
 const io = vi.hoisted(() => ({ servers: [] as any[] }));
 vi.mock("node:net", async original => {
@@ -50,4 +51,25 @@ it("keeps a directly bound listener from admitting requests until all services c
   const socket = Object.assign(new EventEmitter(), { destroyed: false, setEncoding() {}, destroy() { this.destroyed = true; }, setTimeout() {}, writableLength: 0 });
   io.servers[0].emit("connection", socket); const beforeAbort = accepted.mock.calls.length; f.expire(); gate.release();
   const failure = await pending; expect(beforeAbort).toBe(0); expect(failure).toMatchObject({ code: "timeout" }); expect(socket.destroyed).toBe(true);
+});
+
+it("activates a compatible direct listener only after its entire preparation and current check succeed", async () => {
+  const f = fixture(), gate = deferred(), entered = deferred();
+  vi.spyOn(f.broker as any, "startTcpFallback").mockImplementation(async () => { entered.release(); await gate.promise; });
+  const accepted = vi.spyOn(f.broker as any, "accept").mockImplementation(() => {});
+  const pending = f.broker.listen(undefined, f.check, f.controller.signal);
+  await entered.promise;
+  expect(io.servers[0].listeners("connection")).toHaveLength(1);
+  expect(accepted).not.toHaveBeenCalled(); gate.release(); await pending;
+  const socket = Object.assign(new EventEmitter(), { destroy() {} }); io.servers[0].emit("connection", socket);
+  expect(accepted).toHaveBeenCalledExactlyOnceWith(socket);
+});
+
+it("rejects protocol8 authentication before granting authority while protocol9 authenticates without mailbox effects", () => {
+  const f = fixture(), connection = { authed: false };
+  const auth = (f.broker as any).handlers.auth;
+  expect(() => auth(connection, { protocol: 8, token: "fixture-token" })).toThrow(/protocol/i);
+  expect(connection.authed).toBe(false); expect(store!.pending("never-owned")).toEqual([]);
+  expect(PROTOCOL_VERSION).toBe(9); auth(connection, { protocol: 9, token: "fixture-token" });
+  expect(connection.authed).toBe(true); expect(store!.pending("never-owned")).toEqual([]);
 });

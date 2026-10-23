@@ -116,6 +116,16 @@ it("does not publish a journal or schema after the supported home flush exhausts
   expect(ddl).toBe(0); expect(existsSync(env.db)).toBe(false); expect(existsSync(join(env.home, ".store-bootstrap"))).toBe(false);
 });
 
+it("retains an uncertain published preparing record and never reexecutes after directory flush failure", async () => {
+  schemaMs = 0; const dir = join(env.home, ".store-bootstrap");
+  directoryIo.onSync = () => { if (existsSync(dir) && readdirSync(dir).some(name => name.endsWith(".preparing.json"))) throw new Error("Controlled post-file directory flush failure"); };
+  await expect(open()).rejects.toMatchObject({ code: "STORE_BOOTSTRAP_UNSETTLED" });
+  expect(ddl).toBe(0); const name = readdirSync(dir).find(name => name.endsWith(".preparing.json"))!, original = readFileSync(join(dir, name));
+  directoryIo.onSync = undefined;
+  await expect(open()).rejects.toMatchObject({ code: "STORE_BOOTSTRAP_UNSETTLED" });
+  expect(wire.starts).toBe(1); expect(ddl).toBe(0); expect(readFileSync(join(dir, name))).toEqual(original);
+});
+
 it("fences every opener including no-deadline and cached metadata before admitting an unsettled preparation", async () => {
   schemaMs = 0; const db = metadataDb(env.home); db.exec("CREATE TABLE accepted_original(body BLOB); INSERT INTO accepted_original VALUES(x'00ff')");
   const dir = join(env.home, ".store-bootstrap"); mkdirSync(dir); writeFileSync(join(dir, "retained-malformed.json"), "original incomplete evidence");
