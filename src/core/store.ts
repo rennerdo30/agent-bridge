@@ -13,7 +13,7 @@ import type { Logger } from "./logger.js";
 import { isQuietMessage, SIBLING_CONVERSATION_PREFIX, type AgentKind, type BridgeMessage, type PeerInfo } from "./protocol.js";
 import { migrateSqlite } from "./sqlite-migrations.js";
 import { archiveDbPath, archiveMessages, ensureMessageQuarantine, openArchive, unquarantined } from "./sqlite-maintenance.js";
-import { assertCompatibleMailboxReaders, maintenanceLock, storageLease } from "./storage-lock.js";
+import { assertCompatibleMailboxReaders, maintenanceLock, storageLease, storageLeaseObservation } from "./storage-lock.js";
 import { BackupBackground } from "./backup-background.js";
 import { historySchema } from "./history-schema.js";
 import { CONVERSATION_MIGRATION } from "./conversation-schema.js";
@@ -547,6 +547,17 @@ export class MessageStore {
     this.scheduleArchiveMaintenance();
     if (process.env.AGENT_BRIDGE_AUTO_BACKUP === "1" && this.home && !this.backups) this.backups = new BackupBackground(this.home, this.log);
     });
+  }
+  /** Only the isolated cold initializer uses this, before any listener/service
+   * or accepted operation exists. Ordinary close is not silently promoted to
+   * a witness: every actual captured native handle and own lease must close. */
+  closeBootstrapPreparation(): void {
+    if (this.backups || this.archiveTimer || this.#operations.size || this.closed) throw new Error("Cold-store preparation cleanup is unproven");
+    this.close();
+    if (this.lifecycleConstruction.unknown || this.lifecycleConstruction.ordinaryClose !== "returned" ||
+        [...this.lifecycleConstruction.handles.values()].some(handle => handle.close !== "returned" || handle.db.isOpen) ||
+        this.lifecycleConstruction.lease && storageLeaseObservation(this.lifecycleConstruction.lease).release !== "returned")
+      throw new Error("Cold-store preparation retained unclosed resources");
   }
   backupPressure(pending: boolean, lockError = false): void { this.acceptedOperation("direct", () => this.backups?.pressure(pending, lockError)); }
   backupStatus(): import("./backup-background.js").BackupHealth | null { return this.backups?.status() ?? null; }
@@ -1511,14 +1522,15 @@ export class MessageStore {
 
 /** Full asynchronous hosting admission, including constructor effects under the
  * same fresh reader proof/deadline. A completed earlier guard grants no authority. */
-export async function openMessageStore(file: string, log: Logger, endpoint: string, token: string, signal?: AbortSignal): Promise<MessageStore> {
+export async function openMessageStore(file: string, log: Logger, endpoint: string, token: string, signal?: AbortSignal, startupDeadline?: number): Promise<MessageStore> {
   signal?.throwIfAborted();
   if (file === ":memory:") return new MessageStore(file, log);
+  if (startupDeadline !== undefined) await (await import("./store-bootstrap.js")).prepareColdStore(file, endpoint, token, log, signal, startupDeadline);
   let store: MessageStore | undefined, admitted: (() => number) | undefined;
   try {
     const opened = await guardPriorEndpoints(dirname(file), endpoint, token, log, signal, check => {
       admitted = check; store = new MessageStore(file, log); check(); return store;
-    }, file);
+    }, file, startupDeadline);
     admitted?.(); signal?.throwIfAborted(); return opened;
   } catch (error) {
     try { store?.close(); }

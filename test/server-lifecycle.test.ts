@@ -1,9 +1,22 @@
-import { afterEach, describe, expect, it } from "vitest";
-import { compareVersions, NODE_STOP_MS, runShutdownSteps, SHUTDOWN_DEADLINE_MS, shouldYieldTo, watchParent } from "../src/mcp/server-lifecycle.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { compareVersions, NODE_STOP_MS, runShutdownSteps, shutdownBackstop, SHUTDOWN_DEADLINE_MS, shouldYieldTo, watchParent } from "../src/mcp/server-lifecycle.js";
 
 const stops: (() => void)[] = [];
-afterEach(() => { for (const stop of stops.splice(0)) stop(); });
+afterEach(() => { for (const stop of stops.splice(0)) stop(); vi.useRealTimers(); });
 const tick = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+it("disposes only the owned shutdown backstop after actual ordered steps finish, with no later exit callback", async () => {
+  vi.useFakeTimers(); const exit = vi.fn(), foreign = vi.fn();
+  setTimeout(foreign, SHUTDOWN_DEADLINE_MS); const cancel = shutdownBackstop(exit);
+  await runShutdownSteps([{ name: "owned step", run: () => {} }]); cancel();
+  await vi.advanceTimersByTimeAsync(SHUTDOWN_DEADLINE_MS + 1);
+  expect(exit).not.toHaveBeenCalled(); expect(foreign).toHaveBeenCalledOnce(); expect(vi.getTimerCount()).toBe(0);
+});
+it("keeps the original shutdown backstop active while an actual cleanup step remains suspended", async () => {
+  vi.useFakeTimers(); const exit = vi.fn(); let release!: () => void;
+  const cancel = shutdownBackstop(exit), steps = runShutdownSteps([{ name: "suspended", run: () => new Promise<void>(done => { release = done; }), budgetMs: SHUTDOWN_DEADLINE_MS + 5000 }]);
+  await vi.advanceTimersByTimeAsync(SHUTDOWN_DEADLINE_MS); expect(exit).toHaveBeenCalledOnce();
+  release(); await steps; cancel(); expect(vi.getTimerCount()).toBe(0);
+});
 
 describe("AB-385 server version yield", () => {
   it("orders release versions numerically and pre-releases before their release", () => {

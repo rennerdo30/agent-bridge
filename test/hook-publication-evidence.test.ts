@@ -44,3 +44,13 @@ it("distinguishes a failed identity write from a headless return without substit
   await f.hook();
   expect(f.warn).toHaveBeenCalledWith("hook publication incomplete", expect.objectContaining({ stage: "launch-inspection", reason: "headless", sessionUpdate: "not-started" }));
 });
+it.each([-86_400_000, 86_400_000])("does not attribute a wall-clock step of %s to incomplete hook work", async step => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
+  const f = fixture(), gate = deferred(); f.ctx.launchKnown = gate.promise;
+  const originalWall = Date.now(); vi.spyOn(Date, "now").mockReturnValue(originalWall);
+  const pending = f.hook(); await vi.advanceTimersByTimeAsync(0);
+  vi.mocked(Date.now).mockReturnValue(originalWall + step);
+  await vi.advanceTimersByTimeAsync(HOOK_BUDGET_MS); await pending;
+  expect(f.warn).toHaveBeenCalledWith("hook publication incomplete", expect.objectContaining({ stage: "launch-inspection", reason: "deadline", elapsedMs: HOOK_BUDGET_MS }));
+  expect(f.node.currentSessionId).toBeNull(); gate.resolve(); await vi.advanceTimersByTimeAsync(0); expect(vi.getTimerCount()).toBe(0);
+});

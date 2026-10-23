@@ -14,6 +14,7 @@ import { BridgeError, encodeFrame, FrameDecoder, type RequestFrame } from "../sr
 import { assertCompatibleMailboxReaders, storageLease } from "../src/core/storage-lock.js";
 import { deliveryFailure } from "../src/mcp/delivery-evidence.js";
 import * as processIdentity from "../src/core/process-identity.js";
+import { StartupBudget } from "../src/core/startup-budget.js";
 
 const io = vi.hoisted(() => ({ connect: vi.fn(), lstat: vi.fn(), write: vi.fn(), read: vi.fn(), stat: vi.fn(), fds: new Map<number, string>(), actualLstat: undefined as any, actualWrite: undefined as any, actualRead: undefined as any, actualStat: undefined as any }));
 vi.mock("node:timers/promises", async original => ({ ...await original<typeof import("node:timers/promises")>(),
@@ -103,6 +104,7 @@ it("retains bounded phase evidence when identity plus actual fresh schema work e
   const fs = await import("node:fs"), fresh = join(home, "owned-fresh"); fs.mkdirSync(fresh);
   let clock = Date.now(); const start = clock;
   vi.spyOn(Date, "now").mockImplementation(() => clock);
+  vi.spyOn(performance, "now").mockImplementation(() => clock - start);
   vi.spyOn(processIdentity, "ownProcessIdentity").mockImplementation(async () => { clock += 1750; return "bounded-fixture"; });
   const migrate = migrations.migrateSqlite;
   vi.spyOn(migrations, "migrateSqlite").mockImplementation((...args) => {
@@ -232,11 +234,14 @@ it("cancels actual node store admission and closes only its reservation before c
   }));
   const node = new BridgeNode({ pipePath: "fixture-current", dbPath: file, token: "fixture-only-token", agent: "other", name: "fixture", cwd: home,
     autoWake: false, canHostBroker: true, log: nullLogger });
-  const pending = (node as any).tryBecomeBroker().catch((error: unknown) => error);
-  await vi.waitFor(() => expect(query).toHaveBeenCalledOnce());
-  await node.stop(); expect(await pending).toMatchObject({ name: "AbortError" });
-  expect(reservation.close).toHaveBeenCalledOnce(); expect(node.isBroker).toBe(false); expect(node.listenerCount("stopped")).toBe(0);
-  expect(readFileSync(file)).toEqual(original); expect(readdirSync(dir)).toEqual([`${pid}-original`]);
+  const startup = new StartupBudget();
+  try {
+    const pending = (node as any).tryBecomeBroker(startup).catch((error: unknown) => error);
+    await vi.waitFor(() => expect(query).toHaveBeenCalledOnce());
+    await node.stop(); expect(await pending).toMatchObject({ name: "AbortError" });
+    expect(reservation.close).toHaveBeenCalledOnce(); expect(node.isBroker).toBe(false); expect(node.listenerCount("stopped")).toBe(0);
+    expect(readFileSync(file)).toEqual(original); expect(readdirSync(dir)).toEqual([`${pid}-original`]);
+  } finally { startup.close(); }
 });
 
 it("does not retry an effect after its construction callback reports failure", async () => {

@@ -5,7 +5,7 @@ import { connect } from "node:net";
 import { setTimeout as delay } from "node:timers/promises";
 import { DatabaseSync } from "node:sqlite";
 import { BridgeClient } from "./client.js";
-import { APP_NAME, CONNECT_TIMEOUT_MS, DB_FILE_NAME, PROTOCOL_VERSION, WINDOWS_PIPE_PREFIX } from "./constants.js";
+import { APP_NAME, CONNECT_TIMEOUT_MS, REQUEST_TIMEOUT_MS, DB_FILE_NAME, PROTOCOL_VERSION, WINDOWS_PIPE_PREFIX } from "./constants.js";
 import type { Logger } from "./logger.js";
 import { maxSocketPathBytes, shortSocketDirectory } from "./paths.js";
 import { physicalPath } from "./project-identity.js";
@@ -44,14 +44,25 @@ function refused(endpoint: string, reason: string): BridgeError {
 
 /** Current-protocol auth only; no hello, handover, mailbox RPC or loopback fallback.
  * This observation is NOT migration exclusion: the storage maintenance lock supplies that boundary. */
-export async function guardPriorEndpoints<T = void>(home: string, current: string, token: string, log: Logger, signal?: AbortSignal, effect?: (check: () => number) => T, file = join(home, DB_FILE_NAME)): Promise<T> {
+export function guardPriorEndpoints<T = void>(home: string, current: string, token: string, log: Logger, signal?: AbortSignal, effect?: (check: () => number) => T, file = join(home, DB_FILE_NAME), notAfter = Infinity): Promise<T> {
+  return guardStorage(home, current, token, log, signal, effect, file, Math.min(Date.now() + CONNECT_TIMEOUT_MS, notAfter));
+}
+/** Distinct cold-preparation phase. It cannot authorize final open/readiness:
+ * callers must obtain an entirely new ordinary min(2s,remaining) proof. */
+export function guardBootstrapPreparation<T>(home: string, current: string, token: string, log: Logger, signal: AbortSignal, effect: (check: () => number) => T, file: string, deadline: number, revoked: Int32Array): Promise<T> {
+  return guardStorage(home, current, token, log, signal, effect, file, Math.min(Date.now() + REQUEST_TIMEOUT_MS, deadline), () => {
+    if (Atomics.load(revoked, 0) !== 0) throw new BridgeError("timeout", "Cold-store preparation was revoked; originals retained and no startup admitted.");
+  });
+}
+async function guardStorage<T>(home: string, current: string, token: string, log: Logger, signal: AbortSignal | undefined, effect: ((check: () => number) => T) | undefined, file: string, deadline: number, revoked?: () => void): Promise<T> {
+  if (!Number.isFinite(deadline)) throw new BridgeError("timeout", "Storage startup deadline is unproven; no startup was admitted.");
   signal?.throwIfAborted();
-  const deadline = Date.now() + CONNECT_TIMEOUT_MS;
   const observation = new AdmissionObservation();
   const admission = new AbortController();
   const expired = () => new BridgeError("timeout", "Prior endpoint admission exceeded its aggregate budget; startup was not admitted. Original data is retained for owned recovery; no downgrade or process replacement was attempted.", { admission: observation.snapshot() });
   const remaining = () => {
     signal?.throwIfAborted();
+    revoked?.();
     const left = deadline - Date.now();
     if (left <= 0 && !admission.signal.aborted) admission.abort(expired());
     admission.signal.throwIfAborted();
@@ -59,7 +70,7 @@ export async function guardPriorEndpoints<T = void>(home: string, current: strin
   };
   const cancelled = () => admission.abort(signal!.reason);
   signal?.addEventListener("abort", cancelled, { once: true });
-  const timer = setTimeout(() => admission.abort(expired()), CONNECT_TIMEOUT_MS);
+  const timer = setTimeout(() => admission.abort(expired()), Math.max(0, deadline - Date.now()));
   try {
     remaining();
     if (existsSync(file)) {

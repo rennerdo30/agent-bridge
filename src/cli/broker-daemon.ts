@@ -2,7 +2,7 @@ import { join } from "node:path";
 import { Broker } from "../core/broker.js";
 import { BridgeClient } from "../core/client.js";
 import { loadConfig } from "../core/config.js";
-import { DAEMON_IDLE_EXIT_MS, HANDOVER_DRAIN_MS, JOBS_FILE, PROTOCOL_VERSION } from "../core/constants.js";
+import { CONNECT_TIMEOUT_MS, DAEMON_IDLE_EXIT_MS, HANDOVER_DRAIN_MS, JOBS_FILE, PROTOCOL_VERSION } from "../core/constants.js";
 import type { Logger } from "../core/logger.js";
 import { resolveDbPath } from "../core/paths.js";
 import { openMessageStore } from "../core/store.js";
@@ -12,6 +12,7 @@ import { BridgeError } from "../core/protocol.js";
 import type { DashboardInfo } from "./dashboard.js";
 import { EndpointReservation } from "../core/endpoint-reservation.js";
 import { guardPriorEndpoints } from "../core/prior-endpoints.js";
+import { STARTUP_DEADLINE_ENV, StartupBudget } from "../core/startup-budget.js";
 
 /** Bounded idle period: AGENT_BRIDGE_DAEMON_IDLE_EXIT_MS (1 s to 24 h) or the 10-minute default. */
 export function daemonIdleExitMs(value = process.env.AGENT_BRIDGE_DAEMON_IDLE_EXIT_MS): number {
@@ -21,19 +22,25 @@ export function daemonIdleExitMs(value = process.env.AGENT_BRIDGE_DAEMON_IDLE_EX
 
 /** Existing broker and services, owned by a demand-start process rather than an MCP session. */
 export async function runBrokerDaemon(home: string, pipe: string, log: Logger): Promise<number> {
+  const handoff = process.env[STARTUP_DEADLINE_ENV];
+  const startup = new StartupBudget(handoff === undefined ? Infinity : /^\d{13}$/.test(handoff) ? Number(handoff) : NaN);
+  const stopStartup = () => startup.abort(new Error("Daemon stopped during startup"));
+  process.on("SIGTERM", stopStartup); process.on("SIGINT", stopStartup);
+  try {
+  startup.remaining();
   const token = loadOrCreateToken(home);
-  await guardPriorEndpoints(home, pipe, token, log);
+  await guardPriorEndpoints(home, pipe, token, log, startup.signal, undefined, resolveDbPath(home), startup.deadline);
   // A broker that is handing over (or exiting idle) still holds the endpoint and refuses with `handover`.
   // Wait, bounded, until it has released it; the exclusive bind below stays the only admission, so two
   // brokers never serve at once and this one never starts before the old one closed the pipe.
   for (const deadline = Date.now() + HANDOVER_DRAIN_MS + 5_000; ;) {
     let client: BridgeClient;
-    try { client = await BridgeClient.connect(pipe, log); }
+    try { client = await BridgeClient.connect(pipe, log, Math.min(CONNECT_TIMEOUT_MS, startup.remaining()), { signal: startup.signal }); }
     catch (error) {
       if (["ENOENT", "ECONNREFUSED"].includes((error as NodeJS.ErrnoException).code ?? "")) break;
       throw error;
     }
-    try { await client.request("auth", { protocol: PROTOCOL_VERSION, token }); return 0; }
+    try { await client.request("auth", { protocol: PROTOCOL_VERSION, token }, startup.remaining()); startup.remaining(); return 0; }
     catch (error) { if (!(error instanceof BridgeError && error.details?.handover === true)) throw error; }
     finally { client.close(); }
     if (Date.now() >= deadline) return 0;
@@ -41,6 +48,7 @@ export async function runBrokerDaemon(home: string, pipe: string, log: Logger): 
   }
   // The store factory prepares creation identity inside its admission budget.
   let reservation: EndpointReservation;
+  startup.remaining();
   try { reservation = await EndpointReservation.bind(pipe); }
   catch (error) {
     if ((error as NodeJS.ErrnoException).code === "EADDRINUSE") return 0;
@@ -55,8 +63,9 @@ export async function runBrokerDaemon(home: string, pipe: string, log: Logger): 
     config.network = startup.network; config.mobile = startup.mobile; config.dashboardPort = startup.dashboardPort;
   }
   void refreshStorePeerIdentities(home).catch(() => {});
-  const store = await openMessageStore(resolveDbPath(home), log.child("store"), pipe, token);
+  const store = await openMessageStore(resolveDbPath(home), log.child("store"), pipe, token, startup.signal, startup.deadline);
   try {
+  startup.remaining();
   const broker = new Broker(pipe, store, log.child("broker"), token, Date.now, join(home, JOBS_FILE), { home, config: config.network }, { ensure: (force, port) => ensureDashboard(force, port) });
   broker.setHostingMode("daemon");
   let stopping = false, release!: () => void;
@@ -102,7 +111,10 @@ export async function runBrokerDaemon(home: string, pipe: string, log: Logger): 
     return dashboardOpening;
   };
   try {
-    try { await broker.listen(reservation); listening = true; }
+    try {
+      await broker.listen(reservation, () => startup.remaining()); listening = true;
+      startup.remaining(); startup.close(); process.off("SIGTERM", stopStartup); process.off("SIGINT", stopStartup);
+    }
     catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EADDRINUSE") throw error;
       // Every bind loser exits without unlinking or closing the winner's endpoint.
@@ -125,4 +137,5 @@ export async function runBrokerDaemon(home: string, pipe: string, log: Logger): 
   }
   } catch (error) { store.close(); throw error; }
   } finally { await reservation.close(); }
+  } finally { startup.close(); process.off("SIGTERM", stopStartup); process.off("SIGINT", stopStartup); }
 }

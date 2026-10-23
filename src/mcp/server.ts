@@ -83,7 +83,7 @@ import { HISTORY_SEARCH_TOOL_DESCRIPTION, historySearchToolInput, type HistorySe
 import { decisionApplies, decisionScopeSchema, MAX_DECISION_TOPIC_CHARS, MAX_DECISION_TEXT_CHARS, type DecideArgs, type DecisionsArgs } from "../core/decisions.js";
 import { askOwnerSchema, type AskOwnerArgs } from "../core/owner-questions.js";
 import { guardServerErrors } from "./job-runner-errors.js";
-import { NODE_STOP_MS, runShutdownSteps, SHUTDOWN_DEADLINE_MS, shouldYieldTo, watchParent, type ShutdownStep } from "./server-lifecycle.js";
+import { NODE_STOP_MS, runShutdownSteps, shutdownBackstop, SHUTDOWN_DEADLINE_MS, shouldYieldTo, watchParent, type ShutdownStep } from "./server-lifecycle.js";
 import { parentProcessIdentity } from "../core/process-identity.js";
 import { ClaudeMailScopes, CLAUDE_CHILD_STATUS_TOOLS, isClaudeMailTool } from "./claude-mail-scope.js";
 import { boundMcpTexts, fitsMcpResult, longestFittingPrefix, messageBodyPage, pageListing, projectFilter, selectForDelivery, sliceWhole, unshownMessageNotes, type ListingLine } from "./output-bounds.js";
@@ -658,7 +658,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
     log.info("shutting down", { reason });
     // AB-385: every step is bounded (runShutdownSteps); this backstop also covers one that blocks synchronously.
     let step = "start";
-    setTimeout(() => { log.warn("shutdown did not finish in time; exiting", { reason, step, deadlineMs: SHUTDOWN_DEADLINE_MS }); process.exit(0); }, SHUTDOWN_DEADLINE_MS).unref();
+    const cancelBackstop = shutdownBackstop(() => { log.warn("shutdown did not finish in time; exiting", { reason, step, deadlineMs: SHUTDOWN_DEADLINE_MS }); process.exit(0); });
     // Runner-hosted subagents keep going for the next server of this session (see job-host.ts). After a yield the
     // job manager is dormant: it no longer writes the job store, and the session's new server settles the turns
     // this process ran inline as interrupted (resumable), as for any executor that exited.
@@ -683,6 +683,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
       onStep: (name) => { step = name; },
       onTimeout: (name, budgetMs) => log.warn("shutdown step did not finish in time; continuing", { reason, step: name, budgetMs }),
     });
+    cancelBackstop();
     process.exit(0);
   };
   transport.onclose = () => void shutdown("transport closed");

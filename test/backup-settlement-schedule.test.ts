@@ -48,6 +48,10 @@ it("keeps the exact accepted capture pending after observer expiry and verified 
   transport.worker = worker as unknown as ChildProcess;
   backup = new BackupBackground(env.home, nullLogger); Reflect.get(backup, "start").call(backup);
   expect(transport.starts).toBe(1); expect(transport.builds).toBe(0);
+  const nonce = (send.mock.calls.find(call => (call[0] as { type?: unknown }).type === "start")![0] as { nonce: string }).nonce;
+  worker.emit("message", { type: "backupProgress", nonce, phase: "priority-lowered", elapsedMs: 1 });
+  expect(backup.lifecycleWorkerProgress()).toMatchObject({ phase: "priority-lowered", exited: false });
+  expect(backup.lifecycleOwnerManifest()).toMatchObject({ settled: false, pendingWorkers: 1, unknown: false });
   backup.pressure(true); backup.quiesceLifecycleMaintenance(); send.mockClear();
   let release!: () => void, entered!: () => void;
   const held = new Promise<void>(resolve => { release = resolve; }), suspended = new Promise<void>(resolve => { entered = resolve; });

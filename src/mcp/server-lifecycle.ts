@@ -11,6 +11,12 @@ export const SHUTDOWN_STEP_MS = 3_000;
 export const NODE_STOP_MS = 8_000;
 /** Backstop over the whole shutdown (each step is bounded; this also covers a step that blocks synchronously). */
 export const SHUTDOWN_DEADLINE_MS = 3 * SHUTDOWN_STEP_MS + NODE_STOP_MS + 1_000;
+/** Dispose only this shutdown's own backstop after normal bounded steps return.
+ * Keep it armed throughout pending/failed cleanup, including synchronous stalls. */
+export function shutdownBackstop(expired: () => void): () => void {
+  const timer = setTimeout(expired, SHUTDOWN_DEADLINE_MS); timer.unref();
+  return () => clearTimeout(timer);
+}
 /** Cheap parent check (signal 0 and the current parent PID); no process is spawned. */
 export const PARENT_CHECK_MS = 5_000;
 /** The parent's creation identity is re-read this often, so a reused PID is not mistaken for the parent. */

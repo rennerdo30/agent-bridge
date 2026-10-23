@@ -46,6 +46,7 @@ describe("owned automatic-backup settlement (not whole-core durability)", () => 
     const outcomes = { verified: 0, notDue: 0, error: 0, other: 0, exited: false };
     const count = (value: number) => Math.min(255, value + 1);
     const observed = (message: unknown) => {
+      if ((message as { type?: unknown } | null)?.type === "backupProgress") return; // Separate source-owned telemetry, not an outcome.
       const item = message as { path?: unknown; skipped?: unknown; error?: unknown } | null;
       const kind = item?.error ? "error" : typeof item?.path === "string" ? "verified" :
         item?.path === null && item?.skipped === "not-due" ? "notDue" : "other";
@@ -67,6 +68,7 @@ describe("owned automatic-backup settlement (not whole-core durability)", () => 
     const started = performance.now(), completion = await backup.settleLifecycleMaintenance(deadline());
     if (!completion.settled) process.stderr.write("AB325 backup settlement evidence " + JSON.stringify({ schema: 1,
       fixture: "backup_completion_after_pressure", outcomes, pendingWorkers: completion.pendingWorkers, unknown: completion.unknown,
+      progress: backup.lifecycleWorkerProgress(),
       elapsedMs: Math.min(20000, Math.max(0, Math.round(performance.now() - started))), connected: worker.connected,
       exit: worker.exitCode === null ? "pending" : worker.exitCode === 0 ? "zero" : "nonzero",
       signal: worker.signalCode === null ? "none" : "present" }) + "\n");

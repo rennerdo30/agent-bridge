@@ -4,14 +4,14 @@ const PHASES = ["inspection", "identity", "endpoints", "readers", "effect", "con
 export type AdmissionPhase = typeof PHASES[number];
 type Span = { phase: AdmissionPhase; start: number };
 let active: AdmissionObservation | undefined;
-const elapsed = (start: number) => Math.max(0, Math.min(60_000, Math.round(Date.now() - start)));
+const elapsed = (start: number) => Math.max(0, Math.min(60_000, Math.round(performance.now() - start)));
 export class AdmissionObservation {
-  private readonly start = Date.now();
+  private readonly start = performance.now();
   private readonly spans = new Set<Span>();
   private readonly totals = new Map<AdmissionPhase, { calls: number; ms: number }>();
   private begin(phase: AdmissionPhase): () => void {
     if (!PHASES.includes(phase)) throw new Error("Unknown admission observation phase");
-    const span = { phase, start: Date.now() }; this.spans.add(span);
+    const span = { phase, start: performance.now() }; this.spans.add(span);
     return () => {
       this.spans.delete(span);
       const prior = this.totals.get(phase) ?? { calls: 0, ms: 0 };

@@ -12,15 +12,19 @@ import { preferredDriveFixture } from "./preferred-drive-fixture.js";
 let env: TestEnv;
 let me: BridgeNode;
 let jobs: JobManager;
+let managerCreated = false;
 
 beforeEach(async () => {
+  managerCreated = false;
   env = makeEnv();
   me = env.node("claude-j", "claude");
   await me.start();
   jobs = new JobManager(me, nullLogger);
+  managerCreated = true;
 });
 afterEach(async () => {
-  jobs.cancelAll();
+  if (managerCreated) jobs.cancelAll(); // Keep failed startup primary; never reuse the preceding fixture's manager.
+  managerCreated = false;
   await env.cleanup();
 });
 

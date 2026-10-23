@@ -29,6 +29,22 @@ type LeaseCapture = {
 const leaseCaptures = new WeakMap<() => void, LeaseCapture>();
 const retainedLeaseCaptures = new Set<LeaseCapture>();
 const maintenanceWitnesses = new WeakMap<() => void, { path: string; nonce: string }>();
+let borrowedMaintenance: { path: string; release: () => void; check: () => void } | undefined;
+/** One synchronous initializer may nest under its own actual common exclusion.
+ * No caller string, PID equivalence or earlier/home-global proof qualifies. */
+export function withMaintenanceExclusion<T>(release: () => void, check: () => void, effect: () => T): T {
+  const witness = maintenanceWitnesses.get(release), identity = witness && leaseFileIdentity(witness.path);
+  if (!witness || !identity) throw new Error("Owned maintenance exclusion is unproven");
+  const assert = () => {
+    check();
+    if (readOwner(witness.path)?.nonce !== witness.nonce || !sameLeaseFile(identity, leaseFileIdentity(witness.path))) throw new Error("Owned maintenance exclusion changed");
+  };
+  assert(); const previous = borrowedMaintenance;
+  const borrow = () => {}; // Owned cleanup neither removes the outer lock nor checks an expired operational deadline.
+  maintenanceWitnesses.set(borrow, witness);
+  borrowedMaintenance = { path: witness.path, release: borrow, check: assert };
+  try { return effect(); } finally { maintenanceWitnesses.delete(borrow); borrowedMaintenance = previous; }
+}
 
 function leaseFileIdentity(path: string): LeaseFileIdentity | null {
   try {
@@ -131,6 +147,7 @@ function maintenanceBusy(path: string): Error {
 export function storageLease(home: string, maintenance?: () => void): () => void {
   readerAdmission?.check();
   const lock = join(home, LOCK_FILE);
+  if (!maintenance && borrowedMaintenance?.path === lock) { borrowedMaintenance.check(); maintenance = borrowedMaintenance.release; }
   const ownsMaintenance = () => {
     const witness = maintenance && maintenanceWitnesses.get(maintenance);
     return !!witness && witness.path === lock && readOwner(lock)?.nonce === witness.nonce;
@@ -264,6 +281,7 @@ export async function assertCompatibleMailboxReadersAsync(home: string, signal: 
  * now belongs to a process that started after the lease was written. */
 export function maintenanceLock(home: string, allowOwnCompatibleLease = false, nonblocking = false): () => void {
   readerAdmission?.check();
+  if (borrowedMaintenance?.path === join(home, LOCK_FILE)) { borrowedMaintenance.check(); return borrowedMaintenance.release; }
   mkdirSync(home, { recursive: true, mode: 0o700 });
   const path = join(home, LOCK_FILE);
   let owner: LockOwner;

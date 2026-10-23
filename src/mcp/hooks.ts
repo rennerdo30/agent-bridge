@@ -336,7 +336,7 @@ export async function buildHookResponse(ctx: ServerContext, input: HookInput): P
   const controller = new AbortController();
   const publication: HookPublication | undefined = input.event === "SessionStart" && input.sessionId && !input.subagent
     ? { stage: "prepare", sessionUpdate: "not-started" } : undefined;
-  const started = Date.now();
+  const started = performance.now();
   let failed = false;
   let deadlineExpired = false;
   const timer = setTimeout(() => { deadlineExpired = true; controller.abort(); }, HOOK_BUDGET_MS);
@@ -370,7 +370,7 @@ export async function buildHookResponse(ctx: ServerContext, input: HookInput): P
       ctx.log.warn("hook publication incomplete", { event: "SessionStart", stage: publication.stage,
         reason: deadlineExpired ? "deadline" : input.signal?.aborted ? "cancelled" : ctx.headless ? "headless" : !current() ? "superseded" : failed ? "error" : "incomplete",
         sessionUpdate: publication.sessionUpdate, localSession: !node?.currentSessionId ? "missing" : node.currentSessionId === input.sessionId ? "expected" : "other",
-        connected: node?.isConnected === true, elapsedMs: Math.max(0, Math.min(60_000, Date.now() - started)) });
+        connected: node?.isConnected === true, elapsedMs: Math.max(0, Math.min(60_000, Math.round(performance.now() - started))) });
     }
   }
 }

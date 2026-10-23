@@ -23,13 +23,14 @@ function delegateToMuseMsp(req: MuseMspRequest) {
   void run.then(() => runs.delete(run), () => runs.delete(run));
   return run;
 }
-function created(path: string, complete: (contents: string) => boolean = contents => contents.length > 0, observed = () => {}) {
+function created(path: string, complete: (contents: string) => boolean = contents => contents.length > 0, observed = () => {},
+  observeFile: (dir: string, check: () => void) => { close(): void } = (dir, check) => watch(dir, check)) {
   const ready = deferred<void>();
   const check = () => {
     if (existsSync(path) && complete(readFileSync(path, "utf8"))) ready.resolve();
     observed();
   };
-  const watcher = watch(join(path, ".."), check);
+  const watcher = observeFile(join(path, ".."), check);
   check();
   return { ready: ready.promise, close: () => watcher.close() };
 }
@@ -82,21 +83,29 @@ describe("Muse stable MSP delegation", () => {
   it("waits for complete stalled-marker contents across creation and partial writes", async () => {
     const f = fixture(), path = join(f.cwd, "stalled-marker");
     let observed = deferred<void>(), settled = false;
-    const marker = created(path, contents => contents === "turn/start", () => observed.resolve());
+    // This case tests the content gate, not one fs.watch event per write:
+    // native watchers may coalesce successive changes. Real host/deadline
+    // fixtures below keep the real default watcher and their original budgets.
+    let changed: () => void = () => { throw new Error("Marker observer was not attached"); };
+    const close = vi.fn();
+    const marker = created(path, contents => contents === "turn/start", () => observed.resolve(), (_dir, check) => { changed = check; return { close }; });
     void marker.ready.then(() => { settled = true; });
     try {
       observed = deferred<void>();
       writeFileSync(path, "");
+      changed();
       await observed.promise;
       expect(settled).toBe(false);
       observed = deferred<void>();
       writeFileSync(path, "turn/");
+      changed();
       await observed.promise;
       expect(settled).toBe(false);
       writeFileSync(path, "turn/start");
+      changed();
       await marker.ready;
       expect(settled).toBe(true);
-    } finally { marker.close(); }
+    } finally { marker.close(); expect(close).toHaveBeenCalledOnce(); }
   });
   it("applies and verifies a resumed experimental profile only after negotiation", async () => {
     const f = fixture({ sessionId: "saved", permissionProfile: "new-profile" }, { MSP_TEST_EXPERIMENTAL: "1", MSP_TEST_PROFILE: "old-profile" });

@@ -791,8 +791,9 @@ export class Broker {
   }
 
   /** Bind the endpoint. Rejects with the socket error (EADDRINUSE when another broker owns it). */
-  listen(reservation?: EndpointReservation): Promise<void> {
-    if (reservation) return this.listenReserved(reservation);
+  listen(reservation?: EndpointReservation, beforeActivate?: () => void): Promise<void> {
+    beforeActivate?.();
+    if (reservation) return this.listenReserved(reservation, beforeActivate);
     return new Promise((resolve, reject) => {
       const server = createServer((socket) => this.accept(socket));
       const onError = (err: Error) => {
@@ -828,7 +829,7 @@ export class Broker {
     });
   }
 
-  private async listenReserved(reservation: EndpointReservation): Promise<void> {
+  private async listenReserved(reservation: EndpointReservation, beforeActivate?: () => void): Promise<void> {
     this.server = reservation.ownedServer(this.pipePath);
     this.networkAuthorityDeferred = true;
     const optional = (what: string, step: () => void) => {
@@ -837,6 +838,7 @@ export class Broker {
     try {
       await this.startServices(optional);
       const accept = (socket: Socket) => this.accept(socket);
+      beforeActivate?.();
       reservation.activate(accept, this);
       this.network?.activateAuthority();
       this.networkAuthorityDeferred = false;
