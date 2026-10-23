@@ -37,6 +37,7 @@ type StoredRemoteRecord = Omit<RemoteRecord, "job"> & { job: Omit<Job, "controll
 const REMOTE_JOBS_FILE = "remote-jobs.json";
 interface Pending { host: string; resolve: (value: RemoteJobSnapshot) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }
 interface MirrorIntent { options: RunFeedOptions; snapshot: RemoteJobSnapshot; controller?: AbortController; task?: Promise<void> }
+interface StartingOperation { pair: string; peer: string; supervisor: string; route: RemoteSupervisorRoute; settled: Promise<void>; release: () => void; record?: RemoteRecord }
 
 /** Canonical containment rejects traversal, sibling-prefix paths and symlink/junction escapes. */
 export function allowedRemoteDirectory(directory: string, roots: string[]): string {
@@ -60,7 +61,7 @@ export class RemoteJobs {
   private readonly mirrorStates = new Map<string, RunnerState>();
   private readonly approvals = new Map<string, () => void>();
   private readonly publishingApprovals = new Set<string>();
-  private readonly starting = new Set<string>();
+  private readonly starting = new Map<string, StartingOperation>();
   /** A remote request awaiting its answer, or a spawn still being admitted or started: a daemon must not exit idle. */
   get busy(): boolean { return this.pending.size > 0 || this.starting.size > 0 || this.pendingStarts.size > 0; }
   /** A local Bridge runner may register from this durable receiver-side record.
@@ -208,10 +209,37 @@ export class RemoteJobs {
       if (!rate || now - rate.at >= REMOTE_JOB_RATE_WINDOW_MS) { rate = { at: now, requests: 0, spawns: 0 }; this.rates.set(pair.id, rate); }
       if (++rate.requests > REMOTE_JOB_RATE_LIMIT || (frame.request.op === "spawn" && ++rate.spawns > REMOTE_JOB_SPAWN_LIMIT)) throw new Error("Remote job rate limit reached; try again later.");
       if (frame.request.op === "spawn" && this.starting.has(frame.request.job)) throw new Error("Remote job is already starting.");
-      if (frame.request.op === "spawn") this.starting.add(frame.request.job);
+      const starting = this.starting.get(frame.request.job);
+      if (frame.request.op !== "spawn" && starting) {
+        // Root/worktree/usage admission awaits precede even the provisional
+        // record. A concurrent control must not become an Unknown job refusal
+        // and poison the requester's exact retained operation. Wait only for
+        // this authenticated original spawn; never retry/reexecute that spawn.
+        if (starting.pair !== pair.id || starting.peer !== frame.peer.id || starting.supervisor !== frame.peer.supervisor ||
+            JSON.stringify(starting.route) !== JSON.stringify(returnRoute)) throw new Error("Remote job belongs to another supervisor.");
+        await starting.settled;
+        if (this.closed) throw new Error("Remote jobs link closed before operation admission.");
+        if (!starting.record || this.records.get(frame.request.job) !== starting.record || this.starting.has(frame.request.job))
+          throw new Error("Original remote spawn did not retain its admitted generation; operation remains unconfirmed.");
+        if (JSON.stringify(this.returnRoute(pair, frame.peer)) !== JSON.stringify(returnRoute))
+          throw new Error("Remote job belongs to the original authenticated supervisor binding.");
+      }
+      let reservation: StartingOperation | undefined;
+      if (frame.request.op === "spawn") {
+        let release!: () => void;
+        const settled = new Promise<void>(resolve => { release = resolve; });
+        reservation = { pair: pair.id, peer: frame.peer.id, supervisor: frame.peer.supervisor, route: returnRoute, settled, release };
+        this.starting.set(frame.request.job, reservation);
+      }
       let value: RemoteJobSnapshot;
-      try { value = await this.handle(pair, frame.peer, frame.request, returnRoute); }
-      finally { if (frame.request.op === "spawn") this.starting.delete(frame.request.job); }
+      try {
+        value = await this.handle(pair, frame.peer, frame.request, returnRoute);
+        if (reservation) reservation.record = this.records.get(frame.request.job);
+      }
+      finally {
+        if (reservation && this.starting.get(frame.request.job) === reservation) this.starting.delete(frame.request.job);
+        reservation?.release();
+      }
       const compatible = remoteSnapshotForPeer(value, this.network.peerSupports(pair.id, REMOTE_JOB_CANCELLED_CAPABILITY));
       await this.network.sendExtension(pair.id, REMOTE_JOB_FRAME, { kind: "response", rid: frame.rid, value: compatible });
     } catch (err) {
@@ -493,6 +521,7 @@ export class RemoteJobs {
   close(): void {
     this.unsubscribeLink?.();
     this.closed = true;
+    for (const starting of this.starting.values()) starting.release();
     for (const intent of this.mirrorIntents.values()) intent.controller?.abort(new Error("Remote mirror broker closed"));
     this.mirrorIntents.clear();
     this.mirrorTurns.clear(); this.mirrorStates.clear();

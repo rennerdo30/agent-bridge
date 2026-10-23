@@ -220,7 +220,9 @@ describe("Muse legacy exec remote profile contracts", () => {
     const snapshot = { state: { pid: 0, peer: "muse-job-abcdef12", status: "done", updatedAt: Date.now(), report: "remote done", sessionId: "remote-session" }, alive: false, approvals: [] };
     const remoteJob = vi.fn(async () => snapshot);
     const node = { remoteJob } as unknown as BridgeNode;
-    const job = { id: "abcdef12", name: "muse-job-abcdef12", controller: new AbortController(), workdir: env.home } as Job;
+    const job: Job = { id: "abcdef12", name: "muse-job-abcdef12", agent: "muse", model: null, prompt: "remote", startedAt: Date.now(),
+      owner: "requesting-supervisor", supervisor: "requesting-session", queue: [], controller: new AbortController(), progress: null,
+      status: "running", sessionId: null, workdir: env.home, worktree: null };
     const args = { prompt: "remote", title: "Remote launch", cwd: env.home, host: "paired", permission_profile: "named" };
     const host = new RemoteJobHost(node, env.home, nullLogger);
     host.start(job, "paired", "muse", { ...args, _job: job.name });

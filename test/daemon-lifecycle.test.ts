@@ -321,9 +321,9 @@ function fixtureStartupLogger(diagnostics?: UiUnknownDiagnostics): typeof nullLo
   };
   const fixtureLog: typeof nullLogger = { ...nullLogger, child: scope => { if (scope === "node") diagnostics?.constructorLogger(); return fixtureLog; },
     error: (message, data) => {
-      if (message === "broker refused this peer" || message === "could not join the bridge") {
-        const failure = deliveryFailure({ code: data?.code, message: data?.message ?? data?.err });
-        record("admission_refused", failure.code, failure.protocol?.source ?? failure.reason);
+      if (message === "broker refused this peer" || message === "could not join the bridge" || message === "cannot open message store") {
+        const failure = message === "cannot open message store" ? deliveryFailure(data?.err) : deliveryFailure({ code: data?.code, message: data?.message ?? data?.err });
+        record(message === "cannot open message store" ? "store_open_refused" : "admission_refused", failure.code, failure.protocol?.source ?? failure.reason);
       }
     },
     debug: (message, data) => { if (message === "connect attempt failed" && ["ENOENT", "ECONNREFUSED", "ETIMEDOUT", "EUNSAFESOCKETDIR"].includes(String(data?.code))) {
@@ -331,6 +331,7 @@ function fixtureStartupLogger(diagnostics?: UiUnknownDiagnostics): typeof nullLo
     } },
     info: (message, data) => {
       if (message === "connected to broker") record("authenticated_ready");
+      else if (message === "another session is preparing the store; retrying broker election") record("store_preparation_deferred");
       else if (message === "client protocol refusal observation") {
         const protocol = deliveryFailure({ code: "protocol_mismatch", details: { protocolObservation: data?.protocolObservation } }).protocol;
         if (protocol?.connectionGeneration !== undefined) record("protocol_connection", protocol.connectionGeneration, protocol.operation);
@@ -371,17 +372,21 @@ function dashboardSender(url: string, cookie: string, diagnostics?: UiUnknownDia
 }
 function observeUiSender(diagnostics?: UiUnknownDiagnostics) {
   const starts: BridgeNode[] = [], metadataAtStart: boolean[] = [];
+  const failures: Array<ReturnType<typeof deliveryFailure>> = [];
   const original = BridgeNode.prototype.start;
   const start = vi.spyOn(BridgeNode.prototype, "start").mockImplementation(function (this: BridgeNode) {
     // The existing constructor records metadata/read state before election.
     // Presence here is evidence about that path, not an elected broker.
     starts.push(this); metadataAtStart.push(existsSync(env.db));
     diagnostics?.start(starts, this);
-    return diagnostics ? diagnostics.observe("start", () => original.call(this)) : original.call(this);
+    const pending = diagnostics ? diagnostics.observe("start", () => original.call(this)) : original.call(this);
+    // Observe the original rejection without replacing its promise or error.
+    void pending.then(() => {}, error => { if (failures.length < 8) failures.push(deliveryFailure(error)); });
+    return pending;
   });
   // Pass through every attempted listen, including attempts that reject.
   const listen = vi.spyOn(Broker.prototype, "listen");
-  return { starts, metadataAtStart, listen, close: () => { start.mockRestore(); listen.mockRestore(); } };
+  return { starts, metadataAtStart, failures, listen, close: () => { start.mockRestore(); listen.mockRestore(); } };
 }
 // Parser-only fixtures use synthetic lines below. This helper provides no
 // ownership authority; the actual reader brackets it with creation checks.
@@ -561,7 +566,7 @@ describe("standalone demand-start broker", () => {
       const response = await send("embedded-by-default", { brokerDaemon: { cli }, daemon: { enabled: true } });
       if (response.status !== 200) process.stderr.write("Embedded UI admission diagnostics " + JSON.stringify({
         ...await httpFailureEvidence(response), stages: startupEvidence, startCount: observed.starts.length,
-        embedded: observed.starts.map(node => node.isBroker), listenCount: observed.listen.mock.calls.length,
+        embedded: observed.starts.map(node => node.isBroker), listenCount: observed.listen.mock.calls.length, failures: observed.failures,
       }) + "\n");
       expect(response.status).toBe(200);
       expect(observed.starts).toHaveLength(1); expect(observed.starts[0]!.isBroker).toBe(true);

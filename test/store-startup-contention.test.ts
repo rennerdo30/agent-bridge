@@ -5,6 +5,7 @@ import { MessageStore } from "../src/core/store.js";
 import { searchMessages } from "../src/core/message-history.js";
 import { nullLogger } from "../src/core/logger.js";
 import { makeEnv, until, type TestEnv } from "./helpers.js";
+import { deliveryFailure } from "../src/mcp/delivery-evidence.js";
 
 let env: TestEnv;
 beforeEach(() => { env = makeEnv(); });
@@ -33,26 +34,35 @@ it("serves requests under one second with retained legacy and expired rows while
   seed.close();
   const writer = new DatabaseSync(archiveDbPath(env.db));
   writer.exec("BEGIN IMMEDIATE");
+  let phase = "replacement-start", replacement: ReturnType<typeof env.node> | undefined;
+  const began = performance.now();
   try {
-    const replacement = env.node("replacement");
+    replacement = env.node("replacement");
     const deadline = <T>(operation: Promise<T>) => {
       let timer: ReturnType<typeof setTimeout>;
       return Promise.race([operation, new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("broker blocked on archive writer")), 1_000); })]).finally(() => clearTimeout(timer));
     };
     await deadline(replacement.start());
+    phase = "maintenance-yield";
     // Allow maintenance to hit the held writer before checking responsiveness.
     await new Promise(resolve => setTimeout(resolve, 100));
-    expect(await deadline(replacement.peers())).toHaveLength(1);
+    phase = "peers"; expect(await deadline(replacement.peers())).toHaveLength(1);
+    phase = "send";
     expect((await deadline(replacement.send({ to: "offline", body: "reachable during archival" }))).messages).toHaveLength(1);
     const check = new DatabaseSync(env.db, { readOnly: true });
     try {
       expect(check.prepare("SELECT body FROM messages WHERE id='expired-retained'").get()!.body).toBe("expired bytes");
       expect(check.prepare("SELECT body FROM archived_messages WHERE id='legacy-retained'").get()!.body).toBe("legacy bytes");
     } finally { check.close(); }
-    writer.exec("ROLLBACK");
+    phase = "archive-release"; writer.exec("ROLLBACK");
     await until(() => Number(writer.prepare("SELECT COUNT(*) AS count FROM messages WHERE id IN ('expired-retained','legacy-retained')").get()!.count) === 2);
     expect(writer.prepare("SELECT body FROM messages WHERE id='legacy-retained'").get()!.body).toBe("legacy bytes");
     expect(writer.prepare("SELECT body FROM messages WHERE id='expired-retained'").get()!.body).toBe("expired bytes");
+  } catch (error) {
+    console.error("Archive writer responsiveness diagnostics", JSON.stringify({ version: 1, phase,
+      elapsedMs: Math.min(120_000, Math.round(performance.now() - began)), writerHeld: writer.isTransaction,
+      connected: replacement?.isConnected, broker: replacement?.isBroker, failure: deliveryFailure(error) }));
+    throw error;
   } finally { if (writer.isTransaction) writer.exec("ROLLBACK"); writer.close(); }
 });
 

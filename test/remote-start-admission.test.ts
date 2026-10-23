@@ -25,6 +25,9 @@ import { publishRunnerSpec, runnerLedgerNamespace } from "../src/core/runner-sto
 import { projectRunnerInputs, runnerLedgerPrincipal } from "../src/mcp/runner-delivery-retention.js";
 import { completionMessageId } from "../src/core/completion.js";
 import { randomUUID } from "node:crypto";
+import { RemoteJobHost } from "../src/mcp/remote-job-host.js";
+import type { Job } from "../src/mcp/jobs.js";
+import { remoteJobWireSchema, type RemoteJobRequest } from "../src/network/remote-job-protocol.js";
 vi.mock("../src/core/usage.js", async original => ({ ...await original<typeof import("../src/core/usage.js")>(), checkUsagePreflight: async () => ({ type: "allow", reason: "fixture: provider probes outside storage admission contract" }) }));
 
 let home: string, remote: RemoteJobs;
@@ -90,6 +93,93 @@ function neverQuery() {
   return { started: () => Boolean(resolve), release: async () => { resolve(new Map([[pid, `generation-${pid}`]])); await refreshStorePeerIdentities(home); } };
 }
 const host = { pid: null, peer: "detached-fixture", startedAt: Date.now() };
+
+it.each([
+  ["cancel", "success"], ["message", "success"], ["settings", "success"], ["pause", "success"],
+  ["title", "success"], ["effort", "success"], ["attach", "success"],
+  ["cancel", "failed-start"], ["cancel", "closed"], ["cancel", "replaced"], ["cancel", "capability"],
+])("owns early wire %s across suspended pre-record spawn admission: %s", async (kind, outcome) => {
+  remote.close();
+  const paired = { id: randomUUID(), name: "paired", fingerprint: "a".repeat(64) };
+  const advertised = fixtureRemotePeer(home, paired, { ...peer, sessionId: peer.supervisor });
+  let currentPeer = advertised, compatible = true;
+  let receive!: (payload: any, pair: any) => Promise<void>, releasePreflight!: () => void, releaseHost!: () => void;
+  const replies = new Map<string, { resolve: (value: any) => void; reject: (error: Error) => void }>();
+  const network = { peerSupports: () => compatible, peers: () => [currentPeer], registerExtension: (_type: string, _cap: string, handler: typeof receive) => { receive = handler; },
+    sendExtension: vi.fn(async (_host, _type, raw) => {
+      const frame = remoteJobWireSchema.parse(raw); expect(frame.kind).toBe("response");
+      if (frame.kind !== "response") throw new Error("Expected actual production response");
+      const pending = replies.get(frame.rid)!; replies.delete(frame.rid);
+      if (frame.error) pending.reject(new Error(frame.error)); else pending.resolve(frame.value);
+    }) };
+  remote = new RemoteJobs(network as any, home, nullLogger, async (record, command, origin) => {
+    await control(record, command);
+    expect(origin).toEqual({ kind: "remote-job-control", operation: record.id, owner: `native:${advertised.nativeOwner}`,
+      source: { kind: "remote", hostId: paired.id, hostFingerprint: paired.fingerprint } });
+    if (command.type === "cancel") writeRunnerState(home, record.id, { pid: 0, peer: record.name, status: "cancelled", updatedAt: Date.now(), delivered: false });
+  });
+  vi.mocked(worktree.gitDirsOutside).mockImplementationOnce(() => new Promise((resolve, reject) => { releasePreflight = () => outcome === "failed-start" ? reject(new Error("controlled preflight refusal")) : resolve([]); }));
+  const start = vi.spyOn(JobRunners.prototype, "startAsync").mockImplementation(async job => {
+    await new Promise<void>(resolve => { releaseHost = resolve; });
+    writeRunnerState(home, job.id, { pid: 0, peer: job.name, status: "running", updatedAt: Date.now() }); return host;
+  });
+  vi.spyOn(JobRunners.prototype, "alive").mockImplementation((_job, state) => state?.status === "running");
+  const remoteJob = vi.fn((_host: string, request: RemoteJobRequest) => new Promise<any>((resolve, reject) => {
+    const rid = randomUUID(); replies.set(rid, { resolve, reject });
+    void receive({ kind: "request", rid, peer, request }, paired).catch(reject);
+  }));
+  const source = join(home, "requester"), client = new RemoteJobHost({ remoteJob } as any, source, nullLogger);
+  const job = { id: "1234abcd", name: "codex-job-1234abcd", agent: "codex", startedAt: 123, owner: peer.name, supervisor: peer.supervisor,
+    controller: new AbortController(), queue: [] } as unknown as Job;
+  const cache = () => JSON.parse(readFileSync(join(source, "remote-job-states", `${job.id}.json`), "utf8"));
+  try {
+    client.start(job, paired.name, "codex", { prompt: "Exact pre-record original context", title: "Early control", cwd: home });
+    await until(() => Boolean(releasePreflight));
+    const commands: Record<string, RunnerControl> = { cancel: { type: "cancel" }, message: { type: "message", body: "Exact early C1", cid: randomUUID() },
+      settings: { type: "settings", settings: { model: "fixture-model" } }, pause: { type: "pause", reason: "Original early pause" },
+      title: { type: "title", title: "Original early title" }, effort: { type: "effort", effort: "high" }, attach: { type: "attach" } };
+    const command = commands[kind]!;
+    if (kind === "cancel") job.controller.abort(); // Actual JobManager cancellation keeps this exact controller/incarnation.
+    client.send(job, command);
+    // An authenticated same-name peer with another supervisor session cannot
+    // attach to this wait or affect either original operation.
+    const foreignReply = new Promise<any>((resolve, reject) => {
+      const rid = randomUUID(); replies.set(rid, { resolve, reject });
+      void receive({ kind: "request", rid, peer: { ...peer, supervisor: "foreign-session" }, request: { op: "control", job: job.id, control: { type: "cancel" } } }, paired).catch(reject);
+    });
+    await expect(foreignReply).rejects.toThrow("another supervisor");
+    expect(() => new RemoteJobHost({ remoteJob } as any, source, nullLogger).assertTurnAdmission(job)).toThrow();
+    await Promise.resolve(); await Promise.resolve(); expect(control).not.toHaveBeenCalled();
+    if (outcome === "closed") remote.close();
+    releasePreflight();
+    if (outcome !== "failed-start" && outcome !== "closed") {
+      await until(() => Boolean(releaseHost));
+      if (outcome === "replaced") currentPeer = fixtureRemotePeer(home, paired, { ...peer, sessionId: "replacement-session" });
+      if (outcome === "capability") compatible = false;
+      releaseHost();
+    }
+    if (outcome !== "success") {
+      await vi.waitFor(() => expect(cache().operations[1].state).toBe("blocked"));
+      expect(control).not.toHaveBeenCalled(); expect(remoteJob).toHaveBeenCalledTimes(2);
+      const original = cache().operations;
+      expect(original[1].request.control).toEqual(command);
+      const restarted = new RemoteJobHost({ remoteJob } as any, source, nullLogger);
+      expect(() => restarted.start({ ...job, startedAt: 124 }, "replacement-host", "codex", { prompt: "No replay", title: "Refuse", cwd: home })).toThrow();
+      expect(restarted.alive(job)).toBe(true); expect(cache().operations).toEqual(original);
+      expect((remote as any).starting.size).toBe(0); expect((remote as any).pendingStarts.size).toBe(0);
+      return;
+    }
+    await vi.waitFor(() => expect(control).toHaveBeenCalledWith({ owner: "paired/sender", name: job.name, id: job.id }, command));
+    await vi.waitFor(() => expect(cache().operations.map((op: any) => op.state)).toEqual(["confirmed", "confirmed"]));
+    expect(start).toHaveBeenCalledOnce(); expect(remoteJob).toHaveBeenCalledTimes(2);
+    expect(cache().operations[0].request.args.prompt).toBe("Exact pre-record original context");
+    expect(cache().operations[1].request.control).toEqual(command);
+    if (kind === "cancel") expect(client.state(job)?.status).toBe("cancelled");
+    const stored = JSON.parse(readFileSync(join(home, "remote-jobs.json"), "utf8")).jobs[0];
+    expect(stored.job).toMatchObject({ id: job.id, prompt: "Exact pre-record original context", supervisor: `${paired.id}/${peer.supervisor}` });
+    expect(stored.returnRoute.destination).toMatchObject({ hostId: paired.id, hostFingerprint: paired.fingerprint, native: advertised.nativeOwner });
+  } finally { releasePreflight?.(); releaseHost?.(); }
+});
 
 it("refuses unsettled remote terminal snapshots and continuation before stripping pending evidence", async () => {
   const start = vi.spyOn(JobRunners.prototype, "startAsync").mockResolvedValue(host);
