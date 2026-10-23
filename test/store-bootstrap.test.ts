@@ -236,6 +236,17 @@ it("R37 rejects the qualified p10/component5 no-registration schedule without in
   expect(existsSync(join(env.home, ".migration-snapshots"))).toBe(false);
 });
 
+it("R37 never calls canonical absence fresh when a historical private-role mailbox already exists", async () => {
+  schemaMs = 0; const path = join(env.home, "token"), historical = new DatabaseSync(path);
+  historical.exec("CREATE TABLE accepted_original(body BLOB); INSERT INTO accepted_original VALUES(x'00ff01')"); historical.close();
+  const bytes = readFileSync(path); opened = new MessageStore(env.db, nullLogger);
+  const header = JSON.parse(String(metadataDb(env.home).prepare("SELECT value FROM bridge_metadata WHERE domain='backup-inputs' AND key='home'").get()!.value));
+  expect(header).toMatchObject({ origin: "legacy-unproven", initial: "unproven" });
+  const { createBackup } = await import("../src/core/backups.js"), boundary = wire.databasePaths.length; directoryIo.opened = [];
+  expect(() => createBackup(env.home, clock, false)).toThrow();
+  expect(wire.databasePaths.slice(boundary)).not.toContain(path); expect(directoryIo.opened).not.toContain(path); expect(readFileSync(path).equals(bytes)).toBe(true);
+});
+
 it.each(["missing-envelope", "missing-namespace", "missing-owner-table"])("R37 refuses an unsupported current-labelled mailbox BEFORE metadata or recovery-snapshot effects: %s", async kind => {
   schemaMs = 0;
   if (kind !== "missing-envelope") { const valid = new MessageStore(env.db, nullLogger); valid.close(); closeMetadataDbs(); }

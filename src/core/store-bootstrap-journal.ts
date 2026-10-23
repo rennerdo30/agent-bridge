@@ -329,10 +329,20 @@ export function assertBootstrapWitness(expected: BootstrapWitness | undefined): 
   if (expected && !sameBootstrapIdentity(captureBootstrapWitness(expected.home), expected)) throw bootstrapUnknown();
 }
 
-type DatafileHeader = { version: 1; contract: typeof CONTRACT; home: string; homeIdentity: Identity; metadataIdentity: Identity; generation: string; origin: "fresh" | "legacy-unproven"; count: number; filesDigest: string };
+type DatafileHeader = { version: 1; contract: typeof CONTRACT; home: string; homeIdentity: Identity; metadataIdentity: Identity; generation: string; origin: "fresh" | "legacy-unproven"; initial: "empty-root" | "unproven"; count: number; filesDigest: string };
 type DatafileRegistration = { version: 1; home: string; name: string; identity: Identity; namespace: string; generation: string };
 type DatafileCatalog = { header: DatafileHeader; files: Record<string, DatafileRegistration> };
 const catalogDigest = (files: DatafileCatalog["files"]) => createHash("sha256").update(JSON.stringify(Object.entries(files).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0))).digest("hex");
+function noUnregisteredInitialInputs(home: string): boolean {
+  // Canonical absence alone is NOT a fresh-home proof: a shipped writer could
+  // already have stored a legal private-role/alternate filename here. Do not
+  // open it to decide. Only exact infrastructure of this admitted initializer
+  // can coexist with a newly created canonical file in a fresh catalog.
+  const entries = readdirSync(home); if (entries.length > 512) return false;
+  const infrastructure = new Set([DB_FILE_NAME, `${DB_FILE_NAME}-wal`, `${DB_FILE_NAME}-shm`, `${DB_FILE_NAME}-journal`, ".maintenance-lock", ".metadata-leases", ".storage-users"]);
+  if (initializer?.home === home) { assertBootstrapAccess(home); infrastructure.add(".store-bootstrap"); infrastructure.add(".store-bootstrap.expected.json"); }
+  return entries.every(name => infrastructure.has(name));
+}
 /** A selection proof only. It confers no reader, writer, recipient or restore
  * authority. Existing/unregistered homes are never reconstructed by scanning. */
 export function initializeDatafileCatalog(db: DatabaseSync, home: string, fresh: boolean): void {
@@ -341,15 +351,17 @@ export function initializeDatafileCatalog(db: DatabaseSync, home: string, fresh:
   if (retained) { readDatafileCatalog(db); return; }
   const raw = db.prepare("SELECT value FROM bridge_metadata WHERE domain='store-bootstrap' AND key='provenance'").get()?.value;
   const provenance = parseProvenance(JSON.parse(String(raw)));
+  const empty = fresh && noUnregisteredInitialInputs(home);
   const header: DatafileHeader = { version: 1, contract: CONTRACT, home: physicalPath(resolve(home)), homeIdentity: provenance.homeIdentity,
-    metadataIdentity: provenance.metadataIdentity, generation: provenance.generation, origin: fresh ? "fresh" : "legacy-unproven", count: 0, filesDigest: catalogDigest({}) };
+    metadataIdentity: provenance.metadataIdentity, generation: provenance.generation, origin: empty ? "fresh" : "legacy-unproven", initial: empty ? "empty-root" : "unproven", count: 0, filesDigest: catalogDigest({}) };
   db.prepare("INSERT INTO bridge_metadata(domain,key,value,updated_at) VALUES('backup-inputs','home',?,?)").run(JSON.stringify(header), Date.now());
 }
 function readDatafileCatalog(db: DatabaseSync): DatafileCatalog {
   const raw = db.prepare("SELECT value FROM bridge_metadata WHERE domain='backup-inputs' AND key='home'").get()?.value;
   if (!text(raw, 16384)) throw bootstrapUnknown();
   const h = JSON.parse(raw);
-  if (!object(h) || !strict(h, ["version", "contract", "home", "homeIdentity", "metadataIdentity", "generation", "origin", "count", "filesDigest"]) || h.version !== 1 || h.contract !== CONTRACT ||
+  if (!object(h) || !strict(h, ["version", "contract", "home", "homeIdentity", "metadataIdentity", "generation", "origin", "initial", "count", "filesDigest"]) || h.version !== 1 || h.contract !== CONTRACT ||
+    h.initial !== (h.origin === "fresh" ? "empty-root" : "unproven") ||
     !Number.isSafeInteger(h.count) || h.count < 0 || h.count > 64 || !digest(h.filesDigest) ||
     !text(h.home) || !identity(h.homeIdentity) || !identity(h.metadataIdentity) || !uuid(h.generation) || !["fresh", "legacy-unproven"].includes(h.origin)) throw bootstrapUnknown();
   const rows = db.prepare("SELECT key,value FROM bridge_metadata WHERE domain='backup-datafiles' ORDER BY key LIMIT 65").all();
