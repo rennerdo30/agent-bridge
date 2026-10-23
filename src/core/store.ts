@@ -1,7 +1,8 @@
 import { admissionSqliteBusy, storageAdmissionRemaining } from "./storage-admission.js";
 import { observeAdmissionPhase } from "./admission-observation.js";
 import { guardPriorEndpoints } from "./prior-endpoints.js";
-import { assertBootstrapAccess, assertBootstrapWitness, syncBootstrapHomeChain } from "./store-bootstrap-journal.js";
+import { assertBootstrapAccess, assertBootstrapWitness, syncBootstrapHomeChain, registerMailboxDatafile } from "./store-bootstrap-journal.js";
+import { assertCurrentMailboxEnvelope } from "./mailbox-layout.js";
 import { assertMetadataUpgradeBoundary, metadataDb } from "./metadata-db.js";
 import { existsSync, mkdirSync, realpathSync } from "node:fs";
 import { createHash } from "node:crypto";
@@ -480,7 +481,7 @@ export class MessageStore {
       if (existed) {
         const inspection = new DatabaseSync(file, { readOnly: true });
         this.captureHandle("admission", inspection);
-        try { version = Number(inspection.prepare("PRAGMA user_version").get()!.user_version); supported = supportedMailboxLayout(inspection); }
+        try { version = Number(inspection.prepare("PRAGMA user_version").get()!.user_version); assertCurrentMailboxEnvelope(inspection); supported = supportedMailboxLayout(inspection); }
         finally { this.closeCapturedHandle(inspection); }
       }
       // A refusal must precede canonical metadata initialization as well as
@@ -578,6 +579,13 @@ export class MessageStore {
         AND conversation_id NOT LIKE '%:note' AND conversation_id NOT LIKE '%:ack'
         AND conversation_id NOT LIKE 'files-progress-%' ${this.frontendOwnership ? `AND ${this.ownershipSql("deliverable_messages")}` : ""} ORDER BY created_at, id LIMIT 50`)),
     };
+    if (this.home) {
+      try { registerMailboxDatafile(metadataDb(this.home), this.home, file, this.namespace); }
+      catch (error) {
+        if (this.historyDb !== this.db) this.closeCapturedHandle(this.historyDb);
+        this.closeCapturedHandle(this.archiveDb); this.closeCapturedHandle(this.db); this.release(); throw error;
+      }
+    }
     log.debug("message store opened", { file });
     this.lifecycleConstruction.construction = "returned"; retainedStoreConstructions.delete(this.lifecycleConstruction);
     } catch (error) { this.lifecycleConstruction.construction = "unknown"; this.lifecycleConstruction.unknown = true; throw error; }

@@ -14,8 +14,8 @@ import { makeEnv, type TestEnv } from "./helpers.js";
 const wire = vi.hoisted(() => ({ starts: 0, before: undefined as undefined | (() => Promise<void>),
   after: undefined as undefined | (() => Promise<void>), wrong: false, workers: [] as any[], stage: "idle", kernelThread: 0, error: undefined as unknown, exitedBeforeMessage: false, wrongThread: false,
   beforeMaintenance: undefined as undefined | (() => void), afterIncremental: undefined as undefined | ((target: string) => void),
-  incrementalSnapshot: undefined as undefined | ((db: DatabaseSync, target: string | Buffer | URL) => number), databaseHandles: [] as DatabaseSync[] }));
-const directoryIo = vi.hoisted(() => ({ next: 2_000_000_000, handles: new Map<number, string>(), files: new Map<number, string>(), failure: "", syncs: [] as string[], onSync: undefined as undefined | (() => void), mutateRead: undefined as undefined | ((path: string) => void), onCopy: undefined as undefined | ((source: string, target: string) => void) }));
+  incrementalSnapshot: undefined as undefined | ((db: DatabaseSync, target: string | Buffer | URL) => number), databaseHandles: [] as DatabaseSync[], databasePaths: [] as string[] }));
+const directoryIo = vi.hoisted(() => ({ next: 2_000_000_000, handles: new Map<number, string>(), files: new Map<number, string>(), opened: [] as string[], failure: "", syncs: [] as string[], onSync: undefined as undefined | (() => void), mutateRead: undefined as undefined | ((path: string) => void), onCopy: undefined as undefined | ((source: string, target: string) => void) }));
 // Explicit simulated directory-durability capability, never evidence that a
 // Windows filesystem supports directory fsync. Ordinary file IO stays real.
 vi.mock("node:fs", async original => {
@@ -23,6 +23,7 @@ vi.mock("node:fs", async original => {
   return { ...actual, constants: { ...actual.constants, O_DIRECTORY: actual.constants.O_DIRECTORY || 0x10000 },
     openSync: (...args: Parameters<typeof actual.openSync>) => {
       const path = String(args[0]);
+      directoryIo.opened.push(path);
       if (actual.existsSync(path) && actual.lstatSync(path).isDirectory()) { const fd = directoryIo.next++; directoryIo.handles.set(fd, path); return fd; }
       const fd = actual.openSync(...args); directoryIo.files.set(fd, path); return fd;
     },
@@ -84,7 +85,7 @@ vi.mock("../src/core/storage-lock.js", async original => {
 vi.mock("node:sqlite", async original => {
   const actual = await original<typeof import("node:sqlite")>();
   return { ...actual, DatabaseSync: new Proxy(actual.DatabaseSync, { construct(target, args) {
-    const handle = Reflect.construct(target, args, target) as DatabaseSync; wire.databaseHandles.push(handle); return handle;
+    const handle = Reflect.construct(target, args, target) as DatabaseSync; wire.databaseHandles.push(handle); wire.databasePaths.push(String(args[0])); return handle;
   } }), backup: async (...args: Parameters<typeof actual.backup>) => {
     const result = wire.incrementalSnapshot ? wire.incrementalSnapshot(args[0], args[1]) : await actual.backup(...args);
     wire.afterIncremental?.(String(args[1])); return result;
@@ -105,7 +106,7 @@ let pendingDiagnostic: ReturnType<typeof setTimeout>, fixtureNumber = 0;
 const deferred = () => { let release!: () => void; const promise = new Promise<void>(done => { release = done; }); return { promise, release }; };
 beforeEach(() => {
   directoryIo.failure = ""; directoryIo.syncs = []; directoryIo.onSync = undefined; directoryIo.mutateRead = undefined; directoryIo.onCopy = undefined;
-  const number = ++fixtureNumber; wire.stage = "setup"; wire.beforeMaintenance = undefined; wire.afterIncremental = undefined; wire.incrementalSnapshot = undefined; wire.databaseHandles = [];
+  const number = ++fixtureNumber; wire.stage = "setup"; wire.beforeMaintenance = undefined; wire.afterIncremental = undefined; wire.incrementalSnapshot = undefined; wire.databaseHandles = []; wire.databasePaths = [];
   pendingDiagnostic = setTimeout(() => console.error("Mock cold-bootstrap pending", { fixture: number, stage: wire.stage }), 1000);
   env = makeEnv(); schemaMs = 2400; ddl = 0; wire.starts = 0; wire.workers = []; wire.before = undefined; wire.after = undefined; wire.wrong = false; wire.error = undefined; wire.exitedBeforeMessage = false; wire.wrongThread = false;
   start = clock = Date.now(); vi.spyOn(Date, "now").mockImplementation(() => clock); vi.spyOn(performance, "now").mockImplementation(() => clock - start);
@@ -138,7 +139,7 @@ function reweightFixtureCopy(backup: string, changed: string[], edit: (manifest:
   return manifest;
 }
 
-it.each(["mail box.db", "郵便.sqlite", "MAIL.DB", "mailbox"])("R37 includes a production-accepted registered mailbox filename without suffix/ASCII guessing: %s", async name => {
+it.each(["mail box.db", "郵便.sqlite", "MAIL.DB", "mailbox", "mail.json"])("R37 includes a production-accepted registered mailbox filename without suffix/ASCII guessing: %s", async name => {
   schemaMs = 0; opened = new MessageStore(join(env.home, name), nullLogger);
   opened.insert({ id: "accepted-filename", recipient: "retained", from: { id: "sender", name: "sender", agent: "codex" }, to: "retained", conversationId: "retained", replyTo: null, hop: 0, body: "accepted filename bytes", createdAt: clock, readAt: null });
   const { createBackup, readBackup } = await import("../src/core/backups.js"), backup = createBackup(env.home, clock, false);
@@ -172,6 +173,54 @@ it.each(["anchor", "exited"])("R37 checks the original cold proof chain independ
   const manifest = reweightFixtureCopy(backup, [path]);
   expect(() => verifyBootstrapPreservationCopy(backup, manifest.bootstrap)).toThrow();
   expect(() => readBackup(backup)).toThrow(); expect(readFileSync(join(env.home, path))).toEqual(original);
+});
+
+it.each(["missing", "partial", "replaced", "detached"])("R37 refuses %s external group evidence before any database payload inspection", async kind => {
+  schemaMs = 0; opened = new MessageStore(env.db, nullLogger);
+  const { createBackup, readBackup } = await import("../src/core/backups.js"), backup = createBackup(env.home, clock, false);
+  const name = backup.split(/[\\/]/).at(-1)!, witness = join(env.home, "backups", ".groups", `${name}.json`), bytes = readFileSync(witness);
+  let candidate = backup;
+  if (kind === "detached") { const detached = join(env.home, "detached"); mkdirSync(detached); candidate = join(detached, name); renameSync(backup, candidate); }
+  else { renameSync(witness, `${witness}.retained`); if (kind !== "missing") writeFileSync(witness, kind === "partial" ? "{" : bytes); }
+  const before = wire.databaseHandles.length;
+  expect(() => readBackup(candidate)).toThrow(); expect(wire.databaseHandles.length).toBe(before);
+  expect(readFileSync(kind === "detached" ? witness : `${witness}.retained`).equals(bytes)).toBe(true);
+});
+
+it.each(["unregistered", "private-registered", "partial-catalog"])("R37 refuses %s selection without opening unknown or private discovery bytes", async kind => {
+  schemaMs = 0; opened = new MessageStore(env.db, nullLogger);
+  const { createBackup } = await import("../src/core/backups.js");
+  const name = kind === "private-registered" ? "token" : "unknown.sqlite", path = join(env.home, name);
+  if (kind === "private-registered") { const alternative = new MessageStore(path, nullLogger); alternative.close(); }
+  else if (kind === "unregistered") writeFileSync(path, "synthetic unknown data: no format read is authorized");
+  else metadataDb(env.home).prepare("DELETE FROM bridge_metadata WHERE domain='backup-datafiles'").run();
+  const boundary = wire.databasePaths.length; directoryIo.opened = [];
+  expect(() => createBackup(env.home, clock, false)).toThrow();
+  expect(wire.databasePaths.slice(boundary)).not.toContain(path);
+  expect(directoryIo.opened).not.toContain(path);
+  expect(existsSync(join(env.home, "backups"))).toBe(false);
+});
+
+it("R37 preserves explicitly known synthetic config capture while excluding credential discovery/capture", async () => {
+  schemaMs = 0; opened = new MessageStore(env.db, nullLogger);
+  const config = '{"synthetic_fixture":true}\n'; writeFileSync(join(env.home, "config.json"), config);
+  writeFileSync(join(env.home, "credentials.json"), "synthetic excluded fixture");
+  const { createBackup, readBackup } = await import("../src/core/backups.js"), backup = createBackup(env.home, clock, false);
+  expect(readFileSync(join(backup, "config.json"), "utf8")).toBe(config);
+  expect(readBackup(backup).files.some(file => file.path === "config.json")).toBe(true);
+  expect(existsSync(join(backup, "credentials.json"))).toBe(false);
+});
+
+it("R37 rejects the qualified p10/component5 no-registration schedule without interpreting its private-name mailbox", () => {
+  // Source-derived schedule from 92db; no old binary, provider or live home.
+  const original = new DatabaseSync(env.db); original.exec("CREATE TABLE bridge_components(name TEXT PRIMARY KEY,version INTEGER); INSERT INTO bridge_components VALUES('metadata',5)"); original.close();
+  const privatePath = join(env.home, "token"), mail = new DatabaseSync(privatePath);
+  mail.exec("CREATE TABLE accepted_original(body BLOB); INSERT INTO accepted_original VALUES(x'00ff01')"); mail.close();
+  const before = readFileSync(privatePath), canonical = readFileSync(env.db), boundary = wire.databaseHandles.length;
+  expect(() => new MessageStore(privatePath, nullLogger)).toThrow();
+  expect(wire.databasePaths.slice(boundary)).not.toContain(privatePath);
+  expect(readFileSync(privatePath).equals(before)).toBe(true); expect(readFileSync(env.db).equals(canonical)).toBe(true);
+  expect(existsSync(join(env.home, ".migration-snapshots"))).toBe(false);
 });
 
 it.each(["missing-envelope", "missing-namespace", "missing-owner-table"])("R37 refuses an unsupported current-labelled mailbox BEFORE metadata or recovery-snapshot effects: %s", async kind => {
@@ -389,7 +438,7 @@ it("refuses backup publication when the final rename cannot be made directory-du
   expect(readdirSync(join(env.home, "backups")).length).toBeGreaterThan(0);
 });
 
-it.each([1, 2, 3, 4])("refuses automatic component%s upgrade before effects but preserves originals under explicit isolated offline admission", async version => {
+it.each([1, 2, 3, 4, 5])("refuses automatic component%s upgrade before effects but preserves originals under explicit isolated offline admission", async version => {
   schemaMs = 0; const legacy = new DatabaseSync(env.db);
   legacy.exec(`CREATE TABLE bridge_components(name TEXT PRIMARY KEY,version INTEGER); INSERT INTO bridge_components VALUES('metadata',${version}); CREATE TABLE accepted_original(body BLOB); INSERT INTO accepted_original VALUES(x'00ff01');`); legacy.close();
   const bytes = readFileSync(env.db);
@@ -397,7 +446,7 @@ it.each([1, 2, 3, 4])("refuses automatic component%s upgrade before effects but 
   expect(existsSync(join(env.home, ".store-bootstrap"))).toBe(false); expect(existsSync(join(env.home, ".migration-snapshots"))).toBe(false);
   const admitted = metadataDb(env.home, { kind: "offline-isolated", home: env.home });
   expect(admitted.prepare("SELECT body FROM accepted_original").get()!.body).toEqual(new Uint8Array([0,255,1]));
-  expect(admitted.prepare("SELECT version FROM bridge_components WHERE name='metadata'").get()!.version).toBe(5);
+  expect(admitted.prepare("SELECT version FROM bridge_components WHERE name='metadata'").get()!.version).toBe(6);
   expect(JSON.parse(String(admitted.prepare("SELECT value FROM bridge_metadata WHERE domain='store-bootstrap' AND key='provenance'").get()!.value)).kind).toBe("ordinary");
   const snapshots = readdirSync(join(env.home, ".migration-snapshots")).filter(name => name.endsWith(".db")); expect(snapshots.length).toBeGreaterThan(0);
 });
@@ -413,7 +462,7 @@ it("never treats current component missing provenance as ordinary or rebuilds a 
 
 it("refuses a current component with no provenance row without minting ordinary authority", () => {
   const db = new DatabaseSync(env.db);
-  db.exec("CREATE TABLE bridge_components(name TEXT PRIMARY KEY,version INTEGER); INSERT INTO bridge_components VALUES('metadata',5); CREATE TABLE accepted_original(body BLOB); INSERT INTO accepted_original VALUES(x'00ff01');"); db.close();
+  db.exec("CREATE TABLE bridge_components(name TEXT PRIMARY KEY,version INTEGER); INSERT INTO bridge_components VALUES('metadata',6); CREATE TABLE accepted_original(body BLOB); INSERT INTO accepted_original VALUES(x'00ff01');"); db.close();
   const bytes = readFileSync(env.db); expect(() => metadataDb(env.home)).toThrow(/preparation/i);
   expect(readFileSync(env.db)).toEqual(bytes); expect(existsSync(join(env.home, ".store-bootstrap.expected.json"))).toBe(false);
 });

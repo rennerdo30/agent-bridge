@@ -23,7 +23,7 @@ export function priorEndpoints(home: string, platform: NodeJS.Platform = process
     if (/^[de]:/i.test(path)) { homes.add(path.replace(/^[de]:/i, "E:")); homes.add(path.replace(/^[de]:/i, "D:")); }
   }
   const endpoints = new Set<string>();
-  for (const path of homes) for (const protocol of [undefined, 2, 3, 4, 5, 6, 7, 8, 9]) {
+  for (const path of homes) for (const protocol of [undefined, 2, 3, 4, 5, 6, 7, 8, 9, 10]) {
     const suffix = protocol === undefined ? "" : `-p${protocol}`;
     if (platform === "win32") {
       const hash = createHash("sha256").update(path.toLowerCase()).digest("hex").slice(0, 12);

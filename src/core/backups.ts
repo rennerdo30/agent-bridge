@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
-import { closeSync, copyFileSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { closeSync, constants, copyFileSync, existsSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { DB_FILE_NAME } from "./constants.js";
 import { isRecord, retentionLimit } from "./json-store.js";
 import { ARCHIVE_DB_NAME, snapshotDatabase } from "./sqlite-maintenance.js";
@@ -8,10 +8,10 @@ import { maintenanceLock, storageLease } from "./storage-lock.js";
 import { closeMetadataDb } from "./metadata-db.js";
 import * as sqlite from "node:sqlite";
 import { open } from "node:fs/promises";
-import { assertUnboundFullRestore, bootstrapHomeIdentity, captureBootstrapPreservation, sameBootstrapIdentity, syncBootstrapDirectory, syncBootstrapHomeChain, verifyBootstrapPreservationCopy, type BootstrapPreservation } from "./store-bootstrap-journal.js";
+import { assertUnboundFullRestore, bootstrapHomeIdentity, captureBootstrapPreservation, sameBootstrapIdentity, syncBootstrapDirectory, syncBootstrapHomeChain, verifyBootstrapPreservationCopy, portableDatafileName, privateBackupName, type BootstrapPreservation } from "./store-bootstrap-journal.js";
 
 export const BACKUPS_DIR_NAME = "backups";
-export const BACKUP_MANIFEST_VERSION = 1;
+export const BACKUP_MANIFEST_VERSION = 2;
 export const DEFAULT_BACKUP_RETENTION = 7;
 export const DEFAULT_BACKUP_INTERVAL_MS = 24 * 60 * 60 * 1_000;
 export const BACKUP_RETENTION_ENV = "AGENT_BRIDGE_BACKUP_RETENTION";
@@ -20,6 +20,40 @@ const MANIFEST_NAME = "manifest.json";
 const PUBLICATION_NAME = "publication.json";
 const BACKUP_PREFIX = "snapshot-";
 const USER_DATABASES = [DB_FILE_NAME, ARCHIVE_DB_NAME, "history.db", "store-compatibility.db", "owner-questions.db"] as const;
+
+const GROUP_DIR = ".groups", GROUP_MAX = 256 * 1024;
+function witnessLocation(path: string): { root: string; name: string; file: string } {
+  path = resolve(path); const name = basename(path);
+  if (!/^snapshot-\d{13,}-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(name)) throw new Error("Unsupported backup snapshot identity");
+  let root = dirname(path); if (basename(root) === "archive") root = dirname(root);
+  if (basename(root) !== BACKUPS_DIR_NAME) throw new Error("Detached backup has no original expected-group witness");
+  bootstrapHomeIdentity(root); bootstrapHomeIdentity(join(root, GROUP_DIR));
+  return { root, name, file: join(root, GROUP_DIR, `${name}.json`) };
+}
+function readGroupWitness(path: string) {
+  const location = witnessLocation(path), before = lstatSync(location.file, { bigint: true });
+  if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1n || before.size < 2n || before.size > BigInt(GROUP_MAX)) throw new Error("Unproven backup expected group");
+  const fd = openSync(location.file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+  try {
+    const signature = (s: typeof before) => [s.dev, s.ino, s.size, s.mtimeNs, s.ctimeNs].map(String);
+    const bound = signature(before), initial = fstatSync(fd, { bigint: true });
+    if (!sameBootstrapIdentity(bound, signature(initial))) throw new Error("Changed backup witness");
+    const bytes = Buffer.alloc(Number(before.size)); if (readSync(fd, bytes, 0, bytes.length, 0) !== bytes.length) throw new Error("Incomplete backup witness");
+    const value: unknown = JSON.parse(bytes.toString("utf8"));
+    if (!isRecord(value) || value.version !== 2 || value.snapshot !== location.name || !sameBootstrapIdentity(value.rootIdentity, bootstrapHomeIdentity(location.root)) || !isRecord(value.bootstrap) ||
+      !sameBootstrapIdentity(bound, signature(fstatSync(fd, { bigint: true }))) || !sameBootstrapIdentity(bound, signature(lstatSync(location.file, { bigint: true })))) throw new Error("Changed or incomplete backup witness");
+    return { value, digest: createHash("sha256").update(bytes).digest("hex"), signature: bound };
+  } finally { closeSync(fd); }
+}
+function publishGroupWitness(home: string, root: string, name: string, bootstrap: BootstrapPreservation, check: () => void): void {
+  check(); const dir = join(root, GROUP_DIR); mkdirSync(dir, { mode: 0o700, recursive: true }); bootstrapHomeIdentity(dir);
+  syncBootstrapDirectory(root); check(); syncBootstrapDirectory(dir); check(); syncBootstrapDirectory(home); check();
+  const contents = JSON.stringify({ version: 2, snapshot: name, rootIdentity: bootstrapHomeIdentity(root), bootstrap }) + "\n";
+  if (Buffer.byteLength(contents) > GROUP_MAX) throw new Error("Backup group exceeds bounded witness capacity");
+  const fd = openSync(join(dir, `${name}.json`), "wx", 0o400);
+  try { check(); writeFileSync(fd, contents); check(); fsyncSync(fd); } finally { closeSync(fd); }
+  check(); syncBootstrapDirectory(dir); check(); syncBootstrapDirectory(root); check(); syncBootstrapDirectory(home); check();
+}
 
 export interface BackupManifest {
   version: number;
@@ -67,7 +101,9 @@ function publishBackup(home: string, root: string, staging: string, name: string
     renameSync(staging, published); check(); syncBootstrapDirectory(root); check();
     // This marker is created only AFTER the full proof group and final parent
     // entry are durable. A missing marker is never upgraded from cached state.
-    writeFileSync(join(published, PUBLICATION_NAME), JSON.stringify({ version: 1, manifest: digest(join(published, MANIFEST_NAME)) }) + "\n", { flag: "wx", mode: 0o600 });
+    const group = readGroupWitness(published);
+    if (!sameBootstrapIdentity(group.value.bootstrap, manifest.bootstrap)) throw new Error("Backup expected group changed");
+    writeFileSync(join(published, PUBLICATION_NAME), JSON.stringify({ version: 2, manifest: digest(join(published, MANIFEST_NAME)), group: group.digest, groupSignature: group.signature }) + "\n", { flag: "wx", mode: 0o600 });
     check(); syncFile(join(published, PUBLICATION_NAME)); check(); syncBootstrapDirectory(published); check();
     return published;
   } catch (error) {
@@ -92,7 +128,7 @@ export function jsonStoreFiles(home: string): string[] {
       const st = lstatSync(path);
       if (st.isSymbolicLink()) continue;
       if (st.isDirectory() && recurse) visit(path, true);
-      else if (st.isFile() && name !== "dashboard.json" && /\.jsonl?(?:-\d+-[\w-]+)?$/.test(name)) files.push(path);
+      else if (st.isFile() && (name === "config.json" && dir === home || !privateBackupName(name)) && name !== "dashboard.json" && /\.jsonl?(?:-\d+-[\w-]+)?$/.test(name)) files.push(path);
     }
   };
   visit(home, false);
@@ -128,6 +164,7 @@ function createBackupUnlocked(home: string, now: number, rotate: boolean): strin
   const root = join(home, BACKUPS_DIR_NAME);
   mkdirSync(root, { recursive: true, mode: 0o700 });
   const name = `${BACKUP_PREFIX}${String(now).padStart(13, "0")}-${randomUUID()}`;
+  publishGroupWitness(home, root, name, bootstrap, () => {});
   const staging = join(root, `.pending-${name}`);
   mkdirSync(staging, { mode: 0o700 });
   const manifest: BackupManifest = { version: BACKUP_MANIFEST_VERSION, createdAt: now, files: [], bootstrap };
@@ -142,7 +179,7 @@ function createBackupUnlocked(home: string, now: number, rotate: boolean): strin
   };
   // The archive only grows. Capture it after the primary, even while the broker is archiving.
   for (const name of databaseOrder(bootstrap)) capture(join(home, name), true);
-  for (const file of jsonStoreFiles(home)) capture(file, false);
+  for (const file of jsonStoreFiles(home)) if (!bootstrap.databases.includes(relative(home, file))) capture(file, false);
   verifyBootstrapPreservationCopy(staging, bootstrap);
   if (!sameBootstrapIdentity(captureBootstrapPreservation(home), bootstrap)) throw new Error("Backup source provenance changed; unpublished snapshot retained");
   const published = publishBackup(home, root, staging, name, manifest);
@@ -183,6 +220,8 @@ export async function backupIfDueBackground(home: string, control: BackgroundBac
   const staging = join(root, `.pending-${name}`);
   const manifest: BackupManifest = { version: BACKUP_MANIFEST_VERSION, createdAt: now, files: [], bootstrap };
   try {
+    mkdirSync(root, { recursive: true, mode: 0o700 });
+    publishGroupWitness(home, root, name, bootstrap, control.checkpoint);
     mkdirSync(staging, { recursive: true, mode: 0o700 });
     const checksum = async (file: string) => {
       const handle = await open(file, "r");
@@ -247,7 +286,7 @@ export async function backupIfDueBackground(home: string, control: BackgroundBac
     };
     // Source files are immutable snapshots before checksums; archives follow primary capture.
     for (const name of databaseOrder(bootstrap)) await capture(join(home, name), true);
-    for (const file of jsonStoreFiles(home)) await capture(file, false);
+    for (const file of jsonStoreFiles(home)) if (!bootstrap.databases.includes(relative(home, file))) await capture(file, false);
     control.checkpoint();
     verifyBootstrapPreservationCopy(staging, bootstrap);
     if (!sameBootstrapIdentity(captureBootstrapPreservation(home), bootstrap)) throw new Error("Backup source provenance changed; unpublished snapshot retained");
@@ -269,7 +308,7 @@ export async function backupIfDueBackground(home: string, control: BackgroundBac
 
 function allowedPath(path: string, bootstrap?: BootstrapPreservation): boolean {
   return USER_DATABASES.some(name => path === name) ||
-    (/^[\w.-]+\.db$/.test(path) && !!bootstrap?.databases.includes(path)) ||
+    (portableDatafileName(path) && !privateBackupName(path) && !!bootstrap?.databases.includes(path)) ||
     /^\.store-bootstrap\/[a-f0-9-]{36}\.(preparing|prepared|exited)\.json$/.test(path) ||
     (/^[\w.-]+\.json$/.test(path) && !["dashboard.json"].includes(path)) ||
     /^(jobs|runs|archive|read-state|job-outcomes|local-result-receipts)\/[\w./-]+$/.test(path) && !path.split("/").some((s) => s === ".." || s === ".") &&
@@ -296,14 +335,20 @@ function createRecovery(home: string): string {
 
 export function readBackup(path: string): BackupManifest {
   if (existsSync(join(path, "failure.json"))) throw new Error("Unsettled backup publication; original snapshot retained");
+  // Resolve only the fixed external witness name, never a manifest-supplied
+  // path. No database/config payload is read before this proof is available.
+  let witness: ReturnType<typeof readGroupWitness> | undefined;
+  try { witness = readGroupWitness(path); } catch { /* Only proven unbound v1 may proceed below. */ }
   const manifestBytes = readFileSync(join(path, MANIFEST_NAME)), manifestDigest = createHash("sha256").update(manifestBytes).digest("hex");
   const value: unknown = JSON.parse(manifestBytes.toString("utf8"));
-  if (!isRecord(value) || value.kind !== undefined && value.kind !== "full" || value.version !== BACKUP_MANIFEST_VERSION || !Number.isFinite(value.createdAt) || !Array.isArray(value.files)) throw new Error("unsupported full backup manifest; scoped message snapshots require a table merge");
+  if (!isRecord(value) || value.kind !== undefined && value.kind !== "full" || ![1, BACKUP_MANIFEST_VERSION].includes(Number(value.version)) || !Number.isFinite(value.createdAt) || !Array.isArray(value.files) || value.files.length > 10000) throw new Error("unsupported full backup manifest; scoped message snapshots require a table merge");
+  if (value.version === 2 && (!witness || !sameBootstrapIdentity(value.bootstrap, witness.value.bootstrap))) throw new Error("Missing or changed original backup expected group; detached copies cannot be certified");
+  if (value.version === 1) { if (value.bootstrap) throw new Error("Legacy artifact cannot certify a complete bound database group"); assertUnboundFullRestore(path); }
   const seen = new Set<string>();
   const bootstrap = value.bootstrap as BootstrapPreservation | undefined;
   if (bootstrap && (!isRecord(bootstrap.metadata) || !Array.isArray(bootstrap.databases) || bootstrap.databases.length > 64 ||
     !Array.isArray(bootstrap.mailboxes) || bootstrap.mailboxes.length > 64 || !bootstrap.mailboxes.every(mailbox => isRecord(mailbox) && typeof mailbox.path === "string" && typeof mailbox.namespace === "string") || !isRecord(bootstrap.sources) ||
-    !bootstrap.databases.every(name => typeof name === "string" && /^[\w.-]+\.db$/.test(name)) || !Array.isArray(bootstrap.evidence) || bootstrap.evidence.length > 49 ||
+    !bootstrap.databases.every(name => typeof name === "string" && portableDatafileName(name) && !privateBackupName(name)) || !Array.isArray(bootstrap.evidence) || bootstrap.evidence.length > 49 ||
     !bootstrap.evidence.every(file => isRecord(file) && typeof file.path === "string" && typeof file.digest === "string" && /^[a-f0-9]{64}$/.test(file.digest) &&
       (file.path === ".store-bootstrap.expected.json" || /^\.store-bootstrap\/[a-f0-9-]{36}\.(preparing|prepared|exited)\.json$/.test(file.path))))) throw new Error("invalid backup preservation evidence");
   for (const file of value.files) {
@@ -319,8 +364,8 @@ export function readBackup(path: string): BackupManifest {
     const marker = join(path, PUBLICATION_NAME), state = lstatSync(marker);
     if (!state.isFile() || state.isSymbolicLink() || state.nlink !== 1 || state.size > 256) throw new Error("Unproven backup publication");
     const publication: unknown = JSON.parse(readFileSync(marker, "utf8"));
-    if (!isRecord(publication) || publication.version !== 1 || publication.manifest !== manifestDigest) throw new Error("Unproven backup publication");
-    const checksummedDatabases = [...seen].filter(name => name.endsWith(".db")).sort();
+    if (!isRecord(publication) || publication.version !== 2 || publication.manifest !== manifestDigest || !witness || publication.group !== witness.digest || !sameBootstrapIdentity(publication.groupSignature, witness.signature)) throw new Error("Unproven backup publication");
+    const checksummedDatabases = [...seen].filter(name => bootstrap.databases.includes(name)).sort();
     if (!sameBootstrapIdentity(checksummedDatabases, bootstrap.databases.slice().sort())) throw new Error("Incomplete full backup database group");
     for (const file of bootstrap.evidence) if (!seen.has(file.path)) throw new Error("incomplete backup preservation evidence");
     verifyBootstrapPreservationCopy(path, bootstrap);

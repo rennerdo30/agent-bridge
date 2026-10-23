@@ -82,13 +82,13 @@ it("activates a compatible direct listener only after its entire preparation and
   expect(accepted).toHaveBeenCalledExactlyOnceWith(socket);
 });
 
-it("rejects protocol9 authentication before granting authority while protocol10 authenticates without mailbox effects", () => {
+it("rejects intermediate protocol9/10 authentication before granting authority while protocol11 authenticates without mailbox effects", () => {
   const f = fixture(), connection = { authed: false };
   const insert = vi.spyOn(store!, "insert"), insertOnce = vi.spyOn(store!, "insertOnce");
   const auth = (f.broker as any).handlers.auth;
-  expect(() => auth(connection, { protocol: 9, token: "fixture-token" })).toThrow(/protocol/i);
+  for (const protocol of [9, 10]) expect(() => auth(connection, { protocol, token: "fixture-token" })).toThrow(/protocol/i);
   expect(connection.authed).toBe(false); expect(insert).not.toHaveBeenCalled(); expect(insertOnce).not.toHaveBeenCalled();
-  expect(PROTOCOL_VERSION).toBe(10); auth(connection, { protocol: 10, token: "fixture-token" });
+  expect(PROTOCOL_VERSION).toBe(11); auth(connection, { protocol: 11, token: "fixture-token" });
   expect(connection.authed).toBe(true); expect(insert).not.toHaveBeenCalled(); expect(insertOnce).not.toHaveBeenCalled();
 });
 
@@ -117,7 +117,7 @@ it("settles required activation before optional purge failure, records its diagn
   try {
     const failure = new Error("controlled optional purge failure"), warnings = vi.spyOn(nullLogger, "warn");
     const purge = vi.spyOn(store!, "schedulePurgeOlderThan").mockImplementation(() => { throw failure; });
-    const maintenance = vi.spyOn(f.broker as any, "startServingMaintenance"), backupsClose = vi.spyOn(store!, "closeBackups");
+    const maintenance = vi.spyOn(f.broker as any, "startServingMaintenance");
     const healthClose = vi.spyOn((f.broker as any).healthMonitor, "close");
     const clearInterval = vi.spyOn(globalThis, "clearInterval");
     await f.broker.listen(f.reservation as any, f.check, f.controller.signal);
@@ -131,8 +131,18 @@ it("settles required activation before optional purge failure, records its diagn
     expect(f.server.listening).toBe(true); expect((f.broker as any).networkAuthorityDeferred).toBe(false);
     expect((f.broker as any).servingMaintenance).toBeNull();
     const purgeTimer = (f.broker as any).purgeTimer; expect(purgeTimer).not.toBeNull();
-    await f.broker.close();
-    expect(backupsClose).toHaveBeenCalledOnce(); expect(healthClose).toHaveBeenCalledOnce(); expect(clearInterval).toHaveBeenCalledWith(purgeTimer);
+    const entered = deferred(), gate = deferred(), ownedClose = vi.fn(async () => { entered.release(); await gate.promise; });
+    (store as any).backups = { close: ownedClose };
+    const phases: string[] = [], closeBackups = store!.closeBackups.bind(store), closeStore = store!.close.bind(store); let ordinaryClose = false;
+    vi.spyOn(store!, "closeBackups").mockImplementation(() => { phases.push(ordinaryClose ? "ordinary-store-close" : "broker-drain"); return closeBackups(); });
+    vi.spyOn(store!, "close").mockImplementation(() => { ordinaryClose = true; try { closeStore(); } finally { ordinaryClose = false; } });
+    let closed = false; const close = f.broker.close().then(() => { closed = true; });
+    await entered.promise; expect(closed).toBe(false); expect(ownedClose).toHaveBeenCalledOnce(); expect(phases).toEqual(["broker-drain"]);
+    gate.release(); await close;
+    // Both legacy helpers may observe closure; the exact owned worker is
+    // drained once, before native store close, rather than counted as two.
+    expect(ownedClose).toHaveBeenCalledOnce(); expect(phases).toEqual(["broker-drain", "ordinary-store-close"]); expect((store as any).backups).toBeNull();
+    expect(healthClose).toHaveBeenCalledOnce(); expect(clearInterval).toHaveBeenCalledWith(purgeTimer);
     expect(f.server.listening).toBe(false); expect((f.broker as any).server).toBeNull();
     expect((f.broker as any).historyBackground).toBeNull(); expect((f.broker as any).jobArchiveBackground).toBeNull(); expect((f.broker as any).network).toBeNull();
   } finally {

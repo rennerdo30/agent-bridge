@@ -9,8 +9,10 @@ import { maintenanceLock, storageLease } from "./storage-lock.js";
 import { physicalPath } from "./project-identity.js";
 import { assertBootstrapAccess, initializeBootstrapProvenance, syncBootstrapHomeChain } from "./store-bootstrap-journal.js";
 import { snapshotMetadataTables } from "./metadata-snapshot.js";
+import { assertCurrentMailboxEnvelope } from "./mailbox-layout.js";
+import { initializeDatafileCatalog } from "./store-bootstrap-journal.js";
 
-export const METADATA_STORE_VERSION = 5;
+export const METADATA_STORE_VERSION = 6;
 const VERSION = METADATA_STORE_VERSION;
 const connections = new Map<string, DatabaseSync>();
 type MetadataAdmissionIdentity = { home: string; file: string };
@@ -199,6 +201,7 @@ export function assertMetadataUpgradeBoundary(home: string, offline?: OfflineMet
  const file = join(resolve(home), "bridge.db"); if (!existsSync(file)) return 0;
  const inspection = new DatabaseSync(file, { readOnly: true, timeout: 0 });
  try {
+  assertCurrentMailboxEnvelope(inspection);
   const version = inspection.prepare("SELECT 1 FROM sqlite_master WHERE name='bridge_components'").get()
    ? Number(inspection.prepare("SELECT version FROM bridge_components WHERE name='metadata'").get()?.version ?? 0) : 0;
   if (version > 0 && version < VERSION && (!offline || offline.kind !== "offline-isolated" || handleKey(physicalPath(resolve(offline.home))) !== handleKey(physicalPath(resolve(home)))))
@@ -252,7 +255,7 @@ export function metadataDb(home: string, offline?: OfflineMetadataAdmission): Da
      }
      storageAdmissionRemaining();
      db.exec("BEGIN IMMEDIATE");
-     try { storageAdmissionRemaining(); const previous = version(); db.exec(SCHEMA); storageAdmissionRemaining(); initializeBootstrapProvenance(db,home,previous); storageAdmissionRemaining(); db.exec("COMMIT"); }
+     try { storageAdmissionRemaining(); const previous = version(); db.exec(SCHEMA); storageAdmissionRemaining(); initializeBootstrapProvenance(db,home,previous); initializeDatafileCatalog(db, home, !existed); storageAdmissionRemaining(); db.exec("COMMIT"); }
      catch (error) { db.exec("ROLLBACK"); throw error; }
     }
    } finally { exclusive?.(); release(); }

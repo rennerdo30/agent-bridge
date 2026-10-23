@@ -31,7 +31,7 @@ export function needsColdPreparation(file: string): boolean {
       ? Number(db.prepare("SELECT version FROM bridge_components WHERE name='metadata'").get()?.version ?? 0) : 0;
   } finally { db.close(); }
   const hasArchive = existsSync(join(dirname(file), "archive.db")), hasHistory = existsSync(join(dirname(file), "history.db"));
-  if (version === 0 && metadata === 5 && !hasArchive && !hasHistory) return true;
+  if (version === 0 && metadata === 6 && !hasArchive && !hasHistory) return true;
   if (!present[0]) throw bootstrapUnknown();
   if (version === 14 && (!hasArchive || !hasHistory)) throw bootstrapUnknown();
   return false; // Existing populated/legacy stores retain the ordinary migration/refusal contract.
@@ -61,7 +61,7 @@ export async function prepareColdStore(file: string, endpoint: string, token: st
       check(); bootstrapHomeIdentity(home); inspectBootstrapJournal(home);
       if (!needsColdPreparation(file)) return undefined;
       return { version: 1 as const, attempt: randomUUID(), state: "preparing" as const, home, homeIdentity: bootstrapHomeIdentity(home), file,
-        contract: "protocol10-metadata5-schema14-anchor-v1" as const,
+        contract: "protocol11-metadata6-schema14-registration-v1" as const,
         original: Object.fromEntries(coldStoreFiles(file).map(path => [path, existsSync(path) ? bootstrapFileIdentity(path) : null])),
         pid: process.pid, processIdentity: "" };
     }, file, deadline);
