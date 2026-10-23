@@ -14,6 +14,19 @@ const recordSchema = z.object({ version: z.literal(1), attempt: z.uuid(), state:
   namespace: z.string().regex(/^[a-f0-9]{64}$/).optional() }).strict();
 export type BootstrapRecord = z.infer<typeof recordSchema>;
 export const bootstrapUnknown = () => Object.assign(new Error("Cold-store preparation is incomplete or unproven; original records are retained. Owner-coordinated isolated recovery is required; no automatic reexecution."), { code: "STORE_BOOTSTRAP_UNSETTLED" });
+/** Diagnostic only. Do not expose a native import error's message, paths, stack
+ * or cause, and never turn an error classification into permission to retry. */
+export function bootstrapWorkerFailure(error: unknown): Error {
+  let code: unknown;
+  try { if (typeof error === "object" && error !== null) code = Object.getOwnPropertyDescriptor(error, "code")?.value; } catch { /* Unknown/proxy evidence remains unknown. */ }
+  const categories: Record<string, string> = {
+    ERR_MODULE_NOT_FOUND: "module-not-found", MODULE_NOT_FOUND: "module-not-found",
+    ERR_UNKNOWN_FILE_EXTENSION: "module-format", ERR_WORKER_PATH: "worker-entry-path",
+    ERR_WORKER_INVALID_EXEC_ARGV: "worker-arguments", ERR_WORKER_OUT_OF_MEMORY: "worker-memory",
+  };
+  const failure = typeof code === "string" && code.length <= 64 && Object.hasOwn(categories, code) ? categories[code]! : "unclassified";
+  return Object.assign(bootstrapUnknown(), { bootstrapStage: "worker-start-or-module-error", bootstrapFailure: failure });
+}
 export function bootstrapFileIdentity(file: string) {
   const stat = lstatSync(file, { bigint: true });
   if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1n || stat.ino <= 0n) throw bootstrapUnknown();

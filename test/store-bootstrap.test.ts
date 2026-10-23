@@ -11,18 +11,18 @@ import { inspectBootstrapJournal } from "../src/core/store-bootstrap-journal.js"
 import { makeEnv, type TestEnv } from "./helpers.js";
 
 const wire = vi.hoisted(() => ({ starts: 0, before: undefined as undefined | (() => Promise<void>),
-  after: undefined as undefined | (() => Promise<void>), wrong: false, workers: [] as any[], stage: "idle", kernelThread: 0 }));
+  after: undefined as undefined | (() => Promise<void>), wrong: false, workers: [] as any[], stage: "idle", kernelThread: 0, error: undefined as unknown, exitedBeforeMessage: false, wrongThread: false }));
 vi.mock("node:worker_threads", async original => {
   const actual = await original<typeof import("node:worker_threads")>(), { EventEmitter } = await import("node:events");
   return { ...actual, get threadId() { return wire.kernelThread; }, Worker: class extends EventEmitter {
-    threadId = 100 + wire.starts++; terminated = false; running = false; exit!: () => void; exited = new Promise<number>(resolve => { this.exit = () => resolve(this.terminated ? 1 : 0); });
+    threadId = 100 + wire.starts++; terminated = false; finished = false; running = false; exit!: () => void; exited = new Promise<number>(resolve => { this.exit = () => resolve(this.terminated ? 1 : 0); });
     constructor(entry: URL, options: any) {
       super(); wire.workers.push(this);
       wire.stage = "transport-created";
       if (!String(entry).endsWith("/store-bootstrap-worker.mjs")) throw new Error("Unexpected native worker request; no fallback permitted");
-      queueMicrotask(() => { void this.run(options.workerData.plan); });
+      queueMicrotask(() => { if (wire.error) { this.emit("error", wire.error); this.finish(1); } else void this.run(options.workerData.plan); });
     }
-    finish(code: number) { if (this.threadId === -1) return; this.threadId = -1; this.exit(); this.emit("exit", code); }
+    finish(code: number) { if (this.finished) return; this.finished = true; this.threadId = -1; this.exit(); this.emit("exit", code); }
     async run(plan: any) {
       try {
         await wire.before?.(); if (this.terminated) return;
@@ -30,12 +30,13 @@ vi.mock("node:worker_threads", async original => {
         wire.stage = "importing-kernel";
         const { runColdStoreBootstrap } = await import("../src/core/store-bootstrap-worker.js");
         wire.stage = "running-kernel";
-        wire.kernelThread = this.threadId;
+        wire.kernelThread = this.threadId + (wire.wrongThread ? 1 : 0);
         await runColdStoreBootstrap(plan); this.running = false;
         wire.stage = "kernel-returned";
         if (this.terminated) { this.finish(1); return; }
+        if (wire.exitedBeforeMessage) this.threadId = -1;
         this.emit("message", { attempt: wire.wrong ? "foreign-attempt" : plan.record.attempt, state: "prepared" });
-        await wire.after?.(); if (this.threadId !== -1) this.finish(this.terminated ? 1 : 0);
+        await wire.after?.(); this.finish(this.terminated ? 1 : 0);
       } catch (error) {
         const failure = error as { code?: unknown; stack?: unknown };
         console.error("Mock cold-bootstrap failure", { code: typeof failure?.code === "string" && /^[A-Z_]{1,40}$/.test(failure.code) ? failure.code : "unclassified",
@@ -62,7 +63,7 @@ const deferred = () => { let release!: () => void; const promise = new Promise<v
 beforeEach(() => {
   const number = ++fixtureNumber; wire.stage = "setup";
   pendingDiagnostic = setTimeout(() => console.error("Mock cold-bootstrap pending", { fixture: number, stage: wire.stage }), 1000);
-  env = makeEnv(); schemaMs = 2400; ddl = 0; wire.starts = 0; wire.workers = []; wire.before = undefined; wire.after = undefined; wire.wrong = false;
+  env = makeEnv(); schemaMs = 2400; ddl = 0; wire.starts = 0; wire.workers = []; wire.before = undefined; wire.after = undefined; wire.wrong = false; wire.error = undefined; wire.exitedBeforeMessage = false; wire.wrongThread = false;
   start = clock = Date.now(); vi.spyOn(Date, "now").mockImplementation(() => clock); vi.spyOn(performance, "now").mockImplementation(() => clock - start);
   const migrate = migrations.migrateSqlite;
   vi.spyOn(migrations, "migrateSqlite").mockImplementation((...args) => {
@@ -78,6 +79,45 @@ afterEach(async () => {
 });
 const open = (signal?: AbortSignal) => openMessageStore(env.db, nullLogger, "fixture-current", "fixture-only-token", signal, start + 10000);
 const stageOrFailure = (stage: Promise<void>, pending: Promise<unknown>) => Promise.race([stage, pending.then(error => { throw error instanceof Error ? error : new Error("Original operation settled before the required stage"); })]);
+
+it.each([["missing module", "ERR_MODULE_NOT_FOUND"], ["unknown code", "not-allowlisted"], ["oversized code", "x".repeat(4097)]])("retains only a bounded classification for an actual fake Worker error event: %s", async (_label, code) => {
+  wire.error = Object.assign(new Error("fixture-private-path-or-body"), { code });
+  const failure = await open().then(store => { opened = store; throw new Error("Worker failure must not admit a store"); }, error => error);
+  expect(failure).toMatchObject({ code: "STORE_BOOTSTRAP_UNSETTLED", bootstrapStage: "worker-start-or-module-error",
+    bootstrapFailure: code === "ERR_MODULE_NOT_FOUND" ? "module-not-found" : "unclassified" });
+  expect(JSON.stringify(failure)).not.toContain("fixture-private-path-or-body");
+  expect(existsSync(env.db)).toBe(false); expect(ddl).toBe(0); expect(wire.workers[0].threadId).toBe(-1);
+});
+
+it("validates prepared evidence against the captured worker incarnation after the live threadId retires", async () => {
+  wire.exitedBeforeMessage = true;
+  opened = await open(); expect(opened.namespace).toMatch(/^[a-f0-9]{64}$/);
+  expect(wire.workers[0].threadId).toBe(-1); expect(ddl).toBe(1); inspectBootstrapJournal(env.home);
+});
+
+it("refuses a prepared record from another thread even after the owned live threadId retires", async () => {
+  wire.exitedBeforeMessage = true; wire.wrongThread = true;
+  await expect(open()).rejects.toMatchObject({ code: "STORE_BOOTSTRAP_UNSETTLED", bootstrapStage: "prepared-record-validation", bootstrapFailure: "worker-thread" });
+  expect(ddl).toBe(1); const original = readFileSync(env.db);
+  await expect(open()).rejects.toMatchObject({ code: "STORE_BOOTSTRAP_UNSETTLED" });
+  expect(wire.starts).toBe(1); expect(readFileSync(env.db)).toEqual(original);
+});
+
+it("does not invoke a Worker error code accessor or expose its private error data", async () => {
+  const getter = vi.fn(() => { throw new Error("private accessor"); });
+  wire.error = Object.defineProperty(new Error("fixture-private-path-or-body"), "code", { get: getter });
+  const failure = await open().then(store => { opened = store; throw new Error("Must refuse worker error"); }, error => error);
+  expect(failure).toMatchObject({ code: "STORE_BOOTSTRAP_UNSETTLED", bootstrapFailure: "unclassified" });
+  expect(getter).not.toHaveBeenCalled(); expect(JSON.stringify(failure)).not.toContain("fixture-private-path-or-body");
+});
+
+it("requires the archive profile workflow to build the actual bootstrap entry before running the unchanged regression", () => {
+  const workflow = readFileSync(".github/workflows/ab319-archive-profile.yml", "utf8");
+  const regression = workflow.indexOf("run: node node_modules/vitest/vitest.mjs run test/jobs-archive-persist.test.ts");
+  const build = workflow.indexOf("run: npm run build");
+  expect(regression).toBeGreaterThan(0); expect(build).toBeGreaterThan(0); expect(build).toBeLessThan(regression);
+  expect(readFileSync("scripts/build.mjs", "utf8")).toContain('ENTRIES["store-bootstrap-worker"] = "src/core/store-bootstrap-worker.ts"');
+});
 
 it("admits slow preparation over two seconds only after exact worker exit and a fresh final opener within one outer budget", async () => {
   const diagnostic = setTimeout(() => console.error("Mock cold-bootstrap pending stage", wire.stage), 1000);

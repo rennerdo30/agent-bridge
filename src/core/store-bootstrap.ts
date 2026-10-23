@@ -10,7 +10,7 @@ import { ownProcessIdentity } from "./process-identity.js";
 import { physicalPath } from "./project-identity.js";
 import { maintenanceLock } from "./storage-lock.js";
 import type { Logger } from "./logger.js";
-import { appendBootstrapRecord, bootstrapDigest, bootstrapFileIdentity, bootstrapHomeIdentity, bootstrapUnknown, inspectBootstrapJournal, readBootstrapRecord, sameBootstrapIdentity, type BootstrapRecord } from "./store-bootstrap-journal.js";
+import { appendBootstrapRecord, bootstrapDigest, bootstrapFileIdentity, bootstrapHomeIdentity, bootstrapUnknown, bootstrapWorkerFailure, inspectBootstrapJournal, readBootstrapRecord, sameBootstrapIdentity, type BootstrapRecord } from "./store-bootstrap-journal.js";
 
 export interface ColdBootstrapPlan { record: BootstrapRecord; endpoint: string; token: string; deadline: number; revoked: SharedArrayBuffer }
 const pending = new Set<string>();
@@ -82,18 +82,29 @@ export async function prepareColdStore(file: string, endpoint: string, token: st
     try {
       check(); if (signal?.aborted) stop(); if (cancelled) throw cancelled;
       worker = new Worker(workerEntry(), { workerData: { kind: "agent-bridge-cold-bootstrap-v1", plan, ownProcessIdentity: { pid: process.pid, identity } }, execArgv: [] });
+      // threadId is lifecycle state and becomes -1 after exit. The durable
+      // proof must match the immutable identity assigned to this owned worker.
+      const workerThread = worker.threadId;
+      if (!Number.isSafeInteger(workerThread) || workerThread <= 0) throw bootstrapUnknown();
       await new Promise<void>((accept, reject) => {
         rejectWait = reject;
         worker!.on("message", message => {
           if (cancelled) return;
           if (message?.attempt !== record.attempt || message?.state !== "prepared") { stop(); return; }
           try {
-            prepared = readBootstrapRecord(join(home, ".store-bootstrap", `${record.attempt}.prepared.json`));
-            if (prepared.attempt !== record.attempt || prepared.state !== "prepared" || prepared.home !== home || prepared.file !== file ||
-                !sameBootstrapIdentity(prepared.original, record.original) || prepared.pid !== record.pid || prepared.workerThread !== worker!.threadId || prepared.processIdentity !== identity || !prepared.files || !prepared.namespace) throw bootstrapUnknown();
+            const mismatch = (reason: string) => Object.assign(bootstrapUnknown(), { bootstrapStage: "prepared-record-validation", bootstrapFailure: reason });
+            try { prepared = readBootstrapRecord(join(home, ".store-bootstrap", `${record.attempt}.prepared.json`)); }
+            catch { throw mismatch("unreadable-prepared-record"); }
+            if (prepared.attempt !== record.attempt || prepared.state !== "prepared") throw mismatch("attempt-or-state");
+            if (prepared.home !== home || prepared.file !== file) throw mismatch("destination");
+            if (!sameBootstrapIdentity(prepared.original, record.original)) throw mismatch("original-files");
+            if (prepared.pid !== record.pid) throw mismatch("process");
+            if (prepared.workerThread !== workerThread) throw mismatch("worker-thread");
+            if (prepared.processIdentity !== identity) throw mismatch("process-incarnation");
+            if (!prepared.files || !prepared.namespace) throw mismatch("missing-prepared-proof");
           } catch (error) { cancelled = error; stop(); }
         });
-        worker!.on("error", () => { cancelled ??= bootstrapUnknown(); stop(); });
+        worker!.on("error", error => { cancelled ??= bootstrapWorkerFailure(error); stop(); });
         worker!.once("exit", code => {
           if (cancelled || code !== 0 || !prepared) reject(cancelled ?? bootstrapUnknown());
           else { try { check(); accept(); } catch (error) { reject(error); } }
