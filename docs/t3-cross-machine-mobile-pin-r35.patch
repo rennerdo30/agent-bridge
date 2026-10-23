@@ -1,0 +1,212 @@
+--- a0c27f1f6f9cc40278481ac07b87f11eceeab6c5:src/core/broker.ts:startServices (normalized)
++++ 7c0538623ef3d6361d80b260e675343aae448012:src/core/broker.ts:startServices (normalized)
+@@
+-{
+-check();
+-await this.nativeChildren.recover(check); check();
+-if (this.jobsPath) void startBrokerJobRunIndex(dirname(this.jobsPath), check).catch(error => this.log.warn("job run index preparing", { err: String(error) }));
+-if (this.jobsPath && this.store.file !== ":memory:") optional("job archive worker", () => { this.jobArchiveBackground = new JobArchiveBackground(this.jobsPath!, this.log); });
+-optional("backups", () => this.store.startBackups());
+-check(); this.healthMonitor.start();
+-optional("handoff replay", () => this.applyHandoffs());
+-check(); this.purgeTimer = setInterval(() => this.purge(), PURGE_INTERVAL_MS);
+-this.purgeTimer.unref();
+-// Config toggles pause the monitor and later resume its durable cursors.
+-// The environment kill switch intentionally disables even the worker.
+-if (this.store.file !== ":memory:" && !["false", "0"].includes(process.env.AGENT_BRIDGE_HISTORY_INGEST ?? "")) optional("history worker", () => {
+-const history = new HistoryBackground(this.store.file, this.log);
+-this.historyBackground = history;
+-this.store.historyPeerSink = (peer) => this.historyBackground?.rememberPeer(peer);
+-this.store.historyMessageSink = () => this.historyBackground?.messageArrived();
+-void history.reconcileAsks().catch(error => this.log.debug("startup ask reconciliation deferred", { error: String(error) }));
+-});
+-check(); this.purge(); check();
+-this.log.info("broker listening", { pipe: this.pipePath });
+-if (this.store.file !== ":memory:" && existsSync(join(dirname(this.store.file),QUESTIONS_FILE))) optional("owner questions", () => { this.ownerQuestions(); });
+-// Another broker may have enabled or changed pairing since this session started.
+-check(); if (this.networking) this.networking.config = readNetworkConfig(this.networking.home, this.networking.config);
+-if (this.networking?.config.enabled) {
+-try {
+-this.network = new NetworkService(this.networking.home, this.networking.config, {
+-peers: () => this.dashboardPeers(),
+-receive: (message, destination) => this.receiveRemote(message, destination),
+-notify: (message, origin) => this.receiveNotification(message, origin),
+-captureNotification: name => this.captureNotificationRecipient(name),
+-pinDestination: (message, destination) => this.store.pinDestination(message, destination),
+-pinnedDestinations: id => this.store.pinnedDestinations(id),
+-receipt: (id, sender, recipient, source) => this.remoteReceipt(id, sender, recipient, source),
+-recipientReceipts: true,
+-}, this.log);
+-this.installRemoteJobs(this.network);
+-check(); await this.network.start(true, check, signal); check();
+-} catch (err) {
+-this.remoteDashboard?.close();
+-this.remoteDashboard = null;
+-this.remoteJobs?.close();
+-this.remoteJobs = null;
+-this.decisionSync?.close();
+-this.decisionSync = null;
+-await this.network?.close();
+-this.network = null;
+-check();
+-this.log.warn("networking could not start; local broker remains available", { message: (err as Error).message });
+-}
+-}
+-}
++{
++check();
++await this.nativeChildren.recover(check); check();
++// Another broker may have enabled or changed pairing since this session started.
++check(); if (this.networking) this.networking.config = readNetworkConfig(this.networking.home, this.networking.config);
++if (this.networking?.config.enabled) {
++try {
++this.network = new NetworkService(this.networking.home, this.networking.config, {
++peers: () => this.dashboardPeers(),
++receive: (message, destination) => this.receiveRemote(message, destination),
++notify: (message, origin) => this.receiveNotification(message, origin),
++captureNotification: name => this.captureNotificationRecipient(name),
++pinDestination: (message, destination) => this.store.pinDestination(message, destination),
++pinnedDestinations: id => this.store.pinnedDestinations(id),
++receipt: (id, sender, recipient, source) => this.remoteReceipt(id, sender, recipient, source),
++recipientReceipts: true,
++}, this.log);
++this.installRemoteJobs(this.network);
++check(); await this.network.start(true, check, signal); check();
++} catch (err) {
++this.remoteDashboard?.close();
++this.remoteDashboard = null;
++this.remoteJobs?.close();
++this.remoteJobs = null;
++this.decisionSync?.close();
++this.decisionSync = null;
++await this.network?.close();
++this.network = null;
++check();
++this.log.warn("networking could not start; local broker remains available", { message: (err as Error).message });
++}
++}
++}
+
+--- a0c27f1f6f9cc40278481ac07b87f11eceeab6c5:src/core/broker.ts:abortStartup (normalized)
++++ 7c0538623ef3d6361d80b260e675343aae448012:src/core/broker.ts:abortStartup (normalized)
+@@
+-{
+-this.healthMonitor.close();
+-if (this.purgeTimer) clearInterval(this.purgeTimer);
+-this.purgeTimer = null;
+-this.questions?.close(); this.questions = null;
+-const jobs = this.jobsPath ? stopJobRunBackfill(dirname(this.jobsPath)) : undefined;
+-const historyOwner = this.historyBackground, archiveOwner = this.jobArchiveBackground, networkOwner = this.network;
+-const history = historyOwner?.close().then(() => { if (this.historyBackground === historyOwner) this.historyBackground = null; });
+-const archive = archiveOwner?.close().then(() => { if (this.jobArchiveBackground === archiveOwner) this.jobArchiveBackground = null; });
+-const backups = this.store.closeBackups(), network = networkOwner?.close().then(() => { if (this.network === networkOwner) this.network = null; }), tcp = this.stopTcpFallback();
+-const results = await Promise.allSettled([jobs, history, archive, backups, network, tcp]);
+-this.remoteDashboard?.close(); this.remoteDashboard = null;
+-this.remoteJobs?.close(); this.remoteJobs = null;
+-this.decisionSync?.close(); this.decisionSync = null;
+-for (const c of this.conns) c.socket.destroy();
+-this.conns.clear();
+-const server = this.server;
+-this.server = null;
+-if (server) await new Promise<void>((r) => server.close(() => r()));
+-if (results.some(result => result.status === "rejected")) throw new Error("Partial broker service cleanup is unproven; exact startup owner retained.");
+-}
++{
++await this.cancelServingMaintenance();
++this.healthMonitor.close();
++if (this.purgeTimer) clearInterval(this.purgeTimer);
++this.purgeTimer = null;
++this.questions?.close(); this.questions = null;
++const jobs = this.jobsPath ? stopJobRunBackfill(dirname(this.jobsPath)) : undefined;
++const historyOwner = this.historyBackground, archiveOwner = this.jobArchiveBackground, networkOwner = this.network;
++const history = historyOwner?.close().then(() => { if (this.historyBackground === historyOwner) this.historyBackground = null; });
++const archive = archiveOwner?.close().then(() => { if (this.jobArchiveBackground === archiveOwner) this.jobArchiveBackground = null; });
++const backups = this.store.closeBackups(), network = networkOwner?.close().then(() => { if (this.network === networkOwner) this.network = null; }), tcp = this.stopTcpFallback();
++const results = await Promise.allSettled([jobs, history, archive, backups, network, tcp]);
++this.remoteDashboard?.close(); this.remoteDashboard = null;
++this.remoteJobs?.close(); this.remoteJobs = null;
++this.decisionSync?.close(); this.decisionSync = null;
++for (const c of this.conns) c.socket.destroy();
++this.conns.clear();
++const server = this.server;
++this.server = null;
++if (server) await new Promise<void>((r) => server.close(() => r()));
++if (results.some(result => result.status === "rejected")) throw new Error("Partial broker service cleanup is unproven; exact startup owner retained.");
++}
+
+--- a0c27f1f6f9cc40278481ac07b87f11eceeab6c5:src/core/broker.ts:close (normalized)
++++ 7c0538623ef3d6361d80b260e675343aae448012:src/core/broker.ts:close (normalized)
+@@
+-{
+-this.healthMonitor.close();
+-this.closing = true;
+-if (this.livenessTimer) { clearInterval(this.livenessTimer); this.livenessTimer = null; }
+-if (this.idle?.timer) { clearTimeout(this.idle.timer); this.idle.timer = null; }
+-this.questions?.close(); this.questions = null;
+-this.store.stopWrites();
+-if (this.pendingJobMailRetry) clearTimeout(this.pendingJobMailRetry);
+-if (this.jobMailRerouteTimer) { clearTimeout(this.jobMailRerouteTimer); this.jobMailRerouteTimer = null; }
+-this.pendingJobMailRetry = null;
+-if (this.jobsPath) await stopJobRunBackfill(dirname(this.jobsPath));
+-await this.historyBackground?.close();
+-await this.jobArchiveBackground?.close();
+-this.jobArchiveBackground = null;
+-this.historyBackground = null;
+-await this.store.closeBackups();
+-if (this.purgeTimer) clearInterval(this.purgeTimer);
+-await this.networkChange;
+-this.remoteDashboard?.close();
+-this.remoteDashboard = null;
+-this.remoteJobs?.close();
+-this.remoteJobs = null;
+-this.decisionSync?.close();
+-this.decisionSync = null;
+-await this.network?.close();
+-this.network = null;
+-for (const c of this.conns) c.socket.destroy();
+-this.conns.clear();
+-await this.stopTcpFallback();
+-const server = this.server;
+-this.server = null;
+-if (server) await new Promise<void>((r) => server.close(() => r()));
+-await this.pendingJobMailRoute?.catch((err) => this.log.warn("pending mail route stopped", { err: String(err) }));
+-this.store.close();
+-this.log.info("broker closed");
+-}
++{
++this.healthMonitor.close();
++this.closing = true;
++await this.cancelServingMaintenance();
++if (this.livenessTimer) { clearInterval(this.livenessTimer); this.livenessTimer = null; }
++if (this.idle?.timer) { clearTimeout(this.idle.timer); this.idle.timer = null; }
++this.questions?.close(); this.questions = null;
++this.store.stopWrites();
++if (this.pendingJobMailRetry) clearTimeout(this.pendingJobMailRetry);
++if (this.jobMailRerouteTimer) { clearTimeout(this.jobMailRerouteTimer); this.jobMailRerouteTimer = null; }
++this.pendingJobMailRetry = null;
++if (this.jobsPath) await stopJobRunBackfill(dirname(this.jobsPath));
++await this.historyBackground?.close();
++await this.jobArchiveBackground?.close();
++this.jobArchiveBackground = null;
++this.historyBackground = null;
++await this.store.closeBackups();
++if (this.purgeTimer) clearInterval(this.purgeTimer);
++await this.networkChange;
++this.remoteDashboard?.close();
++this.remoteDashboard = null;
++this.remoteJobs?.close();
++this.remoteJobs = null;
++this.decisionSync?.close();
++this.decisionSync = null;
++await this.network?.close();
++this.network = null;
++for (const c of this.conns) c.socket.destroy();
++this.conns.clear();
++await this.stopTcpFallback();
++const server = this.server;
++this.server = null;
++if (server) await new Promise<void>((r) => server.close(() => r()));
++await this.pendingJobMailRoute?.catch((err) => this.log.warn("pending mail route stopped", { err: String(err) }));
++this.store.close();
++this.log.info("broker closed");
++}

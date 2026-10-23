@@ -90,7 +90,8 @@ remote recipient or accepted runner-input format. Do not claim old remote hosts
 have new cold-store guarantees; no separate wire bypass has been demonstrated.
 If implementation finds one, stop that dependent scope and return concrete proof.
 
-Gate is a proposal until approval. Unaffected producer deferral, parent-chain
+Parent approved this source-only gate on 2026-10-23 after reading d18a6e75.
+Unaffected producer deferral, parent-chain
 durability and red schedules can proceed. Before green: old9/component4 refusal,
 fresh10/component5 provenance, explicit isolated no-loss upgrade/interruption,
 complete/partial backup/restore, missing whole directory between final guards and
@@ -99,3 +100,21 @@ commit/tree/PID/deadline/exit receipts go to AB458; independent R35 full design 
 hosted actual-worker/full/lifecycle/native acceptance remain mandatory. Historical
 WMI late-Create, Windows availability and earlier runtime causes remain separate
 unresolved gates; do not infer no-start from helper termination/nonreadiness.
+
+## Approved preservation-only full-backup boundary
+
+Parent approved refusal of provenance-bound full restore before any maintenance
+lease, metadata close, recovery directory, rename or write. Both ordinary and
+cold provenance bind original identities. A copied snapshot has new inodes;
+confirmation cannot grant a reconstructed generation. Full backups include the
+original provenance/namespace and exact external anchor plus preparing/prepared/
+exited bytes, verified against an unchanged source expectation and the copied
+metadata snapshot before publication. This is archive/preservation verification,
+not supported full restoration. Incomplete or changing proof remains unpublished.
+
+AB-461 owns a separately reviewed durable owner-coordinated isolated offline
+restore-generation design. No such transition, automatic copy/split/reexecution
+or installed restore is implemented here. Existing genuinely unbound raw backups
+retain their legacy path only if no bridge/mailbox authority is present; missing
+or old metadata is never reclassified into ordinary provenance. Scoped message
+table merges keep their existing ownership, namespace and direction fences.
