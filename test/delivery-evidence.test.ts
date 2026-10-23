@@ -63,3 +63,15 @@ it("bounds protocol source and numeric connection evidence without getters or ca
     .toEqual({ source: "native-attestation" });
   expect(getter).not.toHaveBeenCalled();
 });
+
+it.each([
+  ["retained by an unproven storage reader", "storage-reader"],
+  ["active with unverified pipe ownership", "prior-endpoint"],
+  ["a component2 metadata store whose cached inactive writers require explicit owner-coordinated offline migration into an isolated home", "legacy-storage"],
+])("classifies only bounded startup refusal families: %s", (reason, source) => {
+  const message = `Prior Core endpoint PRIVATE_PATH is ${reason}; owner-coordinated shutdown is required.`;
+  const evidence = deliveryFailure({ code: "protocol_mismatch", message });
+  expect(evidence.protocol).toEqual({ source });
+  expect(JSON.stringify(evidence)).not.toContain("PRIVATE_PATH");
+  expect(deliveryFailure({ code: "protocol_mismatch", message: "x".repeat(4096) + message }).protocol).toEqual({ source: "unspecified" });
+});

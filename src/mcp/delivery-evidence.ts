@@ -6,7 +6,7 @@ const failureCode = z.enum(["unauthorized", "unknown_target", "job_index_prepari
   "not_registered", "protocol_mismatch", "ambiguous_target", "ELEASEBUSY", "OWNER_QUIESCED", "OWNER_UNAVAILABLE", "STORE_UPGRADE_DEFERRED", "STORE_READER_ACTIVE",
   "STORE_OFFLINE_REQUIRED", "SQLITE_BUSY", "SQLITE_LOCKED", "ERR_SQLITE_ERROR", "other"]);
 const protocolEvidenceSchema = z.object({
-  source: z.enum(["version", "native-attestation", "frontend-attestation", "mailbox-attestation", "schema-admission", "unsupported-operation", "handover", "unspecified"]),
+  source: z.enum(["version", "native-attestation", "frontend-attestation", "mailbox-attestation", "schema-admission", "unsupported-operation", "handover", "prior-endpoint", "storage-reader", "legacy-storage", "unspecified"]),
   operation: z.enum(["tracked_send", "legacy_send", "auth_hello", "ack", "status_read", "other"]).optional(),
   connectionGeneration: z.number().int().min(1).max(2_147_483_647).optional(),
   clientProtocol: z.number().int().min(0).max(65_535).optional(), brokerProtocol: z.number().int().min(0).max(65_535).optional(),
@@ -94,7 +94,10 @@ export function deliveryFailure(error: unknown): Pick<DeliveryEvidence, "code" |
   const source = /broker speaks protocol/.test(message) ? "version" : /did not attest the exact native identity/.test(message) ? "native-attestation" :
     /did not attest the exact T3 frontend/.test(message) ? "frontend-attestation" : /lacks schema14 local mailbox provenance/.test(message) ? "mailbox-attestation" :
     /requires schema14 ownership/.test(message) ? "schema-admission" : /unknown op:|does not support \w+ required/.test(message) ? "unsupported-operation" :
-    /broker is stopping/.test(message) ? "handover" : "unspecified";
+    /broker is stopping/.test(message) ? "handover" :
+    /Prior Core endpoint .* is retained by an unproven storage reader;/.test(message) ? "storage-reader" :
+    /Prior Core endpoint .* is (?:a pre-lease schema2\/3 store|a component[12] metadata store)/.test(message) ? "legacy-storage" :
+    /Prior Core endpoint .* is (?:unresponsive|active|inaccessible|not a verified private socket)/.test(message) ? "prior-endpoint" : "unspecified";
   const observed = dataField(dataField(error, "details"), "protocolObservation");
   const protocol: z.infer<typeof protocolEvidenceSchema> = { source };
   const operation = dataField(observed, "operation");

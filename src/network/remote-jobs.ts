@@ -43,6 +43,7 @@ interface MirrorIntent { options: RunFeedOptions; snapshot: RemoteJobSnapshot; c
 interface StartingOperation {
   pair: string; peer: string; supervisor: string; route: RemoteSupervisorRoute; settled: Promise<void>; release: () => void; record?: RemoteRecord;
   controller: AbortController; turn: number; incarnation: string; request: Extract<RemoteJobRequest, { op: "spawn" }>;
+  eligible?: boolean; previous?: RemoteRecord; failure?: unknown;
   cancelRequested?: boolean; cancelEvidence?: boolean; effectAttempted?: boolean; result?: RemoteJobSnapshot;
 }
 
@@ -224,10 +225,11 @@ export class RemoteJobs {
         // interrupts this original admission; other operations wait for it.
         if (starting.pair !== pair.id || starting.peer !== frame.peer.id || starting.supervisor !== frame.peer.supervisor ||
             JSON.stringify(starting.route) !== JSON.stringify(returnRoute)) throw new Error("Remote job belongs to another supervisor.");
-        if (frame.request.op === "control" && frame.request.control.type === "cancel") this.cancelAdmission(starting, frame.request);
+        if (frame.request.op === "control" && frame.request.control.type === "cancel" && starting.eligible) this.cancelAdmission(starting, frame.request);
         await starting.settled;
         if (this.closed) throw new Error("Remote jobs link closed before operation admission.");
         if (!this.network.peerSupports(pair.id, REMOTE_RUNNER_LEDGER_CAPABILITY)) throw unsupportedRunnerLedger();
+        if (starting.failure) throw starting.failure;
         if (JSON.stringify(this.returnRoute(pair, frame.peer)) !== JSON.stringify(returnRoute))
           throw new Error("Remote job belongs to the original authenticated supervisor binding.");
         if (frame.request.op === "control" && frame.request.control.type === "cancel" && starting.cancelRequested && starting.result) {
@@ -248,17 +250,23 @@ export class RemoteJobs {
       }
       let value: RemoteJobSnapshot;
       try {
+        let cancelledBeforeStart = false;
         try { value = await this.handle(pair, frame.peer, frame.request, returnRoute, reservation); }
         catch (error) {
           // Only this live admission can prove cancellation before the actual
           // publication/launch boundary. An attempted effect stays unknown.
-          if (!reservation?.cancelEvidence || reservation.effectAttempted || this.closed ||
+          if (!reservation?.eligible || !reservation.cancelEvidence || !reservation.cancelRequested || !reservation.controller.signal.aborted ||
+              reservation.effectAttempted || this.starting.get(frame.request.job) !== reservation || this.records.get(frame.request.job) !== reservation.previous || this.closed ||
               !this.network.peerSupports(pair.id, REMOTE_RUNNER_LEDGER_CAPABILITY) ||
-              JSON.stringify(this.returnRoute(pair, frame.peer)) !== JSON.stringify(returnRoute)) throw error;
+              JSON.stringify(this.returnRoute(pair, frame.peer)) !== JSON.stringify(returnRoute)) {
+            if (reservation) reservation.failure = error;
+            throw error;
+          }
+          cancelledBeforeStart = true;
           value = { state: { pid: 0, peer: `${reservation.request.target}-job-${frame.request.job}`, status: "cancelled", updatedAt: Date.now(), delivered: false },
             alive: false, approvals: [], usageTurn: reservation.request.usageTurn };
         }
-        if (reservation) { reservation.record = this.records.get(frame.request.job); reservation.result = value; }
+        if (reservation) { reservation.record = cancelledBeforeStart ? undefined : this.records.get(frame.request.job); reservation.result = value; }
       }
       finally {
         if (reservation && this.starting.get(frame.request.job) === reservation) this.starting.delete(frame.request.job);
@@ -275,6 +283,10 @@ export class RemoteJobs {
    * also read by prior v2 writers at preclaim/spec publication; no new optional
    * field may be the sole barrier against a restarted or older writer. */
   private cancelAdmission(starting: StartingOperation, request: Extract<RemoteJobRequest, { op: "control" }>): void {
+    const pending = this.pendingStarts.get(request.job);
+    if (!starting.eligible || starting.failure || this.starting.get(request.job) !== starting ||
+        (pending ? pending.controller !== starting.controller || this.records.get(request.job) !== pending.record : this.records.get(request.job) !== starting.previous))
+      throw new Error("Original remote admission is not eligible for this cancellation");
     if (starting.cancelRequested) return;
     if (!starting.effectAttempted) {
       metadataDb(this.home);
@@ -291,7 +303,6 @@ export class RemoteJobs {
       starting.cancelEvidence = true;
     }
     starting.cancelRequested = true;
-    const pending = this.pendingStarts.get(request.job);
     if (pending?.controller === starting.controller) pending.cancelRequested = true;
     starting.controller.abort(new Error("Remote job not_started: cancelled before detached runner startup"));
   }
@@ -330,6 +341,10 @@ export class RemoteJobs {
       if (Object.keys(settings).length) { const parsed = parseJobSettings(settings, request.target); if (typeof parsed === "string") throw new Error(parsed); parsedSettings = parsed; }
       let args: DelegateArgs = { ...request.args, ...(request.target === "codex" ? { native_subagents: request.args.native_subagents ?? cfg.codexSubagents } : {}) };
       let cwd = allowedRemoteDirectory(args.cwd!, policy.allowRoots);
+      // Eligibility is a proven generation, not merely a reserved job ID. This
+      // synchronous boundary precedes the first pre-record await and follows
+      // original-record ownership, retained-evidence, liveness and policy checks.
+      if (starting) { starting.previous = record; starting.eligible = true; }
       for (const directory of await gitDirsOutside(cwd, this.log) ?? []) allowedRemoteDirectory(directory, policy.allowRoots);
       current();
       let worktree: Worktree | null = null;

@@ -95,6 +95,53 @@ function neverQuery() {
 }
 const host = { pid: null, peer: "detached-fixture", startedAt: Date.now() };
 
+it.each(["same", "foreign-supervisor", "foreign-pair"])("never lets a rejected concurrent spawn/cancel poison an existing live generation: %s", async owner => {
+  remote.close();
+  const originalPair = { id: randomUUID(), name: "paired", fingerprint: "a".repeat(64) };
+  const otherPair = { id: randomUUID(), name: "foreign", fingerprint: "b".repeat(64) };
+  const other = { id: "other-supervisor", name: "other", supervisor: "other-session" };
+  const peers = [fixtureRemotePeer(home, originalPair, { ...peer, sessionId: peer.supervisor }),
+    fixtureRemotePeer(home, originalPair, { ...other, sessionId: other.supervisor }), fixtureRemotePeer(home, otherPair, { ...other, sessionId: other.supervisor })];
+  const config = JSON.parse(readFileSync(join(home, "config.json"), "utf8")); config.network.remoteJobs.allowPeers.push("foreign");
+  writeFileSync(join(home, "config.json"), JSON.stringify(config));
+  let receive!: (payload: any, pair: any) => Promise<void>;
+  const replies = new Map<string, (response: any) => void>();
+  remote = new RemoteJobs({ peerSupports: () => true, peers: () => peers, registerExtension: (_type: string, _cap: string, handler: typeof receive) => { receive = handler; },
+    sendExtension: async (_host: string, _type: string, raw: any) => { const frame = remoteJobWireSchema.parse(raw); replies.get(frame.rid)!(frame); } } as any, home, nullLogger, control);
+  const wire = (request: RemoteJobRequest, sender = peer, pair = originalPair) => new Promise<any>((resolve, reject) => {
+    const rid = randomUUID(); replies.set(rid, resolve); void receive({ kind: "request", rid, peer: sender, request }, pair).catch(reject);
+  });
+  const launch = vi.spyOn(JobRunners.prototype, "start").mockImplementation((job, spec) => {
+    publishRunnerSpec(home, job.id, { ...spec, home, job: { ...job, controller: undefined } });
+    writeRunnerState(home, job.id, { pid: 0, peer: job.name, status: "running", sessionId: "original-native-session", updatedAt: Date.now() }); return host;
+  });
+  vi.spyOn(JobRunners.prototype, "alive").mockImplementation((_job, state) => state?.status === "running");
+  expect((await wire(request("1234abcd", "Exact original live task"))).value).toMatchObject({ alive: true, state: { status: "running" } });
+  const original = (remote as any).records.get("1234abcd"), originalSpec = readOriginalRunnerSpec(home, "1234abcd"), originalState = readRunnerState(home, "1234abcd");
+  const bytes = readFileSync(join(home, "remote-jobs.json")), sender = owner === "same" ? peer : other, pair = owner === "foreign-pair" ? otherPair : originalPair;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    // Consecutive callbacks model frames already queued in the same received
+    // socket buffer. Do not await the spawn's synchronous rejection first.
+    const spawn = wire(request("1234abcd", "Rejected replacement must never own cancellation"), sender, pair);
+    const cancel = wire({ op: "control", job: "1234abcd", control: { type: "cancel" } }, sender, pair);
+    const results = await Promise.all([spawn, cancel]);
+    expect(results.every(result => result.value === undefined)).toBe(true);
+    expect(results.map(result => result.error)).toEqual(Array(2).fill(expect.stringContaining(owner === "same" ? "already running" : "another supervisor")));
+    expect(existsSync(join(home, "remote-job-states", "1234abcd.json"))).toBe(false);
+    expect((remote as any).records.get("1234abcd")).toBe(original); expect(original.job.controller.signal.aborted).toBe(false);
+    expect(readFileSync(join(home, "remote-jobs.json"))).toEqual(bytes); expect(readOriginalRunnerSpec(home, "1234abcd")).toEqual(originalSpec);
+    expect(readRunnerState(home, "1234abcd")).toEqual(originalState); expect(control).not.toHaveBeenCalled(); expect(launch).toHaveBeenCalledOnce();
+  }
+  expect((await wire({ op: "state", job: "1234abcd" })).value).toMatchObject({ alive: true, state: { status: "running" } });
+  if (owner === "same") {
+    await wire({ op: "control", job: "1234abcd", control: { type: "cancel" } });
+    expect(control).toHaveBeenCalledExactlyOnceWith({ owner: "paired/sender", name: "codex-job-1234abcd", id: "1234abcd" }, { type: "cancel" },
+      { kind: "remote-job-control", operation: "1234abcd", owner: `native:${peers[0]!.nativeOwner}`,
+        source: { kind: "remote", hostId: originalPair.id, hostFingerprint: originalPair.fingerprint } });
+    expect(existsSync(join(home, "remote-job-states", "1234abcd.json"))).toBe(false);
+  }
+});
+
 it.each(["reader", "pre-record", "duplicate", "foreign", "restart", "held-control", "failed-retention"])("wire cancellation aborts original suspended admission before publication and cannot launch after release: %s", async phase => {
   remote.close(); metadataDb(home);
   const paired = { id: randomUUID(), name: "paired", fingerprint: "a".repeat(64) };

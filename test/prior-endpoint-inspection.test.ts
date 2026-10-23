@@ -11,18 +11,21 @@ import { nullLogger } from "../src/core/logger.js";
 import { BridgeNode } from "../src/core/node.js";
 import { guardPriorEndpoints, priorEndpoints } from "../src/core/prior-endpoints.js";
 import { BridgeError } from "../src/core/protocol.js";
+import { assertCompatibleMailboxReaders, storageLease } from "../src/core/storage-lock.js";
+import { deliveryFailure } from "../src/mcp/delivery-evidence.js";
 
-const io = vi.hoisted(() => ({ connect: vi.fn(), lstat: vi.fn(), actualLstat: undefined as any }));
+const io = vi.hoisted(() => ({ connect: vi.fn(), lstat: vi.fn(), write: vi.fn(), actualLstat: undefined as any, actualWrite: undefined as any }));
 vi.mock("node:net", async original => ({ ...await original<typeof import("node:net")>(), connect: io.connect }));
 vi.mock("node:fs", async original => {
-  const actual = await original<typeof import("node:fs")>(); io.actualLstat = actual.lstatSync;
-  return { ...actual, lstatSync: io.lstat };
+  const actual = await original<typeof import("node:fs")>(); io.actualLstat = actual.lstatSync; io.actualWrite = actual.writeSync;
+  return { ...actual, lstatSync: io.lstat, writeSync: io.write };
 });
 let home: string, file: string, original: Buffer, live: string | undefined;
 let inspections = 0, busy = 0;
 const sockets: { destroyed: boolean }[] = [];
 beforeEach(() => {
   live = undefined; inspections = 0; busy = 0; sockets.length = 0;
+  io.write.mockImplementation(io.actualWrite);
   io.lstat.mockImplementation((path: string) => {
     if (path === live || live && path === dirname(live)) return {
       isSocket: () => path === live, isDirectory: () => path !== live, isSymbolicLink: () => false,
@@ -50,6 +53,32 @@ beforeEach(() => {
 afterEach(() => { vi.restoreAllMocks(); closeMetadataDbs(); io.connect.mockReset(); io.lstat.mockReset(); rmSync(home, { recursive: true, force: true }); });
 const guard = (signal?: AbortSignal) => guardPriorEndpoints(home, "fixture-current", "fixture-only-token", nullLogger, signal);
 const unchanged = () => { expect(readFileSync(file).equals(original)).toBe(true); expect(readdirSync(home)).toEqual(["bridge.db"]); };
+
+it("fails closed during actual lease publication and admits only its completed current declaration", async () => {
+  let unpublished: unknown;
+  io.write.mockImplementationOnce((...args: any[]) => {
+    // Simulate another process's census after exclusive open but before the
+    // actual owner bytes are written. No threads, load or real process launch.
+    try { assertCompatibleMailboxReaders(home); } catch (error) { unpublished = error; }
+    return io.actualWrite(...args);
+  });
+  const release = storageLease(home);
+  try {
+    expect(unpublished).toMatchObject({ code: "STORE_READER_ACTIVE" });
+    expect(() => assertCompatibleMailboxReaders(home)).not.toThrow();
+    await guard();
+    expect(readFileSync(file)).toEqual(original);
+  } finally { release(); }
+});
+
+it("distinguishes incomplete reader refusal from an endpoint version without admitting or rewriting it", async () => {
+  const fs = await import("node:fs"), dir = join(home, ".storage-users"); fs.mkdirSync(dir);
+  const lease = join(dir, `${process.pid}-incomplete-publication`); fs.writeFileSync(lease, "");
+  let refusal: unknown; try { await guard(); } catch (error) { refusal = error; }
+  expect(refusal).toMatchObject({ code: "protocol_mismatch" });
+  expect(deliveryFailure(refusal)).toEqual({ code: "protocol_mismatch", reason: "protocol-refusal", protocol: { source: "storage-reader" } });
+  expect(readFileSync(lease)).toEqual(Buffer.alloc(0)); expect(readFileSync(file)).toEqual(original);
+});
 
 it("yields through a transient read-only schema inspection busy error before admitting startup", async () => {
   busy = 1; const close = vi.spyOn(DatabaseSync.prototype, "close");

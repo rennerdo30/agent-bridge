@@ -339,11 +339,13 @@ async function paired(agent = "codex"): Promise<{ local: Client; admin: BridgeCl
   return { local, admin: a, inspector };
 }
 const textOf = (r: any) => r.content.map((c: any) => c.text).join("\n");
-async function call(client: Client, name: string, args: Record<string, unknown>): Promise<string> {
+async function call(client: Client, name: string, args: Record<string, unknown>, requireSuccess = false): Promise<string> {
   const request = Symbol(name); activeCalls.set(request, { name, at: Date.now() });
   try {
-    const text = textOf(await client.callTool({ name, arguments: args }, undefined, { timeout: TEST_TIMEOUT_MS }));
+    const response = await client.callTool({ name, arguments: args }, undefined, { timeout: TEST_TIMEOUT_MS });
+    const text = textOf(response);
     diagnosticResponses.push({ at: Date.now(), name, args, text });
+    if (requireSuccess) expect(response.isError, `${name} must be accepted before waiting for its effect`).not.toBe(true);
     return text;
   } catch (error) { diagnosticResponses.push({ at: Date.now(), name, args, error: String(error) }); throw error; }
   finally { activeCalls.delete(request); }
@@ -626,7 +628,7 @@ rl.on("line", (line) => {
     expect(outcome).toBe("answered");
     await waitFor(() => listPendingApprovals(localHome).length === 0 && listPendingApprovals(remoteHome).length === 0, 30_000, "approval-both-queues-cleared");
     expect(await answerPendingApproval(localHome, approval.id, { decision: "allow" })).toBe("expired");
-    stage("approval-cancel-rpc"); await call(local, "cancel_subagent", { job: job.name }); stage("settled:approval-cancel-rpc");
+    stage("approval-cancel-rpc"); await call(local, "cancel_subagent", { job: job.name }, true); stage("settled:approval-cancel-rpc");
     await waitFor(() => readRunnerState(remoteHome, job.id)?.status === "cancelled", 30_000, "approval-cancel-executor-state");
     await waitFor(() => !pidAlive(readRunnerState(remoteHome, job.id)!.pid), 30_000, "approval-cancel-original-pid-exit");
   }, TEST_TIMEOUT_MS);
