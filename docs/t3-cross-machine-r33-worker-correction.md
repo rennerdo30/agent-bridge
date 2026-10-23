@@ -70,3 +70,35 @@ built-worker and archive-profile acceptance still requires hosted execution.
 File-record fsync, directory publication durability and nonreserved activation
 timing remain explicit full-design review topics, not a claim of power-loss or
 complete lifecycle acceptance from these mocked tests.
+
+## Further exact053 Ubuntu full matrix
+
+Run39928854247/job120331834904: **13failed/4418passed/133skipped,
+0unhandled**. Ten checklist cases fail during setup when the deliberately
+forbidden native Worker is requested; teardown's zero-Worker-call assertion
+also catches the attempted launch. The correction isolates only the optional
+prepareColdStore transport, checking the exact fixture home/endpoint, original
+deadline and cancellation. It creates no files or prepared proof; the real final
+endpoint/reader guard, MessageStore initializer, registration and checklist
+authority handlers remain production code. All Worker/subprocess refusal and
+zero-call assertions remain intact. No fixture prewarming or native fallback.
+
+Affected checklist cases: combined project/parent overflow; spawn brief/state;
+progress in peers; proposal approve/reject; master mid-run edits; canonical
+project spelling; agent descriptions/instructions; project-main authorization
+including unregistered/cwd mismatch; non-hook instructions; remote explicit
+checklist refusal. Original scenario/security assertions are unchanged.
+
+The remaining three are the separately recorded prepared-validation/backoff
+failure, pre-amendment mobile pin failure, and actual node stop during busy
+inspection. The latter exposed a production cancellation-type regression:
+the new outer budget supplied generic Error while the original AbortController
+contract supplied AbortError. Node and daemon explicit stop now use AbortError;
+internal deadline expiry remains timeout. No assertion is broadened, no caller
+abort is swallowed, and neither protected method body changes.
+
+This steering does not renew the approved12s aggregate allowance. The prior
+correction used5071ms; any additional focused check shares the remaining6929ms,
+records a fixed external remaining deadline and reports incomplete on exhaustion.
+The ten full checklist cases and actual daemon/lifecycle/native gates remain CI
+acceptance unless explicitly selected and reported as local mocked evidence.

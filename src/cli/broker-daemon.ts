@@ -24,7 +24,7 @@ export function daemonIdleExitMs(value = process.env.AGENT_BRIDGE_DAEMON_IDLE_EX
 export async function runBrokerDaemon(home: string, pipe: string, log: Logger): Promise<number> {
   const handoff = process.env[STARTUP_DEADLINE_ENV];
   const startup = new StartupBudget(handoff === undefined ? Infinity : /^\d{13}$/.test(handoff) ? Number(handoff) : NaN);
-  const stopStartup = () => startup.abort(new Error("Daemon stopped during startup"));
+  const stopStartup = () => startup.abort(new DOMException("Daemon stopped during startup", "AbortError"));
   process.on("SIGTERM", stopStartup); process.on("SIGINT", stopStartup);
   try {
   startup.remaining();

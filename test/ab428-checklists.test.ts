@@ -70,6 +70,17 @@ vi.mock("node:worker_threads", async original => ({
   ...await original<typeof import("node:worker_threads")>(),
   Worker: vi.fn(function () { throw new Error("Worker forbidden in checklist fixture"); }),
 }));
+// Checklist fixtures prohibit every native Worker. Isolate only the optional
+// cold-preparation transport: the real final endpoint/reader guard and actual
+// MessageStore construction still prove admission and ownership. This does not
+// prewarm storage, manufacture a prepared journal or stub broker authority.
+vi.mock("../src/core/store-bootstrap.js", () => ({
+  prepareColdStore: vi.fn(async (file: string, endpoint: string, _token: string, _log: unknown, signal: AbortSignal | undefined, deadline: number) => {
+    signal?.throwIfAborted();
+    if (file !== env.db || endpoint !== env.pipe || !Number.isFinite(deadline) || deadline <= Date.now())
+      throw new Error("Checklist preparation fixture received an unowned or expired startup");
+  }),
+}));
 
 vi.mock("node:sqlite", async original => {
   const actual = await original<typeof import("node:sqlite")>();

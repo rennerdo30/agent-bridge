@@ -354,7 +354,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   }
 
   private async elect(): Promise<void> {
-    const startup = new StartupBudget(), stopped = () => startup.abort(new Error("Node stopped during startup"));
+    const startup = new StartupBudget(), stopped = () => startup.abort(new DOMException("Node stopped during startup", "AbortError"));
     this.once("stopped", stopped);
     if (this.stopping) stopped();
     try {
