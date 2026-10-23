@@ -2,14 +2,14 @@
   "base": "8deb0286773a6b61243caaae237e16227dc2f591",
   "methods": {
     "src/core/broker.ts:constructor": "942e12b5a088935e829a232a97984c1e67a68baed145cc6e41fc626376972d27",
-    "src/core/broker.ts:listen": "bd39e0afecb5a74d76161f26d5923f2c1e41da8cc490ed1448a9260b850ce4b0",
+    "src/core/broker.ts:listen": "4f8cb41d80881723a281672dabc21821729668d0c896c6d956eb386dc765f4e1",
     "src/core/broker.ts:startServices": "747bad4009529a7c6c8fb150580ce5ed37d66ba5ac3b6f651a6f06ad865b18d7",
     "src/core/broker.ts:abortStartup": "6132967fa78fd39cff064a581f4f49bb9c1c75b644fba78b291708c58733118c",
     "src/core/broker.ts:close": "fb5a92326cac082ae181f38208c0af708a2b342297038d021f67a13bcd8b9b27",
     "src/core/node.ts:constructor": "c70bf3e865405166e195839fd1b315548b5a0a56847db0bba52eba72d0b691f5",
     "src/core/node.ts:start": "b504e47bab8d53e8bb71ad3457594988c38cc78bed67e2b1be3e197bc1f5066a",
     "src/core/node.ts:stop": "b98b5631cf7643be62bce61fac172fc79c0da09db2c7720abf14502736b57359",
-    "src/core/node.ts:tryBecomeBroker": "0703c468cdaf390be07a5d4015e455a66738b230b86084993718847ea85a116f",
+    "src/core/node.ts:tryBecomeBroker": "ce203d2b515ceabf13e51a123d81cb1b7cf3c319fcbb47e28284357459f078d4",
     "src/cli/dashboard.ts:constructor": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
     "src/cli/dashboard.ts:open": "6eacbb835304e2a5d3c303c54c3c674910cbf4f9a5411b3af62a7747fe2d211b",
     "src/cli/dashboard.ts:ensure": "d19ca8a9485ccc07d588997e3497bc11545e730a264e9a6f59bf1ceb0dfcda49",
@@ -17,6 +17,24 @@
   },
   "uiSha256": "f2a5b28254d4bb467f28bdee139e3b23bd9d4bd0c7c15fee116b4ed85a6ac385",
   "updates": {
+    "AB-458-R33": {
+      "sourceCommit": "1c9876df4ef2f8ff3c9cccfb1dca7fd613bec293",
+      "sourceTree": "3f373864185f9c3c251e360e8adf071b74962708",
+      "artifactCommit": "053049e53294466c9cfe9952fe12af0b6f4b5ea4",
+      "changes": [
+        {
+          "method": "src/core/broker.ts:listen",
+          "previous": "bd39e0afecb5a74d76161f26d5923f2c1e41da8cc490ed1448a9260b850ce4b0",
+          "current": "4f8cb41d80881723a281672dabc21821729668d0c896c6d956eb386dc765f4e1"
+        },
+        {
+          "method": "src/core/node.ts:tryBecomeBroker",
+          "previous": "0703c468cdaf390be07a5d4015e455a66738b230b86084993718847ea85a116f",
+          "current": "ce203d2b515ceabf13e51a123d81cb1b7cf3c319fcbb47e28284357459f078d4"
+        }
+      ],
+      "reason": "Parent 2026-10-23 exact normalized two-method review and binary Git blob verification at the frozen source/artifact above. One original outer startup budget, guarded isolated initializer and a fresh final admission; listen checks before activation after services await, and tryBecomeBroker forwards the stop-bound budget and closes late owned stores. Exact CRLF worktree and committed blob hashes are separately recorded in the R33 manifest. Other eleven methods, UI hash, normalizer, assertions and prior attribution remain unchanged. Preservation-baseline approval only: fresh independent full design/correction review must assess nonreserved activation, late native effects/cancellation, journal durability and final proof; hosted worker/full/lifecycle acceptance remains required. No installed migration, update, release or local native launch is authorized."
+    },
     "AB-428": {
       "base": "42ac9a2b8018fe9abe5adac196b4a770e54290a0",
       "sourceCommit": "82b5730c76edc587e69b693b9325d2ac94a85fc6",
