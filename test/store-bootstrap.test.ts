@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, renameSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -12,6 +12,27 @@ import { makeEnv, type TestEnv } from "./helpers.js";
 
 const wire = vi.hoisted(() => ({ starts: 0, before: undefined as undefined | (() => Promise<void>),
   after: undefined as undefined | (() => Promise<void>), wrong: false, workers: [] as any[], stage: "idle", kernelThread: 0, error: undefined as unknown, exitedBeforeMessage: false, wrongThread: false }));
+const directoryIo = vi.hoisted(() => ({ next: 2_000_000_000, handles: new Map<number, string>(), files: new Map<number, string>(), failure: "", syncs: [] as string[], mutateRead: undefined as undefined | ((path: string) => void) }));
+// Explicit simulated directory-durability capability, never evidence that a
+// Windows filesystem supports directory fsync. Ordinary file IO stays real.
+vi.mock("node:fs", async original => {
+  const actual = await original<typeof import("node:fs")>();
+  return { ...actual,
+    openSync: (...args: Parameters<typeof actual.openSync>) => {
+      const path = String(args[0]);
+      if (actual.existsSync(path) && actual.lstatSync(path).isDirectory()) { const fd = directoryIo.next++; directoryIo.handles.set(fd, path); return fd; }
+      const fd = actual.openSync(...args); directoryIo.files.set(fd, path); return fd;
+    },
+    fstatSync: (fd: number, options?: any) => directoryIo.handles.has(fd) ? actual.lstatSync(directoryIo.handles.get(fd)!, options) : actual.fstatSync(fd, options),
+    fsyncSync: (fd: number) => { const path = directoryIo.handles.get(fd); if (!path) return actual.fsyncSync(fd);
+      directoryIo.syncs.push(path); if (directoryIo.failure && (directoryIo.failure === "all" || path.endsWith(".store-bootstrap"))) throw Object.assign(new Error("Controlled directory publication unavailable"), { code: "ENOTSUP" }); },
+    closeSync: (fd: number) => { if (directoryIo.handles.delete(fd)) return; directoryIo.files.delete(fd); return actual.closeSync(fd); },
+    readSync: (fd: number, buffer: Buffer, offset: number, length: number, position: number) => {
+      const count = actual.readSync(fd, buffer, offset, length, position), path = directoryIo.files.get(fd);
+      if (path) directoryIo.mutateRead?.(path); return count;
+    },
+  };
+});
 vi.mock("node:worker_threads", async original => {
   const actual = await original<typeof import("node:worker_threads")>(), { EventEmitter } = await import("node:events");
   return { ...actual, get threadId() { return wire.kernelThread; }, Worker: class extends EventEmitter {
@@ -61,6 +82,7 @@ let env: TestEnv, opened: MessageStore | undefined, clock: number, start: number
 let pendingDiagnostic: ReturnType<typeof setTimeout>, fixtureNumber = 0;
 const deferred = () => { let release!: () => void; const promise = new Promise<void>(done => { release = done; }); return { promise, release }; };
 beforeEach(() => {
+  directoryIo.failure = ""; directoryIo.syncs = []; directoryIo.mutateRead = undefined;
   const number = ++fixtureNumber; wire.stage = "setup";
   pendingDiagnostic = setTimeout(() => console.error("Mock cold-bootstrap pending", { fixture: number, stage: wire.stage }), 1000);
   env = makeEnv(); schemaMs = 2400; ddl = 0; wire.starts = 0; wire.workers = []; wire.before = undefined; wire.after = undefined; wire.wrong = false; wire.error = undefined; wire.exitedBeforeMessage = false; wire.wrongThread = false;
@@ -76,9 +98,41 @@ afterEach(async () => {
   clearTimeout(pendingDiagnostic);
   opened?.close(); opened = undefined; closeMetadataDbs(); vi.useRealTimers(); vi.restoreAllMocks(); await env.cleanup();
   expect(wire.workers.every(worker => worker.threadId === -1)).toBe(true);
+  expect(directoryIo.handles.size).toBe(0);
 });
 const open = (signal?: AbortSignal) => openMessageStore(env.db, nullLogger, "fixture-current", "fixture-only-token", signal, start + 10000);
 const stageOrFailure = (stage: Promise<void>, pending: Promise<unknown>) => Promise.race([stage, pending.then(error => { throw error instanceof Error ? error : new Error("Original operation settled before the required stage"); })]);
+
+it.each(["all", "record-directory"])("refuses unsupported directory publication before schema effects: %s", async failure => {
+  schemaMs = 0; directoryIo.failure = failure;
+  const error = await open().then(store => { opened = store; return undefined; }, error => error);
+  expect(error).toMatchObject({ code: "STORE_BOOTSTRAP_UNSETTLED" });
+  expect(ddl).toBe(0); expect(existsSync(env.db)).toBe(false);
+});
+
+it("fences every opener including no-deadline and cached metadata before admitting an unsettled preparation", async () => {
+  schemaMs = 0; const db = metadataDb(env.home); db.exec("CREATE TABLE accepted_original(body BLOB); INSERT INTO accepted_original VALUES(x'00ff')");
+  const dir = join(env.home, ".store-bootstrap"); mkdirSync(dir); writeFileSync(join(dir, "retained-malformed.json"), "original incomplete evidence");
+  const bytes = readFileSync(env.db);
+  const error = await openMessageStore(env.db, nullLogger, "fixture-current", "fixture-token").then(store => { opened = store; return undefined; }, error => error);
+  expect(error).toMatchObject({ code: "STORE_BOOTSTRAP_UNSETTLED" });
+  expect(() => metadataDb(env.home)).toThrow(/preparation/i);
+  const { MessageStore } = await import("../src/core/store.js"); expect(() => new MessageStore(env.db, nullLogger)).toThrow(/preparation/i);
+  expect(readFileSync(env.db)).toEqual(bytes); expect(readFileSync(join(dir, "retained-malformed.json"), "utf8")).toBe("original incomplete evidence");
+});
+
+it.each(["preparing-missing", "prepared-replaced", "prepared-in-place"])("revalidates retained original records after worker exit: %s", async mutation => {
+  schemaMs = 0; const seen = deferred(), gate = deferred(); wire.after = async () => { seen.release(); await gate.promise; };
+  const pending = open().then(store => { opened = store; return undefined; }, error => error);
+  await stageOrFailure(seen.promise, pending);
+  const dir = join(env.home, ".store-bootstrap"), preparing = readdirSync(dir).find(name => name.endsWith(".preparing.json"))!, prepared = readdirSync(dir).find(name => name.endsWith(".prepared.json"))!;
+  const target = join(dir, mutation === "preparing-missing" ? preparing : prepared), original = readFileSync(target);
+  if (mutation !== "prepared-in-place") { renameSync(target, target + ".retained-original"); if (mutation === "prepared-replaced") writeFileSync(target, original); }
+  else { const row = JSON.parse(original.toString()); row.namespace = "a".repeat(64); writeFileSync(target, JSON.stringify(row)); }
+  gate.release(); const error = await pending;
+  expect(error).toMatchObject({ code: "STORE_BOOTSTRAP_UNSETTLED" }); expect(opened).toBeUndefined();
+  expect(readdirSync(dir).some(name => name.endsWith(".exited.json"))).toBe(false); expect(ddl).toBe(1);
+});
 
 it.each([["missing module", "ERR_MODULE_NOT_FOUND"], ["unknown code", "not-allowlisted"], ["oversized code", "x".repeat(4097)]])("retains only a bounded classification for an actual fake Worker error event: %s", async (_label, code) => {
   wire.error = Object.assign(new Error("fixture-private-path-or-body"), { code });
