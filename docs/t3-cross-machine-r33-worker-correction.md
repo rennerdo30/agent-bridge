@@ -102,3 +102,48 @@ correction used5071ms; any additional focused check shares the remaining6929ms,
 records a fixed external remaining deadline and reports incomplete on exhaustion.
 The ten full checklist cases and actual daemon/lifecycle/native gates remain CI
 acceptance unless explicitly selected and reported as local mocked evidence.
+
+The steered source is frozen at
+**43d9ad7c8f6779418d6e6d387dfd1876db0dbe41**, tree
+**47889d0d3469e69dd434ce390fcf33e5d4d256d6**. Exact selected checks:
+combined checklist overflow, checklist/project spawn brief/state, and actual
+node stop during busy inspection. **3passed/297excluded** (PID65360,3004ms,
+exit0), including original zero-native-Worker/subprocess teardown assertions;
+noEmit PID2848,1317ms,exit0. The remaining segment consumed4376ms of the6929ms
+remaining cap; combined measured validation is **9447ms/12000ms**. No timeout,
+retry or extension. This is a second source freeze under the user's subsequent
+steering and the same aggregate allowance, not a rerun of the15-case8b freeze
+or a claim that all18 cases ran on43d9.
+
+Raw exact-head/tree/PID/start/end/exit streams and segment/combined accounting:
+`E:/AgentData/reports/ab458-r33-43d9ad7c-remaining-batch.json` and its
+`-mock.out/.err`, `-typecheck.out/.err` siblings. All ten checklist failures
+remain in the matrix; only the two named checklist cases were selected locally.
+No native-worker or actual daemon acceptance is inferred. The earlier, separate
+batch remains **NOT RECONSTRUCTED**.
+
+## Exact6b lifecycle source correction
+
+Run39929971037 Ubuntu120335523521 and Mac120335523764 each report
+**1failed/349passed/44skipped**. Pin failure is resolved. The late-definite-failure
+case still fails at stop74/message93. Correction to the earlier interpretation:
+exact6b line93 is the worker-message envelope refusal (non-prepared or wrong
+attempt), not the durable prepared-record catch at105. The kernel deliberately
+sends failed when it refuses; the stack cannot identify a record/thread mismatch.
+Immutable thread capture therefore is not claimed to fix this hosted failure.
+
+The fixture alone fakes Date to1000000 in the parent, but its real worker retains
+the actual wall clock. The parent exports this fake absolute startup deadline;
+the worker's original deadline check must refuse it before initialization. This
+is a source-proved unsupported cross-worker clock schedule, not permission to
+relax expired-worker or journal proof. The fixture now uses the production
+RelaunchBackoff constructor's existing injected-clock interface for that node
+only. Startup/election/worker clocks remain real. The same unknown-attempt,
+4999/5000 and9999/10000 boundaries, launch counts, authenticated connection and
+nonembedded assertions are retained. No provider/native test ran locally.
+
+The exact failed kernel reason was not serialized by that run. Source and
+fixture establish the clock mismatch; actual-worker hosted execution is still
+required to show the corrected fixture reaches and passes its original final
+assertions. No discarded native error, power-loss durability or general Windows
+availability is retroactively proved.

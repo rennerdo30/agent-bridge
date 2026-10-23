@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { createServer } from "node:net";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BridgeNode } from "../src/core/node.js";
-import { launchDaemon, type LateDaemonLaunch } from "../src/core/daemon-launcher.js";
+import { launchDaemon, RelaunchBackoff, type LateDaemonLaunch } from "../src/core/daemon-launcher.js";
 import { Broker } from "../src/core/broker.js";
 import { BridgeClient, CLIENT_TRANSPORT_DIAGNOSTIC_COUNT_LIMIT, CLIENT_TRANSPORT_DIAGNOSTIC_RECORD_LIMIT,
   type ClientConnectionClosedDiagnostic } from "../src/core/client.js";
@@ -732,9 +732,10 @@ describe("standalone demand-start broker", () => {
     expect(a.isBroker).toBe(false);
   });
   it("late definite failures un-latch an unknown attempt only after a doubling backoff", async () => {
-    // Only the clock is fake: elections, sockets and timers run for real.
-    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(1_000_000);
-    try {
+    // Only the actual backoff policy's supported clock is controlled. Startup
+    // deadlines cross a real Worker boundary and must use the same wall clock
+    // on both sides; faking parent Date alone sends a past absolute deadline.
+    let backoffNow = 1_000_000;
       const reports: LateDaemonLaunch[] = [];
       const daemonHost = env.node("late-host");
       const launch = vi.fn<NonNullable<NonNullable<ConstructorParameters<typeof BridgeNode>[0]["daemon"]>["launch"]>>()
@@ -742,25 +743,25 @@ describe("standalone demand-start broker", () => {
         .mockImplementationOnce(async (_options, report) => { reports.push(report!); return { kind: "unknown" }; })
         .mockImplementationOnce(async () => { await daemonHost.start(); return { kind: "created" }; });
       const a = node("late-failure", launch);
+      Reflect.set(a, "relaunchBackoff", new RelaunchBackoff(() => backoffNow));
       await expect(a.start()).rejects.toThrow("could not connect");
       expect(launch).toHaveBeenCalledOnce();
-      const first = Date.now();
+      const first = backoffNow;
       reports[0]!({ kind: "unavailable", reason: "windows_wmi_create_rejected" });
-      vi.setSystemTime(first + 4_999);
+      backoffNow = first + 4_999;
       await expect(a.ensureConnected()).rejects.toThrow("could not connect");
       expect(launch).toHaveBeenCalledOnce(); // Un-latched, but still inside the 5 s backoff.
-      vi.setSystemTime(first + 5_000);
+      backoffNow = first + 5_000;
       await expect(a.ensureConnected()).rejects.toThrow("could not connect");
       expect(launch).toHaveBeenCalledTimes(2);
-      const second = Date.now();
+      const second = backoffNow;
       reports[1]!({ kind: "unavailable", reason: "windows_wmi_create_rejected" });
-      vi.setSystemTime(second + 9_999);
+      backoffNow = second + 9_999;
       await expect(a.ensureConnected()).rejects.toThrow("could not connect");
       expect(launch).toHaveBeenCalledTimes(2); // The second backoff doubled to 10 s.
-      vi.setSystemTime(second + 10_000);
+      backoffNow = second + 10_000;
       await a.ensureConnected();
       expect(launch).toHaveBeenCalledTimes(3); expect(a.isBroker).toBe(false);
-    } finally { vi.useRealTimers(); }
   });
   it("an unknown creation that did start a daemon is relaunched after that daemon crashes", async () => {
     // The real creation runs, but its receipt is reported after the decision budget ("unknown").
