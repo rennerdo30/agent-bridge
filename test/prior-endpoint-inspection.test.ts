@@ -237,7 +237,7 @@ it("checks the original deadline after owned policy cleanup and closes an unadmi
     .then(store => { store.close(); return { admitted: true, error: undefined }; }, error => ({ admitted: false, error }));
   expect(crossed).toBe(true); expect(outcome).toMatchObject({ admitted: false, error: { code: "timeout" } });
   expect(close).toHaveBeenCalledOnce();
-  const rejected = close.mock.contexts[0] as MessageStore;
+  const rejected = close.mock.contexts[0] as InstanceType<typeof MessageStore>;
   expect([(rejected as any).db, (rejected as any).archiveDb, rejected.history.storageDatabase].every(db => !db.isOpen)).toBe(true);
   expect(readdirSync(join(home, ".storage-users"))).toEqual([]);
 });
