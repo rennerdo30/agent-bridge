@@ -1,3 +1,4 @@
+import { closeMetadataDb, metadataDb } from "../src/core/metadata-db.js";
 import { lstatSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -154,4 +155,20 @@ it("sends cancellation during a still-owned in-flight spawn while a restarted un
   expect(restarted.alive(job)).toBe(true);
   settle({ state: null, alive: true, approvals: [] });
   await vi.waitFor(() => expect(JSON.parse(readFileSync(join(env.home, "remote-job-states", `${job.id}.json`), "utf8")).operations.every((op: any) => op.state === "confirmed")).toBe(true));
+});
+
+it.each([1, 2])("refuses component%s restored remote execution before cache, job or metadata mutation", version => {
+  env = makeEnv(); const db = metadataDb(env.home);
+  db.prepare("INSERT INTO bridge_metadata VALUES(?,?,?,?)").run("fixture", "original", "Exact original pending ownership evidence", 1);
+  db.prepare("UPDATE bridge_components SET version=? WHERE name='metadata'").run(version); closeMetadataDb(env.home);
+  const before = readFileSync(join(env.home, "bridge.db")), files = readdirSync(env.home);
+  const remoteJob = vi.fn(() => new Promise<never>(() => {})), node = { remoteJob } as any;
+  const job = { id: "1234abcd", name: "codex-job-1234abcd", agent: "codex", startedAt: 123,
+    remote: { host: "original-paired", name: "codex-job-1234abcd" }, controller: new AbortController(), queue: [] } as any;
+  const principal = { ...job.remote };
+  const runners = new JobRunners(node, env.home, "unused-cli", nullLogger);
+  expect(() => runners.start(job, { args: { ...spawn().args, host: "original-paired" }, target: "codex" } as any)).toThrow(/cached writers/);
+  expect(() => new RemoteJobHost(node, env.home, nullLogger).start(job, "replacement-paired", "codex", spawn().args)).toThrow(/cached writers/);
+  expect(job.remote).toEqual(principal); expect(remoteJob).not.toHaveBeenCalled();
+  expect(readFileSync(join(env.home, "bridge.db"))).toEqual(before); expect(readdirSync(env.home)).toEqual(files);
 });

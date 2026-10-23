@@ -133,3 +133,13 @@ Approval42990 is source-only. The final validation receipt supplies the exact
 source/tree and complete file inventory for parent correction review. No new
 protected-method body, UI source, normalizer, baseline hash or flaky selector/date
 was changed in R21.
+
+The final audit also proved a restored-remote early-return bypass on7e5b104:
+`job.remote` skipped the local spec/admission path, allowing a component1/2 cache
+write and dispatch. PID44068 (60s,exit1) shows both unsafe admissions on unchanged
+7e5 production. Remote host admission and every cache writer now require current
+metadata after strict operation inspection, including direct start and restored
+normal JobRunners.start; no cache/job/metadata change is allowed on refusal. This
+is a correction within the same approved8/3/v2 contract, not a further version.
+The7e5 receipt remains valid for that earlier head only; the final receipt must
+name the correcting head and qualification explicitly.

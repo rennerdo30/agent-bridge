@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { join } from "node:path";
+import { metadataDb } from "../core/metadata-db.js";
 import { writeJsonStore } from "../core/json-store.js";
 import { readRemoteOperationEvidence, type RemoteOperationCache as Cached } from "../core/remote-operation-evidence.js";
 import type { BridgeNode } from "../core/node.js";
@@ -21,9 +22,15 @@ export class RemoteJobHost {
   private read(job: Job): Cached | null {
     return readRemoteOperationEvidence(this.home, job.id);
   }
-  assertTurnAdmission(job: Job): void { if (this.blocked(job)) throw unsupportedRunnerLedger(true); }
+  assertTurnAdmission(job: Job): void {
+    if (this.blocked(job)) throw unsupportedRunnerLedger(true);
+    // Restored remote jobs skip the local spec path. They still must prove the
+    // current metadata writer contract before cache or remote effects.
+    metadataDb(this.home);
+  }
   private blocked(job: Job): boolean { return Boolean(this.read(job)?.operations?.some(op => op.state === "blocked" || op.state === "pending" && !this.busy.has(job.id))); }
   private write(job: Job, data: Cached): void {
+    metadataDb(this.home);
     writeJsonStore(this.path(job), { ...data }, this.read(job));
   }
   private track(job: Job, request: RemoteJobRequest): string {
@@ -61,6 +68,7 @@ export class RemoteJobHost {
   }
   start(job: Job, host: string, target: CodingAgent, args: DelegateArgs): JobHostInfo {
     if (this.blocked(job)) throw new Error("Original remote operation remains unconfirmed; owner-coordinated recovery is required before another spawn/continuation");
+    this.assertTurnAdmission(job);
     job.remote = { host, name: `${target}-job-${job.id}` };
     this.pauseSent.delete(job.id);
     this.save(job, { state: null, alive: true, approvals: [] });
