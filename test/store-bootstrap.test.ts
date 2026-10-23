@@ -230,9 +230,15 @@ it.each(["sync", "background"])("backs up an ordinary alternate mailbox before a
     snapshot(source, target);
     if (source === join(env.home, "archive.db")) { opened!.purgeOlderThan(2); archived = true; }
   });
-  wire.afterIncremental = target => { if (target.endsWith("archive.db")) { opened!.purgeOlderThan(2); archived = true; } };
+  let archiveSnapshotComplete = false;
+  wire.afterIncremental = target => { if (target.endsWith("archive.db")) archiveSnapshotComplete = true; };
   const { createBackup, readBackup, backupIfDueBackground } = await import("../src/core/backups.js");
-  const backup = mode === "sync" ? createBackup(env.home, clock, false) : (await backupIfDueBackground(env.home, { checkpoint() {} }, clock))!;
+  const backup = mode === "sync" ? createBackup(env.home, clock, false) : (await backupIfDueBackground(env.home, { checkpoint() {
+    // This is the first actual production checkpoint AFTER the archive source
+    // transaction/handle closes. Never manufacture writer contention while the
+    // backup itself still owns its read transaction.
+    if (archiveSnapshotComplete && !archived) { opened!.purgeOlderThan(2); archived = true; }
+  } }, clock))!;
   expect(archived).toBe(true); expect(readBackup(backup).files.map(file => file.path)).toContain("mail.db");
   const bodies: unknown[] = [];
   for (const name of ["mail.db", "archive.db"]) {
