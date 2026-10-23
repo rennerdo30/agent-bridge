@@ -1,7 +1,7 @@
 import { admissionSqliteBusy, storageAdmissionRemaining } from "./storage-admission.js";
 import { observeAdmissionPhase } from "./admission-observation.js";
 import { guardPriorEndpoints } from "./prior-endpoints.js";
-import { assertBootstrapAccess, assertBootstrapWitness, syncBootstrapHomeChain, registerMailboxDatafile } from "./store-bootstrap-journal.js";
+import { assertBootstrapAccess, assertBootstrapWitness, syncBootstrapHomeChain, registerMailboxDatafile, bootstrapFileOriginallyAbsent } from "./store-bootstrap-journal.js";
 import { assertCurrentMailboxEnvelope } from "./mailbox-layout.js";
 import { assertMetadataUpgradeBoundary, metadataDb } from "./metadata-db.js";
 import { existsSync, mkdirSync, realpathSync } from "node:fs";
@@ -529,7 +529,7 @@ export class MessageStore {
         observeAdmissionPhase("constructor-readers", () => assertCompatibleMailboxReaders(dirname(file)));
       }
       let deferred = false;
-      try { observeAdmissionPhase("main-schema", () => migrateMessageSchema(this.db, file, existed, log)); }
+      try { observeAdmissionPhase("main-schema", () => migrateMessageSchema(this.db, file, existed && !bootstrapFileOriginallyAbsent(file), log)); }
       catch (error) {
         const version = Number(this.db.prepare("PRAGMA user_version").get()!.user_version);
         if ((error as NodeJS.ErrnoException).code !== "STORE_UPGRADE_DEFERRED" || version < 4) throw error;

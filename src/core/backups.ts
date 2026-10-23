@@ -64,8 +64,15 @@ export interface BackupManifest {
 }
 
 function digest(path: string): string {
-  const hash = createHash("sha256"), fd = openSync(path, "r"), buffer = Buffer.allocUnsafe(256 * 1024);
-  try { for (let bytes; (bytes = readSync(fd, buffer, 0, buffer.length, null)) > 0;) hash.update(buffer.subarray(0, bytes)); }
+  const before = lstatSync(path, { bigint: true });
+  if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1n) throw new Error("Unproven backup file identity");
+  const signature = (s: typeof before) => [s.dev, s.ino, s.size, s.mtimeNs, s.ctimeNs].map(String), bound = signature(before);
+  const hash = createHash("sha256"), fd = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0)), buffer = Buffer.allocUnsafe(256 * 1024);
+  try {
+    if (!sameBootstrapIdentity(bound, signature(fstatSync(fd, { bigint: true })))) throw new Error("Changed backup file identity");
+    for (let bytes; (bytes = readSync(fd, buffer, 0, buffer.length, null)) > 0;) hash.update(buffer.subarray(0, bytes));
+    if (!sameBootstrapIdentity(bound, signature(fstatSync(fd, { bigint: true }))) || !sameBootstrapIdentity(bound, signature(lstatSync(path, { bigint: true })))) throw new Error("Changed backup file identity");
+  }
   finally { closeSync(fd); }
   return hash.digest("hex");
 }
@@ -127,7 +134,7 @@ export function jsonStoreFiles(home: string): string[] {
       const path = join(dir, name);
       const st = lstatSync(path);
       if (st.isSymbolicLink()) continue;
-      if (st.isDirectory() && recurse) visit(path, true);
+      if (st.isDirectory() && recurse && !privateBackupName(name)) visit(path, true);
       else if (st.isFile() && (name === "config.json" && dir === home || !privateBackupName(name)) && name !== "dashboard.json" && /\.jsonl?(?:-\d+-[\w-]+)?$/.test(name)) files.push(path);
     }
   };
@@ -310,9 +317,9 @@ function allowedPath(path: string, bootstrap?: BootstrapPreservation): boolean {
   return USER_DATABASES.some(name => path === name) ||
     (portableDatafileName(path) && !privateBackupName(path) && !!bootstrap?.databases.includes(path)) ||
     /^\.store-bootstrap\/[a-f0-9-]{36}\.(preparing|prepared|exited)\.json$/.test(path) ||
-    (/^[\w.-]+\.json$/.test(path) && !["dashboard.json"].includes(path)) ||
+    (/^[\w.-]+\.json$/.test(path) && (path === "config.json" || !privateBackupName(path))) ||
     /^(jobs|runs|archive|read-state|job-outcomes|local-result-receipts)\/[\w./-]+$/.test(path) && !path.split("/").some((s) => s === ".." || s === ".") &&
-      /\.jsonl?(?:-\d+-[\w-]+)?$/.test(path);
+      !privateBackupName(path) && /\.jsonl?(?:-\d+-[\w-]+)?$/.test(path);
 }
 
 /** Preserve damaged databases as raw bytes and sidecars. Recovery sets are never rotated. */
@@ -355,10 +362,11 @@ export function readBackup(path: string): BackupManifest {
     if (!isRecord(file) || typeof file.path !== "string" || !allowedPath(file.path, bootstrap) || seen.has(file.path)) throw new Error("unsafe or duplicate backup path");
     seen.add(file.path);
     const source = resolve(path, file.path);
-    if (!source.startsWith(resolve(path) + sep) || lstatSync(source).isSymbolicLink() || digest(source) !== file.sha256) throw new Error(`backup checksum mismatch: ${file.path}`);
+    if (!source.startsWith(resolve(path) + sep) || lstatSync(source).isSymbolicLink()) throw new Error("Unsafe backup source");
     for (let dir = dirname(source); dir !== resolve(path); dir = dirname(dir)) {
       if (lstatSync(dir).isSymbolicLink()) throw new Error("unsafe backup directory");
     }
+    if (statSync(source).size !== file.bytes || digest(source) !== file.sha256) throw new Error(`backup checksum mismatch: ${file.path}`);
   }
   if (bootstrap) {
     const marker = join(path, PUBLICATION_NAME), state = lstatSync(marker);

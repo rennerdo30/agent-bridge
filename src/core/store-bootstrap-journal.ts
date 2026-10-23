@@ -154,6 +154,14 @@ export function withBootstrapInitializer<T>(record: BootstrapRecord, check: () =
   try { assertBootstrapAccess(record.home); const value = effect(); if (value && typeof (value as any).then === "function") throw bootstrapUnknown(); check(); return value; }
   finally { initializer = previous; }
 }
+/** Canonical metadata is created before the fresh mailbox schema. Its mere
+ * existence is not a legacy mailbox requiring a recovery snapshot. This exact
+ * synchronous exception cannot escape the owned, durable initializer scope. */
+export function bootstrapFileOriginallyAbsent(file: string): boolean {
+  if (!initializer || dirname(file) !== initializer.home) return false;
+  assertBootstrapAccess(initializer.home);
+  return Object.hasOwn(initializer.evidence.record.original, file) && initializer.evidence.record.original[file] === null;
+}
 export function assertBootstrapAccess(home: string): void {
   home = physicalPath(resolve(home));
   if (initializer?.home === home) {
