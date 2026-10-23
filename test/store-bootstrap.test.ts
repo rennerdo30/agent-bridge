@@ -12,7 +12,8 @@ import { makeEnv, type TestEnv } from "./helpers.js";
 
 const wire = vi.hoisted(() => ({ starts: 0, before: undefined as undefined | (() => Promise<void>),
   after: undefined as undefined | (() => Promise<void>), wrong: false, workers: [] as any[], stage: "idle", kernelThread: 0, error: undefined as unknown, exitedBeforeMessage: false, wrongThread: false,
-  beforeMaintenance: undefined as undefined | (() => void), afterIncremental: undefined as undefined | ((target: string) => void) }));
+  beforeMaintenance: undefined as undefined | (() => void), afterIncremental: undefined as undefined | ((target: string) => void),
+  incrementalSnapshot: undefined as undefined | ((db: DatabaseSync, target: string | Buffer | URL) => number) }));
 const directoryIo = vi.hoisted(() => ({ next: 2_000_000_000, handles: new Map<number, string>(), files: new Map<number, string>(), failure: "", syncs: [] as string[], onSync: undefined as undefined | (() => void), mutateRead: undefined as undefined | ((path: string) => void), onCopy: undefined as undefined | ((source: string, target: string) => void) }));
 // Explicit simulated directory-durability capability, never evidence that a
 // Windows filesystem supports directory fsync. Ordinary file IO stays real.
@@ -82,7 +83,8 @@ vi.mock("../src/core/storage-lock.js", async original => {
 vi.mock("node:sqlite", async original => {
   const actual = await original<typeof import("node:sqlite")>();
   return { ...actual, backup: async (...args: Parameters<typeof actual.backup>) => {
-    const result = await actual.backup(...args); wire.afterIncremental?.(String(args[1])); return result;
+    const result = wire.incrementalSnapshot ? wire.incrementalSnapshot(args[0], args[1]) : await actual.backup(...args);
+    wire.afterIncremental?.(String(args[1])); return result;
   } };
 });
 vi.mock("node:net", async original => {
@@ -100,7 +102,7 @@ let pendingDiagnostic: ReturnType<typeof setTimeout>, fixtureNumber = 0;
 const deferred = () => { let release!: () => void; const promise = new Promise<void>(done => { release = done; }); return { promise, release }; };
 beforeEach(() => {
   directoryIo.failure = ""; directoryIo.syncs = []; directoryIo.onSync = undefined; directoryIo.mutateRead = undefined; directoryIo.onCopy = undefined;
-  const number = ++fixtureNumber; wire.stage = "setup"; wire.beforeMaintenance = undefined; wire.afterIncremental = undefined;
+  const number = ++fixtureNumber; wire.stage = "setup"; wire.beforeMaintenance = undefined; wire.afterIncremental = undefined; wire.incrementalSnapshot = undefined;
   pendingDiagnostic = setTimeout(() => console.error("Mock cold-bootstrap pending", { fixture: number, stage: wire.stage }), 1000);
   env = makeEnv(); schemaMs = 2400; ddl = 0; wire.starts = 0; wire.workers = []; wire.before = undefined; wire.after = undefined; wire.wrong = false; wire.error = undefined; wire.exitedBeforeMessage = false; wire.wrongThread = false;
   start = clock = Date.now(); vi.spyOn(Date, "now").mockImplementation(() => clock); vi.spyOn(performance, "now").mockImplementation(() => clock - start);
@@ -231,6 +233,9 @@ it.each(["sync", "background"])("backs up an ordinary alternate mailbox before a
     if (source === join(env.home, "archive.db")) { opened!.purgeOlderThan(2); archived = true; }
   });
   let archiveSnapshotComplete = false;
+  // Controlled SQLite backup transport: real production snapshot SQL and bytes,
+  // without the native incremental scheduler depending on this fake clock.
+  wire.incrementalSnapshot = (db, target) => { snapshot(String(db.location("main")), String(target)); return 0; };
   wire.afterIncremental = target => { if (target.endsWith("archive.db")) archiveSnapshotComplete = true; };
   const { createBackup, readBackup, backupIfDueBackground } = await import("../src/core/backups.js");
   const backup = mode === "sync" ? createBackup(env.home, clock, false) : (await backupIfDueBackground(env.home, { checkpoint() {
