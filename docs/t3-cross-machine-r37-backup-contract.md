@@ -53,17 +53,37 @@ Proposed publication and verification:
 
 ## Discovery and copied cold proof repair
 
-Remove the `.db`/ASCII filename assumption. Proposed bounded nofollow root-file
-classification uses only a16-byte SQLite format discriminator, with descriptor/
-path identity rechecks and no bytes returned, logged or retained. It reads no
-configuration/credential values or application rows. Only SQLite candidates are
-opened read-only for schema/namespace inspection. Bound file count/bytes/time;
-unknown/incomplete/unsafe evidence refuses certification. Unicode, spaces, case
-and nonstandard suffixes accepted by MessageStore must be included, not silently
-ignored. A production-legal name that cannot be represented safely in a portable
-artifact is an explicit **backup refusal**, not a new MessageStore filename ban.
-JSON enumeration must not capture a discovered SQLite mailbox a second time as
-an inconsistent raw JSON file. No source file is removed or renamed.
+The parent's subsequent critical qualification supersedes the initial16-byte
+proposal: **do not probe arbitrary root-file bytes**, even for format detection.
+Exclude credential/token/key/config/private-provider paths before opening them.
+Only already proved datafile paths may reach SQLite inspection. Unknown entries
+which cannot be classified safely refuse certification. No such discriminator
+has been implemented or run.
+
+The remaining concrete design choice is an additive, typed datafile registration
+in canonical metadata, published by a fully validated MessageStore before it can
+accept traffic. It would retain exact home/file identity, mailbox namespace and
+ordinary/cold generation for Unicode/spaces/suffix/case names without reading
+unknown files. This is a selection proof, not new recipient or writer authority.
+Root enumeration reads names/stat only. Missing registration is not absence or
+completeness permission: older/unregistered/ambiguous entries refuse rather than
+being scanned or silently omitted. A private/nonportable registered name refuses
+backup without changing MessageStore filename support. No registration code is
+implemented pending parent clarification of this conservative boundary.
+
+In particular, a partial catalog cannot certify a home by ignoring unproven
+private entries: an old writer could have used that production-accepted name.
+Without independent safe role evidence, the whole backup must refuse. This may
+make normal homes containing token/config files ineligible, so it is an explicit
+availability/compatibility decision, not an implicit fallback. Existing JSON
+backup code also intentionally captures config.json; whether the new exclusion
+applies to all capture or only discovery needs an explicit parent resolution
+before changing that established preservation behavior. No private/config value
+is accessed during this source-only investigation.
+
+JSON enumeration must not capture a registered SQLite mailbox a second time as
+an inconsistent raw JSON file. Bound file counts/record sizes and retain all
+unknown/original bytes. No source file is removed, renamed or attributed anew.
 
 Validate the complete copied anchor/preparing/prepared/exited chain using the
 original recorded identities, not the copy's new inodes. Bind the actual anchor
