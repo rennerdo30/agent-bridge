@@ -8,6 +8,7 @@ import { closeMetadataDbs, metadataDb } from "../src/core/metadata-db.js";
 import { nullLogger } from "../src/core/logger.js";
 import * as migrations from "../src/core/sqlite-migrations.js";
 import { inspectBootstrapJournal, readBootstrapEvidence } from "../src/core/store-bootstrap-journal.js";
+import { createHash } from "node:crypto";
 import { makeEnv, type TestEnv } from "./helpers.js";
 
 const wire = vi.hoisted(() => ({ starts: 0, before: undefined as undefined | (() => Promise<void>),
@@ -121,6 +122,71 @@ afterEach(async () => {
 });
 const open = (signal?: AbortSignal) => openMessageStore(env.db, nullLogger, "fixture-current", "fixture-only-token", signal, start + 10000);
 const stageOrFailure = (stage: Promise<void>, pending: Promise<unknown>) => Promise.race([stage, pending.then(error => { throw error instanceof Error ? error : new Error("Original operation settled before the required stage"); })]);
+
+function reweightFixtureCopy(backup: string, changed: string[], edit: (manifest: any) => void = () => {}): any {
+  const path = join(backup, "manifest.json"), manifest = JSON.parse(readFileSync(path, "utf8")); edit(manifest);
+  for (const name of changed) {
+    const bytes = readFileSync(join(backup, name)), sha256 = createHash("sha256").update(bytes).digest("hex");
+    const file = manifest.files.find((entry: any) => entry.path === name); if (file) Object.assign(file, { sha256, bytes: bytes.length });
+    const evidence = manifest.bootstrap?.evidence.find((entry: any) => entry.path === name); if (evidence) evidence.digest = sha256;
+  }
+  writeFileSync(path, JSON.stringify(manifest));
+  const publication = join(backup, "publication.json"), marker = JSON.parse(readFileSync(publication, "utf8"));
+  marker.manifest = createHash("sha256").update(readFileSync(path)).digest("hex"); writeFileSync(publication, JSON.stringify(marker));
+  return manifest;
+}
+
+it.each(["mail box.db", "郵便.sqlite", "MAIL.DB", "mailbox"])("R37 includes a production-accepted registered mailbox filename without suffix/ASCII guessing: %s", async name => {
+  schemaMs = 0; opened = new MessageStore(join(env.home, name), nullLogger);
+  opened.insert({ id: "accepted-filename", recipient: "retained", from: { id: "sender", name: "sender", agent: "codex" }, to: "retained", conversationId: "retained", replyTo: null, hop: 0, body: "accepted filename bytes", createdAt: clock, readAt: null });
+  const { createBackup, readBackup } = await import("../src/core/backups.js"), backup = createBackup(env.home, clock, false);
+  expect(readBackup(backup).files.map(file => file.path)).toContain(name);
+  const copied = new DatabaseSync(join(backup, name), { readOnly: true });
+  try { expect(copied.prepare("SELECT body FROM messages WHERE id='accepted-filename'").get()!.body).toBe("accepted filename bytes"); } finally { copied.close(); }
+});
+
+it("R37 refuses whole ordinary mailbox removal even when every editable inventory and copied catalog entry is removed", async () => {
+  schemaMs = 0; opened = new MessageStore(join(env.home, "mail.db"), nullLogger);
+  const { createBackup, readBackup } = await import("../src/core/backups.js"), backup = createBackup(env.home, clock, false);
+  const source = readFileSync(join(env.home, "mail.db")); rmSync(join(backup, "mail.db"));
+  const metadata = new DatabaseSync(join(backup, "bridge.db")); metadata.prepare("DELETE FROM bridge_metadata WHERE domain='backup-datafiles' AND key=?").run("mail.db"); metadata.close();
+  reweightFixtureCopy(backup, ["bridge.db"], manifest => {
+    manifest.files = manifest.files.filter((entry: any) => entry.path !== "mail.db");
+    manifest.bootstrap.databases = manifest.bootstrap.databases.filter((name: string) => name !== "mail.db");
+    manifest.bootstrap.mailboxes = manifest.bootstrap.mailboxes.filter((entry: any) => entry.path !== "mail.db");
+    delete manifest.bootstrap.sources["mail.db"];
+    if (manifest.bootstrap.catalog?.files) delete manifest.bootstrap.catalog.files["mail.db"];
+  });
+  expect(() => readBackup(backup)).toThrow(); expect(readFileSync(join(env.home, "mail.db"))).toEqual(source);
+});
+
+it.each(["anchor", "exited"])("R37 checks the original cold proof chain independently of reweighted copy manifests: %s", async stage => {
+  schemaMs = 0; opened = await open(); const { createBackup, readBackup } = await import("../src/core/backups.js");
+  const { verifyBootstrapPreservationCopy } = await import("../src/core/store-bootstrap-journal.js"), backup = createBackup(env.home, clock, false);
+  const path = stage === "anchor" ? ".store-bootstrap.expected.json" : `.store-bootstrap/${readdirSync(join(backup, ".store-bootstrap")).find(name => name.endsWith(".exited.json"))!}`;
+  const original = readFileSync(join(env.home, path));
+  if (stage === "anchor") writeFileSync(join(backup, path), "{}");
+  else { const record = JSON.parse(readFileSync(join(backup, path), "utf8")); record.namespace = "a".repeat(64); writeFileSync(join(backup, path), JSON.stringify(record)); }
+  const manifest = reweightFixtureCopy(backup, [path]);
+  expect(() => verifyBootstrapPreservationCopy(backup, manifest.bootstrap)).toThrow();
+  expect(() => readBackup(backup)).toThrow(); expect(readFileSync(join(env.home, path))).toEqual(original);
+});
+
+it.each(["missing-envelope", "missing-namespace", "missing-owner-table"])("R37 refuses an unsupported current-labelled mailbox BEFORE metadata or recovery-snapshot effects: %s", async kind => {
+  schemaMs = 0;
+  if (kind !== "missing-envelope") { const valid = new MessageStore(env.db, nullLogger); valid.close(); closeMetadataDbs(); }
+  const seed = new DatabaseSync(env.db); seed.exec("CREATE TABLE owner_original(body BLOB); INSERT INTO owner_original VALUES(x'00ff01'); PRAGMA user_version=14;");
+  if (kind === "missing-namespace") seed.exec("DROP TABLE mailbox_store");
+  if (kind === "missing-owner-table") seed.exec("DROP TABLE message_frontends"); seed.close();
+  const before = readFileSync(env.db), names = readdirSync(env.home), metadata = await import("../src/core/metadata-db.js"), initialize = vi.spyOn(metadata, "metadataDb");
+  let failure: unknown;
+  try { opened = new MessageStore(env.db, nullLogger); } catch (error) { failure = error; }
+  expect(failure).toMatchObject({ code: "STORE_LAYOUT_UNSUPPORTED" }); expect(initialize).not.toHaveBeenCalled();
+  expect(readFileSync(env.db).equals(before)).toBe(true); expect(readdirSync(env.home)).toEqual(names);
+  expect(existsSync(join(env.home, ".migration-snapshots"))).toBe(false);
+  const retained = new DatabaseSync(env.db, { readOnly: true });
+  try { expect(retained.prepare("SELECT hex(body) AS body FROM owner_original").all()).toEqual([{ body: "00FF01" }]); } finally { retained.close(); }
+});
 
 it.each(["all", "record-directory"])("refuses unsupported directory publication before schema effects: %s", async failure => {
   schemaMs = 0; directoryIo.failure = failure;
