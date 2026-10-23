@@ -1,3 +1,4 @@
+import { guardPriorEndpoints } from "./prior-endpoints.js";
 import { existsSync, mkdirSync, realpathSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { dirname, resolve } from "node:path";
@@ -465,7 +466,7 @@ export class MessageStore {
       }
       if (version === 2 || version === 3) throw Object.assign(new Error("Pre-lease schema2/3 requires owner-coordinated shutdown and explicit offline migration into an isolated home; automatic shared-home migration is refused."), { code: "STORE_OFFLINE_REQUIRED" });
       if (version < SQLITE_STORE_VERSION) {
-        try { unlockUpgrade = maintenanceLock(dirname(file)); }
+        try { unlockUpgrade = maintenanceLock(dirname(file), false, true); }
         catch (cause) { throw Object.assign(new Error("Mailbox migration exclusion is unavailable; owner-coordinated shutdown is required before sharing this data home.", { cause }), { code: "STORE_READER_ACTIVE" }); }
       }
     }
@@ -1503,4 +1504,15 @@ export class MessageStore {
     this.lifecycleConstruction.ordinaryClose = "returned";
     } catch (error) { this.lifecycleConstruction.ordinaryClose = "unknown"; this.lifecycleConstruction.unknown = true; throw error; }
   }
+}
+
+/** Full asynchronous hosting admission, including constructor effects under the
+ * same fresh reader proof/deadline. A completed earlier guard grants no authority. */
+export async function openMessageStore(file: string, log: Logger, endpoint: string, token: string, signal?: AbortSignal): Promise<MessageStore> {
+  if (file === ":memory:") return new MessageStore(file, log);
+  return guardPriorEndpoints(dirname(file), endpoint, token, log, signal, check => {
+    let store: MessageStore | undefined;
+    try { store = new MessageStore(file, log); check(); return store; }
+    catch (error) { store?.close(); throw error; }
+  }, file);
 }

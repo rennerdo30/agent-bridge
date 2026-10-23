@@ -1,3 +1,4 @@
+import { storageAdmissionTimeout } from "./storage-admission.js";
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -167,11 +168,12 @@ export function historyInitializationObservation(db: DatabaseSync): Readonly<{
     ownerBound: false, ownershipReleased: false });
 }
 export function openHistoryStore(file: string): DatabaseSync {
-  const db = new DatabaseSync(file, { timeout: 3000 });
+  const timeout = storageAdmissionTimeout(3000);
+  const db = new DatabaseSync(file, { timeout });
   const record: HistoryInitialization = { identity: Symbol(), db, file, state: "initializing", close: "not_attempted" };
   historyInitializations.set(db, record); // Capture before configuration or migration can fail.
   try {
-    db.exec("PRAGMA busy_timeout=3000");
+    db.exec(`PRAGMA busy_timeout=${timeout}`);
     registerHistoryFunctions(db);
     const version = Number(db.prepare("PRAGMA user_version").get()!.user_version);
     if (version > HISTORY_STORE_VERSION) throw new Error(`unsupported history store version: ${version}`);

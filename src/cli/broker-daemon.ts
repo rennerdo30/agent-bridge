@@ -5,13 +5,12 @@ import { loadConfig } from "../core/config.js";
 import { DAEMON_IDLE_EXIT_MS, HANDOVER_DRAIN_MS, JOBS_FILE, PROTOCOL_VERSION } from "../core/constants.js";
 import type { Logger } from "../core/logger.js";
 import { resolveDbPath } from "../core/paths.js";
-import { MessageStore } from "../core/store.js";
+import { openMessageStore } from "../core/store.js";
 import { loadOrCreateToken } from "../core/token.js";
 import { refreshStorePeerIdentities } from "../core/store-compatibility.js";
 import { BridgeError } from "../core/protocol.js";
 import type { DashboardInfo } from "./dashboard.js";
 import { EndpointReservation } from "../core/endpoint-reservation.js";
-import { ownProcessIdentity } from "../core/process-identity.js";
 import { guardPriorEndpoints } from "../core/prior-endpoints.js";
 
 /** Bounded idle period: AGENT_BRIDGE_DAEMON_IDLE_EXIT_MS (1 s to 24 h) or the 10-minute default. */
@@ -40,10 +39,7 @@ export async function runBrokerDaemon(home: string, pipe: string, log: Logger): 
     if (Date.now() >= deadline) return 0;
     await new Promise(resolve => setTimeout(resolve, 200));
   }
-  // Windows reads this process's creation identity through PowerShell (about 0.7 s idle, seconds under load).
-  // Start it now, off the event loop, so it overlaps binding and opening the store; the TCP fallback record
-  // awaits it after activation. Only a store migration still needs it synchronously (its lock record).
-  void ownProcessIdentity();
+  // The store factory prepares creation identity inside its admission budget.
   let reservation: EndpointReservation;
   try { reservation = await EndpointReservation.bind(pipe); }
   catch (error) {
@@ -59,7 +55,7 @@ export async function runBrokerDaemon(home: string, pipe: string, log: Logger): 
     config.network = startup.network; config.mobile = startup.mobile; config.dashboardPort = startup.dashboardPort;
   }
   void refreshStorePeerIdentities(home).catch(() => {});
-  const store = new MessageStore(resolveDbPath(home), log.child("store"));
+  const store = await openMessageStore(resolveDbPath(home), log.child("store"), pipe, token);
   try {
   const broker = new Broker(pipe, store, log.child("broker"), token, Date.now, join(home, JOBS_FILE), { home, config: config.network }, { ensure: (force, port) => ensureDashboard(force, port) });
   broker.setHostingMode("daemon");

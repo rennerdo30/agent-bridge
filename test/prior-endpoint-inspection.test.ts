@@ -72,6 +72,121 @@ afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); closeMetadataDbs(); 
 const guard = (signal?: AbortSignal) => guardPriorEndpoints(home, "fixture-current", "fixture-only-token", nullLogger, signal);
 const unchanged = () => { expect(readFileSync(file).equals(original)).toBe(true); expect(readdirSync(home)).toEqual(["bridge.db"]); };
 
+it("rechecks prior endpoints after a suspended successful census before admitting storage", async () => {
+  const fs = await import("node:fs"), dir = join(home, ".storage-users"), pid = process.pid + 2_000_000;
+  fs.mkdirSync(dir); fs.writeFileSync(join(dir, `${pid}-original`), JSON.stringify({ pid, nonce: "original", createdAt: Date.now(), mailboxProtocol: 7, mailboxSchema: 14 }));
+  vi.spyOn(process, "kill").mockReturnValue(true);
+  vi.spyOn(processIdentity, "identityStartedAfter").mockReturnValue(true);
+  let finish!: (identity: string) => void;
+  const query = vi.spyOn(processIdentity, "readProcessIdentity").mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+  const effect = vi.fn(); const pending = guard().then(effect, error => error);
+  await vi.waitFor(() => expect(query).toHaveBeenCalledOnce());
+  live = priorEndpoints(home).find(endpoint => endpoint.includes("p7"))!;
+  finish(new Date(Date.now() + 10_000).toString());
+  expect(await pending).toMatchObject({ code: "protocol_mismatch" });
+  expect(effect).not.toHaveBeenCalled(); expect(readFileSync(file)).toEqual(original);
+});
+
+it("never repeats synchronous process creation queries at the actual store constructor boundary", async () => {
+  const fs = await import("node:fs"), dir = join(home, ".storage-users"), pid = process.pid + 2_000_000;
+  fs.mkdirSync(dir); fs.writeFileSync(join(dir, `${pid}-original`), JSON.stringify({ pid, nonce: "original", createdAt: Date.now(), mailboxProtocol: 7, mailboxSchema: 14 }));
+  vi.spyOn(process, "kill").mockReturnValue(true);
+  vi.spyOn(processIdentity, "identityStartedAfter").mockReturnValue(true);
+  vi.spyOn(processIdentity, "readProcessIdentity").mockResolvedValue(new Date(Date.now() + 10_000).toString());
+  const sync = vi.spyOn(processIdentity, "processStartMs").mockImplementation(() => { throw new Error("forbidden synchronous liveness query"); });
+  await guard();
+  const { MessageStore } = await import("../src/core/store.js");
+  expect(() => new MessageStore(file, nullLogger)).toThrow(); // No transferable proof from an earlier guard.
+  expect(sync).not.toHaveBeenCalled(); expect(readFileSync(file)).toEqual(original);
+});
+
+it.each(["success", "changed", "expired"])("keeps actual store construction inside the fresh bounded proof: %s", async phase => {
+  const { MessageStore, openMessageStore } = await import("../src/core/store.js");
+  // Canonical new-home schema/metadata/namespace, then a retained PID-reuse lease.
+  const initial = new MessageStore(file + ".fresh", nullLogger); initial.close();
+  closeMetadataDbs();
+  const target = file + ".fresh", fs = await import("node:fs"), dir = join(home, ".storage-users"), pid = process.pid + 2_000_000;
+  fs.mkdirSync(dir, { recursive: true }); const lease = join(dir, `${pid}-original`);
+  const bytes = JSON.stringify({ pid, nonce: "original", createdAt: Date.now(), mailboxProtocol: 7, mailboxSchema: 14 });
+  fs.writeFileSync(lease, bytes);
+  vi.spyOn(process, "kill").mockReturnValue(true);
+  vi.spyOn(processIdentity, "identityStartedAfter").mockReturnValue(true);
+  vi.spyOn(processIdentity, "readProcessIdentity").mockResolvedValue(new Date(Date.now() + 10_000).toString());
+  const sync = vi.spyOn(processIdentity, "processStartMs").mockImplementation(() => { throw new Error("forbidden synchronous liveness query"); });
+  // At constructor's first SQL open the earlier proof has already been used.
+  // Change evidence at its second census (after opening, before migration).
+  const prepare = vi.mocked(DatabaseSync.prototype.prepare).getMockImplementation()!;
+  let reads = 0;
+  vi.spyOn(DatabaseSync.prototype, "prepare").mockImplementation(function(this: DatabaseSync, sql: string) {
+    if (sql === "PRAGMA user_version" && ++reads === 3) {
+      if (phase === "changed") fs.writeFileSync(lease, bytes.replace("original", "replaced"));
+      if (phase === "expired") vi.spyOn(Date, "now").mockReturnValue(Date.now() + CONNECT_TIMEOUT_MS + 1);
+    }
+    return prepare.call(this, sql);
+  });
+  const pending = openMessageStore(target, nullLogger, "fixture-current", "fixture-only-token");
+  if (phase === "success") {
+    const store = await pending; expect(store.file).toBe(target); store.close();
+    expect(() => new MessageStore(target, nullLogger)).toThrow(); // Scoped proof is no longer available.
+  }
+  else await expect(pending).rejects.toMatchObject({ code: phase === "expired" ? "timeout" : "STORE_READER_ACTIVE" });
+  expect(sync).not.toHaveBeenCalled(); expect(readFileSync(lease, "utf8")).toBe(phase === "changed" ? bytes.replace("original", "replaced") : bytes);
+  expect(readdirSync(dir)).toEqual([`${pid}-original`]);
+});
+
+it("refuses a nested migration lock without a synchronous wait or liveness query, preserving original bytes", async () => {
+  const { MessageStore, openMessageStore } = await import("../src/core/store.js");
+  const target = file + ".fresh", initial = new MessageStore(target, nullLogger); initial.close(); closeMetadataDbs();
+  const db = new DatabaseSync(target); db.exec("PRAGMA user_version=13"); db.close();
+  const fs = await import("node:fs"), lock = target + ".migration-lock", owner = JSON.stringify({ pid: process.pid + 2_000_000, identity: "foreign-original" });
+  fs.writeFileSync(lock, owner); const bytes = readFileSync(target);
+  vi.spyOn(process, "kill").mockReturnValue(true);
+  const wait = vi.spyOn(Atomics, "wait").mockImplementation(() => { throw new Error("synchronous wait forbidden during admission"); });
+  await expect(openMessageStore(target, nullLogger, "fixture-current", "fixture-only-token")).rejects.toMatchObject({ code: "EBUSY" });
+  expect(wait).not.toHaveBeenCalled(); expect(readFileSync(target)).toEqual(bytes); expect(readFileSync(lock, "utf8")).toBe(owner);
+  expect(readdirSync(join(home, ".storage-users"))).toEqual([]);
+});
+
+it("cancels actual node store admission and closes only its reservation before construction", async () => {
+  const fs = await import("node:fs"), dir = join(home, ".storage-users"), pid = process.pid + 2_000_000;
+  fs.mkdirSync(dir); fs.writeFileSync(join(dir, `${pid}-original`), JSON.stringify({ pid, nonce: "original", createdAt: Date.now(), mailboxProtocol: 7, mailboxSchema: 14 }));
+  vi.spyOn(process, "kill").mockReturnValue(true);
+  const { EndpointReservation } = await import("../src/core/endpoint-reservation.js");
+  const reservation = { close: vi.fn(async () => {}) };
+  vi.spyOn(EndpointReservation, "bind").mockResolvedValue(reservation as any);
+  const compatibility = await import("../src/core/store-compatibility.js");
+  vi.spyOn(compatibility, "refreshStorePeerIdentities").mockResolvedValue();
+  const query = vi.spyOn(processIdentity, "readProcessIdentity").mockImplementation((_pid, signal) => new Promise((_resolve, reject) => {
+    signal!.addEventListener("abort", () => reject(signal!.reason), { once: true });
+  }));
+  const node = new BridgeNode({ pipePath: "fixture-current", dbPath: file, token: "fixture-only-token", agent: "other", name: "fixture", cwd: home,
+    autoWake: false, canHostBroker: true, log: nullLogger });
+  const pending = (node as any).tryBecomeBroker().catch((error: unknown) => error);
+  await vi.waitFor(() => expect(query).toHaveBeenCalledOnce());
+  await node.stop(); expect(await pending).toMatchObject({ name: "AbortError" });
+  expect(reservation.close).toHaveBeenCalledOnce(); expect(node.isBroker).toBe(false); expect(node.listenerCount("stopped")).toBe(0);
+  expect(readFileSync(file)).toEqual(original); expect(readdirSync(dir)).toEqual([`${pid}-original`]);
+});
+
+it("does not retry an effect after its construction callback reports failure", async () => {
+  const failure = Object.assign(new Error("effect failed with retained evidence"), { code: "STORE_READER_ACTIVE", readerCompatibility: "unproven" });
+  const effect = vi.fn(() => { throw failure; });
+  await expect(guardPriorEndpoints(home, "fixture-current", "fixture-only-token", nullLogger, undefined, effect)).rejects.toBe(failure);
+  expect(effect).toHaveBeenCalledOnce(); unchanged();
+});
+
+it.each(["deadline", "caller"])("preserves the original %s reason during census backoff", async phase => {
+  vi.useFakeTimers(); const release = storageLease(home), stop = new AbortController();
+  io.read.mockImplementation((path: unknown, ...args: any[]) => String(path).includes(".storage-users") ? "" : io.actualRead(path, ...args));
+  let error: unknown; const pending = guard(stop.signal).catch(failure => { error = failure; });
+  await vi.advanceTimersByTimeAsync(1);
+  if (phase === "caller") stop.abort(new Error("explicit fixture cancellation"));
+  else await vi.advanceTimersByTimeAsync(CONNECT_TIMEOUT_MS);
+  await pending;
+  expect(error).toMatchObject(phase === "caller" ? { message: "explicit fixture cancellation" } : { code: "timeout" });
+  release();
+});
+
 it("refuses a late census retry before another pass or effect even when the reader has become compatible", async () => {
   vi.useFakeTimers(); const release = storageLease(home), dir = join(home, ".storage-users"), lease = join(dir, readdirSync(dir)[0]!);
   let ready = false, observations = 0;

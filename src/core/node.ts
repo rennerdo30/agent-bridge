@@ -440,10 +440,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   private async tryBecomeBroker(): Promise<boolean> {
     if (this.broker) return true;
     if (this.stopping) return false;
-    // The store's migration lock and the TCP fallback record need this process's identity; read it without
-    // blocking the session's event loop (a synchronous PowerShell query on Windows otherwise).
-    const identity = this.opts.dbPath === ":memory:" ? undefined : ownProcessIdentity();
-    const [{ Broker }, { MessageStore }] = await Promise.all([import("./broker.js"), import("./store.js")]);
+    const [{ Broker }, { openMessageStore }] = await Promise.all([import("./broker.js"), import("./store.js")]);
     const { EndpointReservation } = await import("./endpoint-reservation.js");
     let reservation: import("./endpoint-reservation.js").EndpointReservation;
     try { reservation = await EndpointReservation.bind(this.opts.pipePath); }
@@ -452,14 +449,16 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
       if (!this.opts.daemon && (this.opts.platform ?? process.platform) !== "win32") await this.clearStaleSocket();
       return false;
     }
-    await identity;
     let store: MessageStore;
     try {
-      if (this.opts.dbPath !== ":memory:") await guardPriorEndpoints(dirname(this.opts.dbPath), this.opts.pipePath, this.opts.token, this.log);
       // Unverified living readers conservatively defer upgrades; process
       // discovery must not delay hosting their existing compatible schema.
       if (this.opts.dbPath !== ":memory:") void refreshStorePeerIdentities(dirname(this.opts.dbPath)).catch(error => this.log.debug("store reader identity refresh deferred", { err: String(error) }));
-      store = new MessageStore(this.opts.dbPath, this.log.child("store"));
+      const admission = new AbortController();
+      const cancelled = () => admission.abort(); this.once("stopped", cancelled);
+      if (this.stopping) admission.abort();
+      try { store = await openMessageStore(this.opts.dbPath, this.log.child("store"), this.opts.pipePath, this.opts.token, admission.signal); }
+      finally { this.off("stopped", cancelled); }
       if (this.opts.dbPath !== ":memory:") { this.presenceAdmitted = true; this.recordStorePresence(); }
     } catch (err) {
       await reservation.close();

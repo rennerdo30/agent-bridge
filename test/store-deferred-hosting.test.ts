@@ -196,12 +196,15 @@ it("refuses mailbox startup while a retained older non-hosting reader blocks pro
   expect(output).toContain(`ready pid=${pid}`);
   const first = env.node("reloaded-first", "claude");
   const second = env.node("reloaded-second", "codex");
-  await expect(first.start()).rejects.toMatchObject({ code: "protocol_mismatch" }); await first.stop();
-  await expect(second.start()).rejects.toMatchObject({ code: "protocol_mismatch" });
+  // An empty historical lease proves neither compatibility nor a completed old
+  // declaration. The bounded census expires; it must not expose timers/promises'
+  // ABORT_ERR as if this were caller cancellation, or admit migration.
+  await expect(first.start()).rejects.toMatchObject({ code: "timeout" }); await first.stop();
+  await expect(second.start()).rejects.toMatchObject({ code: "timeout" });
   expect(output).not.toContain("connected");
   await first.stop(); await second.stop();
   const replacement = env.node("reloaded-again", "claude");
-  await expect(replacement.start()).rejects.toMatchObject({ code: "protocol_mismatch" });
+  await expect(replacement.start()).rejects.toMatchObject({ code: "timeout" });
   expect(replacement.isBroker).toBe(false);
   expect(runner.exitCode, output).toBeNull();
   const check = new DatabaseSync(env.db, { readOnly: true });

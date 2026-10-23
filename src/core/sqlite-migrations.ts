@@ -1,3 +1,4 @@
+import { storageAdmissionRemaining, storageAdmissionTimeout } from "./storage-admission.js";
 import { DatabaseSync } from "node:sqlite";
 import { createHash, randomUUID } from "node:crypto";
 import { closeSync, copyFileSync, fsyncSync, mkdirSync, openSync, writeFileSync } from "node:fs";
@@ -58,14 +59,15 @@ function metadataSnapshot(db: DatabaseSync, path: string, tables: string[], vers
 /** Every change is versioned. Keep the writer lock through recovery from the pre-migration backup. */
 export function migrateSqlite(db: DatabaseSync, file: string, existed: boolean, target: number, migrations: readonly SqliteMigration[], log: Logger): void {
   // Already current: nothing to migrate, so never block the event loop on another process's migration lock (AB-223).
-  db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
+  db.exec(`PRAGMA busy_timeout = ${storageAdmissionTimeout(SQLITE_BUSY_TIMEOUT_MS)}`);
   if (Number(db.prepare("PRAGMA user_version").get()!.user_version) === target) return;
   const release = migrationLock(file);
   try { migrateLocked(db, file, existed, target, migrations, log); } finally { release(); }
 }
 
 function migrateLocked(db: DatabaseSync, file: string, existed: boolean, target: number, migrations: readonly SqliteMigration[], log: Logger): void {
-  db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
+  storageAdmissionRemaining();
+  db.exec(`PRAGMA busy_timeout = ${storageAdmissionTimeout(SQLITE_BUSY_TIMEOUT_MS)}`);
   const version = Number(db.prepare("PRAGMA user_version").get()!.user_version);
   if (version > target) throw new Error(`unsupported SQLite store version: ${version}`);
   if (version === target) return;
@@ -115,7 +117,7 @@ function migrateLocked(db: DatabaseSync, file: string, existed: boolean, target:
     // The savepoint restores schema first. Restore original table contents from the verified snapshot,
     // under the same writer lock, without replacing a database another reader has open.
     if (backup) {
-      const original = new DatabaseSync(backup, { readOnly: true, timeout: SQLITE_BUSY_TIMEOUT_MS });
+      const original = new DatabaseSync(backup, { readOnly: true, timeout: storageAdmissionTimeout(SQLITE_BUSY_TIMEOUT_MS) });
       try {
         // Virtual tables and their shadows were restored by the savepoint. Never rewrite FTS internals.
         const tables = original.prepare("PRAGMA table_list").all().filter((r) => r.schema === "main" && r.type === "table" && !String(r.name).startsWith("sqlite_"));

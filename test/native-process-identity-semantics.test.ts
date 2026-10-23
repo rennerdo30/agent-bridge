@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+// Exercise the production fallback, including under the subprocess-blocked AB458 harness.
+vi.unmock("../src/core/process-identity.js");
 
 /**
  * AB-427: how native host answers map onto the existing identity contract, on every platform (Windows is
@@ -65,4 +67,32 @@ it("falls back to the PowerShell probe when the host does not answer, and keeps 
   expect(identity.readProcessIdentitiesSync([PID, OTHER])).toBeUndefined();
   probes.async.mockRejectedValue(new Error("SIMULATED batch timeout"));
   await expect(identity.readProcessIdentities([PID])).rejects.toMatchObject({ code: identity.IDENTITY_QUERY_FAILED });
+});
+
+it("caps an owned fallback to remaining admission time and propagates cancellation before another start", async () => {
+  const stop = new AbortController(); let remaining = 75;
+  let release!: () => void;
+  probes.async.mockImplementation((_file, _args, options) => new Promise((resolve, reject) => {
+    expect(options).toMatchObject({ signal: stop.signal, timeout: 75 });
+    options.signal.addEventListener("abort", () => reject(options.signal.reason), { once: true });
+    release = () => resolve({ stdout: TICKS });
+  }));
+  const pending = identity.readProcessIdentity(PID, stop.signal, () => remaining);
+  expect(probes.async).toHaveBeenCalledOnce(); remaining = 0; stop.abort(); release();
+  expect(await pending).toBeNull();
+  expect(await identity.readProcessIdentity(PID, stop.signal, () => { throw new Error("expired"); })).toBeNull();
+  expect(probes.async).toHaveBeenCalledOnce();
+});
+
+it("keeps nested synchronous migration queries inside the production admission scope without starting probes", async () => {
+  const { withStorageAdmission } = await import("../src/core/storage-admission.js");
+  withStorageAdmission(() => 100, () => {
+    expect(identity.processIdentity(PID)).toBeUndefined();
+    expect(identity.processStartMs(PID)).toBeUndefined();
+    expect(identity.readProcessIdentitiesSync([PID])).toBeUndefined();
+    expect(identity.readProcessNamesSync([PID])).toBeUndefined();
+  });
+  expect(nativeAnswer.calls).toBe(0); expect(probes.sync).not.toHaveBeenCalled();
+  probes.sync.mockReturnValue(TICKS);
+  expect(identity.processIdentity(PID)).toBe(TICKS); // The scope did not alter the general policy.
 });

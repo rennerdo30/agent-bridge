@@ -1,3 +1,4 @@
+import { storageAdmissionRemaining, storageAdmissionTimeout } from "./storage-admission.js";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -147,16 +148,16 @@ export function physicalMetadataPath(path: string): void {
 /** Observe an already admitted component without starting a competing migration. */
 export function existingMetadataDb(home: string): DatabaseSync | undefined {
  const file = join(resolve(home),"bridge.db"), cached = connections.get(handleKey(file));
- if (cached) return escapeMetadataReference(cached);
+ if (cached) { if (storageAdmissionRemaining() !== undefined) cached.exec("PRAGMA busy_timeout=0"); return escapeMetadataReference(cached); }
  if (!existsSync(file)) return undefined;
  physicalMetadataPath(file);
  const admission = observeExistingMetadataAdmission(file);
- const db = new DatabaseSync(file,{timeout:5_000});
+ const db = new DatabaseSync(file,{timeout:storageAdmissionTimeout(5_000)});
  recordMetadataAdmission(db, file, admission);
  try {
   if (!db.prepare("SELECT 1 FROM sqlite_master WHERE name='bridge_components'").get() ||
     Number(db.prepare("SELECT version FROM bridge_components WHERE name='metadata'").get()?.version ?? 0) !== VERSION) { legacyMetadataClose(db); return undefined; }
-  db.exec("PRAGMA busy_timeout=5000; PRAGMA synchronous=FULL;"); connections.set(handleKey(file),db); changeLifecycleRegistry(); return escapeMetadataReference(db);
+  db.exec(`PRAGMA busy_timeout=${storageAdmissionTimeout(5000)}; PRAGMA synchronous=FULL;`); connections.set(handleKey(file),db); changeLifecycleRegistry(); return escapeMetadataReference(db);
  } catch (error) { legacyMetadataClose(db); throw error; }
 }
 
@@ -186,14 +187,15 @@ export function assertMetadataAdmission(home: string): void {
  * All readers stopped; the named home is explicitly isolated from old releases. */
 export interface OfflineMetadataAdmission { kind: "offline-isolated"; home: string }
 export function metadataDb(home: string, offline?: OfflineMetadataAdmission): DatabaseSync {
+ storageAdmissionRemaining();
  const file = join(resolve(home), "bridge.db");
  const cached = connections.get(handleKey(file));
- if (cached) return escapeMetadataReference(cached);
+ if (cached) { if (storageAdmissionRemaining() !== undefined) cached.exec("PRAGMA busy_timeout=0"); return escapeMetadataReference(cached); }
  physicalMetadataPath(file);
  mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
  const existed = existsSync(file);
  const admission = observeExistingMetadataAdmission(file);
- const db = new DatabaseSync(file, { timeout: 5_000 });
+ const db = new DatabaseSync(file, { timeout: storageAdmissionTimeout(5_000) });
  recordMetadataAdmission(db, file, admission);
  try {
   const version = () => db.prepare("SELECT 1 FROM sqlite_master WHERE name='bridge_components'").get()
@@ -201,7 +203,7 @@ export function metadataDb(home: string, offline?: OfflineMetadataAdmission): Da
   if (!Number.isSafeInteger(version()) || version() < 0) throw new Error("Metadata component version is unproven; originals retained for owner-coordinated offline recovery.");
   if (version() > 0 && version() < VERSION && (!offline || offline.kind !== "offline-isolated" || handleKey(physicalPath(resolve(offline.home))) !== handleKey(physicalPath(resolve(home)))))
     throw Object.assign(new Error(`Metadata component${version()} cached writers cannot be excluded automatically. Stop old readers through the owner and explicitly admit offline migration into an isolated home; originals remain unchanged.`), { code: "STORE_OFFLINE_REQUIRED" });
-  db.exec("PRAGMA busy_timeout=5000; PRAGMA synchronous=FULL;");
+  db.exec(`PRAGMA busy_timeout=${storageAdmissionTimeout(5000)}; PRAGMA synchronous=FULL;`);
   if (version() > VERSION) throw new Error("Metadata store is newer than this reader; retained unchanged.");
   if (version() < VERSION) {
    assertMetadataAdmission(home);

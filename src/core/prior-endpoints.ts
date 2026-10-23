@@ -10,8 +10,9 @@ import type { Logger } from "./logger.js";
 import { maxSocketPathBytes, shortSocketDirectory } from "./paths.js";
 import { physicalPath } from "./project-identity.js";
 import { BridgeError } from "./protocol.js";
-import { assertCompatibleMailboxReadersAsync } from "./storage-lock.js";
+import { assertCompatibleMailboxReadersAsync, withMailboxReaderAdmission } from "./storage-lock.js";
 import { isSqliteBusy, retrySqlite } from "./sqlite-policy.js";
+import { ownProcessIdentity } from "./process-identity.js";
 
 const PROBE_MS = 300;
 /** Only historical endpoints derived from this data home; never discovery/config scanning. */
@@ -42,7 +43,7 @@ function refused(endpoint: string, reason: string): BridgeError {
 
 /** Current-protocol auth only; no hello, handover, mailbox RPC or loopback fallback.
  * This observation is NOT migration exclusion: the storage maintenance lock supplies that boundary. */
-export async function guardPriorEndpoints(home: string, current: string, token: string, log: Logger, signal?: AbortSignal): Promise<void> {
+export async function guardPriorEndpoints<T = void>(home: string, current: string, token: string, log: Logger, signal?: AbortSignal, effect?: (check: () => number) => T, file = join(home, DB_FILE_NAME)): Promise<T> {
   signal?.throwIfAborted();
   const deadline = Date.now() + CONNECT_TIMEOUT_MS;
   const admission = new AbortController();
@@ -59,7 +60,6 @@ export async function guardPriorEndpoints(home: string, current: string, token: 
   const timer = setTimeout(() => admission.abort(expired()), CONNECT_TIMEOUT_MS);
   try {
     remaining();
-    const file = join(home, DB_FILE_NAME);
     if (existsSync(file)) {
       let inspectionState: { version: number; metadata: number };
       try {
@@ -87,7 +87,14 @@ export async function guardPriorEndpoints(home: string, current: string, token: 
       if (inspectionState.version === 2 || inspectionState.version === 3) throw refused(home, "a pre-lease schema2/3 store requiring explicit offline migration into an isolated home");
       if (inspectionState.metadata === 1 || inspectionState.metadata === 2) throw refused(home, `a component${inspectionState.metadata} metadata store whose cached inactive writers require explicit owner-coordinated offline migration into an isolated home`);
     }
-    for (let observation = 0; ; observation++) {
+    // Construction may need this process's identity for a metadata/migration
+    // lease. Prepare it asynchronously inside the same budget, never by a cold
+    // synchronous query nested in the constructor.
+    if (effect) {
+      const identity = await ownProcessIdentity(admission.signal, remaining); remaining();
+      if (!identity) throw new BridgeError("internal", "Own process identity is unproven; storage admission was refused without construction.");
+    }
+    const probeEndpoints = async () => {
       remaining();
       for (const endpoint of priorEndpoints(home)) {
         remaining();
@@ -139,9 +146,17 @@ export async function guardPriorEndpoints(home: string, current: string, token: 
         throw refused(endpoint, "active");
       }
       remaining();
-      try { await assertCompatibleMailboxReadersAsync(home, admission.signal, remaining); remaining(); return; }
+    };
+    for (let observation = 0; ; observation++) {
+      await probeEndpoints();
+      let proof: Awaited<ReturnType<typeof assertCompatibleMailboxReadersAsync>> | undefined;
+      try {
+        proof = await assertCompatibleMailboxReadersAsync(home, admission.signal, remaining); remaining();
+        await probeEndpoints(); remaining(); proof.assert(home);
+      }
       catch (error) {
-        remaining();
+        proof = undefined; remaining();
+        if (error instanceof BridgeError) throw error;
         const census = error as { code?: string; readerCompatibility?: string };
         // Only a new successful census can admit. Never expire, clean or grant an
         // unknown reader; a completed old declaration and all other errors refuse.
@@ -149,7 +164,9 @@ export async function guardPriorEndpoints(home: string, current: string, token: 
         if (!(census.code === "ENOENT" || census.code === "STORE_READER_ACTIVE" && census.readerCompatibility === "unproven") || Date.now() >= deadline)
           throw refused(home, "retained by an unproven storage reader");
       }
-      await delay(Math.min(25 * 2 ** Math.min(observation, 4), remaining()), undefined, { signal: admission.signal });
+      if (proof) return withMailboxReaderAdmission(proof, () => effect ? effect(remaining) : undefined as T);
+      try { await delay(Math.min(25 * 2 ** Math.min(observation, 4), remaining()), undefined, { signal: admission.signal }); }
+      catch (error) { remaining(); throw error; }
     }
   } finally { clearTimeout(timer); signal?.removeEventListener("abort", cancelled); }
 }

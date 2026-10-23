@@ -1,3 +1,4 @@
+import { storageAdmissionTimeout } from "./storage-admission.js";
 import { randomUUID } from "node:crypto";
 import { closeSync, existsSync, openSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { processIdentity, recordedOwnerLiveness } from "./process-identity.js";
@@ -33,7 +34,7 @@ export function migrationLock(file: string): () => void {
   const path = `${file}.migration-lock`, recovery = `${path}.recovery`;
   const identity = processIdentity(process.pid);
   const owner = JSON.stringify({ pid: process.pid, nonce: randomUUID(), ...(identity ? { identity } : {}) });
-  const until = Date.now() + 5_000;
+  const until = Date.now() + storageAdmissionTimeout(5_000);
   const pause = new Int32Array(new SharedArrayBuffer(4));
   const verdicts = new Map<string, boolean>();
   for (;;) {

@@ -5,6 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import { migrateSqlite } from "./sqlite-migrations.js";
 import { nullLogger, type Logger } from "./logger.js";
 import { configureSqlite } from "./sqlite-policy.js";
+import { storageAdmissionRemaining, storageAdmissionTimeout } from "./storage-admission.js";
 export { SQLITE_BUSY_TIMEOUT_MS } from "./sqlite-policy.js";
 import { SQLITE_BUSY_TIMEOUT_MS } from "./sqlite-policy.js";
 import { openPreservedReader, preserveArchiveTarget } from "./storage-preservation.js";
@@ -22,10 +23,10 @@ export function checkDatabase(db: DatabaseSync): string[] {
 export function snapshotDatabase(source: string, target: string): void {
   const db = new DatabaseSync(source, { readOnly: true });
   try {
-    db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
+    db.exec(`PRAGMA busy_timeout = ${storageAdmissionTimeout(SQLITE_BUSY_TIMEOUT_MS)}`);
     db.prepare("VACUUM INTO ?").run(target);
   } finally { db.close(); }
-  const copy = new DatabaseSync(target, { readOnly: true, timeout: SQLITE_BUSY_TIMEOUT_MS });
+  const copy = new DatabaseSync(target, { readOnly: true, timeout: storageAdmissionTimeout(SQLITE_BUSY_TIMEOUT_MS) });
   try {
     const findings = checkDatabase(copy);
     if (findings.length) throw new Error(`invalid database backup: ${findings.join(", ")}`);
@@ -64,6 +65,7 @@ export function archiveInitializationObservation(db: DatabaseSync): Readonly<{
     ownerBound: false, ownershipReleased: false });
 }
 export function openArchive(path: string, options: { migrate?: boolean; home?: string } = {}): DatabaseSync {
+  storageAdmissionRemaining();
   const existed = existsSync(path);
   let admitted: ReturnType<typeof preserveArchiveTarget> | undefined;
   let original: DatabaseSync | undefined;
@@ -89,7 +91,7 @@ export function openArchive(path: string, options: { migrate?: boolean; home?: s
     record.db = db; record.construction = "returned";
     archiveInitializations.set(db, record); // Capture the actual returned writer BEFORE checks or page SQL.
     admitted?.check();
-    db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
+    db.exec(`PRAGMA busy_timeout = ${storageAdmissionTimeout(SQLITE_BUSY_TIMEOUT_MS)}`);
     if (options.migrate === false) {
       if (admitted?.created) db.exec(ARCHIVE_SCHEMA);
       else if (Number(db.prepare("PRAGMA user_version").get()!.user_version) !== ARCHIVE_STORE_VERSION)

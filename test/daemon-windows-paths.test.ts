@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { lstatSync, renameSync } from "node:fs";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { assertWindowsLifecyclePathProof, cachedWindowsLifecyclePathProof, hasVerifiedWindowsLifecyclePaths, pendingWindowsLifecycleVerifications,
   verifyWindowsLifecyclePaths } from "../src/core/lifecycle-windows.js";
 import { makeEnv, until, type TestEnv } from "./helpers.js";
@@ -94,7 +94,13 @@ describe.skipIf(process.platform !== "win32")("Windows phase-local path observat
   });
   it.each(["Modify", "Write", "DeleteSubdirectoriesAndFiles", "ChangePermissions", "TakeOwnership", "WriteAttributes", "WriteExtendedAttributes"])("refuses individual constituent ancestor control rights: %s", async grant => {
     const home = await prepare(grant);
-    await expect(verifyWindowsLifecyclePaths(home, randomUUID(), "prepare", "established", performance.now() + 5000)).rejects.toMatchObject({ reason: "unsafe_acl", rule: "foreign_write", role: "ancestor", ancestorDepth: 2 });
+    // This case measures the ACL policy, not a loaded host's PowerShell startup
+    // latency. Keep the production budget unchanged under a controlled clock;
+    // the separate expiry/late-helper cases below retain budget refusal coverage.
+    vi.useFakeTimers({ toFake: ["performance", "setTimeout", "clearTimeout"] });
+    try {
+      await expect(verifyWindowsLifecyclePaths(home, randomUUID(), "prepare", "established", performance.now() + 5000)).rejects.toMatchObject({ reason: "unsafe_acl", rule: "foreign_write", role: "ancestor", ancestorDepth: 2 });
+    } finally { vi.useRealTimers(); }
   });
   it("HOME owner remains current-SID-only even when Administrators is permitted as an ancestor owner", async () => {
     const home = await prepare("benign", "none", "none", "administrators");

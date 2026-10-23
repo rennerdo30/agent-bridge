@@ -1,3 +1,4 @@
+import { storageAdmissionRemaining } from "./storage-admission.js";
 import { createHash, randomUUID } from "node:crypto";
 import { closeSync, fsyncSync, linkSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
@@ -20,7 +21,7 @@ function nonBlockingAlive(owner: Owner): boolean | undefined {
   catch (error) { return (error as NodeJS.ErrnoException).code === "ESRCH" ? false : undefined; }
   const key = `${owner.pid}:${owner.identity}`;
   if (exitedIdentities.has(key)) return false;
-  if (!identityProbes.has(key)) {
+  if (storageAdmissionRemaining() === undefined && !identityProbes.has(key)) {
     identityProbes.add(key);
     void readProcessIdentity(owner.pid).then(current => {
       // A verified different creation identity proves this specific old owner is
@@ -121,6 +122,7 @@ function archiveOwned(path: string, registry: string, owner: Owner, identity: st
  * Hard-link support is required; unsupported filesystems fail closed without a weaker fallback.
  */
 export function metadataFileLease(path: string, waitMs = 0, nonBlockingRecovery = false): () => void {
+  if (storageAdmissionRemaining() !== undefined) { waitMs = 0; nonBlockingRecovery = true; }
   const identity = processIdentity(process.pid);
   if (!identity) throw busy();
   const parent = dirname(path);
