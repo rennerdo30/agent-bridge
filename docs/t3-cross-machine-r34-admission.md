@@ -182,3 +182,28 @@ gate. No fresh mocked budget is requested for an unrelated substitute test. The
 existing60s ledger remains55.163s used; the amendment/static source inspection
 did not execute tests or noEmit. Current residuals and Windows availability
 blocker remain, with independent full R34 review active on frozen490 unchanged.
+
+Exactf25 lifecycle run39937063764 Ubuntu120359087030 and Mac120359086785 each
+have1 failed/349 passed/44 skipped; the pin failure is gone. Both now pass the
+first actual native-instance/open and closed-preflight checks, then throw
+ERR_INVALID_STATE at315 `expect(first).not.toBe(preflightClosed[0])`.
+
+Matcher source inspection confirms the unwanted access path: installed Vitest
+5.0.2 `node_modules/vitest/dist/chunks/index.DGdajAO2.js:2016` computes Object.is,
+then when false computes deep-equality hints BEFORE calling this.assert, even for
+negated assertions. The eq implementation at1317-1326 compares object members
+through a[key]/b[key], so it can invoke native accessors on the closed expected
+handle. The CI error occurs at this matcher call after the actual-reference
+checks, not at allocation or retention. This is source/CI evidence; the exact
+individual getter was not separately instrumented locally.
+
+All four distinct-reference comparisons in this overflow case now assert
+`expect(Object.is(left,right)).toBe(false)`. This keeps the exact original
+Object.is identity relation while passing only a boolean to the matcher; it
+does not compare contents, reopen a handle, ignore an error or relax the
+129/130-retention/close-failure/census assertions. Preflight isOpen=false,
+retained-writer isOpen=true, actual native instance checks and all effect/generation
+checks remain. No production, pin, timeout, budget or new test/package change.
+Both exactf25 logs are qualified red; corrected full fixture green remains
+hosted-only/NOT RUN. No local runtime/native/full launch or added verification
+batch; existing aggregate remains55.163/60s. Frozen490 review is unaffected.

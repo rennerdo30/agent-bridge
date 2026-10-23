@@ -312,16 +312,19 @@ describe("metadata close prerequisites: observations only; canonical issuer UNWI
   expect(() => api.metadataDb(failedHome)).toThrow("SIMULATED overflow close failure");
   expect(preflightClosed).toHaveLength(1); expect(preflightClosed[0]).toBeInstanceOf(DatabaseSync); expect(preflightClosed[0]!.isOpen).toBe(false);
   const first = unregisteredNative[0]!; expect(first).toBeInstanceOf(DatabaseSync); expect(first.isOpen).toBe(true);
-  expect(first).not.toBe(preflightClosed[0]);
+  // Vitest computes deep-equality hints even for a passing not.toBe identity
+  // check. Assert only the primitive identity result, never inspect accessors
+  // on these deliberately closed native preflight handles.
+  expect(Object.is(first, preflightClosed[0])).toBe(false);
   exec.mockClear(); close.mockClear(); const prepare = vi.spyOn(DatabaseSync.prototype, "prepare"), result = observe(); retained(result);
   expect(result.blockers).toContain("bound"); expect(result.outcomes.registeredHandles).toBe(129);
   expect(result.outcomes.retainedHandleFailures).toBe(1); expect(result.outcomes.observedHandles).toBe(0);
   expect(result.admissionGeneration).toBe(baseline.admissionGeneration + 1); expect(result.membershipDigest).toBeNull();
   expect(exec).not.toHaveBeenCalled(); expect(close).not.toHaveBeenCalled(); expect(prepare).not.toHaveBeenCalled();
   expect(() => api.metadataDb(failedHome)).toThrow("SIMULATED overflow close failure");
-  expect(preflightClosed).toHaveLength(2); expect(preflightClosed[1]).not.toBe(preflightClosed[0]); expect(preflightClosed[1]!.isOpen).toBe(false);
-  expect(unregisteredNative[1]).not.toBe(first); expect(unregisteredNative[1]!.isOpen).toBe(true);
-  expect(unregisteredNative[1]).not.toBe(preflightClosed[1]);
+  expect(preflightClosed).toHaveLength(2); expect(Object.is(preflightClosed[1], preflightClosed[0])).toBe(false); expect(preflightClosed[1]!.isOpen).toBe(false);
+  expect(Object.is(unregisteredNative[1], first)).toBe(false); expect(unregisteredNative[1]!.isOpen).toBe(true);
+  expect(Object.is(unregisteredNative[1], preflightClosed[1])).toBe(false);
   exec.mockClear(); close.mockClear(); prepare.mockClear(); const later = observe(); retained(later);
   expect(later.outcomes.registeredHandles).toBe(130); expect(later.outcomes.retainedHandleFailures).toBe(2);
   expect(later.admissionGeneration).toBe(result.admissionGeneration + 1); expect(later.membershipDigest).toBeNull();
