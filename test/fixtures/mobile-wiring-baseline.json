@@ -4,7 +4,7 @@
     "src/core/broker.ts:constructor": "942e12b5a088935e829a232a97984c1e67a68baed145cc6e41fc626376972d27",
     "src/core/broker.ts:listen": "dd9b9a4c89eb00cf2a616274884330b7c7e74aafaa8fea6832cbbf264048ecf2",
     "src/core/broker.ts:startServices": "258cf7e8495f1ed376d1a649a72e29732ab4efc13516b51ce32aefa01ae429c7",
-    "src/core/broker.ts:abortStartup": "7b3dc7bf4af0d58ba0ef819078ca8f795b47e700f7c4d25e8375c9df13c74ac4",
+    "src/core/broker.ts:abortStartup": "064ce446840687233b79dea28dbc12219d60ecc10e09729d1d0bd909db99b277",
     "src/core/broker.ts:close": "7b3ddeb36b6f4ea009af51c0fb5c1749af388d8d47ef9dc9ad6452d087b33a6c",
     "src/core/node.ts:constructor": "c70bf3e865405166e195839fd1b315548b5a0a56847db0bba52eba72d0b691f5",
     "src/core/node.ts:start": "b504e47bab8d53e8bb71ad3457594988c38cc78bed67e2b1be3e197bc1f5066a",
@@ -17,6 +17,19 @@
   },
   "uiSha256": "f2a5b28254d4bb467f28bdee139e3b23bd9d4bd0c7c15fee116b4ed85a6ac385",
   "updates": {
+    "AB-458-R36": {
+      "sourceCommit": "cf5c9a555192c9168aa22a19f5b610daa191ad02",
+      "sourceTree": "e49b051f94a2e4531127bb699df919875b79082b",
+      "artifactCommit": "92db681b8102a9cdbb212cdf1cf5ffd312acda36",
+      "changes": [
+        {
+          "method": "src/core/broker.ts:abortStartup",
+          "previous": "7b3dc7bf4af0d58ba0ef819078ca8f795b47e700f7c4d25e8375c9df13c74ac4",
+          "current": "064ce446840687233b79dea28dbc12219d60ecc10e09729d1d0bd909db99b277"
+        }
+      ],
+      "reason": "Parent2026-10-23 reviewed complete R36 normalized abortStartup delta and nested mobile retirement/disposer/serving cancellation plus backup ordering/group/publication/locked restore/provenance retry/byte-preserving refusal helpers; independently verified every manifest hash against committed Git blobs. Approved ONLY this exact one-method preservation baseline amendment. Other12 methods/UI/normalizer/assertions/prior attribution unchanged. Attribution only, not correctness, merge or native acceptance; every later method-body delta returns for review. Windows availability, bound restore and WMI remain blockers."
+    },
     "AB-458-R35": {
       "sourceCommit": "7c0538623ef3d6361d80b260e675343aae448012",
       "sourceTree": "d3dede915a014dc9ae582c966fd27cc536ba9405",

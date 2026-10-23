@@ -1,0 +1,30 @@
+{
+  "sourceCommit": "cf5c9a555192c9168aa22a19f5b610daa191ad02",
+  "sourceTree": "e49b051f94a2e4531127bb699df919875b79082b",
+  "artifactCommit": "92db681b8102a9cdbb212cdf1cf5ffd312acda36",
+  "startingHead": "92db681b8102a9cdbb212cdf1cf5ffd312acda36",
+  "action": "Parent-approved separate attributable abortStartup baseline amendment",
+  "change": {
+    "method": "src/core/broker.ts:abortStartup",
+    "previous": "7b3dc7bf4af0d58ba0ef819078ca8f795b47e700f7c4d25e8375c9df13c74ac4",
+    "current": "064ce446840687233b79dea28dbc12219d60ecc10e09729d1d0bd909db99b277"
+  },
+  "unchangedMethods": 12,
+  "uiSha256": "f2a5b28254d4bb467f28bdee139e3b23bd9d4bd0c7c15fee116b4ed85a6ac385",
+  "normalizerSha256": "19b5fbbccdea0d567510ebca43e4b7d6c9506504375f79d395641c34d6dd4549",
+  "sourceHashesChecked": 45,
+  "hashSemantics": "Exact Git-blob hashes independently verified by parent; raw worktree LF-normalized equivalence checked here before editing baseline only",
+  "baselineBeforeSha256": "9e3c93cffec06066e35b2615d8b6ada6d555a545e1e4263fc4dcdc9c65b24821",
+  "baselineAfterSha256": "74d5aaa05c85fa0795f1db96b61c68c7d0e09b87be2723ae52fb539ca3a2db2a",
+  "staticReceipt": {
+    "startUtc": "2026-10-23T21:02:41.9395774+09:00",
+    "endUtc": "2026-10-23T21:02:42.1790257+09:00",
+    "elapsedMs": 243,
+    "ownPowerShellPid": 63000,
+    "externalToolTimeoutMs": 10000,
+    "exit": 0
+  },
+  "approval": "Parent2026-10-23 reviewed complete R36 normalized abortStartup delta and nested mobile retirement/disposer/serving cancellation plus backup ordering/group/publication/locked restore/provenance retry/byte-preserving refusal helpers; independently verified every manifest hash against committed Git blobs. Approved ONLY this exact one-method preservation baseline amendment. Other12 methods/UI/normalizer/assertions/prior attribution unchanged. Attribution only, not correctness, merge or native acceptance; every later method-body delta returns for review. Windows availability, bound restore and WMI remain blockers.",
+  "verification": "Static source equivalence and exact baseline/attribution scope only; no tests/noEmit/native/helper launches. Prior exact source/mock/noEmit cf5c9a55 receipt unchanged; fixture follow-up not yet tested.",
+  "receiptCorrection": "Before commit, represented sourceHashesChecked as the scalar count45 rather than the PowerShell enumeration of45 individual Count=1 values. No hash, source, baseline or prior verification changed."
+}
