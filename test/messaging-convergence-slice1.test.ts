@@ -67,6 +67,8 @@ import { StartupBudget } from '../src/core/startup-budget.js';
 import { guardPriorEndpoints, priorEndpoints } from '../src/core/prior-endpoints.js';
 import { BridgeClient } from '../src/core/client.js';
 import { Broker } from '../src/core/broker.js';
+import { BridgeNode } from '../src/core/node.js';
+import { runBrokerDaemon } from '../src/cli/broker-daemon.js';
 import { NativeChildren } from '../src/core/native-children.js';
 import { EndpointReservation } from '../src/core/endpoint-reservation.js';
 import { NetworkService } from '../src/network/link.js';
@@ -86,7 +88,7 @@ const sha = (path:string) => createHash('sha256').update(readFileSync(path)).dig
 const tree = (path:string):string[]=>existsSync(path) ? readdirSync(path,{withFileTypes:true}).flatMap(item=>item.isDirectory()?tree(join(path,item.name)):[join(path,item.name)]).sort() : [];
 const database = (path:string)=>{const db=new DatabaseSync(path);closes.push(()=>{if(db.isOpen)db.close();});return db;};
 beforeAll(()=>{const db=new DatabaseSync(':memory:');try {console.log('SLICE1_SQLITE_RUNTIME '+JSON.stringify({node:process.version,pid:process.pid,...db.prepare('SELECT sqlite_version() AS sqlite,sqlite_source_id() AS sqliteSourceId').get()}));}finally{db.close();}});
-afterEach(async()=>{vi.restoreAllMocks();vi.useRealTimers();for(const close of closes.splice(0).reverse())await close();closeMetadataDbs();transport.active='';transport.protocol=0;transport.writes=[];transport.nativeOpens=[];transport.hooks={};});
+afterEach(async()=>{vi.restoreAllMocks();vi.useRealTimers();for(const close of closes.splice(0).reverse())await close();closeMetadataDbs();vi.unstubAllEnvs();transport.active='';transport.protocol=0;transport.writes=[];transport.nativeOpens=[];transport.hooks={};});
 const fileState = (path:string) => tree(path).map(file=>[file,sha(file)] as const);
 /** Approved quiescent inspection allowance only. Every original file survives;
  * only exact inspected SHM is volatile. New exact WAL must be empty, and this
@@ -430,12 +432,18 @@ it('review7: real recovery joins bounded busy retries at the original startup ex
  } finally {store.close();await result;}
 });
 it('review7: real route recovery rolls back if a synchronous route step crosses startup expiry',async()=> {
- vi.useFakeTimers();const store=new MessageStore(':memory:',nullLogger);closes.push(()=>store.close());store.retainNativeChild('synthetic/sub:a','synthetic');
+ vi.useFakeTimers();const f=candidate(),store=f.store;store.retainNativeChild('synthetic/sub:a','synthetic');
+ const db=(store as unknown as {db:DatabaseSync}).db;
+ db.exec("INSERT INTO messages VALUES ('recovery-original','synthetic/sub:a','synthetic-id','synthetic-sender','other','synthetic/sub:a','synthetic-conversation',NULL,0,'synthetic retained message',1,NULL)");
+ const originalRoutes=db.prepare('SELECT * FROM native_child_routes ORDER BY address').all(),originalMessages=db.prepare('SELECT rowid,* FROM messages ORDER BY rowid').all(),normal=db.prepare('PRAGMA busy_timeout').get()!.timeout;
  const budget=new StartupBudget();closes.push(()=>budget.close());
  // Store statements are frozen; move the fake clock in the actual SQL driver instead.
  const prepare=DatabaseSync.prototype.prepare;
  vi.spyOn(DatabaseSync.prototype,'prepare').mockImplementation(function(this:DatabaseSync,sql:string){const statement=prepare.call(this,sql);if(sql==='UPDATE native_child_routes SET active=0 WHERE address=?'){vi.setSystemTime(Date.now()+10_001);}return statement;});
- await expect(new NativeChildren(store).recover(budget)).rejects.toThrow();expect(store.nativeChildRoutes()).toHaveLength(1);
+ await expect(new NativeChildren(store).recover(budget)).rejects.toThrow();expect(db.isTransaction).toBe(false);
+ expect(db.prepare('SELECT * FROM native_child_routes ORDER BY address').all()).toEqual(originalRoutes);expect(db.prepare('SELECT rowid,* FROM messages ORDER BY rowid').all()).toEqual(originalMessages);
+ expect(db.prepare('PRAGMA busy_timeout').get()!.timeout).toBe(normal);
+ const other=database(join(f.path,'bridge.db'));other.exec('PRAGMA busy_timeout=0; BEGIN IMMEDIATE');expect(other.isTransaction).toBe(true);other.exec('ROLLBACK');expect(store.nativeChildRoutes()).toHaveLength(1);
 });
 it.each(['history.db','archive.db','store-compatibility.db','owner-questions.db'])('review7: guards selected auxiliary %s before native snapshot or destination effects',async name=> {
  const f=shipping(),file=join(f.source,name);if(name==='history.db')writeFileSync(file,Buffer.alloc(0));else if(name==='archive.db')writeFileSync(file,Buffer.alloc(100));
@@ -607,4 +615,55 @@ it('round2: mandatory ownership failure cannot be downgraded to optional mainten
  const store=new MessageStore(':memory:',nullLogger);closes.push(()=>store.close());const broker=new Broker('synthetic',store,nullLogger,'synthetic-only'),budget=new StartupBudget();closes.push(()=>budget.close());const server=new StartupServer();server.listening=true;
  vi.spyOn(broker as unknown as {applyHandoffs():void},'applyHandoffs').mockImplementation(()=>{throw Error('synthetic mandatory ownership failure');});
  const reservation={ownedServer:()=>server,activate:vi.fn(),close:vi.fn(async()=>{})};await expect(broker.listen(reservation as never,budget)).rejects.toThrow('mandatory ownership');expect(reservation.activate).not.toHaveBeenCalled();expect(reservation.close).toHaveBeenCalledOnce();
+});
+
+it.each([['node','linux'],['daemon','linux'],['node','win32'],['daemon','win32']] as const)('round3: actual %s caller owns teardown after activated %s startup expires',async(caller,platform)=>{
+ vi.useFakeTimers();startupPlatform(platform);vi.stubEnv('AGENT_BRIDGE_DAEMON_CONFIG',undefined);vi.stubEnv('AGENT_BRIDGE_DAEMON_DASHBOARD','0');vi.stubEnv('AGENT_BRIDGE_STARTUP_DEADLINE',undefined);
+ const f=candidate();f.store.close();closeMetadataDbs();const events:string[]=[],servers:StartupServer[]=[];
+ const config={enabled:platform==='linux',name:'synthetic',port:4242,bind:'127.0.0.1',discovery:false,remoteJobs:{enabled:false,allowRoots:[],agents:[],allowPeers:[]}};
+ writeFileSync(join(f.path,'token'),'synthetic-only');writeFileSync(join(f.path,'config.json'),JSON.stringify({version:4,dashboard:false,network:config}));writeFileSync(join(f.path,'jobs.json'),JSON.stringify({version:4,jobs:[],handoffs:[]}));
+ if(config.enabled){mkdirSync(join(f.path,'network'));writeFileSync(join(f.path,'network','keys.json'),JSON.stringify({identity:{id:'11111111-1111-4111-8111-111111111111',key:'a'.repeat(64)},invitations:[],pairs:[]}));}
+ transport.hooks.maintenance=(name:string)=>events.push(name);transport.hooks.net=()=>{const server=new StartupServer();servers.push(server);return server;};transport.hooks.tls=()=>{const server=new StartupServer();servers.push(server);return server;};
+ // In-process protection adapter only: native helper APIs remain guarded.
+ transport.hooks.execFile=(_file:string,args:string[],_options:unknown,done:(error:null,value:string)=>void)=>{const child=Object.assign(new EventEmitter(),{pid:700003,exitCode:null as number|null,signalCode:null,kill:vi.fn(()=>true),stdin:Object.assign(new EventEmitter(),{end:(value:string)=>queueMicrotask(()=>{done(null,args.join(' ').includes('::Unprotect')?Buffer.from(value,'base64').toString():Buffer.from(value).toString('base64'));child.exitCode=0;child.emit('close',0,null);})})});return child;};
+ transport.hooks.execFileSync=(_file:string,_args:string[],options:{input:string})=>Buffer.from(options.input,'base64').toString();
+ const listen=Broker.prototype.listen,close=Broker.prototype.close;let owned:Broker|undefined,activeNetwork:any,actualStore:MessageStore|undefined,storeCloses=0,brokerCloses=0,activated=false;
+ vi.spyOn(Broker.prototype,'close').mockImplementation(function(this:Broker){brokerCloses++;return close.call(this);});
+ vi.spyOn(Broker.prototype,'listen').mockImplementation(async function(this:Broker,...args:Parameters<Broker['listen']>){owned=this;actualStore=(this as any).store;const closeStore=actualStore!.close.bind(actualStore);vi.spyOn(actualStore!,'close').mockImplementation(()=>{storeCloses++;return closeStore();});await listen.apply(this,args);activeNetwork=(this as any).network;activated=!!(this as any).maintenanceStart&&servers.every(server=>server.listening);if(activeNetwork)expect(activeNetwork.status().ready).toBe(true);vi.setSystemTime(Date.now()+10_001);});
+ const budget=new StartupBudget();closes.push(()=>budget.close());let node:BridgeNode|undefined;
+ try{
+  const operation=caller==='node'?(()=>{node=new BridgeNode({pipePath:'synthetic-round3',token:'synthetic-only',dbPath:join(f.path,'bridge.db'),agent:'other',name:'synthetic',cwd:f.path,autoWake:false,log:nullLogger,network:{home:f.path,config}});(node as any).startupBudget=budget;return(node as any).tryBecomeBroker() as Promise<boolean>;})():runBrokerDaemon(f.path,'synthetic-round3',nullLogger);
+  await expect(operation).rejects.toThrow();expect(activated).toBe(true);expect(brokerCloses).toBe(1);expect(storeCloses).toBe(1);
+  expect((owned as any).startupAuthorityRevoked).toBe(true);expect((owned as any).maintenanceStart).toBeNull();expect((owned as any).server).toBeNull();expect((owned as any).tcpServer).toBeNull();expect((owned as any).network).toBeNull();
+  if(activeNetwork)expect(activeNetwork.status().ready).toBe(false);expect(servers).toHaveLength(2);for(const server of servers){expect(server.listening).toBe(false);expect(server.closed).toBeGreaterThan(0);}
+  const socket={destroy:vi.fn()};(owned as any).accept(socket);expect(socket.destroy).toHaveBeenCalledOnce();await vi.advanceTimersByTimeAsync(0);expect(events.filter(name=>!name.endsWith('-close'))).toEqual([]);expect(vi.getTimerCount()).toBeLessThanOrEqual(1);
+ }finally{if(owned&&!(owned as any).closing)await close.call(owned);await node?.stop();}
+});
+
+it('round3: recovery owns rollback when BEGIN itself returns after expiry',async()=>{
+ vi.useFakeTimers();const f=candidate(),db=(f.store as any).db as DatabaseSync;f.store.retainNativeChild('synthetic/sub:a','synthetic');const budget=new StartupBudget();closes.push(()=>budget.close());const exec=DatabaseSync.prototype.exec;let late=false;
+ vi.spyOn(DatabaseSync.prototype,'exec').mockImplementation(function(this:DatabaseSync,sql:string){const result=exec.call(this,sql);if(this===db&&sql==='BEGIN IMMEDIATE'&&!late){late=true;vi.setSystemTime(Date.now()+10_001);}return result;});
+ await expect(new NativeChildren(f.store).recover(budget)).rejects.toThrow();expect(late).toBe(true);expect(db.isTransaction).toBe(false);expect(db.prepare('SELECT active FROM native_child_routes').get()!.active).toBe(1);expect(db.prepare('PRAGMA busy_timeout').get()!.timeout).toBe(3000);
+});
+
+it('round3: unknown native recovery COMMIT is retained without rollback or replay',async()=>{
+ const f=candidate(),db=(f.store as any).db as DatabaseSync;f.store.retainNativeChild('synthetic/sub:a','synthetic');const budget=new StartupBudget();closes.push(()=>budget.close());const exec=DatabaseSync.prototype.exec;let commits=0,rollbacks=0;
+ vi.spyOn(DatabaseSync.prototype,'exec').mockImplementation(function(this:DatabaseSync,sql:string){if(this===db&&sql==='ROLLBACK')rollbacks++;const result=exec.call(this,sql);if(this===db&&sql==='COMMIT'){commits++;throw Error('synthetic unknown native settlement');}return result;});
+ await expect(new NativeChildren(f.store).recover(budget)).rejects.toMatchObject({code:'STORE_COMMIT_UNKNOWN'});expect(commits).toBe(1);expect(rollbacks).toBe(0);expect(db.isTransaction).toBe(false);expect(db.prepare('SELECT active FROM native_child_routes').get()!.active).toBe(0);expect(db.prepare('PRAGMA busy_timeout').get()!.timeout).toBe(3000);
+});
+
+it('round3: unchanged alternate main cannot bypass committed WAL completion proof',async()=>{
+ const f=shipping(),name='alpha.db';copyFileSync(join(f.source,'bridge.db'),join(f.source,name));const originals=fileState(f.source),maintenance=await import('../src/core/sqlite-maintenance.js'),snapshot=maintenance.snapshotDatabase;
+ // Choose WAL format while each new synthetic snapshot is still being created,
+ // before immutable hash capture. Logical source/snapshot contents stay exact.
+ vi.spyOn(maintenance,'snapshotDatabase').mockImplementation((source,target)=>{snapshot(source,target);if(target.endsWith(name)){const db=database(target);db.exec('PRAGMA journal_mode=WAL');db.close();}});
+ const exec=DatabaseSync.prototype.exec,target=join(f.destination,name);let held:DatabaseSync|undefined,interrupted=false,commits=0;
+ vi.spyOn(DatabaseSync.prototype,'exec').mockImplementation(function(this:DatabaseSync,sql:string){if(this.location('main')===target&&sql==='BEGIN IMMEDIATE'&&!held){held=database(target);held.exec('BEGIN');expect(held.prepare('PRAGMA user_version').get()!.user_version).toBe(9);}const result=exec.call(this,sql);if(this.location('main')===target&&sql==='COMMIT'){commits++;if(!interrupted){interrupted=true;throw Error('synthetic alternate committed before unknown settlement');}}return result;});
+ const options={source:f.source,destination:f.destination,mailboxes:[name],apply:true,offlineIsolated:true};await expect(migrateMessagingHome(options)).rejects.toThrow();expect(interrupted).toBe(true);
+ const coordinator=database(join(f.destination,'bridge.db')),attempt=JSON.parse(String(coordinator.prepare("SELECT value FROM bridge_metadata WHERE domain='messaging-migration'").get()!.value));coordinator.close();expect(sha(target)).toBe(attempt.snapshots[name]);
+ const writer=database(target),marker=writer.prepare('SELECT state,attempt FROM messaging_candidate').get(),namespace=writer.prepare('SELECT namespace FROM mailbox_store').get();expect(marker).toMatchObject({state:'ready',attempt:attempt.id});
+ writer.exec("UPDATE bridge_metadata SET value='synthetic WAL-only changed content' WHERE domain='synthetic-retained'");expect(writer.prepare("SELECT value FROM bridge_metadata WHERE domain='synthetic-retained'").get()!.value).toBe('synthetic WAL-only changed content');expect(writer.prepare('SELECT state,attempt FROM messaging_candidate').get()).toEqual(marker);expect(writer.prepare('SELECT namespace FROM mailbox_store').get()).toEqual(namespace);writer.close();
+ expect(sha(target)).toBe(attempt.snapshots[name]);expect(lstatSync(target+'-wal').size).toBeGreaterThan(0);const before=fileState(f.source),mainHash=sha(target),walHash=sha(target+'-wal'),snapshots=tree(join(f.destination,'.migration-snapshots')).map(file=>[file,sha(file)]);
+ await expect(migrateMessagingHome(options)).rejects.toThrow('completion proof');expect(commits).toBe(1);expect(sha(target)).toBe(mainHash);expect(sha(target+'-wal')).toBe(walHash);expect(fileState(f.source)).toEqual(before);for(const [file,hash]of originals)expect(sha(file)).toBe(hash);expect(tree(join(f.destination,'.migration-snapshots')).map(file=>[file,sha(file)])).toEqual(snapshots);
+ held!.exec('ROLLBACK');held!.close();
 });
