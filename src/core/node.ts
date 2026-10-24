@@ -1356,7 +1356,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     if (this.opts.dbPath !== ":memory:") recordStorePeer(dirname(this.opts.dbPath), { pid: process.pid, name: this.currentName, version: APP_VERSION, storeCapabilities: candidateStoreCapabilities }, { authoritative: true });
   }
   private readIdentities(message?: BridgeMessage): string[] {
-    return readJournalIdentities(this.currentName, this.sessionId, this.opts.frontend, message?.recipientNative, message?.recipientMailbox ?? (this.mailboxNamespace ? localMailbox(this.mailboxNamespace) : undefined), message?.jobRoute);
+    return readJournalIdentities(this.currentName, this.sessionId, this.opts.frontend, message ? message.recipientNative : this.nativeIdentity, message?.recipientMailbox ?? (this.mailboxNamespace ? localMailbox(this.mailboxNamespace) : undefined), message?.jobRoute);
   }
 
   private currentNativeIdentity(): string | undefined {
