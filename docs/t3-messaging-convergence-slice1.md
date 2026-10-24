@@ -1,3 +1,5 @@
+> Latest: corrected source `eeae258fb01df64b50e1df46054f10bc086061b2` remains WIP. Corrected noEmit passed; focused verification stopped at37 passed/1 failed/8 unaccepted. Both corrected allowances are spent. See the appended correction; the original red receipt follows as history.
+
 # AB-458 convergence slice1 WIP receipt
 
 **Parent design hold on nonmutating inspection. This is not a completed slice1 candidate, independent acceptance, merge, release or installed migration.**
@@ -404,3 +406,87 @@ AssertionError: expected [ [ …(2) ], [ …(2) ], [ …(2) ], …(6) ] to deepl
 **Next action:** parent supplies the supported nonmutating inspection decision; implement only that correction in this same checkout, create a new source freeze, then spend the separately approved corrected focused/noEmit allowance once each. Do not integrate into PR141, start later slices, amend pins or claim slice1 ready from this WIP. Parent owns independent review, later forward integration and remaining hosted/native acceptance.
 
 Artifact inventory SHA256: ddb4f1c3dcd1cc1586d93e68fc645b5613582e80c1c09aec6b40dbdad884ba56. The inventory intentionally excludes its own self-referential hash; it lists the exact retained review files before receipt commit/push logs were added. Commit/push logs are retained alongside it and are identified in the final handoff.
+
+## Parent-approved ordinary read-only inspection correction
+
+**The original design hold was resolved, but the corrected selection is RED. No source/test edit or validation retry followed that failure. Slice1 remains WIP, not ready for acceptance.**
+
+- Original source `0f4d4d45025b587604f17c4eac420b3e8b532fd4`, tree `553018b6bb378b51a9948bd36d0e6925da13769f`:19 passed/1 failed/18 unaccepted. Its raw logs, assertion diff and receipt remain unchanged and are not relabelled green.
+- Corrected source `eeae258fb01df64b50e1df46054f10bc086061b2`, tree `72d218b9ec9f7230707770c3de44278fb62c99c0`. Only `src/core/mailbox-layout.ts`, `src/core/metadata-db.ts`, `src/core/store.ts` and the same focused test changed from prior WIP87ab4ca8.
+- Parent explicitly approved ordinary READONLY SQLite with a coordination allowance. This supersedes the literal zero-filesystem-effects interpretation, not its historical red evidence. No scratch copy, custom VFS, immutable/nolock bypass, new ledger, writable recovery, sidecar cleanup, installed migration or native connector was implemented.
+- This appended receipt is a later documentation-only change. Its final commit/tree does not constitute a new source/test pass. Cumulative changed paths remain the31 recorded above.
+
+### Inspection mechanism and test boundary
+
+`inspectMailbox` checks only an explicitly selected main and exact `-wal`/`-shm`/`-journal` family. Existing files must be regular, unlinked and stable by descriptor/path identity; ancestor symlinks refuse. Missing main with retained sidecars, empty/truncated main, invalid format/page-size bounds and linked/substituted inputs refuse before SQLite construction. The fixed100-byte header read is solely a rejection guard, never authority over current schema or WAL.
+
+The `readOnly:true` connection uses the existing default VFS/normal locking and remaining timeout. Version, schema/envelope, component and interrupted-attempt classification share one SQL read transaction. Fresh-state and offline source/resume inspection use the guarded path. Journal presence alone is not rejected; a native read-only recovery failure propagates without writer retry, repair, checkpoint or manual sidecar deletion. Preflight is neither cached-writer revocation nor later serving authority.
+
+Approved quiescent assertions retain every original file and byte except the exact inspected DB-shm volatile coordination. Original main, all original WAL bytes, rollback journal and unrelated files remain checked, as do logical rows/schema/version. Only SQLite-created exact X-wal/X-shm may appear. Newly created WAL must be empty in these quiescent fixtures; small synthetic SHM is at most32768 bytes. This is **not a production/general size cap**. Concurrent-writer fixtures test SQL read-view/order rather than attribute writer bytes by a whole-tree freeze. No unrelated assertion was weakened.
+
+Timeout0 bounds lock waiting, **not synchronous WAL-index work or OS wall-clock preemption**. Existing deadline checks still deny subsequent phases/serving after expiry. No native fstat of SQLite's own handle or stronger publication guarantee is claimed.
+
+Primary-source mechanisms reviewed:
+
+- [Node v24.10.0 open](https://github.com/nodejs/node/blob/v24.10.0/src/node_sqlite.cc#L678-L686) maps readOnly to SQLITE_OPEN_READONLY/default VFS; [Close](https://github.com/nodejs/node/blob/v24.10.0/src/node_sqlite.cc#L1023-L1032) finalizes owned statements/sessions and calls sqlite3_close_v2.
+- [SQLite read-only WAL](https://sqlite.org/wal.html#read_only_databases) permits exact WAL/SHM coordination creation with normal locking.
+- [WAL file lifecycles](https://sqlite.org/walformat.html#file_lifecycles) distinguish volatile SHM and a normal nonempty read-only last client's lack of final checkpoint/WAL unlink. The first SHM hash unit is32768 bytes; larger WALs may require more units.
+- [SQLite3.50.4 pagerOpenWalIfPresent](https://github.com/sqlite/sqlite/blob/version-3.50.4/src/pager.c#L3169-L3187) has a zero-main-page retained-WAL deletion exception; pre-native guards exclude partial inputs.
+
+These source pins are **not proof of the installed or hosted library**. Actual versions were queried inside the already-authorized focused process below. No separate version/probe/helper launch occurred. Exact-build Windows/Linux/macOS behavior, actual hot-journal behavior and source-preservation review remain hosted gates.
+
+### Corrected checks and remaining failure
+
+| Check | Own wrapper/shell/check PID | JST start–end | External limit/result |
+| --- | --- | --- | --- |
+| noEmit |48936/28632/66808 |2026-10-24 09:27:35.981–09:27:37.290 |60000ms;1309ms elapsed;exit0;no timeout |
+| Same focused file with inspection cases |41748/75344/28212 |2026-10-24 09:27:40.712–09:27:44.698 |60000ms;3986ms elapsed;exit1;no timeout |
+
+Both checks observed source `eeae258fb01df64b50e1df46054f10bc086061b2` /tree `72d218b9ec9f7230707770c3de44278fb62c99c0` before and after. Both corrected allowances are consumed. No wrapper/filter retry or further launch budget remains.
+
+Actual query in focused process28212:
+
+```json
+{"node":"v26.4.0","pid":28212,"sqlite":"3.53.2","sqliteSourceId":"2026-06-03 19:12:13 d6e03d8c777cfa2d35e3b60d8ec3e0187f3e9f99d8e2ee9cac695fd6fcdf1a24"}
+```
+
+Raw first headers (identical in each retained stdout/stderr pair):
+
+```json
+{"kind":"noEmit","commit":"eeae258fb01df64b50e1df46054f10bc086061b2","tree":"72d218b9ec9f7230707770c3de44278fb62c99c0","wrapperPID":48936,"parentPID":28632,"childPID":66808,"start":"2026-10-24T00:27:35.981Z","externalDeadlineMs":60000,"command":"C:\\Program Files\\nodejs\\node.exe node_modules/typescript/bin/tsc --noEmit"}
+{"kind":"focused","commit":"eeae258fb01df64b50e1df46054f10bc086061b2","tree":"72d218b9ec9f7230707770c3de44278fb62c99c0","wrapperPID":41748,"parentPID":75344,"childPID":28212,"start":"2026-10-24T00:27:40.712Z","externalDeadlineMs":60000,"command":"C:\\Program Files\\nodejs\\node.exe node_modules/vitest/vitest.mjs run test/messaging-convergence-slice1.test.ts --maxWorkers=1 --pool=threads --no-file-parallelism --reporter=dot --bail=1"}
+```
+
+Vitest5.0.2: **37 passed/1 failed/46 total; remaining8 unaccepted**. Raw failure:
+
+```text
+FAIL test/messaging-convergence-slice1.test.ts > does not reject a rollback journal solely because it exists
+Error: attempt to write a readonly database
+  at test/messaging-convergence-slice1.test.ts:217:67
+  at Module.inspectMailbox src/core/mailbox-layout.ts:66:18
+```
+
+The fixture writes literal `synthetic nonhot original` to its journal and expects a read. The guard admits the regular journal to normal READONLY SQLite; PRAGMA user_version throws. The inspector propagates refusal without writable retry. The fixture's **nonhot assumption is unproved**; the raw reporter supplies no extended error code, so this is not specifically certified as SQLITE_READONLY_ROLLBACK or a real hot-journal schedule. The separate mocked rollback case did not run. No assertion/fixture was changed after failure.
+
+Retained journal: `.agent-bridge-test/slice1-fixtures/b2d8b8a8-c7fd-4322-bcad-9c378a886efe/bridge.db-journal`,25 bytes,SHA256 `c1f7df91d40a823d391c20bdcfa2f3378dbe74a5b20f59d4aa5a72131cfcff66`. Call graph: test217 -> inspectMailbox callback at mailbox-layout66 -> first PRAGMA user_version read. Native read-only open returned and BEGIN ran; the expected positive assertion failed.
+
+Remaining8: mocked rollback propagation, committed-WAL visibility/bytes, concurrent consistent-view classification, finite m1/s9 migration, both interruption schedules, candidate-ready CAS and late mocked recovery. These are **NOT RUN/unaccepted**. Earlier guards/refusal cases and noEmit do not establish these behaviors; the aggregate result remains RED.
+
+### Protected manifest and retained artifacts
+
+Inspection changed **zero of13 protected normalized bodies relative to0f4d4d45**. Cumulative main-to-candidate five proposed deltas/eight unchanged bodies retain the exact hashes above. UI/dashboard source, baseline bytes, normalizers and retention guard remain unchanged. No pin amendment or protected-test run occurred.
+
+- Normalizer SHA256: `93ca63b8638622cc790c0d776b544af0840133e4c144ce792836e718a93b664a`.
+- Corrected-directory normalized JSON patch SHA256: `5c2b4be8c4ccf3811e32673d7adfe23286d1a868d5b489b8bcf4c3207ffb98d1`.
+- Readable cumulative method patch SHA256: `ffb5efda7a9168e366dfa56f4f5737b530476420a81877d5e35ae9f3c7121b1e`; directory headers differ from the earlier artifact, normalized bodies do not.
+- Protected-manifest SHA256: `2713b6127ca809af80d7dade24c5325077c9434e51eac8501e931e88d995f5fd`.
+- Focused stdout/stderr SHA256: `1ce585dbefdd4d355fdb1f820974531d73da0d25e51e2a0c8e6992f508b44282` / `095d44928656a1befc15fda1c9054c9c1acdeecd78f6c9029f05f85d52d51ec6`.
+- noEmit stdout/stderr each SHA256: `bc733dce51cc17053f39ef16547cd3085facc145ad968188ee81e66d140508b5`.
+
+Corrected raw logs, runtime record, process receipts, full source correction patch, normalized before/after bodies and cumulative pin manifest remain in `E:/AgentData/claude-codex-comm/t3-6416720d/.agent-bridge-test/slice1-corrected-review`. Old slice1-review files remain untouched. Combined retained synthetic inventory:180 files; no synthetic originals were manually deleted or repaired.
+
+Settled artifact index `artifact-files.json` SHA256: `8e3aba87d6de0ab01077dd8a445d60f6f9deb4dd019254cee9a817d9ffa621a1`. It excludes itself and later commit/push logs. Initial index captured while stdout was open remains separately as `artifact-files.pre-close.json`, historical rather than settled. A complete final inventory is retained after push.
+
+Static utility PID27388/shell1620,09:31:28.687–09:31:29.083 JST,external10s,exit0. An earlier combined long-shell artifact command was rejected before launch by automatic tool approval (`blocked by policy`); no process/test ran. Structured file creation plus a separate bounded static utility completed artifact work without changing check results.
+
+**Next parent decision:** classify/replace the journal fixture using supported SQLite behavior while preserving fail-closed READONLY recovery and original-data assertions. No further correction/launch authorization remains. Candidate is not slice1-review-ready, integrated, installed or released; no later-slice/native-connector work began.
