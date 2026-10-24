@@ -45,6 +45,7 @@ import { StartupBudget } from '../src/core/startup-budget.js';
 import { guardPriorEndpoints, priorEndpoints } from '../src/core/prior-endpoints.js';
 import { BridgeClient } from '../src/core/client.js';
 import { Broker } from '../src/core/broker.js';
+import { NativeChildren } from '../src/core/native-children.js';
 import { openHistoryStore } from '../src/core/history-store.js';
 import { nullLogger } from '../src/core/logger.js';
 import { PROTOCOL_VERSION } from '../src/core/constants.js';
@@ -387,4 +388,76 @@ it('keeps a late mocked recovery from activating or starting a subsequent phase'
  const result=broker.listen(reservation as never,budget);const rejection=expect(result).rejects.toThrow();
  await vi.advanceTimersByTimeAsync(10_001);finish();await rejection;
  expect(reservation.activate).not.toHaveBeenCalled();expect(reservation.close).toHaveBeenCalledOnce();
+});
+
+it('review7: real recovery joins bounded busy retries at the original startup expiry',async()=> {
+ vi.useFakeTimers();const store=new MessageStore(':memory:',nullLogger);closes.push(()=>store.close());store.retainNativeChild('synthetic/sub:a','synthetic');
+ const broker=new Broker('synthetic',store,nullLogger,'synthetic-only'),server=Object.assign(new EventEmitter(),{listening:true,close:(done:()=>void)=>done()});
+ const reservation={ownedServer:()=>server,activate:vi.fn(),close:vi.fn(async()=>{})},budget=new StartupBudget();closes.push(()=>budget.close());
+ const exec=DatabaseSync.prototype.exec;let attempts=0,state='pending';
+ vi.spyOn(DatabaseSync.prototype,'exec').mockImplementation(function(this:DatabaseSync,sql:string){if(sql==='BEGIN IMMEDIATE'){attempts++;throw Object.assign(Error('database is locked'),{errcode:5});}return exec.call(this,sql);});
+ const result=broker.listen(reservation as never,budget).then(()=>{state='resolved';},()=>{state='rejected';});
+ try {await vi.advanceTimersByTimeAsync(10_001);for(let n=0;n<20;n++)await Promise.resolve();const atExpiry=attempts;
+  expect(state).toBe('rejected');await vi.advanceTimersByTimeAsync(500);expect(attempts).toBe(atExpiry);expect(reservation.activate).not.toHaveBeenCalled();expect(reservation.close).toHaveBeenCalledOnce();
+ } finally {store.close();await result;}
+});
+it('review7: real route recovery rolls back if a synchronous route step crosses startup expiry',async()=> {
+ vi.useFakeTimers();const store=new MessageStore(':memory:',nullLogger);closes.push(()=>store.close());store.retainNativeChild('synthetic/sub:a','synthetic');
+ const budget=new StartupBudget();closes.push(()=>budget.close());
+ // Store statements are frozen; move the fake clock in the actual SQL driver instead.
+ const prepare=DatabaseSync.prototype.prepare;
+ vi.spyOn(DatabaseSync.prototype,'prepare').mockImplementation(function(this:DatabaseSync,sql:string){const statement=prepare.call(this,sql);if(sql==='UPDATE native_child_routes SET active=0 WHERE address=?'){vi.setSystemTime(Date.now()+10_001);}return statement;});
+ await expect(new NativeChildren(store).recover(budget)).rejects.toThrow();expect(store.nativeChildRoutes()).toHaveLength(1);
+});
+it.each(['history.db','archive.db','store-compatibility.db','owner-questions.db'])('review7: guards selected auxiliary %s before native snapshot or destination effects',async name=> {
+ const f=shipping(),file=join(f.source,name);if(name==='history.db')writeFileSync(file,Buffer.alloc(0));else if(name==='archive.db')writeFileSync(file,Buffer.alloc(100));
+ writeFileSync(file+(name==='owner-questions.db'?'-journal':'-wal'),'synthetic retained sidecar');const before=fileState(f.source),opens=transport.nativeOpens.length;
+ await expect(migrateMessagingHome({source:f.source,destination:f.destination,apply:true,offlineIsolated:true})).rejects.toThrow();
+ expect(existsSync(f.destination)).toBe(false);expect(transport.nativeOpens.slice(opens).some(open=>open.file===file)).toBe(false);
+ for(const [path,hash] of before)expect(sha(path)).toBe(hash);
+});
+it.each(['data','cancel'])('review7: final endpoint await cannot publish ready after %s changes',async kind=> {
+ const f=shipping(),controller=new AbortController(),endpoints=await import('../src/core/prior-endpoints.js');let checks=0,changed=false;
+ vi.spyOn(endpoints,'guardPriorEndpoints').mockImplementation(async()=>{if(++checks===4){changed=true;if(kind==='cancel')controller.abort(Error('synthetic final cancellation'));else{const db=database(join(f.source,'bridge.db'));db.exec("UPDATE bridge_metadata SET value='changed after await' WHERE domain='synthetic-retained'");db.close();}}});
+ await expect(migrateMessagingHome({source:f.source,destination:f.destination,apply:true,offlineIsolated:true,signal:controller.signal})).rejects.toThrow();expect(changed).toBe(true);
+ const db=database(join(f.destination,'bridge.db'));if(db.prepare("SELECT 1 FROM sqlite_master WHERE name='messaging_candidate'").get())expect(db.prepare('SELECT state FROM messaging_candidate').get()!.state).not.toBe('ready');
+ expect(JSON.parse(String(db.prepare("SELECT value FROM bridge_metadata WHERE domain='messaging-migration'").get()!.value)).phase).not.toBe('ready');
+});
+it.each([false,true])('review7: resumes two alternates only with same-attempt completion proof tamper=%s',async tamper=> {
+ const f=shipping(),names=['alpha.db','beta.db'];for(const name of names)copyFileSync(join(f.source,'bridge.db'),join(f.source,name));
+ const originals=names.map(name=>sha(join(f.source,name))),exec=DatabaseSync.prototype.exec;let interrupted=false,alphaCommits=0;
+ const spy=vi.spyOn(DatabaseSync.prototype,'exec').mockImplementation(function(this:DatabaseSync,sql:string){const result=exec.call(this,sql);if(sql==='COMMIT'&&this.location('main')===join(f.destination,'alpha.db')&&Number(this.prepare('PRAGMA user_version').get()!.user_version)===15){alphaCommits++;if(!interrupted){interrupted=true;throw Error('synthetic first alternate unknown COMMIT');}}return result;});
+ const options={source:f.source,destination:f.destination,mailboxes:names,apply:true,offlineIsolated:true};await expect(migrateMessagingHome(options)).rejects.toThrow();expect(interrupted).toBe(true);spy.mockRestore();
+ const coordinator=database(join(f.destination,'bridge.db')),attempt=JSON.parse(String(coordinator.prepare("SELECT value FROM bridge_metadata WHERE domain='messaging-migration'").get()!.value));coordinator.close();
+ if(tamper){const changed=database(join(f.destination,'alpha.db'));changed.exec("UPDATE bridge_metadata SET value='tampered' WHERE domain='synthetic-retained'");changed.close();await expect(migrateMessagingHome(options)).rejects.toThrow();}
+ else {await migrateMessagingHome(options);for(const name of names){const db=database(join(f.destination,name));expect(db.prepare('SELECT state,attempt FROM messaging_candidate').get()).toMatchObject({state:'ready',attempt:attempt.id});assertCurrentMailboxEnvelope(db);}expect(alphaCommits).toBe(1);}
+ expect(names.map(name=>sha(join(f.source,name)))).toEqual(originals);expect(sha(join(f.source,'bridge.db'))).toBe(f.original);
+});
+it('review7: Windows mailbox aliases resolve one physical role and missing names refuse',async()=> {
+ const descriptor=Object.getOwnPropertyDescriptor(process,'platform')!;Object.defineProperty(process,'platform',{value:'win32',configurable:true});closes.push(()=>Object.defineProperty(process,'platform',descriptor));
+ const f=shipping();copyFileSync(join(f.source,'bridge.db'),join(f.source,'mail.db'));
+ const plan=await migrateMessagingHome({source:f.source,destination:f.destination,mailboxes:['MAIL.DB']});expect(plan.inputs.some(input=>input.path==='mail.db'&&input.role==='sqlite')).toBe(true);
+ await expect(migrateMessagingHome({source:f.source,destination:f.destination,mailboxes:['missing.db'],apply:true,offlineIsolated:true})).rejects.toThrow();
+ await migrateMessagingHome({source:f.source,destination:f.destination,mailboxes:['MAIL.DB'],apply:true,offlineIsolated:true});const db=database(join(f.destination,'mail.db'));expect(db.prepare('PRAGMA user_version').get()!.user_version).toBe(15);
+});
+it('review7: infrastructure case variants refuse before inspecting their bytes',async()=> {
+ const descriptor=Object.getOwnPropertyDescriptor(process,'platform')!;Object.defineProperty(process,'platform',{value:'win32',configurable:true});closes.push(()=>Object.defineProperty(process,'platform',descriptor));
+ const f=shipping(),file=join(f.source,'CONFIG.JSON');copyFileSync(join(f.source,'bridge.db'),file);const opens=transport.nativeOpens.length;
+ await expect(migrateMessagingHome({source:f.source,destination:f.destination,mailboxes:['CONFIG.JSON'],apply:true,offlineIsolated:true})).rejects.toThrow();expect(existsSync(f.destination)).toBe(false);expect(transport.nativeOpens.slice(opens).some(open=>open.file.toLowerCase()===file.toLowerCase())).toBe(false);
+});
+it('review7: missing explicit mailbox cannot be silently omitted',async()=> {
+ const f=shipping();await expect(migrateMessagingHome({source:f.source,destination:f.destination,mailboxes:['missing.db'],apply:true,offlineIsolated:true})).rejects.toThrow();expect(existsSync(f.destination)).toBe(false);
+});
+it('review7: preserves deleted high AUTOINCREMENT sequence and exact next BigInt id',async()=> {
+ const f=shipping(),db=database(join(f.source,'bridge.db'));db.exec('CREATE TABLE sequence_fidelity(id INTEGER PRIMARY KEY AUTOINCREMENT,value TEXT)');
+ const insert=db.prepare('INSERT INTO sequence_fidelity(id,value) VALUES (?,?)');insert.setReadBigInts(true);insert.run(9007199254740995n,'synthetic');db.exec('DELETE FROM sequence_fidelity');db.close();const original=sha(join(f.source,'bridge.db'));
+ await migrateMessagingHome({source:f.source,destination:f.destination,apply:true,offlineIsolated:true});const target=database(join(f.destination,'bridge.db')),seq=target.prepare("SELECT seq FROM sqlite_sequence WHERE name='sequence_fidelity'");seq.setReadBigInts(true);expect(seq.get()!.seq).toBe(9007199254740995n);
+ const next=target.prepare("INSERT INTO sequence_fidelity(value) VALUES ('synthetic next')");next.setReadBigInts(true);next.run();const row=target.prepare('SELECT id FROM sequence_fidelity');row.setReadBigInts(true);expect(row.get()!.id).toBe(9007199254740996n);expect(sha(join(f.source,'bridge.db'))).toBe(original);
+});
+it('review7: sparse metadata rowids survive collision-safe owned-attempt relocation and resume',async()=> {
+ const f=shipping(),db=database(join(f.source,'bridge.db'));db.exec("UPDATE bridge_metadata SET rowid=-7 WHERE domain='synthetic-retained'; INSERT INTO bridge_metadata(rowid,domain,key,value,updated_at) VALUES(1,'sparse','one','retained',1),(42,'sparse','fortytwo','retained',2)");
+ const read=(source:DatabaseSync)=>{const statement=source.prepare("SELECT rowid AS saved_rowid,domain,key,value,updated_at FROM bridge_metadata WHERE domain<>'messaging-migration' ORDER BY rowid");statement.setReadBigInts(true);return statement.all();};const expected=read(db);db.close();const original=sha(join(f.source,'bridge.db')),prepare=DatabaseSync.prototype.prepare;let interrupted=false;
+ const spy=vi.spyOn(DatabaseSync.prototype,'prepare').mockImplementation(function(this:DatabaseSync,sql:string){if(!interrupted&&sql==='VACUUM INTO ?'){interrupted=true;throw Error('synthetic snapshot interruption');}return prepare.call(this,sql);});
+ const options={source:f.source,destination:f.destination,apply:true,offlineIsolated:true};await expect(migrateMessagingHome(options)).rejects.toThrow();expect(interrupted).toBe(true);spy.mockRestore();const held=database(join(f.destination,'bridge.db')),before=JSON.parse(String(held.prepare("SELECT value FROM bridge_metadata WHERE domain='messaging-migration'").get()!.value));held.close();
+ await migrateMessagingHome(options);const target=database(join(f.destination,'bridge.db'));expect(read(target)).toEqual(expected);const own=target.prepare("SELECT rowid AS saved_rowid,value FROM bridge_metadata WHERE domain='messaging-migration'");own.setReadBigInts(true);const row=own.get()!;expect(expected.some(input=>input.saved_rowid===row.saved_rowid)).toBe(false);expect(JSON.parse(String(row.value))).toMatchObject({id:before.id,inputId:before.inputId,phase:'ready'});expect(sha(join(f.source,'bridge.db'))).toBe(original);
 });
