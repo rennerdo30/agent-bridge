@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { connect, type Socket } from "node:net";
-import { APP_VERSION, CONNECT_TIMEOUT_MS, MAX_FRAME_BYTES, REQUEST_TIMEOUT_MS } from "./constants.js";
+import { APP_VERSION, CONNECT_TIMEOUT_MS, MAX_FRAME_BYTES, PROTOCOL_VERSION, REQUEST_TIMEOUT_MS } from "./constants.js";
 import type { Logger } from "./logger.js";
 import { brokerTcpPortAsync, ensurePrivateSocketDirectory, resolveHome, resolvePipePath } from "./paths.js";
 import {
@@ -70,6 +70,7 @@ export interface BridgeClientEvents {
 /** A single connection to the broker. Reconnection and election live in {@link BridgeNode}. */
 export class BridgeClient extends EventEmitter<BridgeClientEvents> {
   private nextId = 1;
+  private protocolVerified = false;
   private readonly pending = new Map<number, Pending>();
   private closed = false;
   private brokerVersion: string | undefined;
@@ -133,8 +134,9 @@ export class BridgeClient extends EventEmitter<BridgeClientEvents> {
   }
 
   /** Connect to an existing broker. Rejects with the socket error (ENOENT/ECONNREFUSED if nobody listens). */
-  static connect(pipePath: string, log: Logger, timeoutMs: number = CONNECT_TIMEOUT_MS, options: { readOnlyDirectory?: boolean } = {}): Promise<BridgeClient> {
+  static connect(pipePath: string, log: Logger, timeoutMs: number = CONNECT_TIMEOUT_MS, options: { readOnlyDirectory?: boolean; signal?: AbortSignal } = {}): Promise<BridgeClient> {
     return new Promise((resolve, reject) => {
+      options.signal?.throwIfAborted();
       // Never hand the token to an endpoint in a short-socket directory another user controls.
       ensurePrivateSocketDirectory(pipePath, process.platform, options.readOnlyDirectory ?? false);
       let socket = connect(pipePath);
@@ -142,14 +144,22 @@ export class BridgeClient extends EventEmitter<BridgeClientEvents> {
       let settled = false;
       const timer = setTimeout(() => {
         settled = true;
+        options.signal?.removeEventListener("abort", aborted);
         discovery?.abort();
         socket.destroy();
         reject(Object.assign(new Error("timed out connecting to broker"), { code: "ETIMEDOUT" }));
       }, timeoutMs);
+      const aborted = () => {
+        if (settled) return;
+        settled = true; clearTimeout(timer); options.signal?.removeEventListener("abort", aborted);
+        discovery?.abort(); socket.destroy(); reject(options.signal!.reason);
+      };
+      options.signal?.addEventListener("abort", aborted, { once: true });
       const connected = () => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
+        options.signal?.removeEventListener("abort", aborted);
         socket.removeAllListeners("error");
         resolve(new BridgeClient(socket, log));
       };
@@ -157,6 +167,8 @@ export class BridgeClient extends EventEmitter<BridgeClientEvents> {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
+        options.signal?.removeEventListener("abort", aborted);
+        discovery?.abort(); socket.destroy();
         reject(err);
       };
       socket.once("connect", connected);
@@ -187,6 +199,15 @@ export class BridgeClient extends EventEmitter<BridgeClientEvents> {
   }
 
   request<O extends Op>(op: O, args: RequestMap[O][0], timeoutMs: number = REQUEST_TIMEOUT_MS): Promise<RequestMap[O][1]> {
+    if (!this.protocolVerified && (op === 'auth' || op === 'hello' || op === 'helloT3')) {
+      const deadline = Date.now()+timeoutMs;
+      return this.request('ping',{},timeoutMs).then(ping=> {
+        if (ping.protocol!==PROTOCOL_VERSION) throw new BridgeError('protocol_mismatch','Exact broker protocol required before auth or registration',{brokerProtocol:ping.protocol});
+        const left = deadline-Date.now();
+        if (left<=0) throw new BridgeError('timeout','Original authentication deadline expired');
+        this.protocolVerified=true; return this.request(op,args,left);
+      });
+    }
     if (this.closed) return Promise.reject(this.#observedConnectionClosed("prewrite_closed", {
       operation: transportOperation(op), frame_encoded: false, write_call_boundary: "not_reached", write_returned: false,
     }));

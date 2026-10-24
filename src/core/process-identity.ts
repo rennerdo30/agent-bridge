@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import { promisify } from "node:util";
 import { isMainThread, workerData } from "node:worker_threads";
 import { readNativeIdentities, readNativeIdentitiesSync } from "./windows-process-identity.js";
+import { storageAdmissionRemaining } from "./storage-admission.js";
 
 const exec = promisify(execFile);
 let parentIdentity: Promise<string | null> | undefined;
@@ -24,12 +25,15 @@ function remaining(budget: number, started: number): number {
 }
 
 /** A PID alone can be reused. Bind reload recovery to the CLI process's creation time. */
-export function parentProcessIdentity(): Promise<string | null> {
+export function parentProcessIdentity(signal?: AbortSignal, check?: () => number): Promise<string | null> {
+  if (signal) return readProcessIdentity(process.ppid,signal,check);
   return parentIdentity ??= readProcessIdentity(process.ppid);
 }
 
-export async function readProcessIdentity(pid: number, signal?: AbortSignal): Promise<string | null> {
+export async function readProcessIdentity(pid: number, signal?: AbortSignal, check?: () => number): Promise<string | null> {
   if (!Number.isSafeInteger(pid) || pid <= 0 || signal?.aborted) return null;
+  if (storageAdmissionRemaining() !== undefined) return null;
+  check?.();
   try {
     if (process.platform === "linux") {
       const [stat, boot] = await Promise.all([readFile(`/proc/${pid}/stat`, { encoding: "utf8", signal }), readFile("/proc/sys/kernel/random/boot_id", { encoding: "utf8", signal })]);
@@ -39,14 +43,17 @@ export async function readProcessIdentity(pid: number, signal?: AbortSignal): Pr
     const started = performance.now();
     if (process.platform === "win32") {
       // Native first: "" (running, times unreadable) and a missing entry (not running) both stay unknown/null.
-      const pending = readNativeIdentities([pid], NATIVE_QUERY_TIMEOUT_MS, signal);
+      const pending = readNativeIdentities([pid], Math.min(NATIVE_QUERY_TIMEOUT_MS, check?.() ?? NATIVE_QUERY_TIMEOUT_MS), signal);
       const native = pending && await pending;
       if (native) return native.get(pid) || null;
       if (signal?.aborted) return null;
     }
+    check?.();
+    const budget = Math.min(remaining(SINGLE_QUERY_TIMEOUT_MS, started), check?.() ?? SINGLE_QUERY_TIMEOUT_MS);
+    signal?.throwIfAborted();
     const { stdout } = process.platform === "win32"
-      ? await exec("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", windowsIdentityCommand(pid)], { windowsHide: true, timeout: remaining(SINGLE_QUERY_TIMEOUT_MS, started), signal })
-      : await exec("ps", ["-p", String(pid), "-o", "lstart="], { timeout: SINGLE_QUERY_TIMEOUT_MS, env: { ...process.env, LC_ALL: "C" }, signal });
+      ? await exec("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", windowsIdentityCommand(pid)], { windowsHide: true, timeout: budget, signal })
+      : await exec("ps", ["-p", String(pid), "-o", "lstart="], { timeout: budget, env: { ...process.env, LC_ALL: "C" }, signal });
     return stdout.trim() || null;
   } catch { return null; }
 }
@@ -62,6 +69,7 @@ const BATCH_QUERY_TIMEOUT_MS = 15_000;
  * rather than returning an empty map, so callers never mistake it for every process being gone or unknown.
  */
 export async function readProcessIdentities(pids: number[]): Promise<Map<number, string>> {
+  if (storageAdmissionRemaining() !== undefined) throw Object.assign(new Error("Identity discovery deferred during bounded storage admission"), { code: IDENTITY_QUERY_FAILED });
   const valid = [...new Set(pids.filter(pid => Number.isSafeInteger(pid) && pid > 0))];
   const result = new Map<number, string>();
   if (!valid.length) return result;
@@ -96,6 +104,7 @@ export async function readProcessIdentities(pids: number[]): Promise<Map<number,
  * unverified readers). Returns undefined when the query fails, so callers keep those readers blocking.
  */
 export function readProcessIdentitiesSync(pids: number[]): Map<number, string> | undefined {
+  if (storageAdmissionRemaining() !== undefined) return undefined;
   const valid = [...new Set(pids.filter(pid => Number.isSafeInteger(pid) && pid > 0))];
   const result = new Map<number, string>();
   if (!valid.length) return result;
@@ -122,6 +131,7 @@ export function readProcessIdentitiesSync(pids: number[]): Map<number, string> |
 
 /** Bounded image-name evidence for listed processes whose creation identity cannot be read. Failures prove nothing. */
 export function readProcessNamesSync(pids: number[]): Map<number, string> | undefined {
+  if (storageAdmissionRemaining() !== undefined) return undefined;
   const valid = [...new Set(pids.filter(pid => Number.isSafeInteger(pid) && pid > 0))];
   const result = new Map<number, string>();
   if (!valid.length) return result;
@@ -184,8 +194,15 @@ function ownIdentityUnavailable(): void {
  * in-flight own-identity probe (starting one immediately, regardless of the failure cooldown). A success
  * fills the cache that processIdentity(process.pid) returns; a failure is not cached and never guessed.
  */
-export function ownProcessIdentity(): Promise<string | undefined> {
+export function ownProcessIdentity(signal?: AbortSignal, check?: () => number): Promise<string | undefined> {
+  signal?.throwIfAborted(); check?.();
   if (ownIdentity) return Promise.resolve(ownIdentity);
+  if (storageAdmissionRemaining() !== undefined) return Promise.resolve(undefined);
+  if (signal) return readProcessIdentity(process.pid, signal, check).then(identity => {
+    signal.throwIfAborted(); check?.();
+    if (identity) ownIdentity ??= identity;
+    return ownIdentity;
+  });
   return startOwnRefresh();
 }
 
@@ -193,6 +210,7 @@ export function ownProcessIdentity(): Promise<string | undefined> {
 export function processIdentity(pid: number): string | undefined {
   if (!Number.isSafeInteger(pid) || pid <= 0) return undefined;
   if (pid === process.pid && ownIdentity) return ownIdentity;
+  if (storageAdmissionRemaining() !== undefined) return undefined;
   if (pid === process.pid && ownProbeFailed) { refreshOwnIdentity(); return undefined; }
   try {
     let identity: string | undefined;
@@ -231,6 +249,7 @@ export function isProcessIdentityAlive(pid: number, identity: string): boolean |
 /** Wall-clock creation time of a process (epoch ms), or undefined when it cannot be read.
  * A process that started after a lock was written cannot own that lock, so this detects PID reuse. */
 export function processStartMs(pid: number): number | undefined {
+  if (storageAdmissionRemaining() !== undefined) return undefined;
   if (!Number.isSafeInteger(pid) || pid <= 0) return undefined;
   try {
     if (process.platform === "win32") {

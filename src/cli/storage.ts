@@ -8,7 +8,8 @@ const USAGE = "Usage: agent-bridge storage finalize [--check | --yes] [--json] |
 
 const gib = (bytes: number) => `${(bytes / 1024 ** 3).toFixed(2)} GiB`;
 
-export function runStorage(rest: string[], home: string, out: (text: string) => void): number {
+export function runStorage(rest: string[], home: string, out: (text: string) => void): number | Promise<number> {
+  if (rest[0] === "migrate-messaging") return runMessagingMigration(rest.slice(1),out);
   if (rest[0] === "rollback-history" && rest.length === 1) {
     try { out(rollbackHistoryStore(home)); return 0; } catch (err) { out(String((err as Error).message)); return 1; }
   }
@@ -54,4 +55,24 @@ export function runStorage(rest: string[], home: string, out: (text: string) => 
   kept();
   out(`Removed 0 items, 0.00 GiB; ${plan.kept.length} items retained.`);
   return 0;
+}
+
+async function runMessagingMigration(args: string[], out: (text:string)=>void): Promise<number> {
+  const usage = 'Usage: agent-bridge storage migrate-messaging --source <absolute-home> --destination <absolute-isolated-home> [--mailbox <exact-basename>] --check | --yes --offline-isolated';
+  const values = new Map<string,string>(), flags = new Set<string>(), mailboxes: string[] = [];
+  for (let at=0;at<args.length;at++) {
+    const arg = args[at]!;
+    if (['--source','--destination','--mailbox'].includes(arg)) {
+      const value = args[++at];
+      if (!value || value.startsWith('--') || arg!=='--mailbox' && values.has(arg)) {out(usage);return 2;}
+      if (arg==='--mailbox') mailboxes.push(value); else values.set(arg,value);
+    } else if (['--check','--yes','--offline-isolated'].includes(arg) && !flags.has(arg)) flags.add(arg);
+    else {out(usage);return 2;}
+  }
+  if (!values.has('--source') || !values.has('--destination') || flags.has('--check')===flags.has('--yes') || flags.has('--yes')!==flags.has('--offline-isolated')) {out(usage);return 2;}
+  try {
+    const {migrateMessagingHome} = await import('../core/metadata-db.js');
+    out(JSON.stringify(await migrateMessagingHome({source:values.get('--source')!,destination:values.get('--destination')!,apply:flags.has('--yes'),offlineIsolated:flags.has('--offline-isolated'),mailboxes}),null,2));
+    return 0;
+  } catch (error) {out(String((error as Error).message));return 1;}
 }

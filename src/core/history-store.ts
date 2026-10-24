@@ -4,6 +4,7 @@ import { DatabaseSync } from "node:sqlite";
 import { CONVERSATION_RECORDS_VIEW, historyStoreV2Schema, HISTORY_V2_COPY_TABLES } from "./history-schema-v2.js";
 import { registerHistoryFunctions } from "./history-codec.js";
 import { configureSqlite, isSqliteBusy } from "./sqlite-policy.js";
+import { admissionSqliteBusy, storageAdmissionTimeout } from "./storage-admission.js";
 import { migrationLock } from "./migration-lock.js";
 import { liveStorePeers, refreshStorePeerIdentities } from "./store-compatibility.js";
 import { encodeHistoryRow, decodeHistoryRow, HISTORY_V1_PREFIX, resumableHistoryMigration, type HistoryMigrationOptions } from "./history-migration.js";
@@ -167,11 +168,11 @@ export function historyInitializationObservation(db: DatabaseSync): Readonly<{
     ownerBound: false, ownershipReleased: false });
 }
 export function openHistoryStore(file: string): DatabaseSync {
-  const db = new DatabaseSync(file, { timeout: 3000 });
+  const db = new DatabaseSync(file, { timeout: storageAdmissionTimeout(3000) });
   const record: HistoryInitialization = { identity: Symbol(), db, file, state: "initializing", close: "not_attempted" };
   historyInitializations.set(db, record); // Capture before configuration or migration can fail.
   try {
-    db.exec("PRAGMA busy_timeout=3000");
+    admissionSqliteBusy(db,3000,true);
     registerHistoryFunctions(db);
     const version = Number(db.prepare("PRAGMA user_version").get()!.user_version);
     if (version > HISTORY_STORE_VERSION) throw new Error(`unsupported history store version: ${version}`);

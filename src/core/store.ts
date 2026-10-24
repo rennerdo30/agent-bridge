@@ -1,3 +1,7 @@
+import { assertMailboxVersion, preflightMessagingHome, assertCurrentMailboxEnvelope, withFreshMessagingInitialization } from './mailbox-layout.js';
+import { metadataDb, metadataDbOpen, metadataReaderRetained, closeMetadataDb } from './metadata-db.js';
+import { assertCompatibleMailboxReaders, maintenanceLock, withMaintenanceExclusion } from './storage-lock.js';
+import { admissionSqliteBusy, storageAdmissionRemaining, storageAdmissionTimeout, withStorageAdmission } from './storage-admission.js';
 import { existsSync, mkdirSync, realpathSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { DatabaseSync, type StatementSync } from "node:sqlite";
@@ -109,10 +113,87 @@ const MIGRATIONS = [
     INSERT INTO peer_last_seen SELECT name, MAX(learned_at) FROM peer_names GROUP BY name;
     PRAGMA user_version = 9;
   ` },
+  { version: 10, backupTables: [], sql: `
+    CREATE TABLE message_frontends (
+      id TEXT NOT NULL, recipient TEXT NOT NULL, binding TEXT NOT NULL,
+      PRIMARY KEY(id,recipient)
+    );
+    CREATE INDEX idx_message_frontends_binding ON message_frontends(binding,recipient,id);
+    CREATE TABLE send_intents (id TEXT PRIMARY KEY, owner TEXT NOT NULL, fingerprint TEXT NOT NULL);
+    CREATE TABLE send_destinations (
+      id TEXT NOT NULL, recipient TEXT NOT NULL, message TEXT NOT NULL, destination TEXT NOT NULL,
+      PRIMARY KEY(id,recipient)
+    );
+    PRAGMA user_version = 10;
+  ` },
+  // Add columns and project only new metadata; original rows/binding bytes stay
+  // unchanged. No snapshot of a table that a v9 source has not created yet.
+  { version: 11, backupTables: [], sql: `
+    ALTER TABLE message_frontends ADD COLUMN state TEXT NOT NULL DEFAULT 'ambiguous';
+    ALTER TABLE message_frontends ADD COLUMN identity TEXT NOT NULL DEFAULT '';
+    UPDATE message_frontends SET state='hosted',identity=binding
+      WHERE CASE WHEN json_valid(binding) THEN json_extract(binding,'$.kind')='t3'
+        AND json_type(binding,'$.scope')='text' AND length(json_extract(binding,'$.scope'))=64
+        AND json_extract(binding,'$.scope') NOT GLOB '*[^a-f0-9]*'
+        AND json_type(binding,'$.threadId')='text' AND length(json_extract(binding,'$.threadId')) BETWEEN 1 AND 512
+        AND json_type(binding,'$.providerInstanceId')='text' AND length(json_extract(binding,'$.providerInstanceId')) BETWEEN 1 AND 256 ELSE 0 END;
+    CREATE TABLE recipient_registrations (
+      name TEXT PRIMARY KEY, identity TEXT NOT NULL, binding TEXT NOT NULL, state TEXT NOT NULL, peer_id TEXT NOT NULL
+    );
+    PRAGMA user_version = 11;
+  ` },
+  // Preserve every intermediate proof string. It did not encode session versus
+  // process provenance, so no native authority can be reconstructed from it.
+  { version: 12, backupTables: [], sql: `
+    ALTER TABLE message_frontends ADD COLUMN owner TEXT NOT NULL DEFAULT '';
+    ALTER TABLE message_frontends ADD COLUMN sender TEXT NOT NULL DEFAULT '';
+    UPDATE message_frontends SET owner=binding WHERE state='hosted' AND binding=identity;
+    ALTER TABLE recipient_registrations ADD COLUMN owner TEXT NOT NULL DEFAULT '';
+    PRAGMA user_version = 12;
+  ` },
+  // Intermediate readers did not record direction. Keep every original proof;
+  // a display address or missing remote pin cannot prove historical locality.
+  { version: 13, backupTables: [], sql: `
+    ALTER TABLE message_frontends ADD COLUMN mailbox TEXT NOT NULL DEFAULT '';
+    ALTER TABLE message_frontends ADD COLUMN source TEXT NOT NULL DEFAULT '';
+    ALTER TABLE send_intents ADD COLUMN namespace TEXT NOT NULL DEFAULT '';
+    ALTER TABLE send_destinations ADD COLUMN namespace TEXT NOT NULL DEFAULT '';
+    ALTER TABLE job_delivery_routes ADD COLUMN namespace TEXT NOT NULL DEFAULT '';
+    CREATE TABLE IF NOT EXISTS mailbox_store (id INTEGER PRIMARY KEY CHECK(id=1), namespace TEXT NOT NULL);
+    INSERT OR IGNORE INTO mailbox_store VALUES (1,lower(hex(randomblob(32))));
+    CREATE INDEX idx_message_mailbox_owner ON message_frontends(mailbox,state,owner,recipient,id);
+    PRAGMA user_version = 13;
+  ` },
+  { version: 14, backupTables: [], sql: `
+    CREATE TABLE job_mail_grants (
+      id TEXT PRIMARY KEY, namespace TEXT NOT NULL, authority TEXT NOT NULL,
+      original_recipient TEXT NOT NULL, original_owner TEXT NOT NULL, original_mailbox TEXT NOT NULL,
+      body_hash TEXT NOT NULL, original_envelope TEXT NOT NULL, created_at INTEGER NOT NULL
+    );
+    CREATE TABLE job_mail_succession (
+      id TEXT NOT NULL, generation INTEGER NOT NULL, recipient TEXT NOT NULL,
+      owner TEXT NOT NULL, mailbox TEXT NOT NULL, authority TEXT NOT NULL, created_at INTEGER NOT NULL,
+      PRIMARY KEY(id,generation)
+    );
+    CREATE TABLE job_mail_retirements (
+      id TEXT NOT NULL, recipient TEXT NOT NULL, generation INTEGER NOT NULL,
+      retired_at INTEGER NOT NULL, successor_generation INTEGER NOT NULL,
+      PRIMARY KEY(id,recipient,generation)
+    );
+    PRAGMA user_version = 14;
+  ` },
+  { version: 15, backupTables: [], sql: `
+    CREATE TABLE messaging_candidate (id INTEGER PRIMARY KEY CHECK(id=1), contract TEXT NOT NULL, state TEXT NOT NULL, attempt TEXT NOT NULL);
+    INSERT INTO messaging_candidate VALUES (1,'p12/m7/s15','preparing','');
+    INSERT INTO message_frontends(id,recipient,binding,state,identity,owner,sender,mailbox,source)
+      SELECT id,recipient,'','ambiguous','','','','','' FROM messages WHERE 1 ON CONFLICT(id,recipient) DO NOTHING;
+    PRAGMA user_version=15;
+  ` },
 ] as const;
 
 /** Upgrade only the schema, without broker startup, archive movement or retention. */
 export function migrateMessageSchema(db: DatabaseSync, file: string, existed: boolean, log: Logger): void {
+  assertMailboxVersion(db, file);
   migrateSqlite(db, file, existed, SQLITE_STORE_VERSION, MIGRATIONS, log);
 }
 
@@ -172,6 +253,7 @@ type StoreStatement = {
 };
 const storeHandleCaptures = new WeakMap<DatabaseSync, StoreConstructionCapture>();
 const retainedStoreConstructions = new Set<StoreConstructionCapture>();
+const ordinaryInitialization = Symbol('owned ordinary initializer');
 
 /** Actual historical constructor capture only; never native handle export,
  * current cold/schema proof, complete managed census or retirement permission.
@@ -319,11 +401,11 @@ export class MessageStore {
     try { db.close(); if (capture) capture.close = "returned"; }
     catch (error) { if (capture) capture.close = "unknown"; this.lifecycleConstruction.unknown = true; throw error; }
   }
-  private readonly db: DatabaseSync;
-  private readonly archiveDb: DatabaseSync;
-  private readonly historyDb: DatabaseSync;
-  private readonly release: () => void;
-  private readonly home: string | null;
+  private readonly db!: DatabaseSync;
+  private readonly archiveDb!: DatabaseSync;
+  private readonly historyDb!: DatabaseSync;
+  private readonly release!: () => void;
+  private readonly home!: string | null;
   private readonly writeAbort = new AbortController();
   private backups: BackupBackground | null = null;
   private archiveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -341,14 +423,14 @@ export class MessageStore {
   private lifecycleWriteUnknown = false;
   private lifecyclePendingWriteCount = 0;
   private lifecycleDrainWaiter: (() => void) | null = null;
-  readonly decisions: DecisionStore;
-  readonly history: HistoryIndex;
-  readonly historyFile: string;
+  readonly decisions!: DecisionStore;
+  readonly history!: HistoryIndex;
+  readonly historyFile!: string;
   historyPeerSink: ((peer: PeerInfo) => void) | undefined;
   /** Told about every stored or claimed message, so a backed-off history worker indexes it promptly. */
   historyMessageSink: (() => void) | undefined;
-  readonly file: string;
-  private readonly stmt: {
+  readonly file!: string;
+  private readonly stmt!: {
     insert: StoreStatement;
     unread: StoreStatement;
     markRead: StoreStatement;
@@ -360,34 +442,60 @@ export class MessageStore {
   constructor(
     file: string,
     private readonly log: Logger,
+    admitted?: typeof ordinaryInitialization,
   ) {
+    if (admitted !== ordinaryInitialization) {
+      const deadline = Date.now() + 10_000;
+      return openMessageStore(file, log, () => {
+        const left = deadline - Date.now();
+        if (left <= 0) throw new Error('Original startup deadline expired; committed data retained');
+        return left;
+      });
+    }
     retainedStoreConstructions.add(this.lifecycleConstruction);
     try {
     this.file = file;
+    storageAdmissionRemaining();
+    if (file !== ':memory:') preflightMessagingHome(dirname(file), file);
     const existed = file !== ":memory:" && existsSync(file);
     this.home = file === ":memory:" ? null : dirname(file);
     if (file !== ":memory:") mkdirSync(dirname(file), { recursive: true, mode: 0o700 }); // owner-only on Unix
-    this.release = file === ":memory:" ? () => {} : storageLease(dirname(file));
+    if (file !== ':memory:') assertCompatibleMailboxReaders(dirname(file));
+    const lease = file === ":memory:" ? () => {} : storageLease(dirname(file));
+    let released = false;
+    this.release = () => { if (!released) { released = true; lease(); } };
     this.lifecycleConstruction.lease = this.release;
-    try { this.db = new DatabaseSync(file); this.captureHandle("main", this.db); }
+    try { this.db = new DatabaseSync(file, { timeout: storageAdmissionTimeout(SQLITE_BUSY_TIMEOUT_MS) }); this.captureHandle("main", this.db); }
     catch (err) { this.release(); throw err; }
     try {
+      storageAdmissionRemaining();
+      admissionSqliteBusy(this.db, SQLITE_BUSY_TIMEOUT_MS, true);
+      assertMailboxVersion(this.db, file);
+      configureSqlite(this.db);
       let deferred = false;
       try { migrateMessageSchema(this.db, file, existed, log); }
       catch (error) {
         const version = Number(this.db.prepare("PRAGMA user_version").get()!.user_version);
-        if ((error as NodeJS.ErrnoException).code !== "STORE_UPGRADE_DEFERRED" || version < 4) throw error;
+        if ((error as NodeJS.ErrnoException).code !== "STORE_UPGRADE_DEFERRED" || version < SQLITE_STORE_VERSION) throw error;
         deferred = true;
         log.info("hosting broker on compatible existing schema while upgrade waits for retained readers", { file, version, target: SQLITE_STORE_VERSION });
       }
       if (file !== ":memory:") attachStoreCompatibility(this.db, file, log, deferred);
       configureSqlite(this.db);
+      if (file !== ':memory:') {
+        const home = dirname(file), opened = !metadataDbOpen(home);
+        try { metadataDb(home); }
+        finally { if (opened && !metadataReaderRetained(home)) closeMetadataDb(home); }
+      }
+      this.db.prepare("UPDATE messaging_candidate SET state='ready' WHERE id=1 AND attempt='' AND state='preparing'").run();
+      assertCurrentMailboxEnvelope(this.db);
       ensureMessageQuarantine(this.db);
     } catch (err) {
       this.closeCapturedHandle(this.db);
       this.release();
       throw err;
     }
+    storageAdmissionRemaining();
     try { this.archiveDb = openArchive(archiveDbPath(file)); this.captureHandle("archive", this.archiveDb); }
     catch (err) { this.closeCapturedHandle(this.db); this.release(); throw err; }
     // Legacy archived rows stay readable in their original table. Relocation
@@ -396,10 +504,12 @@ export class MessageStore {
     this.#decisionConsumer = this.decisions;
     this.lifecycleConstruction.consumers.add(this.decisions);
     this.historyFile = historyDbPath(file);
+    storageAdmissionRemaining();
     let historyDb: DatabaseSync | undefined;
     try {
       this.historyDb = historyDb = file === ":memory:" ? this.db : openHistoryStore(this.historyFile);
       this.captureHandle("history", this.historyDb);
+      storageAdmissionRemaining();
       this.history = new HistoryIndex(this.historyDb, this.home, undefined, this.db,
         file === ":memory:" ? undefined : (peer) => this.historyPeerSink?.(peer as PeerInfo));
       this.#historyConsumer = this.history;
@@ -429,7 +539,17 @@ export class MessageStore {
     };
     log.debug("message store opened", { file });
     this.lifecycleConstruction.construction = "returned"; retainedStoreConstructions.delete(this.lifecycleConstruction);
-    } catch (error) { this.lifecycleConstruction.construction = "unknown"; this.lifecycleConstruction.unknown = true; throw error; }
+    } catch (error) {
+      this.lifecycleConstruction.construction = "unknown"; this.lifecycleConstruction.unknown = true;
+      const failures: unknown[] = [error];
+      for (const handle of [...this.lifecycleConstruction.handles.values()].reverse()) {
+        if (handle.close === 'returned' || handle.close === 'unknown') continue;
+        try { this.closeCapturedHandle(handle.db); } catch (failure) { failures.push(failure); }
+      }
+      try { this.lifecycleConstruction.lease?.(); } catch (failure) { failures.push(failure); }
+      if (failures.length > 1) throw new AggregateError(failures,'Storage initialization failed; owned cleanup unknown, committed data retained');
+      throw error;
+    }
   }
 
   startBackups(): void {
@@ -1009,5 +1129,32 @@ export class MessageStore {
     }
     this.lifecycleConstruction.ordinaryClose = "returned";
     } catch (error) { this.lifecycleConstruction.ordinaryClose = "unknown"; this.lifecycleConstruction.unknown = true; throw error; }
+  }
+}
+
+/** One admitted ordinary initializer, also used by direct/offline consumers.
+ * No worker, publication proof or second initialization is involved. */
+export function openMessageStore(file: string, log: Logger, check: () => number): MessageStore {
+  let store: MessageStore | undefined;
+  try {
+    return withStorageAdmission(check, () => {
+      check();
+      if (file === ':memory:') { store = new MessageStore(file, log, ordinaryInitialization); check(); return store; }
+      preflightMessagingHome(dirname(file), file);
+      assertCompatibleMailboxReaders(dirname(file));
+      // Existing compatible readers may continue on an already complete layout.
+      const initialize = () => { check(); store = new MessageStore(file, log, ordinaryInitialization); check(); return store; };
+      if (existsSync(file)) {
+        const inspection = new DatabaseSync(file,{readOnly:true,timeout:0});
+        let fresh: boolean;
+        try { fresh = Number(inspection.prepare('PRAGMA user_version').get()!.user_version) === 0; } finally { inspection.close(); }
+        if (!fresh) return initialize();
+      }
+      const release = maintenanceLock(dirname(file), true, true);
+      try { return withMaintenanceExclusion(release, check, () => withFreshMessagingInitialization(dirname(file), initialize,file)); } finally { release(); }
+    });
+  } catch (error) {
+    if (store) { try { store.close(); } catch (cleanup) { throw new AggregateError([error, cleanup], 'Late storage initialization; owned cleanup unknown, committed data retained'); } }
+    throw error;
   }
 }

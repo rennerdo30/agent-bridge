@@ -173,6 +173,7 @@ function connect(path) {
 }
 parentPort.on("message", message => {
   if (message.type === "connect") return connect(message.path);
+  if (message.type === "cancel") { outstanding.delete(message.id); armIdle(); return; }
   if (message.type === "close") { if (socket) socket.destroy(); return; }
   if (message.type !== "query") return;
   if (!socket || Atomics.load(state, 1) !== ${READY}) return answer({ id: message.id, error: "identity host not connected" }, message.sync);
@@ -450,7 +451,9 @@ export function readNativeIdentities(pids: number[], timeoutMs: number, signal?:
   const valid = validPids(pids);
   if (!valid.length) return Promise.resolve(new Map());
   if (signal?.aborted) return undefined;
-  const current = readyHelper();
+  // Deadline-owned callers never cold-start the shared 15-second host. Their
+  // fallback is an independently abortable child with the caller's remaining budget.
+  const current = signal ? (helper && !helper.retired && Atomics.load(helper.state, 1) === READY ? helper : undefined) : readyHelper();
   if (!current) return undefined;
   const id = ++nextId;
   const budget = Number.isFinite(timeoutMs) ? Math.max(0, Math.min(1_000, timeoutMs)) : 0;
@@ -468,7 +471,10 @@ export function readNativeIdentities(pids: number[], timeoutMs: number, signal?:
       if (!current.pending.size) current.worker.unref();
       // A stuck query must not retain outstanding work in the worker forever. Retire this owned helper;
       // late messages cannot resolve another request or keep its pipe/host alive. Unknown remains unknown.
-      if (!value) retire(current);
+      if (!value) {
+        if (!signal && !current.pending.size) retire(current);
+        else { try { current.worker.postMessage({ type: "cancel", id }); } catch { /* no authority to retire shared owners */ } }
+      }
       resolve(value);
     };
     const onAbort = () => finish(undefined);
@@ -477,6 +483,7 @@ export function readNativeIdentities(pids: number[], timeoutMs: number, signal?:
     current.worker.ref();
     timer = setTimeout(() => finish(undefined), budget);
     signal?.addEventListener("abort", onAbort, { once: true });
+    if (signal?.aborted) { onAbort(); return; }
     try { current.worker.postMessage({ type: "query", id, pids: valid, sync: false }); }
     catch { finish(undefined); }
   });

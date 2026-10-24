@@ -27,6 +27,9 @@ function printResult(res: InstallResult): void {
 
 async function main(argv: string[]): Promise<number> {
   const [command = "help", ...rest] = argv;
+  // Offline migration names both homes. Dispatch before ambient-home logger,
+  // token, configuration or normal startup can create any files there.
+  if (command === "storage" && rest[0] === "migrate-messaging") return (await import("./storage.js")).runStorage(rest, "", out);
   const home = resolveHome();
   // State inspection must not create logs or repair malformed configuration/stores.
   if (command === "job-state") return (await import("./job-close.js")).runJobClose(command, rest, home, DEFAULT_CONFIG, nullLogger, out);

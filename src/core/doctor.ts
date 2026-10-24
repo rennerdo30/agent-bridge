@@ -6,13 +6,14 @@ import { DB_FILE_NAME, JOBS_FILE, MAX_BODY_CHARS, MAX_FRAME_BYTES } from "./cons
 import { jsonStoreFiles, listBackups } from "./backups.js";
 import { isRecord, JSON_STORE_VERSION, retentionLimit, writeJsonStore } from "./json-store.js";
 import { ARCHIVE_DB_NAME, ARCHIVE_STORE_VERSION, checkDatabase } from "./sqlite-maintenance.js";
-import { SQLITE_STORE_VERSION, MessageStore } from "./store.js";
+import { SQLITE_STORE_VERSION, MessageStore, openMessageStore } from "./store.js";
 import { maintenanceLock, storageLease } from "./storage-lock.js";
 import { ARCHIVE_AGE_ENV, DEFAULT_ARCHIVE_AGE_MS, archiveOldRuns, runLogFiles, runFileName } from "./run-archive.js";
 import { archiveJobs } from "./job-archive.js";
 import { nullLogger } from "./logger.js";
 import { acquireLock } from "../mcp/jobs.js";
 import { isOversizedBody, QUARANTINE_DIR } from "./oversize.js";
+import { preflightMessagingHome, assertCurrentMailboxEnvelope } from "./mailbox-layout.js";
 
 export interface DoctorFinding {
   severity: "info" | "warning" | "error";
@@ -60,6 +61,7 @@ export function doctor(home: string, now = Date.now()): DoctorReport {
       try {
         db = new DatabaseSync(path, { readOnly: true, timeout: 50 });
         actual = Number(db.prepare("PRAGMA user_version").get()!.user_version);
+        if (name===DB_FILE_NAME) assertCurrentMailboxEnvelope(db);
         for (const detail of checkDatabase(db)) finding("error", "sqlite-integrity", path, detail);
         if (db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='message_archive_conflicts'").get()) {
           const count = Number(db.prepare("SELECT COUNT(*) AS n FROM message_archive_conflicts").get()!.n);
@@ -124,6 +126,7 @@ export function doctor(home: string, now = Date.now()): DoctorReport {
 /** The only automatic repair is preserving orphan temporary files, never guessing missing data. */
 export function fixDoctor(home: string, confirmed: boolean): string[] {
   if (!confirmed) throw new Error("doctor fixes require confirmation");
+  preflightMessagingHome(home);
   const unlock = maintenanceLock(home);
   try {
     const fixed: string[] = [];
@@ -138,15 +141,16 @@ export function fixDoctor(home: string, confirmed: boolean): string[] {
   } finally { unlock(); }
 }
 
-export function archiveHome(home: string, confirmed: boolean, now = Date.now()): { messages: number; jobs: number; runs: number } {
+export function archiveHome(home: string, confirmed: boolean, now = Date.now(), startupCheck?: () => number): { messages: number; jobs: number; runs: number } {
   if (!confirmed) throw new Error("archiving requires confirmation");
+  preflightMessagingHome(home);
   const age = retentionLimit(ARCHIVE_AGE_ENV, DEFAULT_ARCHIVE_AGE_MS);
   if (!age) return { messages: 0, jobs: 0, runs: 0 };
   const release = storageLease(home);
   try {
     let messages = 0;
     if (existsSync(join(home, DB_FILE_NAME))) {
-      const store = new MessageStore(join(home, DB_FILE_NAME), nullLogger);
+      const store = startupCheck ? openMessageStore(join(home,DB_FILE_NAME),nullLogger,startupCheck) : new MessageStore(join(home, DB_FILE_NAME), nullLogger);
       try { messages = store.purgeOlderThan(now - age); } finally { store.close(); }
     }
     let jobs = 0;

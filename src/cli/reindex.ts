@@ -11,11 +11,15 @@ import { DatabaseSync } from "node:sqlite";
 import { migrateHistoryStore } from "../core/history-store.js";
 import { loadConfig } from "../core/config.js";
 import { historyBudget } from "../core/history-budget.js";
+import { StartupBudget } from "../core/startup-budget.js";
+import { openAdmittedMessageStore } from "../core/prior-endpoints.js";
+import { preflightMessagingHome } from "../core/mailbox-layout.js";
 
 type Batch = RequestMap["reindexHistory"][1];
 
 /** Maintenance authenticates without hello: it must not join a mailbox or create decision mail. */
 export async function runReindex(home: string, pipe: string, log: Logger, out: (text: string) => void): Promise<number> {
+  preflightMessagingHome(home);
   let client: BridgeClient | null = null;
   let store: MessageStore | null = null;
   let ingest: ConversationIngestor | null = null;
@@ -33,7 +37,9 @@ export async function runReindex(home: string, pipe: string, log: Logger, out: (
       batch = (reset) => connected.request("reindexHistory", { reset });
     } else {
       // Same migration/backup executor as broker startup, without chat-peer or purge side effects.
-      store = new MessageStore(resolveDbPath(home), log);
+      const startup = new StartupBudget();
+      try { store = await openAdmittedMessageStore(resolveDbPath(home),home,pipe,log,startup); }
+      finally { startup.close(); }
       await migrateHistoryStore(store.file, store.history.storageDatabase, undefined, undefined, undefined, true);
       const index = store.history;
       source = new DatabaseSync(store.file,{readOnly:true,timeout:100});

@@ -1,13 +1,21 @@
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { closeSync, constants as fsConstants, copyFileSync, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readSync, readdirSync } from "node:fs";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { metadataFileLease } from "./metadata-file-lease.js";
 import { liveStorePeers, metadataRelease } from "./store-compatibility.js";
-import { storageLease } from "./storage-lock.js";
+import { assertCompatibleMailboxReaders, hasMaintenanceExclusion, maintenanceLock, storageLease, withMaintenanceExclusion } from "./storage-lock.js";
 import { snapshotMetadataTables } from "./metadata-snapshot.js";
+import { METADATA_COMPONENT_VERSION } from "./store-version.js";
+import { assertCurrentMailboxEnvelope, preflightMessagingHome, offlineMetadataAdmitted, withOfflineMetadataAdmission } from "./mailbox-layout.js";
+import { admissionSqliteBusy, storageAdmissionRemaining, storageAdmissionTimeout } from "./storage-admission.js";
+import { assertSqliteAuthority, configureSqlite } from "./sqlite-policy.js";
+import { snapshotDatabase } from "./sqlite-maintenance.js";
+import { ownProcessIdentity } from "./process-identity.js";
+import { nullLogger } from "./logger.js";
+export { withOfflineMetadataAdmission, type OfflineMetadataAdmission } from "./mailbox-layout.js";
 
-const VERSION = 1;
+const VERSION = METADATA_COMPONENT_VERSION;
 const connections = new Map<string, DatabaseSync>();
 type MetadataAdmissionIdentity = { home: string; file: string };
 const lifecycleAdmissions = new WeakMap<DatabaseSync, MetadataAdmissionIdentity | null>();
@@ -126,7 +134,7 @@ CREATE TABLE IF NOT EXISTS bridge_imports (
  path TEXT PRIMARY KEY, sha256 TEXT NOT NULL, bytes INTEGER NOT NULL,
  bundle TEXT NOT NULL, cold_path TEXT NOT NULL, imported_at INTEGER NOT NULL
 );
-INSERT INTO bridge_components(name,version) VALUES ('metadata',1)
+INSERT INTO bridge_components(name,version) VALUES ('metadata',7)
  ON CONFLICT(name) DO UPDATE SET version=excluded.version;
 `;
 
@@ -144,46 +152,55 @@ export function physicalMetadataPath(path: string): void {
 
 /** Observe an already admitted component without starting a competing migration. */
 export function existingMetadataDb(home: string): DatabaseSync | undefined {
+ preflightMessagingHome(home);
  const file = join(resolve(home),"bridge.db"), cached = connections.get(handleKey(file));
- if (cached) return escapeMetadataReference(cached);
+ if (cached) { assertSqliteAuthority(cached); return escapeMetadataReference(cached); }
  if (!existsSync(file)) return undefined;
  physicalMetadataPath(file);
  const admission = observeExistingMetadataAdmission(file);
- const db = new DatabaseSync(file,{timeout:5_000});
+ const db = new DatabaseSync(file,{timeout:storageAdmissionTimeout(5_000)});
  recordMetadataAdmission(db, file, admission);
  try {
   if (!db.prepare("SELECT 1 FROM sqlite_master WHERE name='bridge_components'").get() ||
     Number(db.prepare("SELECT version FROM bridge_components WHERE name='metadata'").get()?.version ?? 0) !== VERSION) { legacyMetadataClose(db); return undefined; }
-  db.exec("PRAGMA busy_timeout=5000; PRAGMA synchronous=FULL;"); connections.set(handleKey(file),db); changeLifecycleRegistry(); return escapeMetadataReference(db);
+  configureSqlite(db,5_000); connections.set(handleKey(file),db); changeLifecycleRegistry(); return escapeMetadataReference(db);
  } catch (error) { legacyMetadataClose(db); throw error; }
 }
 
 /** Old readers must finish naturally before their file-backed domains change authority. */
 export function assertMetadataAdmission(home: string): void {
+ assertCompatibleMailboxReaders(home);
+ if (offlineMetadataAdmitted(home)) return;
  const blockers = liveStorePeers(home).filter(peer => !metadataRelease(peer.version));
  if (blockers.length) throw Object.assign(new Error(`Waiting for metadata upgrade: ${blockers.map(p => `${p.name} (v${p.version}, pid ${p.pid})`).join(", ")}. Existing readers keep their files.`), { code: "STORE_UPGRADE_DEFERRED" });
 }
 
 /** Additive component versioning leaves AB-206's global user_version untouched. */
 export function metadataDb(home: string): DatabaseSync {
+ storageAdmissionRemaining();
+ preflightMessagingHome(home);
  const file = join(resolve(home), "bridge.db");
  const cached = connections.get(handleKey(file));
- if (cached) return escapeMetadataReference(cached);
+ if (cached) { assertSqliteAuthority(cached); return escapeMetadataReference(cached); }
  physicalMetadataPath(file);
  mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
  const existed = existsSync(file);
  const admission = observeExistingMetadataAdmission(file);
- const db = new DatabaseSync(file, { timeout: 5_000 });
+ const db = new DatabaseSync(file, { timeout: storageAdmissionTimeout(5_000) });
  recordMetadataAdmission(db, file, admission);
  try {
-  db.exec("PRAGMA busy_timeout=5000; PRAGMA synchronous=FULL;");
+  admissionSqliteBusy(db,5_000,true);
   const version = () => db.prepare("SELECT 1 FROM sqlite_master WHERE name='bridge_components'").get()
    ? Number(db.prepare("SELECT version FROM bridge_components WHERE name='metadata'").get()?.version ?? 0) : 0;
   if (version() > VERSION) throw new Error("Metadata store is newer than this reader; retained unchanged.");
   if (version() < VERSION) {
    assertMetadataAdmission(home);
-   const release = observedMetadataLease(`${file}.metadata-migration`, "migration", () => metadataFileLease(`${file}.metadata-migration`, 5_000));
+   if (version() > 0 && !offlineMetadataAdmitted(home)) throw Object.assign(new Error('Explicit offline isolated metadata migration required'), {code:'STORE_OFFLINE_REQUIRED'});
+   const exclusion = hasMaintenanceExclusion(home) ? undefined : maintenanceLock(home,true,true);
+   let release: (() => void) | undefined;
    try {
+    release = observedMetadataLease(`${file}.metadata-migration`, "migration", () => metadataFileLease(`${file}.metadata-migration`, storageAdmissionTimeout(5_000)));
+    storageAdmissionRemaining(); preflightMessagingHome(home); assertMetadataAdmission(home);
     if (version() < VERSION) {
      if (existed) {
       const dir = join(home, ".migration-snapshots");
@@ -192,12 +209,18 @@ export function metadataDb(home: string): DatabaseSync {
       const backup = join(dir, `metadata-v${VERSION}-${randomUUID()}.db`);
       snapshotMetadataTables(db,backup,["bridge_components","worktree_leases","worktree_lease_archive","bridge_metadata","bridge_read_receipts","bridge_imports","job_checklist","project_checklist"],"metadata",VERSION);
      }
+     storageAdmissionRemaining(); configureSqlite(db,5_000);
      db.exec("BEGIN IMMEDIATE");
-     try { db.exec(SCHEMA); db.exec("COMMIT"); }
+     try { storageAdmissionRemaining(); db.exec(SCHEMA); }
      catch (error) { db.exec("ROLLBACK"); throw error; }
+     // A COMMIT error is unknown. Close the owned handle, retain snapshots and
+     // inspect the exact component/attempt on an explicit reopen; never retry an effect.
+     storageAdmissionRemaining(); db.exec("COMMIT");
+     storageAdmissionRemaining();
     }
-   } finally { release(); }
+   } finally { try { release?.(); } finally { exclusion?.(); } }
   }
+  configureSqlite(db,5_000);
   connections.set(handleKey(file), db);
   changeLifecycleRegistry();
   return escapeMetadataReference(db);
@@ -493,4 +516,260 @@ export function saveMetadataValue(home: string, domain: string, key: string, val
   metadataDb(home).prepare(`INSERT INTO bridge_metadata VALUES (?,?,?,?)
    ON CONFLICT(domain,key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`).run(domain,key,JSON.stringify(value),Date.now());
  } finally { release(); }
+}
+
+export interface MessagingMigrationOptions {
+ source: string; destination: string; apply?: boolean; offlineIsolated?: boolean;
+ /** Exact legal alternate mailbox basenames, supplied by the operator, never sniffed. */
+ mailboxes?: string[]; signal?: AbortSignal;
+}
+type MigrationInput = { path: string; role: "sqlite" | "evidence" | "wal"; identity: string; bytes: number; sha256: string };
+interface MigrationAttempt {
+ id: string; inputId: string; source: string; destination: string;
+ inputs: MigrationInput[]; snapshots: Record<string, string>; phase: "copying" | "imported" | "ready";
+}
+const MIGRATION_DOMAIN = "messaging-migration", MIGRATION_KEY = "candidate-p12-m7-s15";
+const migrationRefusal = (message: string) => Object.assign(new Error(message + "; all originals and interrupted destination retained"), { code: "STORE_MIGRATION_HELD" });
+const privateMigrationName = (name: string) => /(?:^|[-_.])(token|secret|credential|key|cert|config|pairing)(?:$|[-_.])/i.test(name);
+const quoteSql = (name: string) => '"' + name.replaceAll('"','""') + '"';
+function migrationSqliteDigest(file: string): string {
+ const db = new DatabaseSync(file,{readOnly:true,timeout:0}), hash = createHash('sha256');
+ const encode = (value:unknown) => JSON.stringify(value,(_,item)=>typeof item==='bigint' ? {bigint:String(item)} : item);
+ try {
+  db.exec('BEGIN');
+  const schema = db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_master ORDER BY type,name LIMIT 513").all();
+  if (schema.length>512) throw migrationRefusal('SQLite schema census bound exceeded');
+  hash.update(encode(schema));
+  for (const table of db.prepare('PRAGMA table_list').all().filter(row=>row.schema==='main' && (row.type==='table' || row.type==='virtual') && !String(row.name).startsWith('sqlite_')).sort((a,b)=>String(a.name).localeCompare(String(b.name)))) {
+   const q = quoteSql(String(table.name));
+   const columns = db.prepare(`PRAGMA table_xinfo(${q})`).all().filter(row=>row.hidden===0).map(row=>String(row.name));
+   const read = db.prepare(`SELECT * FROM ${q} ORDER BY ${columns.map(quoteSql).join(',')}`); read.setReadBigInts(true);
+   hash.update(String(table.name)); for (const row of read.iterate()) hash.update(encode(row));
+  }
+  return hash.digest('hex');
+ } finally { db.close(); }
+}
+
+/** Bounded descriptor hashing; a changed inode/name never supplies the old input's identity. */
+function migrationInput(home: string, path: string, role: MigrationInput["role"]): MigrationInput {
+ const file = join(home,path); physicalMetadataPath(file);
+ const before = lstatSync(file,{bigint:true});
+ const signature = (stat: typeof before) => `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`;
+ if (!before.isFile() || before.nlink !== 1n) throw migrationRefusal("Nonregular migration input");
+ const fd = openSync(file,fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0)), hash = createHash('sha256'), buffer = Buffer.alloc(64*1024);
+ try {
+  if (signature(fstatSync(fd,{bigint:true})) !== signature(before)) throw migrationRefusal("Substituted migration input");
+  for (let length; (length = readSync(fd,buffer,0,buffer.length,null)) > 0;) hash.update(buffer.subarray(0,length));
+  if (signature(fstatSync(fd,{bigint:true})) !== signature(before) || signature(lstatSync(file,{bigint:true})) !== signature(before)) throw migrationRefusal("Changed migration input");
+ } finally { closeSync(fd); }
+ return { path,role,identity:signature(before),bytes:Number(before.size),sha256:hash.digest('hex') };
+}
+function messagingMigrationInventory(home: string, mailboxes: string[]) {
+ physicalMetadataPath(home);
+ const databases = new Set(["bridge.db","archive.db","history.db","store-compatibility.db","owner-questions.db",...mailboxes]);
+ if (mailboxes.length>64) throw migrationRefusal('Mailbox inventory bound exceeded');
+ for (const name of mailboxes) if (!name || basename(name) !== name || /[/\\]/.test(name) || name === "." || name === ".." || ['token','config.json','broker-tcp.json','.maintenance-lock','.storage-users'].includes(name) || /-(?:wal|shm)$/.test(name)) throw migrationRefusal("Alternate mailbox name collides with another exact storage role");
+ const paths: {path:string;role:MigrationInput['role']}[] = [], retainedUnknown: string[] = [];
+ const roots = new Set(["jobs","runs","archive","read-state","job-outcomes","local-result-receipts","remote-job-states",".migration-snapshots"]);
+ const walk = (dir: string, depth: number, dataRole: boolean) => {
+  if (depth > 16) throw migrationRefusal("Migration path depth bound exceeded");
+  const names = readdirSync(join(home,dir));
+  if (paths.length + retainedUnknown.length + names.length > 10_000) throw migrationRefusal("Migration inventory bound exceeded");
+  for (const name of names.sort()) {
+   if (!dir && (name==='.maintenance-lock' || name==='.storage-users' || [...databases].some(database=>name===database+'-shm'))) continue;
+   const path = dir ? join(dir,name) : name, stat = lstatSync(join(home,path));
+   if (stat.isSymbolicLink()) throw migrationRefusal(`Linked input ${path}`);
+   if (stat.isDirectory()) { if (dataRole || roots.has(name)) walk(path,depth+1,true); else retainedUnknown.push(path+sep); continue; }
+   if (!stat.isFile()) { retainedUnknown.push(path); continue; }
+   if (!dir && databases.has(name)) paths.push({path,role:'sqlite'});
+   else if (!dir && [...databases].some(database=>name===database+'-wal')) paths.push({path,role:'wal'});
+   else if (!privateMigrationName(name) && (dataRole || /^(?:jobs|decisions|handoffs|peer-names|session-bindings|project-groups|owner-questions|t3-wakes-[a-f0-9]+)\.json(?:l|[.-].*)?$/.test(name))) paths.push({path,role:'evidence'});
+   else retainedUnknown.push(path); // Token/config/private/unknown bytes are never opened or guessed empty.
+  }
+ };
+ walk('',0,false);
+ const inputs = paths.sort((a,b)=>a.path.localeCompare(b.path)).map(({path,role})=>migrationInput(home,path,role));
+ return {inputs,retainedUnknown};
+}
+
+/** Import an immutable SQLite view into the new coordinator, preserving rowids,
+ * schema, original ordinary rows and metadata. FTS is a derived search index;
+ * its exact original pages remain in the protected input snapshot. */
+function importMigrationSnapshot(target: DatabaseSync, snapshot: string, beforeCommit: () => void): void {
+ const source = new DatabaseSync(snapshot,{readOnly:true,timeout:0});
+ try {
+  const tables = source.prepare("PRAGMA table_list").all().filter(row=>row.schema==='main' && row.type==='table' && !String(row.name).startsWith('sqlite_'));
+  const schema = source.prepare("SELECT type,name,sql FROM sqlite_master WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%' ORDER BY type,name").all();
+  target.exec('BEGIN IMMEDIATE');
+  try {
+   for (const table of tables) {
+    const name = String(table.name), q = quoteSql(name);
+    if (!target.prepare('SELECT 1 FROM sqlite_master WHERE name=?').get(name)) target.exec(String(schema.find(row=>row.name===name)!.sql));
+    const columns = source.prepare(`PRAGMA table_xinfo(${q})`).all().filter(row=>row.hidden===0).map(row=>String(row.name));
+    const rowid = table.wr===0 && name!=='bridge_metadata' ? ['rowid','_rowid_','oid'].find(name=>!columns.includes(name)) : undefined;
+    const all = rowid ? [rowid,...columns] : columns;
+    const read = source.prepare(`SELECT ${all.map(quoteSql).join(',')} FROM ${q}`); read.setReadBigInts(true);
+    const insert = target.prepare(`INSERT INTO ${q} (${all.map(quoteSql).join(',')}) VALUES (${all.map(()=>'?').join(',')})`);
+    for (const row of read.iterate()) insert.run(...all.map(column=>row[column]!));
+   }
+   for (const entry of schema) {
+    if (entry.type==='table' && /^CREATE VIRTUAL TABLE/i.test(String(entry.sql))) {
+     target.exec(String(entry.sql)); target.exec(`INSERT INTO ${quoteSql(String(entry.name))} (${quoteSql(String(entry.name))}) VALUES ('rebuild')`);
+    } else if (entry.type!=='table') target.exec(String(entry.sql));
+   }
+   if (source.prepare("SELECT 1 FROM sqlite_master WHERE name='sqlite_sequence'").get()) {
+    for (const row of source.prepare('SELECT name,seq FROM sqlite_sequence').all()) {
+     if (!target.prepare('UPDATE sqlite_sequence SET seq=? WHERE name=?').run(row.seq!,row.name!).changes) target.prepare('INSERT INTO sqlite_sequence(name,seq) VALUES (?,?)').run(row.name!,row.seq!);
+    }
+   }
+   target.exec(`PRAGMA user_version=${Number(source.prepare('PRAGMA user_version').get()!.user_version)}`);
+   beforeCommit();
+  } catch (error) { target.exec('ROLLBACK'); throw error; }
+  // Never put an external effect or an unknown COMMIT inside retrySqlite.
+  target.exec('COMMIT');
+ } finally { source.close(); }
+}
+
+/** Finite shipping upgrade. --check is read-only. Apply is an operator attestation
+ * of shutdown/isolation, never proof that a cached old handle has been revoked.
+ * The source is retained. Only this API can resume an incomplete destination. */
+export async function migrateMessagingHome(options: MessagingMigrationOptions) {
+ if (!isAbsolute(options.source) || !isAbsolute(options.destination)) throw migrationRefusal('Exact absolute source and destination required');
+ const source = resolve(options.source), destination = resolve(options.destination);
+ const key = (home:string) => process.platform==='win32' ? home.replace(/^[de]:/i,'E:').toLowerCase() : home;
+ if (key(source)===key(destination) || key(destination).startsWith(key(source)+sep) || key(source).startsWith(key(destination)+sep)) throw migrationRefusal('Source and destination must be distinct nonnested homes');
+ physicalMetadataPath(source); physicalMetadataPath(destination);
+ const inventory = messagingMigrationInventory(source,options.mailboxes??[]);
+ const inputId = createHash('sha256').update(JSON.stringify({source:key(source),inputs:inventory.inputs,unknown:inventory.retainedUnknown})).digest('hex');
+ // The original shipping schema is inspected before destination/backup effects.
+ withOfflineMetadataAdmission({kind:'offline-isolated',home:source},()=>preflightMessagingHome(source));
+ for (const mailbox of options.mailboxes??[]) withOfflineMetadataAdmission({kind:'offline-isolated',home:source},()=>preflightMessagingHome(source,join(source,mailbox)));
+ const inputDb = new DatabaseSync(join(source,'bridge.db'),{readOnly:true,timeout:0});
+ try {
+  const version = Number(inputDb.prepare('PRAGMA user_version').get()!.user_version);
+  if (version<1 || version>9) throw migrationRefusal('Only explicitly supported shipping schemas1..9 are admitted');
+ } finally { inputDb.close(); }
+ const plan = {source,destination,inputId,inputs:inventory.inputs,retainedUnknown:inventory.retainedUnknown,originalsRetained:true,applied:false};
+ if (!options.apply) return plan;
+ if (options.offlineIsolated!==true) throw migrationRefusal('Apply requires explicit coordinated shutdown and offline-isolated attestation');
+ options.signal?.throwIfAborted();
+ if (metadataDbOpen(source) || metadataDbOpen(destination) || metadataReaderRetained(source) || metadataReaderRetained(destination)) throw migrationRefusal('This process still owns metadata readers');
+ const identityBudget = AbortSignal.timeout(10_000), signal = options.signal ? AbortSignal.any([options.signal,identityBudget]) : identityBudget;
+ if (!await ownProcessIdentity(signal)) throw migrationRefusal('Own process identity unknown');
+ const releases: (()=>void)[] = [];
+ let coordinator: DatabaseSync | undefined;
+ try {
+  releases.push(maintenanceLock(source,false,true));
+  if (JSON.stringify(messagingMigrationInventory(source,options.mailboxes??[]))!==JSON.stringify(inventory)) throw migrationRefusal('Source changed after planning');
+  mkdirSync(destination,{recursive:true,mode:0o700});
+  releases.push(maintenanceLock(destination,false,true));
+  const {guardPriorEndpoints} = await import('./prior-endpoints.js');
+  const {StartupBudget} = await import('./startup-budget.js');
+  const checkEndpoints = async () => {
+   const budget = new StartupBudget(Infinity,()=>!options.signal?.aborted);
+   try { await guardPriorEndpoints(source,'',budget,true); await guardPriorEndpoints(destination,'',budget,true); }
+   finally { budget.close(); }
+  };
+  await checkEndpoints();
+  const file = join(destination,'bridge.db'), existed = existsSync(file);
+  if (!existed && readdirSync(destination).some(name=>name!=='.maintenance-lock' && name!=='.storage-users')) throw migrationRefusal('Destination is not isolated and empty');
+  if (existed) {
+   const inspect = new DatabaseSync(file,{readOnly:true,timeout:0});
+   try {
+    const prior = inspect.prepare('SELECT value FROM bridge_metadata WHERE domain=? AND key=?').get(MIGRATION_DOMAIN,MIGRATION_KEY);
+    const attempt = prior && JSON.parse(String(prior.value)) as MigrationAttempt | undefined;
+    if (!attempt || attempt.inputId!==inputId || attempt.source!==source || attempt.destination!==destination || !/^[a-f0-9-]{36}$/.test(attempt.id) || !['copying','imported','ready'].includes(attempt.phase) || JSON.stringify(attempt.inputs)!==JSON.stringify(inventory.inputs) || !attempt.snapshots || typeof attempt.snapshots!=='object' || Array.isArray(attempt.snapshots) || Object.entries(attempt.snapshots).some(([path,hash])=>!inventory.inputs.some(input=>input.path===path && input.role!=='wal') || !/^[a-f0-9]{64}$/.test(hash))) throw migrationRefusal('Existing destination has no matching immutable attempt');
+    withOfflineMetadataAdmission({kind:'offline-isolated',home:destination},()=>preflightMessagingHome(destination));
+   } finally { inspect.close(); }
+  }
+  coordinator = new DatabaseSync(file,{timeout:0}); configureSqlite(coordinator);
+  if (!existed) coordinator.exec("CREATE TABLE bridge_metadata(domain TEXT NOT NULL,key TEXT NOT NULL,value TEXT NOT NULL,updated_at INTEGER NOT NULL,PRIMARY KEY(domain,key))");
+  let attempt: MigrationAttempt;
+  const row = coordinator.prepare('SELECT value FROM bridge_metadata WHERE domain=? AND key=?').get(MIGRATION_DOMAIN,MIGRATION_KEY);
+  if (row) {
+   attempt = JSON.parse(String(row.value)) as MigrationAttempt;
+   if (!attempt || attempt.inputId!==inputId || attempt.source!==source || attempt.destination!==destination || !/^[a-f0-9-]{36}$/.test(attempt.id) || !['copying','imported','ready'].includes(attempt.phase) || JSON.stringify(attempt.inputs)!==JSON.stringify(inventory.inputs)) throw migrationRefusal('Interrupted attempt/input identity mismatch');
+  } else {
+   if (existed) throw migrationRefusal('Existing destination has no immutable migration attempt');
+   attempt = {id:randomUUID(),inputId,source,destination,inputs:inventory.inputs,snapshots:{},phase:'copying'};
+   coordinator.prepare('INSERT INTO bridge_metadata VALUES (?,?,?,?)').run(MIGRATION_DOMAIN,MIGRATION_KEY,JSON.stringify(attempt),Date.now());
+  }
+  const save = (previous:string) => {
+   if (coordinator!.prepare('UPDATE bridge_metadata SET value=?,updated_at=? WHERE domain=? AND key=? AND value=?').run(JSON.stringify(attempt),Date.now(),MIGRATION_DOMAIN,MIGRATION_KEY,previous).changes!==1) throw migrationRefusal('Migration attempt CAS failed');
+  };
+  const snapshots = join(destination,'.migration-snapshots',`messaging-${attempt.id}`);
+  mkdirSync(snapshots,{recursive:true,mode:0o700});
+  for (const input of attempt.inputs.filter(input=>input.role!=='wal')) {
+   options.signal?.throwIfAborted();
+   const snapshot = join(snapshots,input.path); physicalMetadataPath(snapshot); mkdirSync(dirname(snapshot),{recursive:true,mode:0o700});
+   if (!existsSync(snapshot)) {
+    if (input.role==='sqlite') snapshotDatabase(join(source,input.path),snapshot);
+    else copyFileSync(join(source,input.path),snapshot,fsConstants.COPYFILE_EXCL);
+   }
+   const captured = migrationInput(snapshots,input.path,'evidence');
+   if (input.role==='evidence' && captured.sha256!==input.sha256 || attempt.snapshots[input.path] && attempt.snapshots[input.path]!==captured.sha256) throw migrationRefusal('Protected snapshot changed');
+   if (input.role==='sqlite') {
+    const check = new DatabaseSync(snapshot,{readOnly:true,timeout:0});
+    try { if (check.prepare('PRAGMA quick_check').all().some(row=>row.quick_check!=='ok')) throw migrationRefusal('Incomplete protected snapshot'); } finally { check.close(); }
+    if (!attempt.snapshots[input.path] && migrationSqliteDigest(join(source,input.path))!==migrationSqliteDigest(snapshot)) throw migrationRefusal('Snapshot does not preserve exact source view');
+   }
+   const previous = JSON.stringify(attempt); attempt.snapshots[input.path]=captured.sha256; save(previous);
+  }
+  if (attempt.phase==='ready') {
+   preflightMessagingHome(destination);
+   for (const mailbox of options.mailboxes??[]) preflightMessagingHome(destination,join(destination,mailbox));
+   return {...plan,attemptId:attempt.id,applied:true};
+  }
+  if (attempt.phase==='copying') {
+   // Coordinator owns only its migration row before import. Avoid replacing its
+   // SQL authority or losing the immutable attempt at a filesystem rename.
+   const canonical = new DatabaseSync(join(snapshots,'bridge.db'),{readOnly:true,timeout:0});
+   const reserved = canonical.prepare("SELECT 1 FROM sqlite_master WHERE name='bridge_metadata'").get() && canonical.prepare('SELECT 1 FROM bridge_metadata WHERE domain=? AND key=?').get(MIGRATION_DOMAIN,MIGRATION_KEY);
+   canonical.close(); if (reserved) throw migrationRefusal('Source contains a conflicting candidate attempt');
+   // Import + phase CAS are one SQLite transaction via a savepoint around the
+   // imported rows. Existing coordinator metadata is merged without replacing it.
+   importMigrationSnapshot(coordinator,join(snapshots,'bridge.db'),()=> {
+    const previous = JSON.stringify(attempt); attempt.phase='imported'; save(previous);
+   });
+  }
+  for (const input of attempt.inputs.filter(input=>input.role!=='wal' && input.path!=='bridge.db')) {
+   const target = join(destination,input.path), snapshot = join(snapshots,input.path);
+   mkdirSync(dirname(target),{recursive:true,mode:0o700}); physicalMetadataPath(target);
+   if (!existsSync(target)) copyFileSync(snapshot,target,fsConstants.COPYFILE_EXCL);
+   if (migrationInput(destination,input.path,'evidence').sha256!==attempt.snapshots[input.path]) throw migrationRefusal('Destination copy does not match retained snapshot');
+  }
+  options.signal?.throwIfAborted();
+  if (JSON.stringify(messagingMigrationInventory(source,options.mailboxes??[]))!==JSON.stringify(inventory)) throw migrationRefusal('Source changed during migration');
+  await checkEndpoints();
+  const {migrateMessageSchema} = await import('./store.js');
+  withOfflineMetadataAdmission({kind:'offline-isolated',home:destination},()=>withMaintenanceExclusion(releases[1]!,()=>1,()=> {
+   for (const input of attempt.inputs.filter(input=>input.role==='sqlite' && (input.path==='bridge.db' || options.mailboxes?.includes(input.path)))) {
+    const db = input.path==='bridge.db' ? coordinator! : new DatabaseSync(join(destination,input.path),{timeout:0});
+    try {
+     configureSqlite(db); migrateMessageSchema(db,join(destination,input.path),true,nullLogger);
+     if (db!==coordinator) {
+      assertCurrentMailboxEnvelope(db);
+      if (db.prepare("UPDATE messaging_candidate SET state='ready',attempt=? WHERE id=1 AND contract='p12/m7/s15' AND attempt IN ('',?)").run(attempt.id,attempt.id).changes!==1) throw migrationRefusal('Alternate mailbox ready CAS failed');
+     }
+    }
+    finally { if (db!==coordinator) db.close(); }
+   }
+   // Reuse the ordinary metadata initializer and its backup-first component migration.
+   metadataDb(destination); closeMetadataDb(destination);
+  }));
+  // Publish candidate-ready and migration completion together, never by a fence
+  // row alone. Validate all layout/namespace evidence under the same exclusion.
+  coordinator.exec('BEGIN IMMEDIATE');
+  try {
+   withOfflineMetadataAdmission({kind:'offline-isolated',home:destination},()=>assertCurrentMailboxEnvelope(coordinator!));
+   if (Number(coordinator.prepare("SELECT version FROM bridge_components WHERE name='metadata'").get()?.version)!==7) throw migrationRefusal('Component verification failed');
+   const previous = JSON.stringify(attempt); attempt.phase='ready';
+   const changed = coordinator.prepare("UPDATE messaging_candidate SET state='ready',attempt=? WHERE id=1 AND contract='p12/m7/s15' AND state IN ('preparing','ready') AND attempt IN ('',?)").run(attempt.id,attempt.id).changes;
+   if (changed!==1) throw migrationRefusal('Candidate-ready CAS failed'); save(previous);
+  } catch (error) { coordinator.exec('ROLLBACK'); throw error; }
+  coordinator.exec('COMMIT'); // Unknown outcome is retained and reported; no external retry.
+  return {...plan,attemptId:attempt.id,applied:true};
+ } finally {
+  try { coordinator?.close(); } finally { for (const release of releases.reverse()) release(); }
+ }
 }

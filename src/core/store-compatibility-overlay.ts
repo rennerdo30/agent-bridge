@@ -3,6 +3,8 @@ import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { Logger } from "./logger.js";
 import { migrateSqlite } from "./sqlite-migrations.js";
+import { configureSqlite } from "./sqlite-policy.js";
+import { storageAdmissionRemaining, storageAdmissionTimeout } from "./storage-admission.js";
 
 const TABLES = ["session_bindings", "peer_names", "peer_name_owners", "job_delivery_routes", "peer_last_seen"] as const;
 const SCHEMA = `
@@ -48,10 +50,10 @@ export function attachStoreCompatibility(db: DatabaseSync, file: string, log: Lo
   const captures = overlayCaptures.get(db) ?? []; captures.push(capture); overlayCaptures.set(db, captures);
   retainedOverlayCaptures.add(capture);
   let overlay: DatabaseSync;
-  try { overlay = new DatabaseSync(path); capture.overlay = overlay; capture.open = "returned"; }
+  try { storageAdmissionRemaining(); overlay = new DatabaseSync(path,{timeout:storageAdmissionTimeout(3000)}); capture.overlay = overlay; capture.open = "returned"; }
   catch (error) { capture.open = "unknown"; throw error; }
   capture.initialize = "attempted";
-  try { migrateSqlite(overlay, path, existed, 1, [{ version: 1, sql: SCHEMA }], log); capture.initialize = "returned"; }
+  try { configureSqlite(overlay); migrateSqlite(overlay, path, existed, 1, [{ version: 1, sql: SCHEMA }], log); capture.initialize = "returned"; }
   catch (error) { capture.initialize = "unknown"; throw error; }
   finally {
     capture.close = "attempted";
@@ -74,7 +76,9 @@ export function attachStoreCompatibility(db: DatabaseSync, file: string, log: Lo
         : table === "session_bindings"
           ? "ON CONFLICT(identity,session_id) DO UPDATE SET learned_at=MAX(session_bindings.learned_at,excluded.learned_at)"
           : "ON CONFLICT DO NOTHING";
-      db.exec(`INSERT INTO main.${table} SELECT * FROM store_compatibility.${table} WHERE 1 ${merge}`);
+      const columns = table==='job_delivery_routes' ? '(id,recipient,consumed_at)' : '';
+      const selected = table==='job_delivery_routes' ? 'id,recipient,consumed_at' : '*';
+      db.exec(`INSERT INTO main.${table} ${columns} SELECT ${selected} FROM store_compatibility.${table} WHERE 1 ${merge}`);
     }
     if (!db.prepare("SELECT name FROM main.sqlite_master WHERE name='peer_last_seen'").get()) {
       db.exec(`INSERT INTO store_compatibility.peer_last_seen SELECT name, MAX(learned_at) FROM peer_names GROUP BY name

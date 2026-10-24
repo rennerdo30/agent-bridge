@@ -12,6 +12,9 @@ import { BridgeError } from "../core/protocol.js";
 import type { DashboardInfo } from "./dashboard.js";
 import { EndpointReservation } from "../core/endpoint-reservation.js";
 import { ownProcessIdentity } from "../core/process-identity.js";
+import { StartupBudget, STARTUP_DEADLINE_ENV } from "../core/startup-budget.js";
+import { preflightMessagingHome } from "../core/mailbox-layout.js";
+import { openAdmittedMessageStore } from "../core/prior-endpoints.js";
 
 /** Bounded idle period: AGENT_BRIDGE_DAEMON_IDLE_EXIT_MS (1 s to 24 h) or the 10-minute default. */
 export function daemonIdleExitMs(value = process.env.AGENT_BRIDGE_DAEMON_IDLE_EXIT_MS): number {
@@ -21,27 +24,32 @@ export function daemonIdleExitMs(value = process.env.AGENT_BRIDGE_DAEMON_IDLE_EX
 
 /** Existing broker and services, owned by a demand-start process rather than an MCP session. */
 export async function runBrokerDaemon(home: string, pipe: string, log: Logger): Promise<number> {
+  const inherited = process.env[STARTUP_DEADLINE_ENV];
+  if (inherited!==undefined && (!/^\d+$/.test(inherited) || !Number.isSafeInteger(Number(inherited)))) throw new Error('Malformed original startup deadline; daemon not admitted');
+  const budget = new StartupBudget(inherited===undefined ? Infinity : Number(inherited));
+  try {
+  budget.remaining(); preflightMessagingHome(home);
   const token = loadOrCreateToken(home);
   // A broker that is handing over (or exiting idle) still holds the endpoint and refuses with `handover`.
   // Wait, bounded, until it has released it; the exclusive bind below stays the only admission, so two
   // brokers never serve at once and this one never starts before the old one closed the pipe.
-  for (const deadline = Date.now() + HANDOVER_DRAIN_MS + 5_000; ;) {
+  for (;;) {
     let client: BridgeClient;
-    try { client = await BridgeClient.connect(pipe, log); }
+    try { client = await BridgeClient.connect(pipe, log,Math.min(2000,budget.remaining()),{signal:budget.signal}); }
     catch (error) {
       if (["ENOENT", "ECONNREFUSED"].includes((error as NodeJS.ErrnoException).code ?? "")) break;
       throw error;
     }
-    try { await client.request("auth", { protocol: PROTOCOL_VERSION, token }); return 0; }
+    try { await client.request("auth", { protocol: PROTOCOL_VERSION, token },budget.remaining()); return 0; }
     catch (error) { if (!(error instanceof BridgeError && error.details?.handover === true)) throw error; }
     finally { client.close(); }
-    if (Date.now() >= deadline) return 0;
+    budget.remaining();
     await new Promise(resolve => setTimeout(resolve, 200));
   }
   // Windows reads this process's creation identity through PowerShell (about 0.7 s idle, seconds under load).
   // Start it now, off the event loop, so it overlaps binding and opening the store; the TCP fallback record
   // awaits it after activation. Only a store migration still needs it synchronously (its lock record).
-  void ownProcessIdentity();
+  if (!await budget.wait(ownProcessIdentity(budget.signal,()=>budget.remaining()))) throw new Error('Own daemon identity unknown');
   let reservation: EndpointReservation;
   try { reservation = await EndpointReservation.bind(pipe); }
   catch (error) {
@@ -56,8 +64,7 @@ export async function runBrokerDaemon(home: string, pipe: string, log: Logger): 
     const startup = JSON.parse(process.env.AGENT_BRIDGE_DAEMON_CONFIG);
     config.network = startup.network; config.mobile = startup.mobile; config.dashboardPort = startup.dashboardPort;
   }
-  void refreshStorePeerIdentities(home).catch(() => {});
-  const store = new MessageStore(resolveDbPath(home), log.child("store"));
+  const store = await openAdmittedMessageStore(resolveDbPath(home),home,pipe,log.child('store'),budget);
   try {
   const broker = new Broker(pipe, store, log.child("broker"), token, Date.now, join(home, JOBS_FILE), { home, config: config.network }, { ensure: (force, port) => ensureDashboard(force, port) });
   broker.setHostingMode("daemon");
@@ -104,7 +111,7 @@ export async function runBrokerDaemon(home: string, pipe: string, log: Logger): 
     return dashboardOpening;
   };
   try {
-    try { await broker.listen(reservation); listening = true; }
+    try { await broker.listen(reservation,budget); budget.remaining(); listening = true; budget.close(); }
     catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EADDRINUSE") throw error;
       // Every bind loser exits without unlinking or closing the winner's endpoint.
@@ -127,4 +134,5 @@ export async function runBrokerDaemon(home: string, pipe: string, log: Logger): 
   }
   } catch (error) { store.close(); throw error; }
   } finally { await reservation.close(); }
+  } finally { budget.close(); }
 }

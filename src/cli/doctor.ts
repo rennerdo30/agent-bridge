@@ -8,6 +8,9 @@ import { nullLogger } from "../core/logger.js";
 import { windowsUserPathFindings } from "./windows-env-doctor.js";
 import { packArchivedRuns } from "../core/finished-run-bundles.js";
 import { closeMetadataDb } from "../core/metadata-db.js";
+import { ownProcessIdentity } from "../core/process-identity.js";
+import { StartupBudget } from "../core/startup-budget.js";
+import { preflightMessagingHome } from "../core/mailbox-layout.js";
 
 /** doctor --archive also packs archived finished runs (AB-208); ordinary run archiving never does. */
 function packAllArchivedRuns(home: string, out: (text: string) => void): number {
@@ -58,12 +61,17 @@ export async function runDoctor(args: string[], home: string, out: (text: string
     out(`Restored backup. Previous data preserved at ${restoreBackup(home, restore, true)}`);
   } else if (args.includes("--backup")) out(`Backup created: ${createBackup(home)}`);
   else if (args.includes("--fix") || args.includes("--archive")) {
+    preflightMessagingHome(home);
     const archive = args.includes("--archive");
     if (!(yes || await ask(archive ? "Archive old data? Every record remains readable." : "Quarantine orphan temporary files? All data will be preserved."))) { out("Maintenance cancelled; data unchanged."); return 1; }
+    const budget = new StartupBudget();
+    try {
+    if (!await budget.wait(ownProcessIdentity(budget.signal,()=>budget.remaining()))) throw new Error('Own maintenance identity unknown');
     if (archive) {
-      const archived = archiveHome(home, true);
+      const archived = archiveHome(home, true,Date.now(),()=>budget.remaining());
       out(`Archived: ${JSON.stringify({ ...archived, packedRuns: packAllArchivedRuns(home, out) })}`);
     } else out(`Preserved files: ${JSON.stringify(fixDoctor(home, true))}`);
+    } finally { budget.close(); }
   }
   const report = doctor(home);
   report.brokerHealth = await probeBrokerHealth(resolvePipePath(home), nullLogger).catch(error => {

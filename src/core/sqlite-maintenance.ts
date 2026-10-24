@@ -4,7 +4,8 @@ import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { migrateSqlite } from "./sqlite-migrations.js";
 import { nullLogger, type Logger } from "./logger.js";
-import { configureSqlite } from "./sqlite-policy.js";
+import { assertSqliteAuthority, configureSqlite } from "./sqlite-policy.js";
+import { admissionSqliteBusy, storageAdmissionRemaining, storageAdmissionTimeout } from "./storage-admission.js";
 export { SQLITE_BUSY_TIMEOUT_MS } from "./sqlite-policy.js";
 import { SQLITE_BUSY_TIMEOUT_MS } from "./sqlite-policy.js";
 import { openPreservedReader, preserveArchiveTarget } from "./storage-preservation.js";
@@ -85,11 +86,13 @@ export function openArchive(path: string, options: { migrate?: boolean; home?: s
     admitted?.check();
     record = { identity: Symbol(), file: path, construction: "attempted_unconfirmed", state: "initializing", close: "not_attempted" };
     retainedArchiveInitializations.add(record); // Register BEFORE native construction; an unreturned attempt remains unknown.
-    db = new DatabaseSync(path);
+    storageAdmissionRemaining();
+    db = new DatabaseSync(path, { timeout: storageAdmissionTimeout(SQLITE_BUSY_TIMEOUT_MS) });
     record.db = db; record.construction = "returned";
     archiveInitializations.set(db, record); // Capture the actual returned writer BEFORE checks or page SQL.
     admitted?.check();
-    db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
+    configureSqlite(db);
+    storageAdmissionRemaining();
     if (options.migrate === false) {
       if (admitted?.created) db.exec(ARCHIVE_SCHEMA);
       else if (Number(db.prepare("PRAGMA user_version").get()!.user_version) !== ARCHIVE_STORE_VERSION)
@@ -168,6 +171,7 @@ function databaseFile(db: DatabaseSync): string {
  * subsequent expiry, hello and restart scans skip it without changing evidence or logging.
  */
 export function archiveMessages(source: DatabaseSync, archive: DatabaseSync, where: string, args: (string | number)[], reason: string, table: "messages" | "archived_messages" = "messages", log: Logger = nullLogger): number {
+  assertSqliteAuthority(source); assertSqliteAuthority(archive);
   ensureMessageQuarantine(source);
   // The same predicate fences selection and removal, including legacy/offline paths.
   where = `(${where}) AND ${unquarantined(table)}`;
@@ -197,6 +201,13 @@ export function archiveMessages(source: DatabaseSync, archive: DatabaseSync, whe
       }
       archive.exec("COMMIT");
     } catch (err) { archive.exec("ROLLBACK"); throw err; }
+    // WAL databases commit independently. Verify the committed destination before
+    // retiring any original, including a destination COMMIT with unknown outcome.
+    for (const r of rows) {
+      if (source.prepare('SELECT 1 FROM message_archive_conflicts WHERE source_table=? AND id=? AND recipient=? AND source_hash=?').get(table,r.id!,r.recipient!,contentHash(r))) continue;
+      const copied = archive.prepare('SELECT * FROM messages WHERE id=? AND recipient=?').get(r.id!,r.recipient!);
+      if (!copied || MESSAGE_IDENTITY_FIELDS.some(key => copied[key] !== r[key])) throw new Error('Archive copy unproven; source retained');
+    }
     const count = Number(source.prepare(`DELETE FROM ${table} WHERE ${where}`).run(...args).changes);
     source.exec("COMMIT");
     // One bounded summary per committed chunk; durable markers prevent retry/restart floods.

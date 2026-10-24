@@ -1,12 +1,22 @@
 import type { DatabaseSync } from "node:sqlite";
 import { setTimeout as delay } from "node:timers/promises";
+import { admissionSqliteBusy, storageAdmissionRemaining } from "./storage-admission.js";
 
 export const SQLITE_BUSY_TIMEOUT_MS = 3_000;
 export const SQLITE_REQUEST_BUSY_MS = 10;
 
 /** Only bridge-owned writable databases change journal mode; external transcripts stay read-only. */
 export function configureSqlite(db: DatabaseSync, busyTimeoutMs = SQLITE_BUSY_TIMEOUT_MS): void {
-  db.exec(`PRAGMA busy_timeout = ${busyTimeoutMs}; PRAGMA journal_mode = WAL;`);
+  admissionSqliteBusy(db, busyTimeoutMs, true);
+  storageAdmissionRemaining(); db.exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;");
+  storageAdmissionRemaining(); assertSqliteAuthority(db);
+}
+
+/** Connection-local readback: another handle's FULL setting supplies no proof. */
+export function assertSqliteAuthority(db: DatabaseSync): void {
+  const mode = db.prepare("PRAGMA journal_mode").get()?.journal_mode;
+  if (mode !== "wal" && !(mode === "memory" && db.location("main") === null) || db.prepare("PRAGMA synchronous").get()?.synchronous !== 2)
+    throw new Error("Accepted authority requires verified SQLite WAL/FULL; writer not admitted");
 }
 
 export function isSqliteBusy(err: unknown): boolean {

@@ -1,3 +1,7 @@
+import { StartupBudget } from './startup-budget.js';
+import { openAdmittedMessageStore, withOrdinaryAdmission } from './prior-endpoints.js';
+import { preflightMessagingHome } from './mailbox-layout.js';
+import { withStorageAdmission } from './storage-admission.js';
 import { randomUUID } from "node:crypto";
 import { retryRequest, transientRequestError } from "./request-retry.js";
 import { EventEmitter } from "node:events";
@@ -103,6 +107,8 @@ function errCode(err: unknown): string {
  * One agent's presence on the bridge. It connects to the broker, or becomes the broker when none
  * is running, and re-elects transparently when the broker process goes away.
  */
+const candidateStoreCapabilities = { json: JSON_STORE_VERSION, sqlite: SQLITE_STORE_VERSION, metadata: 7, jobArchive: 1 };
+
 export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   readonly id: string;
   private client: BridgeClient | null = null;
@@ -124,6 +130,9 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   private readonly agentHostPid: number | null = process.ppid ?? null;
   private retiredBy: "host_exited" | "pid_reused" | undefined;
   private electing: Promise<void> | null = null;
+  private startupBudget: StartupBudget | undefined;
+  private startupHeld: unknown;
+  private initializedThisAttempt = false;
   private reconnectTimer: NodeJS.Timeout | null = null;
   private reconnectDelay = RECONNECT_BACKOFF_MIN_MS;
   private currentName: string;
@@ -161,10 +170,10 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     this.currentCwd = opts.cwd;
     this.autoWake = opts.autoWake;
     this.log = opts.log.child("node");
-    if (opts.dbPath !== ":memory:") this.recordStorePresence();
+    if (opts.dbPath !== ':memory:') preflightMessagingHome(dirname(opts.dbPath));
     if (opts.dbPath !== ":memory:") this.releaseMetadata = retainMetadataReader(dirname(opts.dbPath));
     this.readJournal = new ReadJournal(opts.dbPath === ":memory:" ? ":memory:" : dirname(opts.dbPath), this.log);
-    this.restoreReadState(`name:${this.currentName}`);
+
   }
 
   /**
@@ -176,7 +185,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   private recordStorePresence(delay = 1_000): void {
     const home = dirname(this.opts.dbPath);
     let error: unknown;
-    try { recordStorePeer(home, { pid: process.pid, name: this.currentName, version: APP_VERSION, storeCapabilities: { json: JSON_STORE_VERSION, sqlite: SQLITE_STORE_VERSION, jobArchive: 1 } }); }
+    try { recordStorePeer(home, { pid: process.pid, name: this.currentName, version: APP_VERSION, storeCapabilities: candidateStoreCapabilities }); }
     catch (err) { error = err; }
     let open = false;
     try { open = Boolean(existingMetadataDb(home)); } catch { /* Not open yet. */ }
@@ -232,8 +241,8 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     if (!this.releaseMetadata && this.opts.dbPath !== ":memory:") this.releaseMetadata = retainMetadataReader(dirname(this.opts.dbPath));
     // Registration needs the host CLI's creation identity (a PowerShell query on Windows). Start the shared,
     // memoized read now so it overlaps discovery and daemon creation instead of following broker readiness.
-    if (!this.opts.jobAgent) void parentProcessIdentity();
     await this.ensureConnected();
+    if (this.opts.dbPath !== ':memory:') this.recordStorePresence();
   }
 
   /** Take over unread mail sent to "-N" stand-in names of this session (see the broker's claimMail). */
@@ -307,12 +316,16 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   ensureConnected(): Promise<void> {
     if (isPluginCacheCwd(this.currentCwd)) return Promise.reject(new BridgeError("bad_request", "Project directory is still a plugin cache; waiting for the host's project directory."));
     if (this.isConnected) return Promise.resolve();
+    if (this.startupHeld) return Promise.reject(this.startupHeld);
+    if (!this.electing) { this.startupBudget = new StartupBudget(Infinity,()=>!this.stopping); this.initializedThisAttempt = false; }
     this.electing ??= this.elect()
       .catch((err) => {
-        this.scheduleReconnect(this.nextBackoff());
+        if (this.startupBudget?.signal.aborted || this.initializedThisAttempt || ['STORE_OFFLINE_REQUIRED','STORE_LAYOUT_UNSUPPORTED','STORE_COMMIT_UNKNOWN','protocol_mismatch'].includes(errCode(err))) this.startupHeld = err;
+        else this.scheduleReconnect(this.nextBackoff());
         throw err;
       })
       .finally(() => {
+        this.startupBudget?.close(); this.startupBudget = undefined;
         this.electing = null;
       });
     return this.electing;
@@ -339,13 +352,21 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     this.reconnectTimer.unref();
   }
 
+  private connectForStartup(): Promise<BridgeClient> {
+    const budget = this.startupBudget;
+    return BridgeClient.connect(this.opts.pipePath,this.log,budget ? Math.min(CONNECT_TIMEOUT_MS,budget.remaining()) : CONNECT_TIMEOUT_MS,{signal:budget?.signal});
+  }
   private async elect(): Promise<void> {
+    const budget = this.startupBudget!;
+    if (this.opts.dbPath !== ':memory:' && !await budget.wait(ownProcessIdentity(budget.signal,()=>budget.remaining()))) throw new BridgeError('internal','Own startup identity unknown');
     for (let attempt = 1; attempt <= ELECTION_MAX_ATTEMPTS && !this.stopping; attempt++) {
+      budget.remaining();
       try {
-        const client = await BridgeClient.connect(this.opts.pipePath, this.log.child("client"));
+        const client = await this.connectForStartup();
         await this.adopt(client);
         return;
       } catch (err) {
+        budget.remaining();
         if (err instanceof BridgeError && err.details?.handover === true) {
           // An authenticated daemon is stopping (handover to a newer release, or idle exit) and refuses new work.
           // Its answer supersedes any latched creation attempt: once it released the endpoint, discovery sees it
@@ -385,11 +406,11 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
           if (!this.daemonLaunch) {
             let launch: DaemonLaunch | undefined;
             launch = this.daemonLaunch = await (this.opts.daemon.launch ?? launchDaemon)({ cli: this.opts.daemon.cli, home: dirname(this.opts.dbPath), pipe: this.opts.pipePath,
-              cwd: this.currentCwd, dashboard: this.opts.daemon.dashboard?.(), config: this.opts.daemon.config?.() }, late => {
+              cwd: this.currentCwd, dashboard: this.opts.daemon.dashboard?.(), config: this.opts.daemon.config?.(),startupDeadline:budget.deadline,signal:budget.signal }, late => {
               // The helper finished after the decision budget. Only a definite failure of this same attempt
               // un-latches it, so the next election creates again; anything else stays latched as before.
               this.log.info("late daemon creation observation", { kind: late.kind });
-              if (late.kind === "unavailable" && launch !== undefined && this.daemonLaunch === launch) {
+              if (!budget.signal.aborted && late.kind === "unavailable" && launch !== undefined && this.daemonLaunch === launch) {
                 this.daemonLaunch = undefined;
                 this.log.info("late creation failure; next creation attempt after backoff", { delayMs: this.relaunchBackoff.failed() });
               }
@@ -399,7 +420,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
           }
           if (this.daemonLaunch?.kind === "unavailable") {
             // Only definite creation failure AND fresh concrete endpoint absence permit embedding.
-            try { const client = await BridgeClient.connect(this.opts.pipePath, this.log); await this.adopt(client); return; }
+            try { const client = await this.connectForStartup(); await this.adopt(client); return; }
             catch (error) { if (!["ENOENT", "ECONNREFUSED"].includes(errCode(error))) throw error; }
             if (!this.degradedReason) { this.degradedReason = this.daemonLaunch.reason; this.log.warn("daemon creation unavailable; using session-owned legacy broker", { reason: this.degradedReason }); }
             if (await this.tryBecomeBroker()) continue;
@@ -416,8 +437,8 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     if (this.stopping) return false;
     // The store's migration lock and the TCP fallback record need this process's identity; read it without
     // blocking the session's event loop (a synchronous PowerShell query on Windows otherwise).
-    const identity = this.opts.dbPath === ":memory:" ? undefined : ownProcessIdentity();
-    const [{ Broker }, { MessageStore }] = await Promise.all([import("./broker.js"), import("./store.js")]);
+    const budget = this.startupBudget!; budget.remaining();
+    const { Broker } = await import("./broker.js");
     const { EndpointReservation } = await import("./endpoint-reservation.js");
     let reservation: import("./endpoint-reservation.js").EndpointReservation;
     try { reservation = await EndpointReservation.bind(this.opts.pipePath); }
@@ -426,15 +447,17 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
       if (!this.opts.daemon && (this.opts.platform ?? process.platform) !== "win32") await this.clearStaleSocket();
       return false;
     }
-    await identity;
     let store: MessageStore;
     try {
+      budget.remaining();
       // Unverified living readers conservatively defer upgrades; process
       // discovery must not delay hosting their existing compatible schema.
-      if (this.opts.dbPath !== ":memory:") void refreshStorePeerIdentities(dirname(this.opts.dbPath)).catch(error => this.log.debug("store reader identity refresh deferred", { err: String(error) }));
-      store = new MessageStore(this.opts.dbPath, this.log.child("store"));
+      if (this.initializedThisAttempt) throw new BridgeError('internal','Initializer already attempted; original settlement retained');
+      this.initializedThisAttempt = true;
+      store = await openAdmittedMessageStore(this.opts.dbPath,dirname(this.opts.dbPath),this.opts.pipePath,this.log.child('store'),budget);
     } catch (err) {
       await reservation.close();
+      if (this.initializedThisAttempt) throw err;
       if (["EBUSY", "SQLITE_BUSY", "STORE_UPGRADE_DEFERRED"].includes(errCode(err)) || /database is locked/.test(String((err as Error).message))) {
         this.log.info("another session is preparing the store; retrying broker election", { db: this.opts.dbPath });
         return false;
@@ -445,7 +468,8 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     try {
       const broker = new Broker(this.opts.pipePath, store, this.log.child("broker"), this.opts.token, Date.now, join(dirname(this.opts.dbPath), JOBS_FILE), this.opts.network);
       if (this.degradedReason) broker.setHostingMode("embedded_degraded", this.degradedReason);
-      await broker.listen(reservation);
+      await broker.listen(reservation,budget);
+      budget.remaining();
       if (this.stopping) {
         // stop() ran while this node was opening the store or listening: never keep a broker nobody will close.
         await broker.close();
@@ -457,30 +481,14 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     } catch (err) {
       store.close();
       await reservation.close();
-      const code = errCode(err);
-      if (code === "EADDRINUSE" && (this.opts.platform ?? process.platform) !== "win32") {
-        if (this.opts.daemon) return false;
-        // A Unix socket file can outlive its process. If connecting failed, the file is stale.
-        try {
-          await BridgeClient.connect(this.opts.pipePath, this.log).then((c) => c.close());
-          return false; // someone is alive after all
-        } catch (probeErr) {
-          if (errCode(probeErr) === "ECONNREFUSED") {
-            this.log.warn("removing stale broker socket", { pipe: this.opts.pipePath });
-            await this.clearStaleSocket();
-          }
-        }
-      } else {
-        this.log.debug("could not become broker", { code });
-      }
-      return false;
+      throw err;
     }
   }
 
   /** Legacy Unix stale endpoint handling, shared by embedded election and demand start. */
   private async clearStaleSocket(): Promise<boolean> {
     if ((this.opts.platform ?? process.platform) === "win32") return true;
-    try { const client = await BridgeClient.connect(this.opts.pipePath, this.log); client.close(); return false; }
+    try { const client = await this.connectForStartup(); client.close(); return false; }
     catch (error) {
       if (errCode(error) === "ENOENT") return true;
       if (errCode(error) !== "ECONNREFUSED") return false;
@@ -491,7 +499,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
       const current = lstatSync(this.opts.pipePath);
       if (current.dev !== before.dev || current.ino !== before.ino || !current.isSocket() || current.uid !== uid) return false;
       // Probe again immediately before removal. This retains the documented legacy race, not an OS lock.
-      try { const client = await BridgeClient.connect(this.opts.pipePath, this.log); client.close(); return false; }
+      try { const client = await this.connectForStartup(); client.close(); return false; }
       catch (error) { if (errCode(error) !== "ECONNREFUSED") return false; }
       unlinkSync(this.opts.pipePath);
       return true;
@@ -499,28 +507,37 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   }
 
   private async adopt(client: BridgeClient): Promise<void> {
+    const budget = this.startupBudget!;
+    let adopted = false;
+    try {
+    budget.remaining();
     client.on("event", (ev, data) => this.onEvent(ev, data));
     let brokerVersion: string | undefined;
     // Read presence before hello can trigger writes in a newer broker.
     try {
-      await client.request("auth", { protocol: PROTOCOL_VERSION, token: this.opts.token, ...(this.canHostDaemon ? { canHost: true } : {}) });
-      brokerVersion = (await client.request("ping", {})).brokerVersion;
-      if (this.opts.dbPath !== ":memory:") for (const peer of await client.request("peers", {})) recordStorePeer(dirname(this.opts.dbPath), peer);
+      await client.request("auth", { protocol: PROTOCOL_VERSION, token: this.opts.token, ...(this.canHostDaemon ? { canHost: true } : {}) },budget.remaining());
+      brokerVersion = (await client.request("ping", {},budget.remaining())).brokerVersion;
+      if (this.opts.dbPath !== ":memory:") for (const peer of await client.request("peers", {},budget.remaining())) recordStorePeer(dirname(this.opts.dbPath), peer);
     } catch (error) { client.close(); throw error; }
-    const agentStartedAt = this.opts.jobAgent ? null : await parentProcessIdentity();
+    budget.remaining();
+    const agentStartedAt = this.opts.jobAgent ? null : await budget.wait(parentProcessIdentity(budget.signal,()=>budget.remaining()));
+    budget.remaining();
+    withStorageAdmission(()=>budget.remaining(),()=>this.restoreReadState(`name:${this.currentName}`));
     const args = this.helloArgs();
     // Older brokers publish hello capabilities directly to their observers,
     // which then rewrite each foreign PID record using their legacy shape.
     // Our own explicit record already protects upgrades before registration.
     const hello = await client.request(this.opts.frontend ? "helloT3" : "hello", { ...args, peer: { ...args.peer, agentStartedAt,
-      storeCapabilities: brokerVersion === APP_VERSION ? args.peer.storeCapabilities : undefined } }).catch((err) => {
+      storeCapabilities: brokerVersion === APP_VERSION ? args.peer.storeCapabilities : undefined } },budget.remaining()).catch((err) => {
       client.close();
       throw err;
     });
     if (this.opts.frontend && !sameFrontend(this.opts, hello)) {
       client.close(); throw new BridgeError("protocol_mismatch", "Broker did not attest the exact T3 frontend binding; hosted registration refused.");
     }
-    this.afterHello(client, hello);
+    this.startupBudget?.remaining();
+    this.afterHello(client, hello); adopted = true;
+    } finally { if (!adopted) client.close(); }
   }
 
   private helloArgs() {
@@ -545,7 +562,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
         activity: this.activity,
         unavailable: this.unavailable,
         version: APP_VERSION,
-        storeCapabilities: { json: JSON_STORE_VERSION, sqlite: SQLITE_STORE_VERSION, jobArchive: 1 },
+        storeCapabilities: candidateStoreCapabilities,
         ...(this.opts.jobAgent ? { jobAgent: this.opts.jobAgent } : {}),
         ...(this.opts.jobOwner ? { jobOwner: this.opts.jobOwner, jobParent: this.opts.jobParent, parentJob: this.opts.parentJob, rootSession: this.opts.rootSession, rootName: this.opts.rootName, jobTitle: this.opts.jobTitle, jobSendTo: this.opts.jobSendTo } : {}),
       },
@@ -1242,6 +1259,6 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   }
 
   private recordOwnStorePeer(): void {
-    if (this.opts.dbPath !== ":memory:") recordStorePeer(dirname(this.opts.dbPath), { pid: process.pid, name: this.currentName, version: APP_VERSION, storeCapabilities: { json: JSON_STORE_VERSION, sqlite: SQLITE_STORE_VERSION, jobArchive: 1 } }, { authoritative: true });
+    if (this.opts.dbPath !== ":memory:") recordStorePeer(dirname(this.opts.dbPath), { pid: process.pid, name: this.currentName, version: APP_VERSION, storeCapabilities: candidateStoreCapabilities }, { authoritative: true });
   }
 }

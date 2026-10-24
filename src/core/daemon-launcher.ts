@@ -4,9 +4,10 @@ import { join } from "node:path";
 import { ENV, LATE_RELAUNCH_BACKOFF_MAX_MS, LATE_RELAUNCH_BACKOFF_MIN_MS } from "./constants.js";
 import type { BridgeConfig } from "./config.js";
 import { withoutT3Context } from "./t3-identity.js";
+import { STARTUP_DEADLINE_ENV } from "./startup-budget.js";
 
 export type DaemonLaunch = { kind: "created" } | { kind: "unavailable"; reason: "windows_wmi_unavailable" | "windows_wmi_create_rejected" } | { kind: "unknown"; stage?: "read" | "startup" | "create"; errorCode?: number };
-export interface DaemonOptions { cli: string; home: string; pipe: string; cwd: string; dashboard?: boolean; config?: Pick<BridgeConfig, "network" | "mobile" | "dashboardPort"> }
+export interface DaemonOptions { cli: string; home: string; pipe: string; cwd: string; dashboard?: boolean; config?: Pick<BridgeConfig, "network" | "mobile" | "dashboardPort">; startupDeadline?: number; signal?: AbortSignal }
 const CREATE_TIMEOUT_MS = 5_000;
 /** Hard bound for the creation helper process after the decision budget has passed. */
 const HELPER_LIMIT_MS = 30_000;
@@ -36,11 +37,13 @@ $phase='read'
 try {
   $reader = [IO.StreamReader]::new([Console]::OpenStandardInput(), [Text.UTF8Encoding]::new($false))
   try { $inputData = $reader.ReadToEnd() | ConvertFrom-Json } finally { $reader.Dispose() }
+  if ($inputData.deadline -and [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() -ge $inputData.deadline) { throw 'original startup deadline expired' }
   $phase='startup'
   $startup = New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{
     ShowWindow=[uint16]0; CreateFlags=[uint32]0x09000400; EnvironmentVariables=[string[]]$inputData.environment
   }
   $phase='create'
+  if ($inputData.deadline -and [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() -ge $inputData.deadline) { throw 'original startup deadline expired' }
   $result = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{
     CommandLine=[string]$inputData.command; CurrentDirectory=[string]$inputData.cwd; ProcessStartupInformation=$startup
   }
@@ -55,6 +58,7 @@ export function daemonEnvironment(options: DaemonOptions): NodeJS.ProcessEnv {
     if (/^AGENT_BRIDGE_(?:PARENT_|ROOT_|JOB_|DELEGATE_|INTERNAL$)/.test(key)) delete env[key];
   }
   delete env.NODE_OPTIONS;
+  if (options.startupDeadline!==undefined) env[STARTUP_DEADLINE_ENV]=String(options.startupDeadline);
   env.AGENT_BRIDGE_DAEMON_DASHBOARD = options.dashboard ? "1" : "0";
   if (options.config) env.AGENT_BRIDGE_DAEMON_CONFIG = JSON.stringify(options.config);
   else delete env.AGENT_BRIDGE_DAEMON_CONFIG;
@@ -98,12 +102,15 @@ export type LateDaemonLaunch = (late: DaemonLaunch) => void;
  * outage. Discovery finds the daemon if Create is applied. The helper's own close after the decision is
  * reported to `late`, so a definite late failure need not stay latched as "unknown" for the session's life.
  */
-export function superviseCreateHelper(child: CreateHelper, input: string, late?: LateDaemonLaunch): Promise<DaemonLaunch> {
+export function superviseCreateHelper(child: CreateHelper, input: string, late?: LateDaemonLaunch, options?: Pick<DaemonOptions,'startupDeadline'|'signal'>): Promise<DaemonLaunch> {
   return new Promise(resolve => {
     let output = "", settled = false, closed = false;
     const finish = (result: DaemonLaunch) => { if (!settled) { settled = true; clearTimeout(timer); resolve(result); } };
-    const timer = setTimeout(() => finish({ kind: "unknown" }), CREATE_TIMEOUT_MS);
-    const limit = setTimeout(() => child.kill(), HELPER_LIMIT_MS);
+    const left = Math.max(0,(options?.startupDeadline??Infinity)-Date.now());
+    const timer = setTimeout(() => finish({ kind: "unknown" }), Math.min(CREATE_TIMEOUT_MS,left));
+    const limit = setTimeout(() => {finish({kind:'unknown'});child.kill();}, Math.min(HELPER_LIMIT_MS,left));
+    const abort = () => {finish({kind:'unknown'});child.kill();};
+    options?.signal?.addEventListener('abort',abort,{once:true});
     child.once("error", () => finish({ kind: "unknown" }));
     child.stdin.on("error", () => finish({ kind: "unknown" }));
     child.stdout.setEncoding("utf8").on("data", (chunk: string) => {
@@ -112,17 +119,20 @@ export function superviseCreateHelper(child: CreateHelper, input: string, late?:
     });
     child.once("close", code => {
       clearTimeout(limit);
+      options?.signal?.removeEventListener('abort',abort);
       if (closed) return;
       closed = true;
       const result = classifyWindowsCreate(code, output);
       if (settled) late?.(result); else finish(result);
     });
-    child.stdin.end(input);
+    if (options?.signal?.aborted || left<=0) abort(); else child.stdin.end(input);
   });
 }
 
 /** A creation receipt is not readiness. Existing authenticated IPC is the readiness check. */
 export async function launchDaemon(options: DaemonOptions, late?: LateDaemonLaunch): Promise<DaemonLaunch> {
+  options.signal?.throwIfAborted();
+  if (options.startupDeadline!==undefined && Date.now()>=options.startupDeadline) return {kind:'unknown'};
   if (!existsSync(options.cli)) throw new Error("broker daemon runtime is unavailable");
   const env = daemonEnvironment(options);
   if (process.platform !== "win32") {
@@ -135,6 +145,6 @@ export async function launchDaemon(options: DaemonOptions, late?: LateDaemonLaun
   const powershell = join(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
   if (!existsSync(powershell)) return { kind: "unavailable", reason: "windows_wmi_unavailable" };
   const child = spawn(powershell, ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(WINDOWS_CREATE, "utf16le").toString("base64")], { env, windowsHide: true, stdio: ["pipe", "pipe", "ignore"] });
-  return superviseCreateHelper(child as unknown as CreateHelper, JSON.stringify({ command: [process.execPath, options.cli, "broker-daemon"].map(windowsArgument).join(" "), cwd: options.cwd,
-    environment: Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined).map(([key, value]) => `${key}=${value}`) }), late);
+  return superviseCreateHelper(child as unknown as CreateHelper, JSON.stringify({ command: [process.execPath, options.cli, "broker-daemon"].map(windowsArgument).join(" "), cwd: options.cwd, deadline:options.startupDeadline,
+    environment: Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined).map(([key, value]) => `${key}=${value}`) }), late,options);
 }

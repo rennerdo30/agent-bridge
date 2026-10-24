@@ -1,3 +1,5 @@
+import { StartupBudget } from './startup-budget.js';
+import { withOrdinaryAdmission } from './prior-endpoints.js';
 import { HistoryBackground } from "./history-background.js";
 import { NativeChildren, isNativeChildAddress } from "./native-children.js";
 import { HealthMonitor } from "./health.js";
@@ -786,26 +788,35 @@ export class Broker {
   }
 
   /** Bind the endpoint. Rejects with the socket error (EADDRINUSE when another broker owns it). */
-  listen(reservation?: EndpointReservation): Promise<void> {
-    if (reservation) return this.listenReserved(reservation);
-    return new Promise((resolve, reject) => {
-      const server = createServer((socket) => this.accept(socket));
+  listen(reservation?: EndpointReservation, startup?: StartupBudget): Promise<void> {
+    const budget = startup ?? new StartupBudget();
+    if (reservation) return this.listenReserved(reservation,budget).finally(()=>{if (!startup) budget.close();});
+    this.networkAuthorityDeferred = true;
+    let admitted = false;
+    return new Promise<void>((resolve, reject) => {
+      const server = createServer((socket) => { if (admitted) this.accept(socket); else socket.destroy(); });
       const onError = (err: Error) => {
         server.removeListener("listening", listening);
         reject(err);
       };
       /** Optional services: a failure is logged and the broker keeps serving without them (AB-223, AB-239). */
       const optional = (what: string, step: () => void) => {
-        try { step(); } catch (err) { this.log.warn(`broker startup: ${what} failed; continuing without it`, { err: String(err) }); }
+        try { budget.remaining(); step(); budget.remaining(); } catch (err) { budget.remaining(); this.log.warn(`broker startup: ${what} failed; continuing without it`, { err: String(err) }); }
       };
       const onListening = async () => {
         server.removeListener("error", onError);
         server.on("error", (err) => this.log.error("broker server error", { err }));
         this.server = server;
         try {
-          await this.startServices(optional);
-          this.tcpReady = this.startTcpFallback();
+          budget.remaining();
+          await this.startServices(optional,budget);
+          await this.checkStartupAdmission(budget);
+          this.tcpReady = this.startTcpFallback(budget);
           await this.tcpReady.catch(err => this.log.warn("broker TCP fallback unavailable", { err: String(err) }));
+          budget.remaining();
+          await this.checkStartupAdmission(budget);
+          this.network?.activateAuthority(); this.networkAuthorityDeferred=false;
+          admitted = true;
           resolve();
         } catch (err) {
           // Never leave a bound, half-started broker behind or an unhandled rejection: release the endpoint and let
@@ -819,25 +830,29 @@ export class Broker {
       server.once("error", onError);
       server.once("listening", listening);
       ensurePrivateSocketDirectory(this.pipePath);
-      server.listen(this.pipePath);
-    });
+      budget.remaining(); server.listen(this.pipePath);
+    }).finally(()=>{if (!startup) budget.close();});
   }
 
-  private async listenReserved(reservation: EndpointReservation): Promise<void> {
+  private async listenReserved(reservation: EndpointReservation, budget: StartupBudget): Promise<void> {
     this.server = reservation.ownedServer(this.pipePath);
     this.networkAuthorityDeferred = true;
     const optional = (what: string, step: () => void) => {
-      try { step(); } catch (err) { this.log.warn(`broker startup: ${what} failed; continuing without it`, { err: String(err) }); }
+      try { budget.remaining(); step(); budget.remaining(); } catch (err) { budget.remaining(); this.log.warn(`broker startup: ${what} failed; continuing without it`, { err: String(err) }); }
     };
     try {
-      await this.startServices(optional);
+      budget.remaining();
+      await this.startServices(optional,budget);
+      await this.checkStartupAdmission(budget);
       const accept = (socket: Socket) => this.accept(socket);
-      reservation.activate(accept, this);
+      this.server.on("error", err => this.log.error("broker server error", { err }));
+      this.tcpReady = this.startTcpFallback(budget);
+      await this.tcpReady.catch(err => this.log.warn("broker TCP fallback unavailable", { err: String(err) }));
+          budget.remaining();
+      await this.checkStartupAdmission(budget);
+      budget.remaining(); reservation.activate(accept, this);
       this.network?.activateAuthority();
       this.networkAuthorityDeferred = false;
-      this.server.on("error", err => this.log.error("broker server error", { err }));
-      this.tcpReady = this.startTcpFallback();
-      await this.tcpReady.catch(err => this.log.warn("broker TCP fallback unavailable", { err: String(err) }));
       // Only this real controlled reservation's completed activation registers a
       // source issuer. A constructor, legacy listener, tentative or failed start
       // cannot register/mint. Failure here leaves ordinary serving unchanged.
@@ -856,8 +871,10 @@ export class Broker {
     } catch (error) {
       this.startupAuthorityRevoked = true;
       this.network?.deferAuthority();
-      await this.abortStartup().catch(() => {});
-      await reservation.close();
+      const failures: unknown[] = [error];
+      try { await this.abortStartup(); } catch (cleanup) { failures.push(cleanup); }
+      try { await reservation.close(); } catch (cleanup) { failures.push(cleanup); }
+      if (failures.length>1) throw new AggregateError(failures,'Startup failed; owned cleanup remains unknown');
       throw error;
     }
   }
@@ -888,9 +905,16 @@ export class Broker {
     if (server) await new Promise<void>((r) => server.close(() => r()));
   }
 
-  private async startServices(optional: (what: string, step: () => void) => void): Promise<void> {
-        if (this.jobsPath) void startBrokerJobRunIndex(dirname(this.jobsPath)).catch(error => this.log.warn("job run index preparing", { err: String(error) }));
+  private async checkStartupAdmission(budget: StartupBudget): Promise<void> {
+    budget.remaining();
+    if (this.store.file!==':memory:') await withOrdinaryAdmission(dirname(this.store.file),this.pipePath,budget,()=>budget.remaining());
+    budget.remaining();
+  }
+  private async startServices(optional: (what: string, step: () => void) => void, budget?: StartupBudget): Promise<void> {
+        budget?.remaining();
         await this.nativeChildren.recover();
+        if (budget) await this.checkStartupAdmission(budget);
+        if (this.jobsPath) void startBrokerJobRunIndex(dirname(this.jobsPath)).catch(error => this.log.warn("job run index preparing", { err: String(error) }));
         if (this.jobsPath && this.store.file !== ":memory:") optional("job archive worker", () => { this.jobArchiveBackground = new JobArchiveBackground(this.jobsPath!, this.log); });
         optional("backups", () => this.store.startBackups());
         this.healthMonitor.start();
@@ -941,14 +965,16 @@ export class Broker {
    * the named pipe; loopback stays reachable. The port is recorded in the private
    * bridge home, and the protocol still requires the broker token on hello.
    */
-  private async startTcpFallback(): Promise<void> {
+  private async startTcpFallback(budget?: StartupBudget): Promise<void> {
+    budget?.remaining();
     if (process.platform !== "win32" || this.store.file === ":memory:") return;
     const home = dirname(this.store.file), file = join(home, BROKER_TCP_FILE);
     // The pipe is already serving: every PowerShell helper here (own creation identity, DPAPI
     // unprotect of a previous record, DPAPI protect of the new one) runs off the event loop.
     // Run synchronously they blocked authentication of waiting clients for seconds on Windows.
-    const [identity, previous] = await Promise.all([ownProcessIdentity(),
-      existsSync(file) ? Promise.resolve().then(() => readMusePrivateJsonAsync(file)).then(record => ({ record }), (error: unknown) => ({ error })) : undefined]);
+    const [identity, previous] = await Promise.all([ownProcessIdentity(budget?.signal,budget ? ()=>budget.remaining() : undefined),
+      existsSync(file) ? Promise.resolve().then(() => readMusePrivateJsonAsync(file,budget?.signal)).then(record => ({ record }), (error: unknown) => ({ error })) : undefined]);
+    budget?.remaining();
     if (!identity || this.closing) return;
     const nonce = this.tcpNonce = randomUUID();
     const server = createServer((socket) => this.accept(socket, "tcp"));
@@ -958,6 +984,7 @@ export class Broker {
       server.removeListener("error", reject);
       resolve();
     }); });
+    budget?.remaining();
     const address = server.address();
     if (!address || typeof address === "string" || this.closing) return;
     this.tcpPort = address.port;
@@ -969,8 +996,10 @@ export class Broker {
       if (previous && ("error" in previous ? true : !isEphemeralBrokerTcpRecord(previous.record))) {
         throw "error" in previous ? previous.error : new Error("Retaining unknown TCP discovery state");
       }
+      budget?.remaining();
       await writeMusePrivateJsonAsync(temporary, { port: address.port, pid: process.pid, identity, nonce, protocol: PROTOCOL_VERSION, pipePath: this.pipePath });
       staged = true;
+      budget?.remaining();
       // The read above and the protected write are asynchronous: content that appeared since an absent read
       // was never checked and may be durable user state, so it is retained rather than replaced.
       if (!previous && existsSync(file)) throw new Error("Retaining TCP discovery state that appeared during publication");
@@ -1092,7 +1121,7 @@ export class Broker {
   }
 
   private accept(socket: Socket, transport: Conn["transport"] = "pipe"): void {
-    if (this.startupAuthorityRevoked) { socket.destroy(); return; }
+    if (this.startupAuthorityRevoked || this.networkAuthorityDeferred) { socket.destroy(); return; }
     const conn: Conn = { socket, peer: null, authed: false, inFlight: 0, mailGeneration: 0, transport };
     this.conns.add(conn);
     this.updateIdle();

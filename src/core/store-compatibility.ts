@@ -7,7 +7,7 @@ import { identityStartedAfter, processIdentity, readProcessIdentities, readProce
 import { existingMetadataDb, metadataDb, saveMetadataValue } from "./metadata-db.js";
 import { importMetadataDomain } from "./metadata-import.js";
 
-export interface StoreCapabilities { json: number; sqlite: number; jobArchive?: number }
+export interface StoreCapabilities { json: number; sqlite: number; jobArchive?: number; metadata?: number }
 interface Presence extends StoreCapabilities { pid: number; name: string; version: string; explicit: boolean; processIdentity?: string; observedAt?: number }
 
 const identities = new Map<string, { identity: string | null; at: number; signature: string }>();
@@ -144,7 +144,8 @@ export function releasedStoreCapabilities(version?: string): StoreCapabilities {
 export function validStoreCapabilities(value: unknown): value is StoreCapabilities {
   const v = value as StoreCapabilities | undefined;
   return Boolean(v && Number.isSafeInteger(v.json) && v.json >= 0 && Number.isSafeInteger(v.sqlite) && v.sqlite >= 0 &&
-    (v.jobArchive === undefined || Number.isSafeInteger(v.jobArchive) && v.jobArchive >= 0));
+    (v.jobArchive === undefined || Number.isSafeInteger(v.jobArchive) && v.jobArchive >= 0) &&
+    (v.metadata === undefined || Number.isSafeInteger(v.metadata) && v.metadata >= 0));
 }
 
 /** Retain presence after a broker exits, so its older clients protect the next election. */
