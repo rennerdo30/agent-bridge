@@ -1,12 +1,12 @@
 {
   "base": "8deb0286773a6b61243caaae237e16227dc2f591",
   "methods": {
-    "src/core/broker.ts:constructor": "e7c1745f8b8e42bc9859fb663bfe091b629905bc20a30471711f266df7fbef7b",
+    "src/core/broker.ts:constructor": "2c5158a0c48b9b1a4a66bac223535e2f776b459410c751b1e6483f2f3bdd3919",
     "src/core/broker.ts:listen": "5cd75eaecf77933395633b71b3927e269f35315858b313d58e30c19dd2dfa095",
-    "src/core/broker.ts:startServices": "aa5aae8c1c2505091e4b99a407afcb6768612b7127e51ddee847eb2dc617fd82",
+    "src/core/broker.ts:startServices": "245b70b16770607fa389049fcfbe3128c76d6e6adaf001dac2ffb9d079120530",
     "src/core/broker.ts:abortStartup": "1021c04e914baccb05e9b4f995d511a936682da7b3431d398e567d99439693ed",
     "src/core/broker.ts:close": "cc19f59de9b413c6ab615e39aed09c524618e4aa91fac74f34ae5e2701c1c86d",
-    "src/core/node.ts:constructor": "c67f1d31ca97c17d3c6871b7d88df7428ed9a82da8395ee8b23ffdbb37ca30cd",
+    "src/core/node.ts:constructor": "d6e526b3134da684821c7feb5b33cc4c5a6b50219e35a129d74a375776c0b618",
     "src/core/node.ts:start": "0413d31bfe78ec54fbf03e70ba28de133c7778c26816befb9b6c289007fcb2be",
     "src/core/node.ts:stop": "43183d9fe4bb133d6690fb9095b4e74ed4012d145e3dfa79ef656567012592db",
     "src/core/node.ts:tryBecomeBroker": "7661e29c25c559bf86d2a6924283531d1f64875432dd9c91133e2cae9b6746d5",
@@ -17,6 +17,31 @@
   },
   "uiSha256": "f2a5b28254d4bb467f28bdee139e3b23bd9d4bd0c7c15fee116b4ed85a6ac385",
   "updates": {
+    "AB-458-slice2": {
+      "base": "5e3fa8aa17d22d57cb5d24549c16381c5843edeb",
+      "sourceCommit": "870a9adea0931d9225e049a6d9420b8e024cb9b1",
+      "sourceTree": "b7c5ee6d9beaa02691befb9106901ca8815cc4bc",
+      "manifestSha256": "90a1ac8b9f842ec4a27e320ae9fa6ee532ce754b3e7316efe1d966e970386f3e",
+      "review": "AB-458 independent slice2 ROUND2 desk43895; exact parent approval of three hashes and full readable delta",
+      "changes": [
+        {
+          "method": "src/core/broker.ts:constructor",
+          "previous": "e7c1745f8b8e42bc9859fb663bfe091b629905bc20a30471711f266df7fbef7b",
+          "current": "2c5158a0c48b9b1a4a66bac223535e2f776b459410c751b1e6483f2f3bdd3919"
+        },
+        {
+          "method": "src/core/broker.ts:startServices",
+          "previous": "aa5aae8c1c2505091e4b99a407afcb6768612b7127e51ddee847eb2dc617fd82",
+          "current": "245b70b16770607fa389049fcfbe3128c76d6e6adaf001dac2ffb9d079120530"
+        },
+        {
+          "method": "src/core/node.ts:constructor",
+          "previous": "c67f1d31ca97c17d3c6871b7d88df7428ed9a82da8395ee8b23ffdbb37ca30cd",
+          "current": "d6e526b3134da684821c7feb5b33cc4c5a6b50219e35a129d74a375776c0b618"
+        }
+      ],
+      "reason": "Exact sender/destination and per-copy ownership handler plumbing, network provenance/pin/notification callbacks and node original ownership/read proof. Parent inspected the full approved-to-source normalized patch. Other ten method pins, historical base/UI hash, all prior update objects, actual UI/dashboard, normalizers/assertions and retention/flaky/rules remain unchanged. Source/pin qualification only; no runtime, merge, native or product acceptance."
+    },
     "AB-458-slice1": {
       "base": "5e3fa8aa17d22d57cb5d24549c16381c5843edeb",
       "sourceCommit": "fd3610e284a9d0435f319d2e010780cb37c2166b",
