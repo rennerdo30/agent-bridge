@@ -6,6 +6,7 @@ import { retainMetadataFiles } from "./metadata-import.js";
 import { storageLease } from "./storage-lock.js";
 import { DatabaseSync } from "node:sqlite";
 import type { Logger } from "./logger.js";
+import { storageAdmissionRemaining, admissionSqliteBusy } from "./storage-admission.js";
 
 /** The metadata store cannot open yet: its fail-closed migration lease needs this process's
  * verified identity (ELEASEBUSY) or an older reader still uses the files (STORE_UPGRADE_DEFERRED). */
@@ -18,34 +19,45 @@ const deferrals = new Map<string, { until: number; delay: number; timer: NodeJS.
 /** Consumption is durable before returning context, even when a broker ACK is lost. */
 export class ReadJournal {
  private memory: DatabaseSync | undefined;
+ private readonly startupRetries=new Set<ReturnType<typeof setTimeout>>();
+ /** Only resources created by this journal's current admission, never another home reader. */
+ settleStartup(admitted:boolean):void {
+  if(!admitted){for(const timer of this.startupRetries){const due=deferrals.get(this.home);if(due?.timer===timer){clearTimeout(timer);deferrals.delete(this.home);}}const memory=this.memory;this.memory=undefined;memory?.close();}
+  this.startupRetries.clear();
+ }
  constructor(private readonly home: string, private readonly log?: Logger) {}
  private key(identity: string) { return createHash("sha256").update(identity).digest("hex"); }
  private insert(db: ReturnType<typeof metadataDb>, identity: string, id: string, at: number | null) {
-  db.prepare(`INSERT INTO bridge_read_receipts VALUES (?,?,?) ON CONFLICT(identity,message_id)
+  storageAdmissionRemaining();const insert=db.prepare(`INSERT INTO bridge_read_receipts VALUES (?,?,?) ON CONFLICT(identity,message_id)
    DO UPDATE SET read_at=CASE WHEN read_at IS NULL THEN excluded.read_at
-   WHEN excluded.read_at IS NULL THEN read_at ELSE MIN(read_at,excluded.read_at) END`).run(identity,id,at);
+   WHEN excluded.read_at IS NULL THEN read_at ELSE MIN(read_at,excluded.read_at) END`);
+  storageAdmissionRemaining();insert.run(identity,id,at);storageAdmissionRemaining();
  }
  private database() {
+  storageAdmissionRemaining();
   if (this.home === ":memory:") {
-   if (!this.memory) { this.memory = new DatabaseSync(":memory:"); this.memory.exec("CREATE TABLE bridge_read_receipts(identity TEXT NOT NULL,message_id TEXT NOT NULL,read_at INTEGER,PRIMARY KEY(identity,message_id))"); }
+   if (!this.memory) { this.memory = new DatabaseSync(":memory:");storageAdmissionRemaining();this.memory.exec("CREATE TABLE bridge_read_receipts(identity TEXT NOT NULL,message_id TEXT NOT NULL,read_at INTEGER,PRIMARY KEY(identity,message_id))");storageAdmissionRemaining(); }
+   admissionSqliteBusy(this.memory);
    return this.memory;
   }
   const db = metadataDb(this.home);
-  if (db.prepare("SELECT 1 FROM bridge_components WHERE name='import:read-state'").get()) return db;
+  storageAdmissionRemaining();const imported=db.prepare("SELECT 1 FROM bridge_components WHERE name='import:read-state'");storageAdmissionRemaining();const present=imported.get();storageAdmissionRemaining();if(present)return db;
   const dir = join(this.home,"read-state"); physicalMetadataPath(dir);
   const files = existsSync(dir) ? readdirSync(dir).filter(f => /^[a-f0-9]{64}\.jsonl$/.test(f)).map(f=>join(dir,f)) : [];
+  storageAdmissionRemaining();
   retainMetadataFiles(this.home,files,(store,path,raw) => {
    const identity = path.slice("read-state/".length,-".jsonl".length);
    for (const line of raw.toString("utf8").split("\n")) {
+    storageAdmissionRemaining();
     try {
      const value: unknown = JSON.parse(line);
      const timed = value && typeof value === "object" && !Array.isArray(value) ? value as {ids?:unknown;at?:unknown} : null;
      const ids = timed?.ids ?? value;
      if (Array.isArray(ids)) for (const id of ids) if (typeof id === "string") this.insert(store,identity,id,typeof timed?.at === "number" ? timed.at : null);
-    } catch { /* Interrupted/malformed bytes remain in the verified bundle and cold original. */ }
+    } catch { storageAdmissionRemaining(); /* Interrupted/malformed bytes remain in the verified bundle and cold original. */ }
    }
   });
-  db.prepare("INSERT INTO bridge_components VALUES ('import:read-state',1) ON CONFLICT(name) DO NOTHING").run();
+  storageAdmissionRemaining();const marker=db.prepare("INSERT INTO bridge_components VALUES ('import:read-state',1) ON CONFLICT(name) DO NOTHING");storageAdmissionRemaining();marker.run();storageAdmissionRemaining();
   return db;
  }
  /**
@@ -54,6 +66,7 @@ export class ReadJournal {
   * only happens before the read-state import, so nothing written meanwhile is missed.
   */
  private available(): DatabaseSync | undefined {
+  const admitted=storageAdmissionRemaining()!==undefined;
   if (this.home === ":memory:") return this.database();
   const deferred = deferrals.get(this.home);
   if (deferred && Date.now() < deferred.until) return undefined;
@@ -66,6 +79,7 @@ export class ReadJournal {
    }
    return db;
   } catch (error) {
+   storageAdmissionRemaining();
    if (!DEFERRED_CODES.has(String((error as { code?: unknown }).code))) throw error;
    const delay = deferred ? Math.min(MAX_RETRY_MS, deferred.delay * 2) : FIRST_RETRY_MS;
    if (!deferred) this.log?.warn("metadata store deferred; read marks are kept in the read-state journal files until it opens", { err: String((error as Error).message ?? error) });
@@ -74,7 +88,7 @@ export class ReadJournal {
    // The retry may fire after every node of this home stopped and released the shared handle.
    // A handle it opens then would stay cached with no owner left to close it, keeping bridge.db
    // locked on Windows, so it closes what it opened unless a live node still shares the handle.
-   const timer = setTimeout(() => {
+   storageAdmissionRemaining();const timer = setTimeout(() => {
     // A timer can fire a little before Date.now() reaches `until`; the retry is due now, or it would never run again.
     const due = deferrals.get(this.home);
     if (due?.timer === timer) due.until = 0;
@@ -83,16 +97,20 @@ export class ReadJournal {
     finally { if (opened && !metadataReaderRetained(this.home)) closeMetadataDb(this.home); }
    }, delay);
    timer.unref();
+   if(admitted)this.startupRetries.add(timer);
    deferrals.set(this.home, { until: Date.now() + delay, delay, timer });
    return undefined;
   }
  }
  private legacyPath(identity: string) { return join(this.home,"read-state",`${this.key(identity)}.jsonl`); }
  private legacyEntries(identity: string): { ids: string[]; at: number | null }[] {
+  storageAdmissionRemaining();
   let raw: string;
   try { raw = readFileSync(this.legacyPath(identity),"utf8"); }
   catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return []; throw error; }
+  storageAdmissionRemaining();
   return raw.split("\n").flatMap(line => {
+   storageAdmissionRemaining();
    if (!line) return [];
    try {
     const value: unknown = JSON.parse(line);
@@ -103,9 +121,10 @@ export class ReadJournal {
   });
  }
  read(identity: string): string[] {
+  storageAdmissionRemaining();
   const db = this.available();
   if (!db) return [...new Set(this.legacyEntries(identity).flatMap(entry => entry.ids))];
-  return db.prepare("SELECT message_id FROM bridge_read_receipts WHERE identity=? ORDER BY rowid").all(this.key(identity)).map(r=>String(r.message_id));
+  storageAdmissionRemaining();const read=db.prepare("SELECT message_id FROM bridge_read_receipts WHERE identity=? ORDER BY rowid");storageAdmissionRemaining();const rows=read.all(this.key(identity));storageAdmissionRemaining();return rows.map(r=>String(r.message_id));
  }
  receipt(identity: string, id: string): {read:boolean;at:number|null} {
   const db = this.available();
@@ -118,23 +137,24 @@ export class ReadJournal {
   return {read:!!row,at:row && row.read_at !== null ? Number(row.read_at) : null};
  }
  append(identity: string, ids: string[]): void {
+  storageAdmissionRemaining();
   const release = this.home === ":memory:" ? () => {} : storageLease(this.home);
   try {
    const db = this.available();
    if (db) this.appendRows(db,identity,ids);
    else {
     const dir = join(this.home,"read-state"); physicalMetadataPath(dir);
-    mkdirSync(dir,{recursive:true,mode:0o700});
-    appendFileSync(this.legacyPath(identity),`\n${JSON.stringify({ids,at:Date.now()})}\n`,{mode:0o600,flush:true});
+    storageAdmissionRemaining();mkdirSync(dir,{recursive:true,mode:0o700});storageAdmissionRemaining();
+    appendFileSync(this.legacyPath(identity),`\n${JSON.stringify({ids,at:Date.now()})}\n`,{mode:0o600,flush:true});storageAdmissionRemaining();
    }
   } finally { release(); }
  }
  private appendRows(db: DatabaseSync, identity: string, ids: string[]): void {
   const key = this.key(identity), now = Date.now();
-  db.exec("BEGIN IMMEDIATE");
+  storageAdmissionRemaining();db.exec("BEGIN IMMEDIATE");let committing=false;
   try {
-   for (const id of ids) this.insert(db,key,id,now);
-   db.exec("COMMIT");
-  } catch (error) { db.exec("ROLLBACK"); throw error; }
+   storageAdmissionRemaining();for (const id of ids) this.insert(db,key,id,now);
+   storageAdmissionRemaining();committing=true;db.exec("COMMIT");committing=false;storageAdmissionRemaining();
+  } catch (error) { if(committing)throw Object.assign(new Error('Read-state COMMIT outcome unknown'),{code:'STORE_COMMIT_UNKNOWN',cause:error});if(db.isTransaction)db.exec("ROLLBACK");throw error; }
  }
 }

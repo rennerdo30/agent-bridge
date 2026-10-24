@@ -117,19 +117,19 @@ export function publishPlugin(source: string, base: string, version = APP_VERSIO
 }
 
 /** Preserve every previous metadata revision. Do not rename the old file away before replacement. */
-export function atomicPluginWrite(path: string, text: string | Uint8Array): void {
-  assertUnlinked(path);
-  mkdirSync(dirname(path), { recursive: true });
+export function atomicPluginWrite(path: string, text: string | Uint8Array, startupCheck?:()=>void): void {
+  startupCheck?.();assertUnlinked(path);
+  startupCheck?.();mkdirSync(dirname(path), { recursive: true });startupCheck?.();
   const previous = existsSync(path) ? readFileSync(path) : null;
   const content = Buffer.from(text);
-  if (previous?.equals(content)) return;
+  startupCheck?.();if (previous?.equals(content)) return;
   const tmp = `${path}.${randomUUID()}.tmp`, backup = `${path}.backup-${Date.now()}-${randomUUID()}`;
   assertUnlinked(tmp); assertUnlinked(backup);
-  if (previous) copyFileSync(path, backup);
-  writeFileSync(tmp, content, { flag: "wx", mode: 0o600 });
+  startupCheck?.();if (previous) copyFileSync(path, backup);startupCheck?.();
+  writeFileSync(tmp, content, { flag: "wx", mode: 0o600 });startupCheck?.();
   const current = existsSync(path) ? readFileSync(path) : null;
-  if ((previous === null) !== (current === null) || (previous && !previous.equals(current!))) throw new Error(`Plugin metadata changed concurrently; preserved both copies: ${path}`);
-  renameSync(tmp, path);
+  startupCheck?.();if ((previous === null) !== (current === null) || (previous && !previous.equals(current!))) throw new Error(`Plugin metadata changed concurrently; preserved both copies: ${path}`);
+  startupCheck?.();renameSync(tmp, path);startupCheck?.();
 }
 
 export function selectRuntime(home: string, client: PluginClient, source: string, version = APP_VERSION, options: PluginPromotionOptions = {}): string {

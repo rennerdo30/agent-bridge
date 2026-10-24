@@ -6,6 +6,7 @@ import type { PeerInfo } from "./protocol.js";
 import { identityStartedAfter, processIdentity, readProcessIdentities, readProcessIdentitiesSync, readProcessNamesSync } from "./process-identity.js";
 import { existingMetadataDb, metadataDb, saveMetadataValue } from "./metadata-db.js";
 import { importMetadataDomain } from "./metadata-import.js";
+import { storageAdmissionRemaining } from "./storage-admission.js";
 
 export interface StoreCapabilities { json: number; sqlite: number; jobArchive?: number; metadata?: number }
 interface Presence extends StoreCapabilities { pid: number; name: string; version: string; explicit: boolean; processIdentity?: string; observedAt?: number }
@@ -22,10 +23,11 @@ const NON_BRIDGE_WINDOWS_HOST_NAMES = new Set(["svchost", "wmiprvse", "searchfil
 export { writtenBeforeBoot };
 
 function databasePresence(home: string): {record: Presence; signature: string; at: number}[] | undefined {
+  storageAdmissionRemaining();
   const db = existingMetadataDb(home);
   if (!db?.prepare("SELECT 1 FROM bridge_components WHERE name='import:storage-capabilities'").get()) return undefined;
-  return db.prepare("SELECT key,value,updated_at FROM bridge_metadata WHERE domain='storage-capabilities'").all()
-    .filter(row => /^\d+$/.test(String(row.key))).map(row => ({record:JSON.parse(String(row.value)) as Presence,signature:String(row.value),at:Number(row.updated_at)}));
+  storageAdmissionRemaining();const read=db.prepare("SELECT key,value,updated_at FROM bridge_metadata WHERE domain='storage-capabilities'");storageAdmissionRemaining();const rows=read.all();storageAdmissionRemaining();
+  return rows.filter(row => /^\d+$/.test(String(row.key))).map(row => {storageAdmissionRemaining();return {record:JSON.parse(String(row.value)) as Presence,signature:String(row.value),at:Number(row.updated_at)};});
 }
 
 /** False only for a PID that no longer exists (ESRCH); EPERM and other answers leave it to the identity query. */
@@ -150,11 +152,12 @@ export function validStoreCapabilities(value: unknown): value is StoreCapabiliti
 
 /** Retain presence after a broker exits, so its older clients protect the next election. */
 export function recordStorePeer(home: string, peer: Pick<PeerInfo, "pid" | "name" | "version" | "host" | "storeCapabilities">, options: { authoritative?: boolean } = {}): void {
+  const admitted=storageAdmissionRemaining()!==undefined;
   if (peer.host || !Number.isSafeInteger(peer.pid) || peer.pid <= 0) return;
   const ready = databasePresence(home);
   if (ready || metadataRelease(peer.version)) {
     try {
-      metadataDb(home); importMetadataDomain(home,"storage-capabilities");
+      metadataDb(home);storageAdmissionRemaining();importMetadataDomain(home,"storage-capabilities");storageAdmissionRemaining();
       const explicit = validStoreCapabilities(peer.storeCapabilities), caps = explicit ? peer.storeCapabilities! : releasedStoreCapabilities(peer.version);
       const prior = databasePresence(home)?.find(entry=>entry.record.pid===peer.pid)?.record;
       let identity = cachedIdentity(home,peer.pid);
@@ -164,9 +167,11 @@ export function recordStorePeer(home: string, peer: Pick<PeerInfo, "pid" | "name
         identity ??= prior.processIdentity;
       }
       saveMetadataValue(home,"storage-capabilities",String(peer.pid),{schemaVersion:1,...caps,pid:peer.pid,name:peer.name,version:peer.version ?? "unknown",explicit,observedAt:Date.now(),...(identity ? {processIdentity:identity} : {})});
+      storageAdmissionRemaining();
       if (!identity) void refreshStorePeerIdentities(home).catch(()=>{});
       return;
     } catch (error) {
+      storageAdmissionRemaining();
       // Until the metadata store can open (an older reader, or this process's identity is not yet
       // verifiable for its fail-closed migration lease) the pre-AB-208 file below stays the record;
       // the store imports it when it opens.
@@ -190,16 +195,16 @@ export function recordStorePeer(home: string, peer: Pick<PeerInfo, "pid" | "name
         // the foreign process query is pending. Retain its established generation.
         identity ??= previous.processIdentity;
       }
-    } catch { /* Preserve malformed records via the metadata backup. */ }
+    } catch { storageAdmissionRemaining(); /* Preserve malformed records via the metadata backup. */ }
   }
   if (!explicit && existsSync(path)) {
     try {
       const previous = JSON.parse(readFileSync(path, "utf8"));
       if (previous.explicit && (!identity || previous.processIdentity === identity)) return;
-    } catch { /* Preserve malformed records via the metadata backup. */ }
+    } catch { storageAdmissionRemaining(); /* Preserve malformed records via the metadata backup. */ }
   }
   const caps = explicit ? peer.storeCapabilities! : releasedStoreCapabilities(peer.version);
-  atomicPluginWrite(path, JSON.stringify({ schemaVersion: 1, ...caps, pid: peer.pid, name: peer.name, version: peer.version ?? "unknown", explicit, ...(identity ? { processIdentity: identity } : {}) }) + "\n");
+  storageAdmissionRemaining();atomicPluginWrite(path, JSON.stringify({ schemaVersion: 1, ...caps, pid: peer.pid, name: peer.name, version: peer.version ?? "unknown", explicit, ...(identity ? { processIdentity: identity } : {}) }) + "\n",admitted?storageAdmissionRemaining:undefined);storageAdmissionRemaining();
   if (!identity) void refreshStorePeerIdentities(home).catch(() => {});
 }
 

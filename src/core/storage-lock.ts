@@ -5,7 +5,7 @@ import { identityStartedAfter, processStartMs, readProcessIdentity } from "./pro
 import { ownerGone as bootOwnerGone } from "./boot-time.js";
 import { PROTOCOL_VERSION } from "./constants.js";
 import { SQLITE_STORE_VERSION } from "./store-version.js";
-import { withStorageAdmission } from "./storage-admission.js";
+import { withStorageAdmission, storageAdmissionRemaining } from "./storage-admission.js";
 
 const LOCK_FILE = ".maintenance-lock";
 const USERS_DIR = ".storage-users";
@@ -83,11 +83,12 @@ export function storageLeaseObservation(release: () => void) {
 }
 
 function writeOwner(path: string, capture?: LeaseCapture): LockOwner {
+  storageAdmissionRemaining();
   const owner: LockOwner = { pid: process.pid, nonce: randomUUID(), createdAt: Date.now(), mailboxProtocol: PROTOCOL_VERSION, mailboxSchema: SQLITE_STORE_VERSION };
   if (capture) capture.owner = owner;
   const fd = openSync(path, "wx", 0o600);
   if (capture) capture.descriptor = fd;
-  try { writeSync(fd, JSON.stringify(owner)); fsyncSync(fd); }
+  try { storageAdmissionRemaining();writeSync(fd, JSON.stringify(owner));storageAdmissionRemaining();fsyncSync(fd);storageAdmissionRemaining(); }
   finally {
     if (capture) capture.descriptorClose = "attempted";
     try { closeSync(fd); if (capture) capture.descriptorClose = "returned"; }
@@ -149,6 +150,7 @@ function maintenanceBusy(path: string): Error {
 
 /** Writers register before opening data. The second check closes the restore/open race. */
 export function storageLease(home: string, maintenance?: () => void): () => void {
+  storageAdmissionRemaining();
   readerAdmission?.check();
   const lock = join(home, LOCK_FILE);
   if (!maintenance && borrowedMaintenance?.path === lock) { borrowedMaintenance.check(); maintenance = borrowedMaintenance.release; }
@@ -158,7 +160,7 @@ export function storageLease(home: string, maintenance?: () => void): () => void
   };
   if (existsSync(lock) && !ownsMaintenance() && !recoverStaleLock(lock, true) && existsSync(lock)) throw maintenanceBusy(lock);
   const dir = join(home, USERS_DIR);
-  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  storageAdmissionRemaining();mkdirSync(dir, { recursive: true, mode: 0o700 });storageAdmissionRemaining();
   const path = join(dir, `${process.pid}-${randomUUID()}`);
   const capture: LeaseCapture = { identity: Symbol("storage lease acquisition"), path, file: null,
     descriptorClose: "not_attempted", acquisition: "attempted", release: "not_attempted", attempts: 0 };
@@ -184,6 +186,7 @@ export function storageLease(home: string, maintenance?: () => void): () => void
     remove(false);
     throw maintenanceBusy(lock);
   }
+  try{storageAdmissionRemaining();}catch(error){release();throw error;}
   return release;
 }
 

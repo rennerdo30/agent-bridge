@@ -1,7 +1,7 @@
 import { StartupBudget } from './startup-budget.js';
 import { openAdmittedMessageStore, withOrdinaryAdmission } from './prior-endpoints.js';
 import { preflightMessagingHome } from './mailbox-layout.js';
-import { withStorageAdmission } from './storage-admission.js';
+import { withStorageAdmission, storageAdmissionRemaining } from './storage-admission.js';
 import { randomUUID } from "node:crypto";
 import { retryRequest, transientRequestError } from "./request-retry.js";
 import { EventEmitter } from "node:events";
@@ -145,6 +145,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   private pendingRefreshTimer: NodeJS.Timeout | null = null;
   private refreshingPending: Promise<void> | null = null;
   private ackFlushScheduled = false;
+  private ackFlush: NodeJS.Immediate | null = null;
   private sessionId: string | null = null;
   private autoWake: boolean;
   private wakeOnDirect = false;
@@ -183,16 +184,18 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
    * until the store opens and holds the row.
    */
   private recordStorePresence(delay = 1_000): void {
+    storageAdmissionRemaining();
     const home = dirname(this.opts.dbPath);
     let error: unknown;
     try { recordStorePeer(home, { pid: process.pid, name: this.currentName, version: APP_VERSION, storeCapabilities: candidateStoreCapabilities }); }
     catch (err) { error = err; }
+    storageAdmissionRemaining();
     let open = false;
     try { open = Boolean(existingMetadataDb(home)); } catch { /* Not open yet. */ }
     if (open && !error) return;
     if (error && delay === 1_000) this.log.warn("store presence deferred; retrying in the background", { err: String((error as Error).message ?? error) });
     if (this.presenceTimer) clearTimeout(this.presenceTimer);
-    this.presenceTimer = setTimeout(() => { this.presenceTimer = null; if (!this.stopping) this.recordStorePresence(Math.min(60_000, delay * 2)); }, delay);
+    storageAdmissionRemaining();this.presenceTimer = setTimeout(() => { this.presenceTimer = null; if (!this.stopping) this.recordStorePresence(Math.min(60_000, delay * 2)); }, delay);
     this.presenceTimer.unref();
   }
 
@@ -242,7 +245,6 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     // Registration needs the host CLI's creation identity (a PowerShell query on Windows). Start the shared,
     // memoized read now so it overlaps discovery and daemon creation instead of following broker readiness.
     await this.ensureConnected();
-    if (this.opts.dbPath !== ':memory:') this.recordStorePresence();
   }
 
   /** Take over unread mail sent to "-N" stand-in names of this session (see the broker's claimMail). */
@@ -282,6 +284,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
 
   async stop(closeBroker = true): Promise<void> {
     this.stopping = true;
+    if(this.ackFlush)clearImmediate(this.ackFlush);this.ackFlush=null;this.ackFlushScheduled=false;
     this.emit("stopped");
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     this.reconnectTimer = null;
@@ -306,6 +309,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     if (this.presenceTimer) clearTimeout(this.presenceTimer);
     this.presenceTimer = null;
     this.log.info("bridge node stopped");
+    this.readJournal.settleStartup(false);
     this.releaseMetadata?.(); this.releaseMetadata = undefined;
   }
 
@@ -517,36 +521,55 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
 
   private async adopt(client: BridgeClient): Promise<void> {
     const budget = this.startupBudget!;
-    let adopted = false;
+    let adopted = false, admission: StartupBudget | undefined = budget, eventFailure: unknown, failed=false, failure:unknown;
+    const check=()=>{if(eventFailure)throw eventFailure;return budget.remaining();};
+    const event=(ev:string,data:unknown)=>{
+      if(!admission){this.onEvent(ev,data);return;}
+      try{withStorageAdmission(()=>admission!.remaining(),()=>this.onEvent(ev,data));}
+      catch(error){eventFailure=error;client.close();}
+    };
+    const closed=()=>{if(adopted)this.onClose(client);};
     try {
-    budget.remaining();
-    client.on("event", (ev, data) => this.onEvent(ev, data));
+    check();client.on("event", event);
     let brokerVersion: string | undefined;
     // Read presence before hello can trigger writes in a newer broker.
-    try {
       await client.request("auth", { protocol: PROTOCOL_VERSION, token: this.opts.token, ...(this.canHostDaemon ? { canHost: true } : {}) },budget.remaining());
-      brokerVersion = (await client.request("ping", {},budget.remaining())).brokerVersion;
-      if (this.opts.dbPath !== ":memory:") for (const peer of await client.request("peers", {},budget.remaining())) recordStorePeer(dirname(this.opts.dbPath), peer);
-    } catch (error) { client.close(); throw error; }
-    budget.remaining();
+      check();brokerVersion = (await client.request("ping", {},check())).brokerVersion;check();
+      if (this.opts.dbPath !== ":memory:") {
+        const peers=await client.request("peers",{},check());check();
+        for(const peer of peers){check();withStorageAdmission(check,()=>recordStorePeer(dirname(this.opts.dbPath),peer));check();}
+      }
+    check();
     const agentStartedAt = this.opts.jobAgent ? null : await budget.wait(parentProcessIdentity(budget.signal,()=>budget.remaining()));
-    budget.remaining();
-    withStorageAdmission(()=>budget.remaining(),()=>this.restoreReadState(`name:${this.currentName}`));
+    check();
+    withStorageAdmission(check,()=>this.restoreReadState(`name:${this.currentName}`));check();
     const args = this.helloArgs();
     // Older brokers publish hello capabilities directly to their observers,
     // which then rewrite each foreign PID record using their legacy shape.
     // Our own explicit record already protects upgrades before registration.
     const hello = await client.request(this.opts.frontend ? "helloT3" : "hello", { ...args, peer: { ...args.peer, agentStartedAt,
-      storeCapabilities: brokerVersion === APP_VERSION ? args.peer.storeCapabilities : undefined } },budget.remaining()).catch((err) => {
-      client.close();
-      throw err;
-    });
+      storeCapabilities: brokerVersion === APP_VERSION ? args.peer.storeCapabilities : undefined } },check());check();
     if (this.opts.frontend && !sameFrontend(this.opts, hello)) {
-      client.close(); throw new BridgeError("protocol_mismatch", "Broker did not attest the exact T3 frontend binding; hosted registration refused.");
+      throw new BridgeError("protocol_mismatch", "Broker did not attest the exact T3 frontend binding; hosted registration refused.");
     }
-    this.startupBudget?.remaining();
-    this.afterHello(client, hello); adopted = true;
-    } finally { if (!adopted) client.close(); }
+    check();withStorageAdmission(check,()=>this.afterHello(client,hello));check();
+    if(client.isClosed)throw brokerConnectionClosedError();
+    client.once('close',closed);this.readJournal.settleStartup(true);admission=undefined;adopted=true;
+    } catch(error){failed=true;failure=eventFailure??error;throw failure;}
+    finally { if (!adopted) {
+      const cleanup:unknown[]=[];client.off('event',event);client.off('close',closed);
+      if(this.client===client)this.client=null;
+      if(this.ackFlush)clearImmediate(this.ackFlush);this.ackFlush=null;this.ackFlushScheduled=false;
+      if(this.pendingRefreshTimer)clearTimeout(this.pendingRefreshTimer);this.pendingRefreshTimer=null;
+      if(this.presenceTimer)clearTimeout(this.presenceTimer);this.presenceTimer=null;
+      try{client.close();}catch(error){cleanup.push(error);}
+      try{this.readJournal.settleStartup(false);}catch(error){cleanup.push(error);}
+      const broker=this.broker;this.broker=null;
+      try{await broker?.close();}catch(error){cleanup.push(error);}
+      await Promise.allSettled([...this.pendingAcks]);
+      try{this.releaseMetadata?.();this.releaseMetadata=undefined;}catch(error){cleanup.push(error);}
+      if(cleanup.length)throw new AggregateError(failed?[failure,...cleanup]:cleanup,'Client adoption cleanup remains unknown');
+    } }
   }
 
   private helloArgs() {
@@ -579,27 +602,27 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   }
 
   private afterHello(client: BridgeClient, hello: { name: string; brokerPid: number; sessionId?: string | null }): void {
-    if (this.stopping) { client.close(); return; }
+    storageAdmissionRemaining();if (this.stopping) throw new BridgeError('timeout','Startup owner stopped before adoption');
     // Any authenticated registration settles creation, including an ambiguous attempt: a broker is serving, so
     // after a later loss (crash, idle exit, handover) discovery may demand-start again.
     this.daemonLaunch = undefined;
     this.relaunchBackoff.reset();
-    this.client = client;
     this.currentName = hello.name;
-    this.recordOwnStorePeer();
+    storageAdmissionRemaining();this.recordOwnStorePeer();storageAdmissionRemaining();
     if (!this.sessionId && hello.sessionId) {
       this.sessionId = hello.sessionId;
-      this.restoreReadState(`session:${this.sessionId}`);
+      storageAdmissionRemaining();this.restoreReadState(`session:${this.sessionId}`);storageAdmissionRemaining();
     }
-    this.restoreReadState(`name:${this.currentName}`);
+    storageAdmissionRemaining();this.restoreReadState(`name:${this.currentName}`);storageAdmissionRemaining();
+    if(this.opts.dbPath!==':memory:')this.recordStorePresence();storageAdmissionRemaining();
+    this.client=client;
     this.reconnectDelay = RECONNECT_BACKOFF_MIN_MS;
-    client.once("close", () => this.onClose(client));
     if (this.unflushedAcks.size > 0) {
-      this.acknowledge([...this.unflushedAcks]);
+      storageAdmissionRemaining();this.acknowledge([...this.unflushedAcks]);
     }
-    this.log.info("connected to broker", { name: hello.name, brokerPid: hello.brokerPid, isBroker: this.isBroker });
-    this.emit("connected", { name: hello.name, isBroker: this.isBroker });
-    this.schedulePendingRefresh();
+    storageAdmissionRemaining();this.log.info("connected to broker", { name: hello.name, brokerPid: hello.brokerPid, isBroker: this.isBroker });
+    storageAdmissionRemaining();this.emit("connected", { name: hello.name, isBroker: this.isBroker });
+    storageAdmissionRemaining();this.schedulePendingRefresh();
   }
 
   private onClose(client: BridgeClient): void {
@@ -619,13 +642,13 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     if (ev === "mail_retracted") {
       for (const id of (data as { ids: string[] }).ids) this.inbox.delete(id);
     } else if (ev === "shared_job_control") {
-      this.emit("shared_job_control", data as BridgeNodeEvents["shared_job_control"][0]);
+      storageAdmissionRemaining();this.emit("shared_job_control", data as BridgeNodeEvents["shared_job_control"][0]);
     } else if (ev === "jobs_changed") {
       const ids = new Set((data as { withdrawn: string[] }).withdrawn.map((id) => `job:${id}`));
       for (const [id, m] of this.inbox) if (ids.has(m.from.id)) this.inbox.delete(id);
-      this.emit("jobs_changed");
+      storageAdmissionRemaining();this.emit("jobs_changed");
     } else if (ev === "inline_job_control") {
-      this.emit("inline_job_control", data as BridgeNodeEvents["inline_job_control"][0]);
+      storageAdmissionRemaining();this.emit("inline_job_control", data as BridgeNodeEvents["inline_job_control"][0]);
     } else if (ev === "message") {
       const m = data as BridgeMessage;
       if (this.readIds.has(m.id)) {
@@ -636,14 +659,14 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
       this.inbox.set(m.id, m);
       if (m.conversationId === DASHBOARD_JOB_CONVERSATION) {
         this.markRead([m.id]);
-        this.emit("job_control", m);
+        storageAdmissionRemaining();this.emit("job_control", m);
         return;
       }
       this.log.debug("message received", { id: m.id, from: m.from.name, hop: m.hop });
-      this.emit("message", m);
+      storageAdmissionRemaining();this.emit("message", m);
     } else if (ev === "peer_joined" || ev === "peer_left") {
       if (ev === "peer_joined" && this.opts.dbPath !== ":memory:") recordStorePeer(dirname(this.opts.dbPath), data as PeerInfo);
-      this.emit(ev, data as PeerInfo);
+      storageAdmissionRemaining();this.emit(ev, data as PeerInfo);
     } else if (ev === "handover") {
       const target = data as EventMap["handover"];
       if (isNewerRelease(target?.version, APP_VERSION) || (typeof target?.protocol === "number" && target.protocol > PROTOCOL_VERSION)) {
@@ -664,7 +687,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
       // Retiring this session's connection must not evict every other session. The process still
       // owns the elected listener until actual shutdown; reclaim can reconnect to that listener.
       void this.stop(false).catch((err) => this.log.warn("could not retire replaced connection", { err: String(err) }));
-      this.emit("replaced");
+      storageAdmissionRemaining();this.emit("replaced");
     } else if (ev === "retired") {
       this.leaveRetired((data as { reason?: unknown } | undefined)?.reason);
     }
@@ -1080,7 +1103,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
 
   /** Refill channel/wake consumers too; active hooks are not required to drain a large inbox. */
   private schedulePendingRefresh(delayMs = 100): void {
-    if (this.stopping || this.pendingRefreshTimer) return;
+    if (this.stopping || !this.isConnected || this.pendingRefreshTimer) return;
     this.pendingRefreshTimer = setTimeout(() => {
       this.pendingRefreshTimer = null;
       if (!this.isConnected || this.stopping) return;
@@ -1113,19 +1136,21 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
 
   /** Mark messages consumed locally and on the broker. */
   markRead(ids: string[]): void {
+    storageAdmissionRemaining();
     const real = ids.filter((id) => this.inbox.has(id));
     if (!real.length) return;
     this.readJournal.append(`name:${this.currentName}`, real);
-    if (this.sessionId) this.readJournal.append(`session:${this.sessionId}`, real);
+    storageAdmissionRemaining();if (this.sessionId) this.readJournal.append(`session:${this.sessionId}`, real);storageAdmissionRemaining();
     const messages = real.map((id) => this.inbox.get(id)!);
     for (const id of real) {
+      storageAdmissionRemaining();
       this.inbox.delete(id);
       this.readIds.add(id);
     }
     this.acknowledge(real);
     // Complete notification waits only after the durable delivery receipt, never on arrival or hand-out.
-    try { this.notificationConsumed(messages); }
-    catch (err) { this.log.warn("could not archive completed notification wait", { err: String(err) }); }
+    try { storageAdmissionRemaining();this.notificationConsumed(messages);storageAdmissionRemaining(); }
+    catch (err) { storageAdmissionRemaining();this.log.warn("could not archive completed notification wait", { err: String(err) }); }
   }
 
   setNotificationWaitHandlers(matches: (m: BridgeMessage) => boolean, consumed: (messages: BridgeMessage[]) => void): void {
@@ -1137,20 +1162,24 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   notificationWaitsChanged(): void { this.emit("notification_waits_changed"); }
 
   private restoreReadState(identity: string): void {
-    for (const id of this.readJournal.read(identity)) this.readIds.add(id);
+    storageAdmissionRemaining();const read=this.readJournal.read(identity);storageAdmissionRemaining();
+    for (const id of read) {storageAdmissionRemaining();this.readIds.add(id);}
     const consumed = [...this.inbox.keys()].filter((id) => this.readIds.has(id));
-    consumed.forEach((id) => this.inbox.delete(id));
-    this.acknowledge(consumed);
+    consumed.forEach((id) => {storageAdmissionRemaining();this.inbox.delete(id);});
+    storageAdmissionRemaining();this.acknowledge(consumed);
   }
 
   private acknowledge(ids: string[]): void {
+    storageAdmissionRemaining();
     if (!ids.length) return;
-    ids.forEach((id) => this.unflushedAcks.add(id));
+    ids.forEach((id) => {storageAdmissionRemaining();this.unflushedAcks.add(id);});
     if (!this.isConnected || this.ackFlushScheduled) return;
     // A channel can consume hundreds of replayed messages in one stream chunk. One ack per
     // message would exceed the broker's per-connection request cap and interrupt its own drain.
     this.ackFlushScheduled = true;
-    setImmediate(() => {
+    storageAdmissionRemaining();
+    this.ackFlush=setImmediate(() => {
+      this.ackFlush=null;
       this.ackFlushScheduled = false;
       if (!this.isConnected || !this.unflushedAcks.size) return;
       const batch = [...this.unflushedAcks].slice(0, 500);

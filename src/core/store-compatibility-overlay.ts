@@ -5,6 +5,7 @@ import type { Logger } from "./logger.js";
 import { migrateSqlite } from "./sqlite-migrations.js";
 import { configureSqlite } from "./sqlite-policy.js";
 import { storageAdmissionRemaining, storageAdmissionTimeout } from "./storage-admission.js";
+import { inspectMailbox } from "./mailbox-layout.js";
 
 const TABLES = ["session_bindings", "peer_names", "peer_name_owners", "job_delivery_routes", "peer_last_seen"] as const;
 const SCHEMA = `
@@ -41,8 +42,11 @@ export function storeCompatibilityObservation(db: DatabaseSync) {
  * Missing tables resolve to this attached database; existing primary tables always win.
  * Neither database nor its original records are removed after a later upgrade.
  */
-export function attachStoreCompatibility(db: DatabaseSync, file: string, log: Logger, create: boolean): void {
+export function attachStoreCompatibility(db: DatabaseSync, file: string, log: Logger, create: boolean, transactionOwner?:'caller'): void {
   const admitted=storageAdmissionRemaining()!==undefined;
+  const callerOwned=transactionOwner==='caller';
+  if(callerOwned&&(create||!db.isTransaction))throw new Error('Overlay merge requires the caller-owned current primary transaction');
+  if(callerOwned)for(const table of TABLES){storageAdmissionRemaining();if(!db.prepare("SELECT 1 FROM main.sqlite_master WHERE type='table' AND name=?").get(table))throw new Error('Outer-owned merge refuses missing primary tables; supplemental originals retained');}
   const path = join(dirname(file), "store-compatibility.db");
   const existed = existsSync(path);
   if (!create && !existed) return;
@@ -50,6 +54,14 @@ export function attachStoreCompatibility(db: DatabaseSync, file: string, log: Lo
     open: "attempted", initialize: "not_attempted", close: "not_attempted", attach: "not_attempted", merge: "not_attempted" };
   const captures = overlayCaptures.get(db) ?? []; captures.push(capture); overlayCaptures.set(db, captures);
   retainedOverlayCaptures.add(capture);
+  if(callerOwned){
+    // Independent guarded read-only inspection/closure, then attachment. No
+    // overlay initialization writes occur inside the caller's transaction.
+    try{
+      const present=inspectMailbox(path,overlay=>{capture.overlay=overlay;capture.open='returned';capture.initialize='attempted';storageAdmissionRemaining();if(Number(overlay.prepare('PRAGMA user_version').get()!.user_version)!==1)throw new Error('Supplemental schema requires separate initialization');for(const table of TABLES){storageAdmissionRemaining();if(!overlay.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table))throw new Error('Supplemental layout incomplete; originals retained');}capture.initialize='returned';return true;});
+      if(!present)throw new Error('Supplemental database disappeared');capture.close='returned';
+    }catch(error){capture.initialize='unknown';capture.close=capture.overlay?.isOpen===false?'returned':'unknown';throw error;}
+  }else{
   let overlay: DatabaseSync;
   try { storageAdmissionRemaining(); overlay = new DatabaseSync(path,{timeout:storageAdmissionTimeout(3000)}); capture.overlay = overlay; capture.open = "returned"; }
   catch (error) { capture.open = "unknown"; throw error; }
@@ -61,13 +73,14 @@ export function attachStoreCompatibility(db: DatabaseSync, file: string, log: Lo
     try { overlay.close(); capture.close = "returned"; }
     catch (error) { capture.close = "unknown"; throw error; }
   }
+  }
   capture.attach = "attempted";
   try { const attach=db.prepare("ATTACH DATABASE ? AS store_compatibility");storageAdmissionRemaining();attach.run(path);storageAdmissionRemaining();capture.attach = "returned"; }
   catch (error) { capture.attach = "unknown"; throw error; }
   // A subsequent backup-first primary upgrade adopts supplemental rows while
   // retaining the sidecar as its original recovery source.
   capture.merge = "attempted";
-  try { storageAdmissionRemaining();db.exec("BEGIN IMMEDIATE"); }
+  try { storageAdmissionRemaining();if(!callerOwned)db.exec("BEGIN IMMEDIATE"); }
   catch (error) { capture.merge = "unknown"; throw error; }
   try {
     for (const table of TABLES) {
@@ -82,10 +95,11 @@ export function attachStoreCompatibility(db: DatabaseSync, file: string, log: Lo
       storageAdmissionRemaining();db.exec(`INSERT INTO main.${table} ${columns} SELECT ${selected} FROM store_compatibility.${table} WHERE 1 ${merge}`);
     }
     if (!db.prepare("SELECT name FROM main.sqlite_master WHERE name='peer_last_seen'").get()) {
+      if(callerOwned)throw new Error('Outer-owned merge cannot write supplemental fallback state');
       storageAdmissionRemaining();db.exec(`INSERT INTO store_compatibility.peer_last_seen SELECT name, MAX(learned_at) FROM peer_names GROUP BY name
         ON CONFLICT(name) DO UPDATE SET seen_at=MAX(peer_last_seen.seen_at,excluded.seen_at)`);
     }
-    storageAdmissionRemaining();db.exec("COMMIT");storageAdmissionRemaining();
+    storageAdmissionRemaining();if(!callerOwned)db.exec("COMMIT");storageAdmissionRemaining();
     capture.merge = "returned"; retainedOverlayCaptures.delete(capture);
-  } catch (error) { capture.merge = "unknown";if(!admitted||db.isTransaction)db.exec("ROLLBACK");throw error; }
+  } catch (error) { capture.merge = "unknown";if(!callerOwned&&(!admitted||db.isTransaction))db.exec("ROLLBACK");throw error; }
 }

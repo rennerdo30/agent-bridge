@@ -10,7 +10,8 @@ import { METADATA_COMPONENT_VERSION } from "./store-version.js";
 import { assertCurrentMailboxEnvelope, preflightMessagingHome, offlineMetadataAdmitted, withOfflineMetadataAdmission, inspectMailbox, assertMessagingLayout } from "./mailbox-layout.js";
 import { admissionSqliteBusy, storageAdmissionRemaining, storageAdmissionTimeout, withStorageAdmission } from "./storage-admission.js";
 import { assertSqliteAuthority, configureSqlite } from "./sqlite-policy.js";
-import { snapshotDatabase } from "./sqlite-maintenance.js";
+import { attachStoreCompatibility } from "./store-compatibility-overlay.js";
+import { snapshotDatabase, ensureMessageQuarantine } from "./sqlite-maintenance.js";
 import { ownProcessIdentity } from "./process-identity.js";
 import { nullLogger } from "./logger.js";
 export { withOfflineMetadataAdmission, type OfflineMetadataAdmission } from "./mailbox-layout.js";
@@ -152,9 +153,10 @@ export function physicalMetadataPath(path: string): void {
 
 /** Observe an already admitted component without starting a competing migration. */
 export function existingMetadataDb(home: string): DatabaseSync | undefined {
+ storageAdmissionRemaining();
  preflightMessagingHome(home);
  const file = join(resolve(home),"bridge.db"), cached = connections.get(handleKey(file));
- if (cached) { assertSqliteAuthority(cached); return escapeMetadataReference(cached); }
+ if (cached) { admissionSqliteBusy(cached);assertSqliteAuthority(cached);storageAdmissionRemaining();return escapeMetadataReference(cached); }
  if (!existsSync(file)) return undefined;
  physicalMetadataPath(file);
  const admission = observeExistingMetadataAdmission(file);
@@ -176,19 +178,8 @@ export function assertMetadataAdmission(home: string): void {
 }
 
 /** Additive component versioning leaves AB-206's global user_version untouched. */
-export function metadataDb(home: string): DatabaseSync {
- storageAdmissionRemaining();
- preflightMessagingHome(home);
- const file = join(resolve(home), "bridge.db");
- const cached = connections.get(handleKey(file));
- if (cached) { assertSqliteAuthority(cached); return escapeMetadataReference(cached); }
- physicalMetadataPath(file);
- mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
- const existed = existsSync(file);
- const admission = observeExistingMetadataAdmission(file);
- const db = new DatabaseSync(file, { timeout: storageAdmissionTimeout(5_000) });
- recordMetadataAdmission(db, file, admission);
- try {
+/** Same backup-first component initializer for an explicitly selected owned connection. */
+function initializeMetadataComponent(db: DatabaseSync, home:string, file:string, existed:boolean, inMigrationTransaction=false):void {
   admissionSqliteBusy(db,5_000,true);
   const version = () => db.prepare("SELECT 1 FROM sqlite_master WHERE name='bridge_components'").get()
    ? Number(db.prepare("SELECT version FROM bridge_components WHERE name='metadata'").get()?.version ?? 0) : 0;
@@ -196,11 +187,19 @@ export function metadataDb(home: string): DatabaseSync {
   if (version() < VERSION) {
    assertMetadataAdmission(home);
    if (version() > 0 && !offlineMetadataAdmitted(home)) throw Object.assign(new Error('Explicit offline isolated metadata migration required'), {code:'STORE_OFFLINE_REQUIRED'});
+   if(inMigrationTransaction){
+    // The offline caller has already verified/retained its immutable full input
+    // snapshot and owns this schema transaction under maintenance exclusion.
+    // Use the SAME metadata DDL before ready/proof, without an intermediate m7
+    // commit or attempting a nested backup/transaction.
+    if(!offlineMetadataAdmitted(home)||!hasMaintenanceExclusion(home)||!db.isTransaction)throw migrationRefusal('Metadata migration transaction is not owned');
+    storageAdmissionRemaining();db.exec(SCHEMA);storageAdmissionRemaining();return;
+   }
    const exclusion = hasMaintenanceExclusion(home) ? undefined : maintenanceLock(home,true,true);
    let release: (() => void) | undefined;
    try {
     release = observedMetadataLease(`${file}.metadata-migration`, "migration", () => metadataFileLease(`${file}.metadata-migration`, storageAdmissionTimeout(5_000)));
-    storageAdmissionRemaining(); preflightMessagingHome(home); assertMetadataAdmission(home);
+    storageAdmissionRemaining(); preflightMessagingHome(home,file); assertMetadataAdmission(home);
     if (version() < VERSION) {
      if (existed) {
       const dir = join(home, ".migration-snapshots");
@@ -221,6 +220,22 @@ export function metadataDb(home: string): DatabaseSync {
    } finally { try { release?.(); } finally { exclusion?.(); } }
   }
   configureSqlite(db,5_000);
+}
+
+export function metadataDb(home: string): DatabaseSync {
+ storageAdmissionRemaining();
+ preflightMessagingHome(home);
+ const file = join(resolve(home), "bridge.db");
+ const cached = connections.get(handleKey(file));
+ if (cached) { admissionSqliteBusy(cached);assertSqliteAuthority(cached);storageAdmissionRemaining();return escapeMetadataReference(cached); }
+ physicalMetadataPath(file);
+ mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
+ const existed = existsSync(file);
+ const admission = observeExistingMetadataAdmission(file);
+ const db = new DatabaseSync(file, { timeout: storageAdmissionTimeout(5_000) });
+ recordMetadataAdmission(db, file, admission);
+ try {
+  initializeMetadataComponent(db,home,file,existed);
   connections.set(handleKey(file), db);
   changeLifecycleRegistry();
   return escapeMetadataReference(db);
@@ -511,10 +526,12 @@ export function checkpointOwnedMetadataConnections(owner: MetadataCheckpointOwne
 }
 
 export function saveMetadataValue(home: string, domain: string, key: string, value: unknown): void {
+ storageAdmissionRemaining();
  const release = observedMetadataLease(home, "write", () => storageLease(home));
  try {
-  metadataDb(home).prepare(`INSERT INTO bridge_metadata VALUES (?,?,?,?)
-   ON CONFLICT(domain,key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`).run(domain,key,JSON.stringify(value),Date.now());
+  const insert=metadataDb(home).prepare(`INSERT INTO bridge_metadata VALUES (?,?,?,?)
+   ON CONFLICT(domain,key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`);
+  storageAdmissionRemaining();insert.run(domain,key,JSON.stringify(value),Date.now());storageAdmissionRemaining();
  } finally { release(); }
 }
 
@@ -842,6 +859,11 @@ export async function migrateMessagingHome(options: MessagingMigrationOptions) {
      configureSqlite(db); migrateMessageSchema(db,join(destination,input.path),true,nullLogger,()=>{
       guardSource();
       if(db!==coordinator){
+       initializeMetadataComponent(db,destination,join(destination,input.path),true,true);
+       // Match the ordinary opener's durable schema before freezing completion.
+       // TEMP views are connection-local and excluded from the main digest.
+       ensureMessageQuarantine(db);
+       attachStoreCompatibility(db,join(destination,input.path),nullLogger,false,'caller');
        assertCurrentMailboxEnvelope(db);
        if(db.prepare("UPDATE messaging_candidate SET state='ready',attempt=? WHERE id=1 AND contract='p12/m7/s15' AND attempt IN ('',?)").run(attempt.id,attempt.id).changes!==1)throw migrationRefusal('Alternate mailbox ready CAS failed');
        const namespace=db.prepare('SELECT namespace FROM mailbox_store WHERE id=1').get()!.namespace;
