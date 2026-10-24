@@ -608,9 +608,12 @@ function importMigrationSnapshot(target: DatabaseSync, snapshot: string, beforeC
     const columns = source.prepare(`PRAGMA table_xinfo(${q})`).all().filter(row=>row.hidden===0).map(row=>String(row.name));
     const rowid = table.wr===0 && name!=='bridge_metadata' ? ['rowid','_rowid_','oid'].find(name=>!columns.includes(name)) : undefined;
     const all = rowid ? [rowid,...columns] : columns;
-    const read = source.prepare(`SELECT ${all.map(quoteSql).join(',')} FROM ${q}`); read.setReadBigInts(true);
+    // SQLite may name an implicit rowid result after its INTEGER PRIMARY KEY.
+    // Alias every projection uniquely, including real columns named like aliases.
+    const resultKeys = all.map((_,index)=>`__migration_column_${index}`);
+    const read = source.prepare(`SELECT ${all.map((column,index)=>`${quoteSql(column)} AS ${quoteSql(resultKeys[index]!)}`).join(',')} FROM ${q}`); read.setReadBigInts(true);
     const insert = target.prepare(`INSERT INTO ${q} (${all.map(quoteSql).join(',')}) VALUES (${all.map(()=>'?').join(',')})`);
-    for (const row of read.iterate()) insert.run(...all.map(column=>row[column]!));
+    for (const row of read.iterate()) insert.run(...resultKeys.map(key=>row[key]!));
    }
    for (const entry of schema) {
     if (entry.type==='table' && /^CREATE VIRTUAL TABLE/i.test(String(entry.sql))) {

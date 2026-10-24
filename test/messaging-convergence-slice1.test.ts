@@ -271,15 +271,55 @@ it('classifies one SQL read view while another synthetic connection commits a co
 });
 it('provides a read-only exact-home plan and a finite m1/s9 isolated migration',async()=> {
  const f=shipping(),before=fileState(f.source);
+ // Bounded metadata-only diagnosis of the previous importer failure, inside
+ // this admitted run. Never log row values or open a separate probe process.
+ const prepare=DatabaseSync.prototype.prepare;let examined=0;
+ let projectionEvidence:{table:string;requestedKey:string;returnedKeys:string[]}|undefined;
+ const projectionSpy=vi.spyOn(DatabaseSync.prototype,'prepare').mockImplementation(function(this:DatabaseSync,sql:string){
+  const match=/^SELECT "(rowid|_rowid_|oid)" AS "__migration_column_0",/.exec(sql);
+  if(!projectionEvidence && match && examined<32 && this.location('main')?.includes('.migration-snapshots')) {
+   examined++;const legacy=prepare.call(this,sql.replace(/ AS "__migration_column_\d+"/g,''));legacy.setReadBigInts(true);
+   const row=legacy.get();
+   if(row && !Object.hasOwn(row,match[1]!)) {
+    projectionEvidence={table:String(legacy.columns()[0]!.table),requestedKey:match[1]!,returnedKeys:Object.keys(row)};
+    console.log('SLICE1_LEGACY_ROWID_PROJECTION '+JSON.stringify(projectionEvidence));
+   }
+  }
+  return prepare.call(this,sql);
+ });
  const plan=await migrateMessagingHome({source:f.source,destination:f.destination});
  expect(plan.applied).toBe(false);expect(existsSync(f.destination)).toBe(false);expectInspectionPreserved(f.source,join(f.source,'bridge.db'),before);
  await expect(migrateMessagingHome({source:f.source,destination:f.destination,apply:true})).rejects.toThrow('attestation');
  await migrateMessagingHome({source:f.source,destination:f.destination,apply:true,offlineIsolated:true});
+ projectionSpy.mockRestore();expect(projectionEvidence).toBeDefined();
  const db=database(join(f.destination,'bridge.db'));expect(db.prepare('SELECT * FROM messages ORDER BY id,recipient').all()).toEqual(f.messages);
  expect(db.prepare("SELECT count(*) AS n FROM message_frontends WHERE state='ambiguous' AND owner='' AND source='' AND mailbox=''").get()!.n).toBe(f.messages.length);
  expect(db.prepare("SELECT value FROM bridge_metadata WHERE domain='synthetic-retained'").get()!.value).toBe('{"unknown":true}');
  assertCurrentMailboxEnvelope(db);expect(sha(join(f.source,'bridge.db'))).toBe(f.original);
  expect(tree(f.destination).some(path=>path.includes('.migration-snapshots'))).toBe(true);
+});
+it('preserves INTEGER PRIMARY KEY aliases, shadowed rowids and WITHOUT ROWID value fidelity',async()=> {
+ const f=shipping(),source=database(join(f.source,'bridge.db')),blob=new Uint8Array([0,255,128,1]);
+ source.exec(`CREATE TABLE binding_integer_pk(id INTEGER PRIMARY KEY,"__migration_column_0" TEXT,payload BLOB,nullable TEXT,wide INTEGER);
+ CREATE TABLE binding_shadow(rowid TEXT,value INTEGER,payload BLOB,nullable TEXT);
+ CREATE TABLE binding_without(a TEXT,b INTEGER,payload BLOB,nullable TEXT,PRIMARY KEY(a,b)) WITHOUT ROWID;`);
+ source.prepare('INSERT INTO binding_integer_pk VALUES (?,?,?,?,?)').run(9007199254740993n,'synthetic alias column',blob,null,-9007199254740993n);
+ source.prepare('INSERT INTO binding_shadow(_rowid_,rowid,value,payload,nullable) VALUES (?,?,?,?,?)').run(9007199254740995n,'synthetic shadow',-9007199254740995n,blob,null);
+ source.prepare('INSERT INTO binding_without VALUES (?,?,?,?)').run('synthetic key',9007199254740997n,blob,null);
+ const queries=['SELECT rowid AS implicit_id,* FROM binding_integer_pk','SELECT _rowid_ AS implicit_id,* FROM binding_shadow','SELECT * FROM binding_without'];
+ const read=(db:DatabaseSync)=>queries.map(sql=>{const statement=db.prepare(sql);statement.setReadBigInts(true);return statement.all();});
+ const expected=read(source),schema=source.prepare("SELECT name,sql FROM sqlite_master WHERE name LIKE 'binding_%' ORDER BY name").all();
+ expect(expected).toEqual([
+  [{implicit_id:9007199254740993n,id:9007199254740993n,__migration_column_0:'synthetic alias column',payload:blob,nullable:null,wide:-9007199254740993n}],
+  [{implicit_id:9007199254740995n,rowid:'synthetic shadow',value:-9007199254740995n,payload:blob,nullable:null}],
+  [{a:'synthetic key',b:9007199254740997n,payload:blob,nullable:null}],
+ ]);
+ source.close();const original=sha(join(f.source,'bridge.db'));
+ await migrateMessagingHome({source:f.source,destination:f.destination,apply:true,offlineIsolated:true});
+ const migrated=database(join(f.destination,'bridge.db'));
+ expect(read(migrated)).toEqual(expected);
+ expect(migrated.prepare("SELECT name,sql FROM sqlite_master WHERE name LIKE 'binding_%' ORDER BY name").all()).toEqual(schema);
+ expect(sha(join(f.source,'bridge.db'))).toBe(original);assertCurrentMailboxEnvelope(migrated);
 });
 it.each(['snapshot','committed-ddl'])('resumes one immutable interrupted attempt after %s, retaining all originals',async boundary=> {
  const f=shipping(),exec=DatabaseSync.prototype.exec,prepare=DatabaseSync.prototype.prepare;let injected=false;
