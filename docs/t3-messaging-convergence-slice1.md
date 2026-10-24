@@ -1,4 +1,4 @@
-> Latest: the inventory diagnostic confirmed only newly created zero-byte WAL/volatile SHM coordination, with main identity/size/hash unchanged. The parent-authorized correction froze at `d4f8e17d0bff563f45b5f495b0f1a9f5b4489ed0`. NoEmit and the anchored seven-case selection passed (42 cases excluded). Slice1 WIP is ready for independent source review, with exact protected patches/baselines unchanged and hosted Node24/platform acceptance pending. Earlier red runs, including the diagnostic, remain red and qualified to their own freezes; no full49-case final-head pass is claimed.
+> Latest: the parent's full review of17045adf required seven corrections. One coherent batch is frozen at `80fcb10732cd1f11b9e35500c3003f654f148dd3`; noEmit and the whole guarded slice1 file passed (64/64, including15 review cases). An intentional red run on unchanged17045 production reproduced all seven findings. New exact protected artifacts include the startServices delta; baselines remain unamended. The candidate awaits the parent's new full source/protected review and hosted Node24/platform gates. Earlier red/green freezes below remain separate evidence.
 
 # AB-458 convergence slice1 WIP receipt
 
@@ -737,3 +737,70 @@ This correction changes zero protected normalized methods. Full broker.ts/node.t
 Artifact root: `E:/AgentData/claude-codex-comm/t3-6416720d/.agent-bridge-test/slice1-inventory-review`; static packaging PID32836,10:00:31.369–10:00:32.420 JST,external10000ms,exit0. Previous artifact roots, raw first headers/logs, original data and interrupted snapshots remain untouched. New final retained-file inventory and explicit WIP commit/push receipts follow the artifact-only receipt commit and are reported in the parent handoff.
 
 **Slice1 source candidate is ready for independent review.** No new unresolved fork was introduced by this confirmed conditional correction. Parent review of the full design/source and exact protected deltas, subsequent slices and hosted Node24/Windows/Linux/macOS gates remain separate. There is no new PR, integration, release, installed migration, native connector enablement or whole-product completion claim. PR141/c94 history and the original writer checkout remain untouched. Keep this same worktree/branch for later slices.
+
+## Full-review FIX FIRST: seven-finding correction batch
+
+Parent independently reviewed `17045adff5b63a610d9da9658547a0b2fd6ab8e7` (source equal to d4f8e17d), required seven fixes and approved one coherent correction batch. Design `24a650e1fda1d10b9cb99d9495e0c815d23c9cd9`, original main `5e3fa8aa17d22d57cb5d24549c16381c5843edeb`, p12/m7/s15, pairing1/JSON4/runner-ledger-v2 and the same worktree/assigned branch remain unchanged. The only added source seam is recovery budget/signal plumbing in native-children.ts. No baseline/pin amendment is approved or included.
+
+### Frozen source, exact scope and verification
+
+Intentional red freeze: `5451b7380ec941566c8fe4f9745a8f4e44f999d5`, tree `b56495df5825617623fe89dd76ef1f904e63a607`. It adds only review regressions; `git diff 17045adf HEAD -- src` was empty before launch. Test SHA256 `d04cfb812481b2cde39c60f098bed27c5f70c29792b0447e029d89fc88752bd0`. Exact selection `^review7:.*$`, verbose reporter, one thread worker and no file parallelism. The intentional red selection ran all15 new cases once, rather than stopping after the first expected counterexample. Raw result: **14 failed /1 passed /49 skipped (64)**. The already-passing tamper refusal is a retained negative, not a newly reproduced defect. All seven findings have a meaningful failing counterexample; none of the red failures was classified as a fixture error.
+
+Corrected source freeze: `80fcb10732cd1f11b9e35500c3003f654f148dd3`, tree `f63e6f67c6d317d281576337575eb966326ca92a`, source directory tree `1643df3484897c51e7658c4c43eccdc7f42bc7a5`. Test SHA256 `36559d6a48cd51a4d3f1af500e6c842f66e60be8052ca938d284bdd92ae9587f`. Relative to17045adf, the source/test batch changes exactly broker.ts, metadata-db.ts, native-children.ts, sqlite-migrations.ts, sqlite-policy.ts, store.ts and messaging-convergence-slice1.test.ts (226 insertions/58 deletions). This receipt is the only later tracked artifact change. The final manifest lists every cumulative path from main and every batch path.
+
+The whole focused file repetition was expressly authorized because all seven findings cross earlier fragmented selections. It used `vitest run test/messaging-convergence-slice1.test.ts --maxWorkers=1 --pool=threads --no-file-parallelism --reporter=verbose --bail=1`. **64/64 passed**, with no skipped cases, on the corrected source freeze. This is the guarded slice1 file, not a repository/lifecycle/full suite. Child-process mocks now also reject spawnSync/exec/execSync/fork; the existing Worker/network/process-identity guards remain. No product service was disabled to obtain green results.
+
+| Check | Own wrapper/shell/check PID | JST start–end | External deadline/result |
+| --- | --- | --- | --- |
+| Intentional red counterexamples |21932/10120/32368 |2026-10-24 10:19:51.327–10:19:55.160 |60000ms;3833ms elapsed;exit1;no timeout |
+| noEmit |46604/6696/46248 |2026-10-24 10:25:26.236–10:25:27.527 |60000ms;1291ms elapsed;exit0;no timeout |
+| Whole guarded slice1 file |52648/49028/75244 |2026-10-24 10:25:36.348–10:25:45.858 |60000ms;9510ms elapsed;exit0;no timeout |
+
+Each raw stdout/stderr line1 retains commit/tree, exact test hash, PIDs, UTC start/deadline and argv. Both corrected gates recorded identical before/after freeze/tree/test hashes. The red source also remained fixed. No automatic wrapper retry occurred; all authorized gate allowances are consumed. All owned check processes exited, including actual recovery cancellation/cleanup exercised in the tests.
+
+Version query inside the already-authorized corrected process75244:
+
+```json
+{"node":"v26.4.0","pid":75244,"sqlite":"3.53.2","sqliteSourceId":"2026-06-03 19:12:13 d6e03d8c777cfa2d35e3b60d8ec3e0187f3e9f99d8e2ee9cac695fd6fcdf1a24"}
+```
+
+These are actual Node26 results, not Node24 acceptance. No version-installation/PATH change or separate version/native probe occurred.
+
+### Seven-finding closure matrix
+
+| Review finding | Meaningful red on unchanged17045 production | Batch correction | Corrected evidence |
+| --- | --- | --- | --- |
+| P1 real recovery ignores original budget | Actual recovery busy retry remained pending after10s; synchronous route step crossed expiry and committed | Original StartupBudget passes broker -> NativeChildren -> retryWrite -> retrySqlite. Check before each retry/route effect/COMMIT; clip busy waits, propagate original cancellation, await actual settlement. Owned rollback/timeout restoration remain cleanup; a late committed result admits no next effect | Both actual-method regressions pass with fake time; no all-startServices mock |
+| P1 auxiliary SQLite inspection bypass | Empty/truncated auxiliary reached destination effects; orphan WAL/journal families were accepted | Inspect every exact selected auxiliary family, including missing mains/sidecars, before destination effects. Canonical/declared mailboxes retain layout checks. Snapshot construction and logical digest reads use guarded inspectMailbox paths | history.db, archive.db, store-compatibility.db and owner-questions.db negatives pass; no invalid-family native open or destination effects; originals retained |
+| P1 final-await TOCTOU | Committed data change or cancellation in final endpoint await still returned ready | Original input inventory/cancel guard after final awaits, before schema/component effects and readiness, inside synchronous admission and immediately before final COMMIT. No refreshed input identity | Both final-await tests refuse and never publish ready |
+| P1 interrupted alternate cannot resume | Unknown first alternate COMMIT made resume reject its completed copy by raw snapshot hash | Same-attempt coordinator stores expected original snapshot hash, namespace and complete logical row/schema/version/rowid digest before alternate COMMIT. Resume independently verifies candidate marker/namespace/digest against that immutable proof before skipping it. Cross-DB atomicity is not assumed | Two-alternate interrupted resume passes; source originals retained, markers share same attempt; tampered completed copy refuses. No-repeat counter qualification below |
+| P2 Windows name/role ambiguity | MAIL.DB omitted physical mail.db; CONFIG.JSON accepted as a mailbox; missing explicit input accepted | Platform-aware name comparison resolves one actual basename, rejects duplicate/missing roles and infrastructure/private/case-variant sidecars before content inspection. Fixed infrastructure case variants refuse rather than gaining another role | Alias/missing, infrastructure case variant and explicit-missing tests pass with process-local platform mocking |
+| P2 sqlite_sequence loses large integer | Sequence above safe integer failed numeric conversion after highest row was deleted | Read sqlite_sequence with setReadBigInts(true), bind its integer unchanged | Exact sequence9007199254740995 and next id9007199254740996 pass as BigInts; source retained |
+| P2 bridge_metadata rowids renumber | Sparse source rowids -7/1/42 became2/3/4 after interrupted resume | Remove metadata rowid exception. Inside import transaction, SQLite selects and verifies an exact source-free signed integer slot; relocate only the owned migration row with domain/key/value CAS. Import original sparse rowids unchanged; keep attempt and CAS semantics | Sparse rowids, noncollision, immutable attempt/inputId and interrupted resume pass |
+
+`finding-closure.json` retains the same matrix with exact test-group descriptions. The no-repeat assertion in the alternate test has a qualification: `alphaCommits` counts the first interrupted call only, because its spy is restored before resume. That counter alone is **not** a resume replay detector. The explicit `completedAlternates` source skip implements no-repeat behavior; the runtime tests establish resume success, immutable attempt markers, original preservation and tamper refusal. This test limitation is exposed for the parent's new review rather than claimed as stronger dynamic coverage.
+
+### Transaction, authority and scope details
+
+Ordinary serving calls omit the new optional startup guard and retain the existing infinite accepted-write retry policy. Startup recovery receives the original cancel/remaining check without a new deadline. Each synchronous route write checks before subsequent mutations and COMMIT; expiry rolls back owned uncommitted work and settles the existing retry promise. A native COMMIT that returns late retains committed data and reports failure/unknown admission rather than initiating a next phase or callback retry.
+
+Alternate migration uses a narrow optional beforeCommit seam in the existing migrateMessageSchema/migrateSqlite transaction. It stamps ready/attempt inside the alternate schema transaction, derives expected proof from that same transaction and saves expected proof in the existing canonical attempt row first. An alternate COMMIT can then be separately unknown. Resume never treats that coordinator record alone as completion: exact candidate marker, original snapshot, namespace, schema/version and logical rows/rowids/sequence must independently match. Changed copies without matching proof still refuse. Original snapshots/source bytes remain untouched; there is no external ledger, cross-DB atomicity claim or general importer framework.
+
+Metadata relocation uses SQL integer arithmetic/absence proof, never JavaScript Number allocation. It updates only the exact owned row's rowid inside the import transaction, preserving its immutable JSON attempt/value CAS and all original source metadata records. Auxiliary inspection reads only explicit known family paths; unknown private/config payloads are not sniffed. Every writer retains the existing WAL/FULL policy. No contract/dependency/default/version bump, restored original authority replay or native-port enablement was added.
+
+### Regenerated protected packet, unchanged baselines and retained artifacts
+
+New static packet root: `E:/AgentData/claude-codex-comm/t3-6416720d/.agent-bridge-test/slice1-review7`. All prior artifact roots/freezes and synthetic originals/snapshots remain retained. The unchanged actual methodBody normalizer was extracted without importing/running its test module. It regenerated all13 exact normalized before-main, before-reviewed and after-source bodies plus readable/JSON patches:
+
+- `normalized-before-M.json`, `normalized-before-reviewed.json`, `normalized-after.json` and per-method text directories.
+- `protected-M-to-source.patch`: cumulative main-to-source SHA256 `79f496ae2b488a5ac0db1dc194e2541e3ed12f7790ff39083205d6e13dfa3db9`.
+- `protected-reviewed-to-source.patch`: this batch SHA256 `fee1bce538a510ed32b925b59d91f2ba9cec8e0df926630e942ae66ea4d570e9`.
+- `protected-normalized.patch`: normalized JSON SHA256 `339a6fd59fa1cd968d10fc8c38dc176936754893354ace13c7c4e22586f6ce88`.
+- `protected-manifest.json`: SHA256 `4187d0dd8b62c48931b25fba2aff12573e1b944a1a4893cc76b6e9e28ab42363`.
+- Exact source/test batch patch SHA256 `ed5a13b036d6b96e82902eb4fb4182926d74c97358f4cd8c03c83151903bdc1d`; closure matrix SHA256 `b3224fe11a2f55c36cdeb78438a9049fb7bf2b46590ee58baf4fdfd469c53c3c`.
+
+Only protected `broker.startServices` changes relative to17045adf (`recover()` -> `recover(budget)`). Cumulative main comparison remains five changed/eight unchanged normalized methods; the exact startServices after hash is regenerated, not inherited. Artifact attribution is **not approval**. Baseline bytes SHA256 remain `6f2fdccc956f041f96e12c1ef3658026fcfa6aaf9be5dcd211aeeaad3876c137`; actual UI src/cli/ui.ts remains `dff4d25a71aeb728ab6ea6cbc5d00ed01ba50e5ef14a25fc2bbfca1c8ba4ab38`; retention guard remains `7e2e1b964de51ded5257fd1c66b610374d90041026a91c8b37280851d5e2cbc5`. Normalizer hash remains `93ca63b8638622cc790c0d776b544af0840133e4c144ce792836e718a93b664a`. UI/dashboard, baseline/normalizer/guard/flaky files were not edited; protected pin tests were NOT RUN or amended.
+
+Static packet writer PID9552/shell34544,10:27:58.508–10:27:59.271 JST,external10s,exit0. A subsequent static read command used unsupported PowerShell brace syntax and failed parsing before any read/process/check; the corrected read did not repeat any verification gate. Final source/artifact inventory and bounded public-identity Git commit/push receipts follow this receipt's artifact-only commit and are reported in the handoff.
+
+**Next gate is the parent's new full source review and protected gate.** Hosted Node24/Windows/Linux/macOS, later slices, installed migration/restore and whole-product/native acceptance remain pending/NOT RUN. No new agents/Bridge calls/PR, integration, provider/daemon/production Worker/helper/TLS/full suite/install/cache wipe/release or live-home migration occurred. PR141/c94 and its original writer remain untouched; retain this same candidate for later slices.
