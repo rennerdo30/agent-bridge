@@ -1,4 +1,4 @@
-> Latest: corrected source `eeae258fb01df64b50e1df46054f10bc086061b2` remains WIP. Corrected noEmit passed; focused verification stopped at37 passed/1 failed/8 unaccepted. Both corrected allowances are spent. See the appended correction; the original red receipt follows as history.
+> Latest: production is unchanged from `eeae258fb01df64b50e1df46054f10bc086061b2`. The authorized test-only journal correction froze at `0b1f3dc080417e4f19e9bde202252c05ffd83865`; its one anchored run stopped at5 passed/1 failed/37 skipped, with4 selected cases unaccepted. The journal boundary passed; shipping migration failed binding SQLite parameter1. No retry/noEmit was run. Candidate remains WIP pending the parent's production-fix brief and verification budget. Original receipts and both earlier red runs below remain historical evidence, not current acceptance.
 
 # AB-458 convergence slice1 WIP receipt
 
@@ -490,3 +490,85 @@ Settled artifact index `artifact-files.json` SHA256: `8e3aba87d6de0ab01077dd8a44
 Static utility PID27388/shell1620,09:31:28.687–09:31:29.083 JST,external10s,exit0. An earlier combined long-shell artifact command was rejected before launch by automatic tool approval (`blocked by policy`); no process/test ran. Structured file creation plus a separate bounded static utility completed artifact work without changing check results.
 
 **Next parent decision:** classify/replace the journal fixture using supported SQLite behavior while preserving fail-closed READONLY recovery and original-data assertions. No further correction/launch authorization remains. Candidate is not slice1-review-ready, integrated, installed or released; no later-slice/native-connector work began.
+
+## Test-only journal correction: one anchored run, migration failure
+
+Parent subsequently approved **only the nonhot test fixture correction**, the optional ambiguous-literal negative and one external60s anchored selection. Production, SQLite options, preservation assertions, versions and scope remained unchanged. This section supersedes the previous next-decision paragraph; it does not relabel either earlier red run.
+
+Test/source freeze: `0b1f3dc080417e4f19e9bde202252c05ffd83865`, tree `6fb1512112652f46e2c5a28e259b7d8d87c7f103`. The test file SHA256 is `a0b5d3e27a3625adca418f54b7ff504a1ffbc543b739adf43b7b085a1c468abb`. Tracked files were clean; commit/tree/test hash matched before and after the run. A later receipt-only commit is an artifact and does not gain a separate check result.
+
+Production directory tree is `5a6d53ca2898bd4757f67759aa9d1c9aeed22c66` at both `eeae258f:src` and the test freeze's `src`. `git diff eeae258f HEAD -- src` is empty. Since the preceding receipt `9e934b1cd75cae59bcd5054b44cb7cf4256fc236`, the freeze changes only `test/messaging-convergence-slice1.test.ts` (16 insertions/1 deletion). No history/import implementation, inspector or production method changed in this correction.
+
+### Exact fixture contract
+
+The positive now writes `Buffer.alloc(1024)` as the journal and asserts that its first28 bytes equal `Buffer.alloc(28)` before opening SQLite. Its expected `user_version=7` and original-file preservation assertion remain unchanged. [SQLite locking protocol](https://sqlite.org/lockingv3.html) documents zeroing a PERSIST journal header as a commit/nonhot state. This fixture supplies that state deterministically without an external helper or writable recovery.
+
+The additional negative retains the exact original25 bytes `synthetic nonhot original`, SHA256 `c1f7df91d40a823d391c20bdcfa2f3378dbe74a5b20f59d4aa5a72131cfcff66`, and checks ordinary read-only refusal plus unchanged original files. Those arbitrary nonzero bytes do **not** prove an actual hot journal or any specific extended SQLite error code. The earlier eeae journal and its red logs remain untouched. The separate mocked `READONLY_ROLLBACK` case is unchanged and passed here. No original was repaired, checkpointed or manually deleted.
+
+Exact test-only patch: `.agent-bridge-test/slice1-journal-fixture-review/fixture-only.patch`, SHA256 `b2d74639eed15ac81cd5c07ff0857022f511d44fbba1c977c17560ed5ce2245e`. Production read-only refusal was not weakened.
+
+### Exact selected cases and qualified results
+
+Names were derived from the actual file and joined as an anchored `^(?:name1|...|name10)$` expression; the literal full pattern and argv are retained in `selection.json`, both raw first headers and `focused.receipt.json`. Only this selection was launched, with `--maxWorkers=1 --pool=threads --no-file-parallelism --reporter=dot --bail=1`.
+
+| Exact test name | Result on this freeze |
+| --- | --- |
+| does not reject a rollback journal solely because it exists | PASS |
+| retains arbitrary nonzero journal as ambiguous readonly refusal | PASS |
+| propagates mocked READONLY_ROLLBACK without repair, checkpoint or writable retry | PASS |
+| reads committed WAL evidence and retains all original WAL bytes on quiescent refusal | PASS |
+| classifies one SQL read view while another synthetic connection commits a component change | PASS |
+| provides a read-only exact-home plan and a finite m1/s9 isolated migration | FAIL |
+| resumes one immutable interrupted attempt after snapshot, retaining all originals | NOT RUN/unaccepted |
+| resumes one immutable interrupted attempt after committed-ddl, retaining all originals | NOT RUN/unaccepted |
+| holds candidate-ready CAS failure even with complete tables and a metadata fence row | NOT RUN/unaccepted |
+| keeps a late mocked recovery from activating or starting a subsequent phase | NOT RUN/unaccepted |
+
+Vitest5.0.2 raw result: **1 failed /5 passed /37 skipped (47 total)**. The prior37 passes were excluded and are qualified only by their earlier eeae run; there is no final-head46/47-pass claim. `focused.receipt.json` has an unmodified `passedCount:null` because its parser did not recognize the failure-first summary; the raw summary above is authoritative. `coverageAccepted:false` is correct.
+
+Raw failure:
+
+```text
+FAIL provides a read-only exact-home plan and a finite m1/s9 isolated migration
+TypeError: Provided value cannot be bound to SQLite parameter 1.
+  at importMigrationSnapshot src/core/metadata-db.ts:613:46
+  at Module.migrateMessagingHome src/core/metadata-db.ts:734:4
+  at test/messaging-convergence-slice1.test.ts:277:2
+```
+
+Call graph: selected synthetic shipping migration test -> `migrateMessagingHome` -> `importMigrationSnapshot` -> `insert.run(...all.map(column=>row[column]!))`. This receipt reports the observed binding failure; it does not infer which row/value caused it. No extra SQLite probe or importer correction followed failure. The finite migration, interruption/CAS and late-recovery acceptance remains incomplete.
+
+### Process, version and allowance receipt
+
+| Operation | Own PID(s) | UTC start–end | Deadline/exit |
+| --- | --- | --- | --- |
+| Static name derivation |18888; shell6408 |2026-10-24 00:40:18.180–00:40:18.298 |10000ms;exit0 |
+| Test-only freeze commit |34788; shell11608 |2026-10-24 00:40:29.251–00:40:29.426 |60000ms;exit0 |
+| Anchored focused run |wrapper22984; shell42884; Vitest16024 |2026-10-24 00:40:33.147–00:40:35.352 |60000ms;2205ms elapsed;exit1;no timeout |
+
+Raw first headers are retained verbatim as line1 of both focused logs, including source/tree, production pin, test hash, all PIDs, UTC start,60000ms external limit, full argv/pattern and selected literal names. No automatic wrapper retry or other validation launch occurred. **The single remaining run allowance is exhausted.** All owned validation processes exited; no foreign process was stopped.
+
+Version query occurred inside that already-authorized Vitest process only:
+
+```json
+{"node":"v26.4.0","pid":16024,"sqlite":"3.53.2","sqliteSourceId":"2026-06-03 19:12:13 d6e03d8c777cfa2d35e3b60d8ec3e0187f3e9f99d8e2ee9cac695fd6fcdf1a24"}
+```
+
+This is actual Node26 evidence, **not Node24 acceptance**. No installation, PATH change or separate version/native launch occurred. Hosted Node24 and exact-platform source-preservation gates remain mandatory and NOT RUN.
+
+NoEmit for this fixture correction: **NOT RUN as instructed**. The earlier noEmit on unchanged eeae production passed; this does not claim a new final-tree typing run. No new type change was introduced by the fixture correction. No production worker, provider, daemon, helper, TLS, build, full suite, release, installed migration or owner-home activity occurred.
+
+### Unchanged protected deltas and retained evidence
+
+All13 normalized protected bodies are unchanged by this fixture correction because the complete `src` tree is identical to eeae. The cumulative original five changed/eight unchanged bodies still await the parent's exact patch review. The previous exact manifest, normalized before/after JSON and readable patch were copied byte-for-byte into the new artifact directory; originals were not overwritten. No pin/baseline amendment or protected-test run occurred.
+
+- Protected manifest SHA256: `2713b6127ca809af80d7dade24c5325077c9434e51eac8501e931e88d995f5fd`.
+- Normalized JSON patch SHA256: `5c2b4be8c4ccf3811e32673d7adfe23286d1a868d5b489b8bcf4c3207ffb98d1`.
+- Readable method patch SHA256: `ffb5efda7a9168e366dfa56f4f5737b530476420a81877d5e35ae9f3c7121b1e`.
+- Baseline, UI, retention guard and extracted normalizer hashes were reread as static bytes and equal the preceding manifest. Exact proofs are in `preservation-manifest.json`; the raw normalizer and assertions were not edited or executed.
+- Focused stdout/stderr SHA256: `694de517ee54fd4bec8aef685fd70abd402f78d7be14e5f342350e3579ae233c` / `1102dc0223cd6f5b86c538c901d6013127fa6113c457ef3a05f7ad8640fbac02`.
+- Settled pre-receipt artifact index `artifact-files.json` SHA256: `6c959b559b6a322b83a680b27cb83a13d741a6043785fb74e8e9cd264ba6de19`. It excludes itself, the later static packaging receipt and subsequent Git/push/final inventory files.
+
+New artifact directory: `E:/AgentData/claude-codex-comm/t3-6416720d/.agent-bridge-test/slice1-journal-fixture-review`. Earlier `slice1-review`, `slice1-corrected-review` and all synthetic originals/snapshots remain retained. A new final inventory is written after the explicit WIP push and reported in the handoff; older inventories stay untouched. Packaging used static source/file/hash operations only, PID9316,external10000ms,exit0; its precise UTC times are in `artifact-pack.receipt.json`.
+
+**Parent decision required:** the authorized test fixture boundary now passes, but slice1 cannot be handed off as ready for independent source review while shipping migration fails. A separately scoped production importer correction and explicit verification allowance are needed before further implementation/checks. This WIP preserves the failed source freeze and all evidence; no additional correction, retry, integration or PR was made.
