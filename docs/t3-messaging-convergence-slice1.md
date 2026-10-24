@@ -1,4 +1,4 @@
-> Latest: round2 deadline batch is frozen at `515bce87cee55fa7c9402ad9f11ff09078a1c872`. NoEmit passed; the whole guarded file stopped at77 passed/1 failed, with4 cases unaccepted. The failure is a production no-admission constructor call passing explicit undefined as SQLite options; moveJobs was not reached. Both corrected allowances are spent and source/test edits stopped. The complete pre-test operation audit, approved seams and exact regenerated protected packet are retained. Prior seven stated cases remain closed by the parent and all earlier red/green freezes remain separate evidence; this round2 WIP is not review-ready/accepted.
+> Latest: the parent-approved two-expression constructor correction is frozen at `d643c4b7d494d8107e0a03686a36e1b6d5d24afc`. One noEmit and the five failed-plus-unaccepted cases passed;77 previous cases were excluded and retain their attribution to515bce87. The complete closure/audit/protected packet is ready for the parent's new independent source review. This is a slice1 WIP/source-review candidate, not protected-baseline approval, hosted Node24/platform acceptance, integration or product completion. The original515bce87 red source and ad639653 receipt remain unchanged.
 
 # AB-458 convergence slice1 WIP receipt
 
@@ -879,3 +879,77 @@ New packet root: `E:/AgentData/claude-codex-comm/t3-6416720d/.agent-bridge-test/
 Baseline, actual UI src/cli/ui.ts, normalizer, retention guard and flaky files are unchanged. Protected tests were NOT RUN/amended. Static packet writer PID70040/shell25264,11:33:16.987–11:33:18.089 JST,external10s,exit0. Final receipt-only public-identity commit/push and full source/artifact retained inventory follow and are reported in the parent handoff. No new PR, agent/Bridge call, live-home migration, native provider/Worker/helper/TLS, full suite/build/install/cache wipe/release or PR141/c94/writer modification occurred.
 
 **Parent decision needed:** correct only the two no-admission constructor expressions to omit the options argument, preserve this red freeze, then authorize a fresh failed-plus-unaccepted selection and noEmit. Until then the source is WIP, not ready for the new independent full review/protected gate or later slices. No additional policy/architecture fork is proposed.
+
+## Approved constructor compatibility correction: five selected cases pass
+
+Parent read the complete ad639653 receipt and approved exactly two production expressions: ordinary no-admission callers must omit SQLite argument2, while admitted callers retain the existing bounded options object. No proxy/assertion/test edit or broader product decision was authorized or made. This supersedes the preceding next-decision paragraph and preserves every earlier qualification.
+
+Continuation base/artifact: `ad63965317905c0bad8325fa8655d6df7f1fe330`, tree `048e5362c21c38a99745756720a23ad4743c43f7`. Original starting main remains `5e3fa8aa17d22d57cb5d24549c16381c5843edeb` /tree `099261e3f7c378f38bf2ecb2dcf4ca4479d9fabf`. Design24a650e1, p12/m7/s15, pairing1/JSON4/runner-ledger-v2, checkout and assigned branch remain unchanged.
+
+New source freeze: `d643c4b7d494d8107e0a03686a36e1b6d5d24afc`, tree `2758ced58c1a2b8b8296004e284050b2dec2750a`, source directory tree `b46db63834ce65430a3dd16c841a881ffaaaa107`. Exactly two lines changed from ad639653; the focused test blob is identical to515bce87, SHA256 `c1f67500559dd919db558876d809c01421b2f349beefa6fadf2eac2ccad7a9c8`. Source/test remain frozen after checks. This appended receipt is a later documentation-only artifact, not another source/test run.
+
+Exact expressions (all other constructor statements, cleanup and serving policy unchanged):
+
+```diff
+--- src/core/root-concurrency.ts
+-const left=storageAdmissionRemaining();this.db=owned=new DatabaseSync(join(home,ROOT_LIMIT_DB),left===undefined?undefined:{timeout:storageAdmissionTimeout(LOCK_WAIT_MS)});
++const left=storageAdmissionRemaining();this.db=owned=left===undefined?new DatabaseSync(join(home,ROOT_LIMIT_DB)):new DatabaseSync(join(home,ROOT_LIMIT_DB),{timeout:storageAdmissionTimeout(LOCK_WAIT_MS)});
+--- src/core/resource-slots.ts
+-const left=storageAdmissionRemaining();this.db=owned=new DatabaseSync(join(home,SLOT_DB_NAME),left===undefined?undefined:{timeout:storageAdmissionTimeout(LOCK_WAIT_MS)});
++const left=storageAdmissionRemaining();this.db=owned=left===undefined?new DatabaseSync(join(home,SLOT_DB_NAME)):new DatabaseSync(join(home,SLOT_DB_NAME),{timeout:storageAdmissionTimeout(LOCK_WAIT_MS)});
+```
+
+Exact Git patch: `.agent-bridge-test/slice1-constructor-compatibility/constructor-only.patch`, SHA256 `c51fd5d3ec0fd5a902fc0a2afd47200638f3066905ef34de57ea205d3e1672a6`. `constructor-sites.json` retains before/after expression bytes, blob IDs and file hashes. No new deadline, timeout, quota, capacity, ledger/liveness, acquisition/release or cleanup policy was introduced.
+
+### Checks, exact attribution and consumed allowances
+
+One anchored pattern was derived from the unchanged file's three literal test names and the existing false/true activation template. Exact names/pattern/argv are retained in `selection.json` and raw first headers. Exactly five cases ran;77 prior passes were excluded:
+
+| Exact test name | Result on d643c4b7 |
+| --- | --- |
+| round2: mandatory moveJobs rolls back when its actual SQL preparation finishes late | PASS; ordinary constructors succeed, actual moveJobs is reached and prior slot resource remains after expiry |
+| round2: actual broker starts optional services only after valid activation expire=false | PASS |
+| round2: actual broker starts optional services only after valid activation expire=true | PASS |
+| round2: delayed TCP startup cancels without creating maintenance or publishing a descriptor | PASS |
+| round2: mandatory ownership failure cannot be downgraded to optional maintenance | PASS |
+
+Raw Vitest result: **5 passed /77 skipped (82 registered)**. Earlier whole-file **77 passed/1 failed/4 unaccepted** remains RED on515bce87 with ad639653's exact receipt; it is not relabelled. There is no82-case final-head pass claim. No proxy workaround, assertion weakening or test change was made.
+
+| Operation | Own wrapper / shell / check PID | JST start–end | External limit/result |
+| --- | --- | --- | --- |
+| Source freeze commit |Git58280 /shell56392 |2026-10-24 11:41:18.359–11:41:18.504 |60000ms;exit0;no timeout |
+| noEmit |67824 /28712 /77756 |2026-10-24 11:41:22.937–11:41:24.259 |60000ms;1322ms;exit0;no timeout |
+| Five-case guarded selection |17640 /47360 /4008 |2026-10-24 11:41:32.492–11:41:34.835 |60000ms;2343ms;exit0;no timeout |
+
+Each stdout/stderr begins with exact source commit/tree/test hash, wrapper/shell/check PIDs, UTC start,60000ms external deadline and argv. Both check receipts record unchanged before/after freezes/hashes. Both approved allowances are consumed, with no retries. All owned processes exited; no foreign process was selected or stopped.
+
+Actual version query inside the allowed focused process4008 only: Node `v26.4.0`; SQLite `3.53.2`; source ID `2026-06-03 19:12:13 d6e03d8c777cfa2d35e3b60d8ec3e0187f3e9f99d8e2ee9cac695fd6fcdf1a24`. No separate runtime/native/helper probe, installation or PATH change. Hosted Node24/Windows/Linux/macOS remains mandatory and NOT RUN. No actual socket/TLS/discovery/ACL/DPAPI/worker/provider/runner/daemon launch occurred; actual production control flow used the existing guarded fake adapters and synthetic temporary storage.
+
+### Complete closure packet for new independent source review
+
+| Round2 finding | Prior accepted evidence on515bce87 | Additional evidence on d643c4b7 | Qualification |
+| --- | --- | --- | --- |
+| F1 P1 history initializer/lock and mandatory slot path | Busy lock, late schema/COMMIT, admitted slot-constructor cleanup pass among77 | Ordinary constructor argument compatibility and actual moveJobs late preparation/refusal pass | Stated mocked counterexamples covered; full source/unknown-outcome/cleanup review remains pending |
+| F2 P1 network/listen/discovery and optional starts | Endpoint/TLS/discovery listener/interface, pairing ACL, transfer recovery and runner-archive deadline cases pass among77 | Valid activation, expiry, delayed TCP and mandatory ownership failure pass | Optional maintenance/native-effects closure remains source-review candidate, not acceptance |
+| F3 P2 Muse protection/publication | Late protection no staging and exact-owned helper close join pass among77 | Delayed TCP cannot publish a descriptor or create maintenance after expiry | No actual DPAPI/helper/TLS acceptance; complete publication pipeline requires independent review |
+
+`full-closure.json` retains all seven original review findings with their80fcb107 attribution and historical alternate-spy qualification, plus the three round2 findings above. Parent's prior seven CLOSED stated cases is preserved as such. The improved alternate spy remained active through resume in515bce87; both cases passed among77. Original red/green freezes, original WAL-retention qualification, raw logs and synthetic originals/snapshots remain retained. No new unresolved policy/architecture fork is proposed.
+
+The complete pre-test operation audit is copied byte-for-byte, SHA256 `a50547f9a25674aba60f74228da94a3ca344bf253a04fe3af0c85db2ac796d8a`. Its exact constructor/moveJobs and mandatory-versus-optional edges remain applicable. Full changed-path inventory against original main, bb1f and ad639653 is in `packet-manifest.json`; only root-concurrency.ts/resource-slots.ts changed in this correction, and only this receipt changes afterward. No new file scope or source architecture was added.
+
+All13 protected normalized bodies were regenerated against main and bb1f, then individually verified identical to515bce87: **zero protected changes from this correction**. Cumulative main comparison remains7 changed/6 unchanged; bb1f comparison remains the five broker.listen/startServices/abortStartup/close and node.tryBecomeBroker deltas. These are exact source-review candidates, not pin approval. Baseline, actual UI, normalizer, retention guard and flaky files remain unchanged; protected tests NOT RUN and no baselines amended.
+
+Artifact root: `E:/AgentData/claude-codex-comm/t3-6416720d/.agent-bridge-test/slice1-constructor-compatibility`.
+
+- Protected manifest SHA256: `8c09ac7b3bfc36714b157491fe6eab692a014af7f396cbe64640bc2bbc3b48fe`.
+- Main-to-source readable normalized patch SHA256: `83950a782ce8f10b2dffad4c8ca17ae5dca5da88b3ed6f4ce5e987bd3be48948`.
+- bb1f-to-source readable normalized patch SHA256: `65e87169d1f3caeaf04862a79c920ec0d12e1099a02087ed47c4d8c34fe5db16`.
+- Normalized JSON patch SHA256: `5a67ab2d498804d887d636ac7b2e361387732cc4f3fe2a44dc52eadc1b4364c9`.
+- Full closure SHA256: `f6b2da37a82247facfff0bf93d5b10b527b36ce5a1259aa7de1fd47ddec28537`.
+- Source packet manifest SHA256: `8fe9c27ed123689414b3ba9fe34ae73e836a55821c0303a34e7e8c71caaee3dc`.
+
+Static packaging used PID64584/shell46424,11:42:49.213–11:42:50.955 JST,external10000ms,exit0. Later receipt commit, explicit assigned-ref push and retained-file inventory have their own artifact receipts and final commit/tree, reported in `final-handoff.json`; source/test attribution remains d643c4b7.
+
+Routing notice only: parent reported an automatic project-main change to this child at02:39UTC. The injected Bridge event `075c78e5-cc50-40bf-bed6-c086fa5faa92`, sent02:39:58.094UTC, reports routing changed **back from this child to codex-claude-codex-comm**. Automatic-registration causation is not established. `routing-notice.json` retains the source event; no Bridge call, coordinator-role assumption, routing edit or main handoff was performed. Parent retains coordination/owner communication.
+
+**Next:** parent performs a new independent review of the complete slice1 pipeline and protected13-method packet. Same candidate is retained for later slices. No PR/integration, owner verdict/status/build/handoff, pin amendment, release, installed/live-home migration, dependency/cache change or later-slice work was performed. Original PR141c94 and its writer remain untouched.
