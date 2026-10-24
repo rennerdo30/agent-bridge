@@ -1,4 +1,4 @@
-> Latest: round-three correction source is frozen at `7e50adb0482d783a6057d7658e835d5426b3668e`, tree `5af2e6a555109bc8be12965f4f93215b93c44a6c`. NoEmit and the complete guarded slice1 file90/90 passed once on that freeze. Eight meaningful counterexamples remain RED against unchanged553cd863 production. The three-finding closure and exact regenerated13-method packet await a new parent independent source review. No baseline approval, hosted Node24/platform acceptance, integration or product completion is claimed; all prior freezes/qualifications remain retained.
+> Latest: round-four correction source is frozen at `7ab0ce49948f49e0cc34d1f8ee801920cd65865c`, tree `03c9565adf431f2024dab49c0797b0fefcd12594`. NoEmit and the complete guarded slice1 file97/97 passed once on that freeze. The7fail/1pass red run remains attributed to unchanged7e50 production. Alternate ordinary open/reopen/ready-resume and bounded actual adoption are now exercised, with strict completion proofs and no baseline amendment. The new closure/audit/protected packet awaits parent independent review; hosted Node24/platform and native acceptance remain pending. All earlier freezes and qualifications remain retained.
 
 # AB-458 convergence slice1 WIP receipt
 
@@ -1010,3 +1010,62 @@ Artifact root: `E:/AgentData/claude-codex-comm/t3-6416720d/.agent-bridge-test/sl
 All original source/artifact freezes and raw/synthetic evidence are retained in this assigned checkout. Final retained-file inventory additionally compares every entry in the preceding1727-file inventory for unchanged retention; its result/hash and the final source/artifact separation are reported in `final-handoff.json` and inventory receipts after the explicit assigned-ref WIP push. No owner-home data or foreign process was touched.
 
 **Next:** parent performs another independent complete-pipeline source review and protected-delta gate. Hosted Node24/platform and native acceptance remain separate. Same worktree/branch is retained for later slices; no later slice, PR/integration, release, build/install, installed/live-home migration, restore, main-role handoff, Bridge call, agent, environment/Git configuration, force/reset or rule edit occurred. PR141c94 and its original writer remain untouched.
+
+## Round-four FIX FIRST: usable alternate readiness and bounded client adoption
+
+Parent reviewed7e50adb0 and required two P1 corrections in one batch, preserving the prior three/seven stated cases. Original main `5e3fa8aa17d22d57cb5d24549c16381c5843edeb`, design24a650e1, p12/m7/s15, pairing1/JSON4/runner-ledger-v2 and the same candidate/assigned branch remain unchanged. Explicit extensions were limited to read-journal.ts/metadata-import.ts admission plumbing, optional nonescaping atomicPluginWrite checks and the exact existing additive overlay merge in a caller-owned target transaction. No new module, architecture, persistent state, version, product default or proof exception was introduced.
+
+### Complete audit, source/artifact separation and invariant
+
+The pre-regression complete adoption callgraph is retained at `.agent-bridge-test/slice1-round4/operation-audit.md`. It covers auth/ping/peers and every projection, shared presence/cache observations, storage lease/native phases, legacy backup/staging/rename, identity/capability/hello exchange, read-journal availability/import/read/append, bundle verification/COMMIT/cold moves, notifications, ack scheduling, connected/readiness and owned cleanup. Post-red implementation/approved overlay clarifications are explicitly appended, not represented as a pre-test hash. Complete audit SHA256 `64507110e474a0094d6296c5a7207dedc0de1e5a8695c984be4055201948756c`.
+
+Intentional red freeze: `6c42ead13f6d5a86aafd8fe3c70bb5c7216d6216`, tree `ffa6957f6d5e9ca800ae26235b850844d00f883e`; production src equals7e50 (`bbfcf5d15916898016e369152949d55a75162012`). Red test SHA256 `ecf970a8e79b832720581099b6a82e61359708e12db304d6ffe3e23d9836e767`. The one anchored red run produced **7 failed/1 passed/89 skipped (97)**: the alternate opener failed with STORE_OFFLINE_REQUIRED; six late-adoption schedules reached intended violations; the no-expired-serving-closure control already passed. No fixture failure is claimed as proof. The original red source/logs remain unchanged.
+
+Corrected source: `7ab0ce49948f49e0cc34d1f8ee801920cd65865c`, tree `03c9565adf431f2024dab49c0797b0fefcd12594`, src tree `16fc98a2fa28b1991ecd9f12cacbae7760368639`. Test SHA256 `4cf3375430617f764201d3552a85b3d3a1e9948c6298fcf2d5590cedf099499f`. Exactly eight existing production files changed: metadata-db.ts, metadata-import.ts, node.ts, plugin-runtime.ts, read-journal.ts, storage-lock.ts, store-compatibility-overlay.ts and store-compatibility.ts, plus the focused test. This receipt is the sole later tracked artifact change; source/test stay frozen after checks. Complete inventories against main/reviewed source and exact source/test/production patches are in the packet. Source/test patch SHA256 `92eac4db96a96c8c0849f87df77a91dbd11aa75b3692c279e6abf848f4ecb6fe`.
+
+**Exact completion invariant:** the existing full logical main schema/row/rowid/namespace/attempt digest stays strict. Alternate metadata uses the same actual m7 DDL as the ordinary initializer, inside the already-owned s15 schema transaction, after the immutable full input snapshot was verified. Existing quarantine schema and legitimate supplemental rows are included before ready/proof. No-work ordinary open/reopen is therefore logically idempotent. No rows/domains are ignored. Newer accepted destination work changes the proof and causes retained refusal; ready resume neither replays migration nor overwrites/discards that work.
+
+The approved supplemental mode first requires all five current primary tables and the actual caller-owned transaction. It independently validates/closes the selected supplemental database through guarded read-only inspection, then attaches it for the existing additive merge. It performs no supplemental initialization, nested BEGIN/COMMIT/ROLLBACK or missing-peer_last_seen fallback write. Only the target transaction receives rows; its existing owner commits/rolls back. Default callers keep their original behavior. Source/snapshot supplemental bytes remain retained, and attached WAL databases are not claimed to commit atomically.
+
+### Two-finding closure table
+
+| Finding | Frozen correction | Guarded evidence and limits |
+| --- | --- | --- |
+| F1 P1 alternate ready layout unusable | Apply real metadata compatibility and ordinary-opener prerequisites before same-transaction ready/proof, including exact additive supplemental rows | Interrupted two-alternate resume now passes actual MessageStore open/close/reopen, m7 tables, supplemental values, same-attempt ready resume and no replay. Offline alpha migration call and s15 COMMIT remain1. New accepted peer row remains intact when strict ready resume refuses. Existing ordinary/WAL-only tamper negatives pass; originals retained |
+| F2 P1 client adoption exceeds original deadline | Same original budget after awaits and around each peer/afterHello effect; checked presence/cache/lease/import/journal/legacy native phases; exact failed client/broker/scheduled-resource cleanup; temporary busy policy restoration | Actual adoption late peers, presence, own presence, read-state, import and legacy-backup schedules all refuse before next operational SQL/readiness. Import originals and late-created bundles/backups retained; no committed import rows after expiry. Owned fake-adapter broker is revoked and queued maintenance cancelled. Serving control remains connected and handles events after original budget abort |
+
+The supplemental fixture/direct offline-call spy, owned-broker late-peers extension and s15-only WAL interruption selector were added after the original red run; they are not separately red-proven. They remain purposeful assertions in the same authorized corrected full file. There is no remaining unresolved policy/architecture fork. Source review and hosted/native acceptance are still separate.
+
+### Exact checks, process/runtime receipts and prior negatives
+
+| Check | Own wrapper/shell/check PID | JST start–end | External deadline/result |
+| --- | --- | --- | --- |
+| Intentional red against7e50 production |18884/62332/49548 |2026-10-24 12:26:41.613–12:26:45.603 |60000ms;3990ms;exit1;no timeout |
+| noEmit |26732/55280/53564 |2026-10-24 12:39:26.024–12:39:27.254 |60000ms;1230ms;exit0;no timeout |
+| Complete guarded slice1 focused file |80836/79172/27480 |2026-10-24 12:39:39.517–12:39:53.216 |60000ms;13699ms;exit0;no timeout |
+
+Both corrected receipts record unchanged before/after commit/tree/test hashes. Raw stdout/stderr line1 retains exact freeze, PIDs, UTC start/deadline and full argv. One complete file ran with `--maxWorkers=1 --pool=threads --no-file-parallelism --reporter=verbose --bail=1`: **97/97 passed, no skips**. NoEmit passed once. All authorized checks are consumed, no wrapper retry occurred, and all owned check processes exited. This is not a repository/full/lifecycle suite.
+
+All prior90 cases remain required/pass, including the prior seven, round-two history/network/Muse, round-three caller ownership, actual recovery settlement/unknown-COMMIT and WAL-tamper negatives. `passed-test-names.json` enumerates97 names; `prior-negative-status.json` preserves historical attribution. Older19/1,37/1,journal/import/inventory failures, review7 qualifications,515b77/1/4, d643five-case and7e5090-case results stay attributed to their original freezes, not relabelled by this result.
+
+Actual runtime inside allowed red49548 and corrected27480 only: Node `v26.4.0`, SQLite `3.53.2`, source ID `2026-06-03 19:12:13 d6e03d8c777cfa2d35e3b60d8ec3e0187f3e9f99d8e2ee9cac695fd6fcdf1a24`. Hosted Node24/Windows/Linux/macOS remains mandatory/NOT RUN. No separate runtime/probe, actual helper/TLS/socket/provider/daemon/production Worker/lifecycle launch, installation/PATH/cache change or live-home migration occurred. Tests use synthetic temporary storage and existing guarded fake adapters.
+
+Red commit Git65344/shell54624,12:26:40.376–12:26:40.515 JST; source commit Git27308/shell70792,12:39:19.093–12:39:19.260 JST; each external60000ms,exit0. Static packet PID12496/shell71216,12:41:06.204–12:41:07.564 JST,external10000ms,exit0. Receipt-only commit/push and retained-file inventory follow in artifact receipts/final-handoff.json; tested source remains7ab0ce49.
+
+### Exact protected packet and next independent gate
+
+All13 protected normalized bodies were regenerated with the unchanged actual normalizer against main, reviewed7e50 and bb1f. This batch changes **node.start and node.stop** within those13. Cumulative main is now **8 changed/5 unchanged**, and bb1f comparison has seven proposed deltas. Prior7/6 and5-body statements stay historical. Baseline/UI/dashboard/normalizer/retention/flaky bytes remain unchanged; no pin/baseline amendment or protected test run.
+
+The separate adoption source-review manifest also records exact normalized before/after hashes for start/stop/adopt/afterHello/recordStorePresence/restoreReadState/acknowledge/onEvent/markRead/schedulePendingRefresh. This is an extra source artifact, not a new pin or acceptance.
+
+- Protected13 manifest SHA256 `dd17eb84c92de88b9c697dba232a067ceb000071b8889a351f0dde0b5a8403d9`.
+- Adoption-method manifest SHA256 `d6ba41413c7c2e3496cbff17668e8bd8d87ed7a6272f262fb3e81c81f689fe20`.
+- Main normalized JSON patch SHA256 `ac53f89572cc7fe1b8585ed2322c5259c0d68df7b15c6367e2f8b1b5edd9b5c7`.
+- Main readable patch SHA256 `84ecc813980f888bc84026feabe3af46fed14116430b14f9cc2e0a2fdacbf202`.
+- Reviewed7e50 readable patch SHA256 `c9675ea132f43eaaaa5226f1910bf77ef1129ae26bee20f24ca08f53082847e9`.
+- Closure SHA256 `699e1c371492a44cdf6d697be3a4a255bf3d39de698bf9c6c644e728f0bddbe4`.
+- Packet manifest SHA256 `676134f8ffb485e2f55d2f7e93885b8e037333af6e16361fc631ef2171e50f24`.
+
+Artifact root: `E:/AgentData/claude-codex-comm/t3-6416720d/.agent-bridge-test/slice1-round4`. The final inventory verifies every preceding2393 indexed evidence file remains unchanged and lists the full retained source/log/synthetic packet after the explicit assigned-ref WIP push. No original receipts/snapshots were deleted or rewritten.
+
+**Next:** parent independent full pipeline/protected review, followed separately by hosted Node24/platform/native acceptance. Same candidate retained for later slices. PR141c94 and its writer remain untouched. No new PR/integration/later slice, build/install/release/restore/live migration, Bridge call/agent/main-role handoff, persistent environment/Git configuration, force/reset or rule edit occurred.
