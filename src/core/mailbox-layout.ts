@@ -1,5 +1,5 @@
 import { DatabaseSync } from "node:sqlite";
-import { existsSync, lstatSync } from "node:fs";
+import { closeSync, constants, existsSync, fstatSync, lstatSync, openSync, readSync, type BigIntStats } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { SQLITE_STORE_VERSION, METADATA_COMPONENT_VERSION } from "./store-version.js";
 import { storageAdmissionRemaining, storageAdmissionTimeout } from "./storage-admission.js";
@@ -10,13 +10,72 @@ let initializing: string | undefined;
 const homeKey = (home: string) => process.platform === "win32" ? resolve(home).replace(/^[de]:/i, "E:").toLowerCase() : resolve(home);
 export function offlineMetadataAdmitted(home: string): boolean { return offline === homeKey(home); }
 export function messagingInitializationAdmitted(home: string): boolean { return offlineMetadataAdmitted(home) || initializing === homeKey(home); }
+const inspectionRefusal = () => Object.assign(new Error('Mailbox inspection input is partial, linked or substituted; originals retained'),{code:'STORE_LAYOUT_UNSUPPORTED'});
+const inspectionEntry = (file:string): BigIntStats | undefined => {
+  try {
+    const stat = lstatSync(file,{bigint:true});
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink!==1n || stat.ino<=0n) throw inspectionRefusal();
+    return stat;
+  } catch (error) { if ((error as NodeJS.ErrnoException).code==='ENOENT') return undefined; throw error; }
+};
+const sameInspectionFile = (a:BigIntStats,b:BigIntStats) => a.dev===b.dev && a.ino===b.ino && a.birthtimeNs===b.birthtimeNs;
+
+/** Exact known database family only. This is ordinary READONLY SQLite with its
+ * normal VFS/locking: WAL/SHM coordination may be created or refreshed. Never
+ * repair/checkpoint/delete originals or retry a hot rollback through a writer.
+ * Header bytes only exclude unsafe partial opens; SQL in one read transaction
+ * classifies the committed view, including WAL. Neither is old-writer exclusion.
+ */
+export function inspectMailbox<T>(file:string, inspect:(db:DatabaseSync)=>T): T | undefined {
+  storageAdmissionRemaining();
+  const family = [file,file+'-wal',file+'-shm',file+'-journal'];
+  for (let path=dirname(resolve(file)); ; path=dirname(path)) {
+    const stat=lstatSync(path);
+    if (!stat.isDirectory() || stat.isSymbolicLink()) throw inspectionRefusal();
+    if (path===dirname(path)) break;
+  }
+  const original=family.map(inspectionEntry), descriptors: {path:string;fd:number;stat:BigIntStats}[]=[];
+  if (!original[0]) {
+    if (original.slice(1).some(Boolean)) throw inspectionRefusal();
+    return undefined;
+  }
+  let db:DatabaseSync | undefined;
+  const check = () => {
+    storageAdmissionRemaining();
+    for (const entry of descriptors) {
+      const now=inspectionEntry(entry.path), held=fstatSync(entry.fd,{bigint:true});
+      if (!now || !sameInspectionFile(entry.stat,now) || !sameInspectionFile(entry.stat,held) || held.nlink!==1n) throw inspectionRefusal();
+    }
+    for (const path of family) inspectionEntry(path); // Also validate newly created coordination files.
+  };
+  try {
+    for (let at=0;at<family.length;at++) {
+      const stat=original[at]; if (!stat) continue;
+      const path=family[at]!,fd=openSync(path,constants.O_RDONLY | (constants.O_NOFOLLOW??0));
+      descriptors.push({path,fd,stat}); check();
+    }
+    const main=descriptors[0]!,header=Buffer.alloc(100);
+    if (main.stat.size<512n || readSync(main.fd,header,0,100,0)!==100 || !header.subarray(0,16).equals(Buffer.from('SQLite format 3\0'))) throw inspectionRefusal();
+    const encoded=header.readUInt16BE(16),pageSize=encoded===1 ? 65536 : encoded;
+    if (pageSize<512 || pageSize>65536 || (pageSize & (pageSize-1))!==0 || main.stat.size<BigInt(pageSize) || main.stat.size%BigInt(pageSize)!==0n) throw inspectionRefusal();
+    // In particular, no native open of zero/truncated main + retained WAL: the
+    // pinned pagerOpenWalIfPresent zero-page exception may delete that WAL.
+    check();
+    db=new DatabaseSync(file,{readOnly:true,timeout:storageAdmissionTimeout(0)});
+    check(); db.exec('BEGIN');
+    const result=inspect(db);
+    check(); return result;
+  } finally {
+    try {
+      if (db) { try { if (db.isTransaction) db.exec('ROLLBACK'); } finally { db.close(); } }
+    } finally {
+      try { if (db) check(); } finally { for (const entry of descriptors.reverse()) closeSync(entry.fd); }
+    }
+  }
+}
 export function withFreshMessagingInitialization<T>(home: string, effect: () => T, file = join(home,'bridge.db')): T {
   preflightMessagingHome(home,file);
-  if (existsSync(file)) {
-    const db = new DatabaseSync(file, { readOnly: true, timeout: 0 });
-    try { if (Number(db.prepare("PRAGMA user_version").get()!.user_version) !== 0) throw new Error("Fresh initialization cannot borrow existing authority"); }
-    finally { db.close(); }
-  }
+  inspectMailbox(file,db=>{if (Number(db.prepare('PRAGMA user_version').get()!.user_version)!==0) throw new Error('Fresh initialization cannot borrow existing authority');});
   const previous = initializing; initializing = homeKey(home);
   try { return effect(); } finally { initializing = previous; }
 }
@@ -42,38 +101,40 @@ export function assertMailboxVersion(db: DatabaseSync, file: string): void {
   }
 }
 
-/** A read-only early check. No metadata connection, DDL, lease, snapshot or mkdir. */
+/** Classification belongs to the caller's single SQLite read transaction. */
+export function assertMessagingLayout(db:DatabaseSync,file:string,home=dirname(file)): void {
+  assertMailboxVersion(db, file);
+  const component = db.prepare("SELECT 1 FROM sqlite_master WHERE name='bridge_components'").get();
+  const version = component ? Number(db.prepare("SELECT version FROM bridge_components WHERE name='metadata'").get()?.version ?? 0) : 0;
+  if (version >= 2 && version <= 6 || version > METADATA_COMPONENT_VERSION) throw Object.assign(new Error(`Unreleased/future metadata component ${version}; retained unchanged`), { code: "STORE_LAYOUT_UNSUPPORTED" });
+  if (version === 1 && !offlineMetadataAdmitted(home)) throw Object.assign(new Error("Shipping metadata requires explicitly coordinated offline isolated migration"), { code: "STORE_OFFLINE_REQUIRED" });
+  if (version===METADATA_COMPONENT_VERSION) {
+    for (const [table,columns] of Object.entries({bridge_metadata:['domain','key','value','updated_at'],bridge_read_receipts:['identity','message_id','read_at']})) {
+      const present = db.prepare(`PRAGMA table_info(${table})`).all();
+      if (!columns.every(name=>present.some(column=>column.name===name))) throw Object.assign(new Error('Malformed current metadata layout retained'),{code:'STORE_LAYOUT_UNSUPPORTED'});
+    }
+  }
+  if (db.prepare("SELECT 1 FROM sqlite_master WHERE name='bridge_metadata'").get()) {
+    const row = db.prepare("SELECT value FROM bridge_metadata WHERE domain='messaging-migration' AND key='candidate-p12-m7-s15'").get();
+    if (row) {
+      const attempt = JSON.parse(String(row.value)) as {phase?:unknown};
+      if (attempt.phase!=='ready' && !offlineMetadataAdmitted(home)) throw Object.assign(new Error('Interrupted migration cannot serve; resume the exact explicit offline attempt'),{code:'STORE_OFFLINE_REQUIRED'});
+    }
+  }
+}
+
+/** Ordinary read-only early check; only SQLite's exact WAL/SHM coordination
+ * allowance. No metadata initialization, DDL, lease, snapshot or manual repair. */
 export function preflightMessagingHome(home: string, mailbox = join(home, "bridge.db")): void {
   for (const file of new Set([join(home, "bridge.db"), mailbox])) {
     storageAdmissionRemaining();
-    if (!existsSync(file)) continue;
-    for (let path = resolve(file); ; path = dirname(path)) {
-      const stat = lstatSync(path);
-      if (stat.isSymbolicLink() || path === resolve(file) && (!stat.isFile() || stat.nlink !== 1)) throw new Error("Linked or substituted mailbox retained");
-      if (path === dirname(path)) break;
-    }
-    const db = new DatabaseSync(file, { readOnly: true, timeout: storageAdmissionTimeout(0) });
-    try {
-      assertMailboxVersion(db, file);
-      const component = db.prepare("SELECT 1 FROM sqlite_master WHERE name='bridge_components'").get();
-      const version = component ? Number(db.prepare("SELECT version FROM bridge_components WHERE name='metadata'").get()?.version ?? 0) : 0;
-      if (version >= 2 && version <= 6 || version > METADATA_COMPONENT_VERSION) throw Object.assign(new Error(`Unreleased/future metadata component ${version}; retained unchanged`), { code: "STORE_LAYOUT_UNSUPPORTED" });
-      if (version === 1 && !offlineMetadataAdmitted(home)) throw Object.assign(new Error("Shipping metadata requires explicitly coordinated offline isolated migration"), { code: "STORE_OFFLINE_REQUIRED" });
-      if (version===METADATA_COMPONENT_VERSION) {
-        for (const [table,columns] of Object.entries({bridge_metadata:['domain','key','value','updated_at'],bridge_read_receipts:['identity','message_id','read_at']})) {
-          const present = db.prepare(`PRAGMA table_info(${table})`).all();
-          if (!columns.every(name=>present.some(column=>column.name===name))) throw Object.assign(new Error('Malformed current metadata layout retained'),{code:'STORE_LAYOUT_UNSUPPORTED'});
-        }
-      }
-      if (db.prepare("SELECT 1 FROM sqlite_master WHERE name='bridge_metadata'").get()) {
-        const row = db.prepare("SELECT value FROM bridge_metadata WHERE domain='messaging-migration' AND key='candidate-p12-m7-s15'").get();
-        if (row) {
-          const attempt = JSON.parse(String(row.value)) as {phase?:unknown};
-          if (attempt.phase!=='ready' && !offlineMetadataAdmitted(home)) throw Object.assign(new Error('Interrupted migration cannot serve; resume the exact explicit offline attempt'),{code:'STORE_OFFLINE_REQUIRED'});
-        }
-      }
+    // An absent home is fresh only if its exact database family is absent.
+    try { lstatSync(dirname(file)); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code==='ENOENT') continue; throw error; }
+    inspectMailbox(file,db=> {
+      assertMessagingLayout(db,file,home);
       storageAdmissionRemaining();
-    } finally { db.close(); }
+    });
   }
 }
 

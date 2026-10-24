@@ -1,13 +1,20 @@
 import { EventEmitter } from 'node:events';
 import { createHash, randomUUID } from 'node:crypto';
-import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, linkSync, lstatSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, expect, it, vi } from 'vitest';
 
 // This selection cannot launch a provider, process, native helper, socket server
 // or production Worker, including through a newly introduced indirect call.
-const transport = vi.hoisted(()=>({active:'',protocol:0,writes:[] as string[]}));
+const transport = vi.hoisted(()=>({active:'',protocol:0,writes:[] as string[],nativeOpens:[] as {file:string;readOnly:boolean}[]}));
+vi.mock('node:sqlite',async original=> {
+ const sqlite=await original<typeof import('node:sqlite')>();
+ return {...sqlite,DatabaseSync:new Proxy(sqlite.DatabaseSync,{construct(target,args,newTarget){
+  transport.nativeOpens.push({file:String(args[0]),readOnly:args[1]?.readOnly===true});
+  return Reflect.construct(target,args,newTarget);
+ }})};
+});
 vi.mock('node:child_process',async original=>({...await original<object>(),spawn:()=>{throw Error('subprocess forbidden in slice1 selection');},execFile:()=>{throw Error('subprocess forbidden');},execFileSync:()=>{throw Error('subprocess forbidden');}}));
 vi.mock('node:worker_threads',async original=>({...await original<object>(),Worker:class {constructor(){throw Error('production Worker forbidden in slice1 selection');}}}));
 vi.mock('../src/core/process-identity.js',async original=>({...await original<object>(),
@@ -31,7 +38,7 @@ vi.mock('node:net',async original=> {
 
 import { MessageStore, openMessageStore } from '../src/core/store.js';
 import { metadataDb, closeMetadataDbs, migrateMessagingHome } from '../src/core/metadata-db.js';
-import { assertCurrentMailboxEnvelope, preflightMessagingHome } from '../src/core/mailbox-layout.js';
+import { assertCurrentMailboxEnvelope, preflightMessagingHome, inspectMailbox } from '../src/core/mailbox-layout.js';
 import { configureSqlite, assertSqliteAuthority } from '../src/core/sqlite-policy.js';
 import { admissionSqliteBusy, storageAdmissionTimeout, withStorageAdmission } from '../src/core/storage-admission.js';
 import { StartupBudget } from '../src/core/startup-budget.js';
@@ -49,7 +56,36 @@ const home = () => {const path=resolve('.agent-bridge-test/slice1-fixtures',rand
 const sha = (path:string) => createHash('sha256').update(readFileSync(path)).digest('hex');
 const tree = (path:string):string[]=>existsSync(path) ? readdirSync(path,{withFileTypes:true}).flatMap(item=>item.isDirectory()?tree(join(path,item.name)):[join(path,item.name)]).sort() : [];
 const database = (path:string)=>{const db=new DatabaseSync(path);closes.push(()=>{if(db.isOpen)db.close();});return db;};
-afterEach(()=>{vi.restoreAllMocks();vi.useRealTimers();for(const close of closes.splice(0).reverse())close();closeMetadataDbs();transport.active='';transport.protocol=0;transport.writes=[];});
+beforeAll(()=>{const db=new DatabaseSync(':memory:');try {console.log('SLICE1_SQLITE_RUNTIME '+JSON.stringify({node:process.version,pid:process.pid,...db.prepare('SELECT sqlite_version() AS sqlite,sqlite_source_id() AS sqliteSourceId').get()}));}finally{db.close();}});
+afterEach(()=>{vi.restoreAllMocks();vi.useRealTimers();for(const close of closes.splice(0).reverse())close();closeMetadataDbs();transport.active='';transport.protocol=0;transport.writes=[];transport.nativeOpens=[];});
+const fileState = (path:string) => tree(path).map(file=>[file,sha(file)] as const);
+/** Approved quiescent inspection allowance only. Every original file survives;
+ * only exact inspected SHM is volatile. New exact WAL must be empty, and this
+ * small synthetic fixture's SHM fits the documented first 32768-byte hash unit.
+ * This is not a production WAL/SHM size limit or concurrent-writer hash claim. */
+function expectInspectionPreserved(path:string,file:string,before:readonly (readonly [string,string])[]) {
+ const after=new Map(fileState(path));
+ for (const [original,hash] of before) {
+  expect(after.has(original),original+' retained').toBe(true);
+  if(original!==file+'-shm')expect(after.get(original),original+' original bytes').toBe(hash);
+ }
+ for(const [created] of after) if(!before.some(([original])=>original===created)) {
+  expect([file+'-wal',file+'-shm'],created+' exact coordination only').toContain(created);
+  if(created===file+'-wal')expect(lstatSync(created).size).toBe(0);
+ }
+ for(const suffix of ['-wal','-shm']) if(after.has(file+suffix)) {
+  const stat=lstatSync(file+suffix);expect(stat.isFile() && !stat.isSymbolicLink() && stat.nlink===1).toBe(true);
+  if(suffix==='-shm')expect(stat.size).toBeLessThanOrEqual(32768);
+ }
+}
+function logicalState(db:DatabaseSync) {
+ const schema=db.prepare('SELECT type,name,tbl_name,sql FROM sqlite_master ORDER BY type,name').all();
+ const rows=db.prepare('PRAGMA table_list').all().filter(row=>row.schema==='main' && row.type==='table').map(row=>String(row.name)).sort().map(name=> {
+  const quoted='"'+name.replaceAll('"','""')+'"';
+  return [name,db.prepare(`SELECT * FROM ${quoted}`).all().map(row=>JSON.stringify(row)).sort()];
+ });
+ return {version:db.prepare('PRAGMA user_version').get(),schema,rows};
+}
 function shipping() {
  const source=home(),destination=join(home(),'isolated');
  // Existing committed fixture: generated from tagged source, seeded ONLY with
@@ -142,23 +178,86 @@ it.each(['namespace','envelope','future','draft'])('refuses %s before metadata, 
  if(kind==='envelope')db.exec('DROP TABLE message_frontends');
  if(kind==='future')db.exec('PRAGMA user_version=16');
  if(kind==='draft')db.exec("UPDATE bridge_components SET version=6 WHERE name='metadata'");
- db.close();const before=tree(path).map(file=>[file,sha(file)]);
+ const logicalBefore=logicalState(db);db.close();const before=fileState(path);
  expect(()=>metadataDb(path)).toThrow();expect(()=>new MessageStore(join(path,'bridge.db'),nullLogger)).toThrow();
- expect(tree(path).map(file=>[file,sha(file)])).toEqual(before);
+ expect(inspectMailbox(join(path,'bridge.db'),logicalState)).toEqual(logicalBefore);
+ expectInspectionPreserved(path,join(path,'bridge.db'),before);
 });
 it.each([2,3,4,5,6,10,11,12,13,14])('never automatically reinterprets draft version %s',version=> {
  const {path,store}=candidate();store.close();closeMetadataDbs();
  const db=database(join(path,'bridge.db'));
  if(version<=6)db.prepare("UPDATE bridge_components SET version=? WHERE name='metadata'").run(version);
  else db.exec(`PRAGMA user_version=${version}`);
- db.close();const before=tree(path).map(file=>[file,sha(file)]);
+ const logicalBefore=logicalState(db);db.close();const before=fileState(path);
  expect(()=>new MessageStore(join(path,'bridge.db'),nullLogger)).toThrow();
- expect(tree(path).map(file=>[file,sha(file)])).toEqual(before);
+ expect(inspectMailbox(join(path,'bridge.db'),logicalState)).toEqual(logicalBefore);
+ expectInspectionPreserved(path,join(path,'bridge.db'),before);
+});
+it.each(['empty-main','truncated-main','orphan-sidecars'])('retains %s before any native SQLite open',kind=> {
+ const path=home(),file=join(path,'bridge.db');
+ if(kind==='empty-main')writeFileSync(file,Buffer.alloc(0));
+ if(kind==='truncated-main') {
+  const header=Buffer.alloc(100);header.write('SQLite format 3\0');header.writeUInt16BE(4096,16);writeFileSync(file,header);
+ }
+ writeFileSync(file+'-wal','synthetic retained WAL original');
+ writeFileSync(file+'-shm','synthetic retained coordination');
+ writeFileSync(file+'-journal','synthetic retained rollback original');
+ const before=fileState(path),opens=transport.nativeOpens.length;
+ expect(()=>preflightMessagingHome(path)).toThrow();
+ expect(transport.nativeOpens.slice(opens)).toEqual([]);expect(fileState(path)).toEqual(before);
+});
+it('retains hardlinked exact-family inputs before native inspection',()=> {
+ const path=home(),file=join(path,'bridge.db');copyFileSync('test/fixtures/sqlite-upgrade/v0.29.14/bridge.db',file);
+ linkSync(file,file+'-wal');const before=fileState(path),opens=transport.nativeOpens.length;
+ expect(()=>preflightMessagingHome(path)).toThrow();expect(transport.nativeOpens.slice(opens)).toEqual([]);expect(fileState(path)).toEqual(before);
+});
+it('does not reject a rollback journal solely because it exists',()=> {
+ const path=home(),file=join(path,'bridge.db');copyFileSync('test/fixtures/sqlite-upgrade/v0.29.14/bridge.db',file);
+ writeFileSync(file+'-journal','synthetic nonhot original');const before=fileState(path);
+ expect(inspectMailbox(file,db=>db.prepare('PRAGMA user_version').get()!.user_version)).toBe(7);
+ expectInspectionPreserved(path,file,before);
+});
+it('propagates mocked READONLY_ROLLBACK without repair, checkpoint or writable retry',()=> {
+ const path=home(),file=join(path,'bridge.db');copyFileSync('test/fixtures/sqlite-upgrade/v0.29.14/bridge.db',file);
+ writeFileSync(file+'-journal','synthetic retained hot-boundary evidence');const before=fileState(path),opens=transport.nativeOpens.length;
+ const prepare=DatabaseSync.prototype.prepare,exec=DatabaseSync.prototype.exec,statements:string[]=[];
+ vi.spyOn(DatabaseSync.prototype,'prepare').mockImplementation(function(this:DatabaseSync,sql:string){
+  if(this.location('main')===file && sql==='PRAGMA user_version')throw Object.assign(Error('SQLITE_READONLY_ROLLBACK: recovery requires a writer'),{code:'ERR_SQLITE_ERROR',errcode:776});
+  return prepare.call(this,sql);
+ });
+ vi.spyOn(DatabaseSync.prototype,'exec').mockImplementation(function(this:DatabaseSync,sql:string){if(this.location('main')===file)statements.push(sql);return exec.call(this,sql);});
+ expect(()=>metadataDb(path)).toThrow(/READONLY_ROLLBACK/);
+ expect(transport.nativeOpens.slice(opens)).toEqual([{file,readOnly:true}]);expect(statements).toEqual(['BEGIN','ROLLBACK']);
+ expect(fileState(path)).toEqual(before);
+});
+it('reads committed WAL evidence and retains all original WAL bytes on quiescent refusal',()=> {
+ const {path,store}=candidate(),file=join(path,'bridge.db');store.close();closeMetadataDbs();
+ const writer=database(file);writer.exec("PRAGMA wal_autocheckpoint=0; INSERT INTO bridge_metadata VALUES ('synthetic-wal','proof','committed in WAL',1); DELETE FROM mailbox_store;");
+ const retainedReader=new DatabaseSync(file,{readOnly:true,timeout:0});
+ try {retainedReader.exec('BEGIN');retainedReader.prepare('SELECT * FROM mailbox_store').all();writer.close();}
+ finally {if(retainedReader.isTransaction)retainedReader.exec('ROLLBACK');retainedReader.close();}
+ expect(lstatSync(file+'-wal').size).toBeGreaterThan(0);
+ writeFileSync(join(path,'unrelated-evidence.bin'),'unrelated original');const before=fileState(path);
+ expect(()=>preflightMessagingHome(path)).toThrow(/envelope/);
+ expect(inspectMailbox(file,db=>db.prepare("SELECT value FROM bridge_metadata WHERE domain='synthetic-wal' AND key='proof'").get()!.value)).toBe('committed in WAL');
+ expectInspectionPreserved(path,file,before);
+});
+it('classifies one SQL read view while another synthetic connection commits a component change',()=> {
+ const {path,store}=candidate(),file=join(path,'bridge.db');store.close();closeMetadataDbs();
+ const writer=database(file);writer.exec('PRAGMA wal_autocheckpoint=0');
+ const observed=inspectMailbox(file,db=> {
+  expect(db.isTransaction).toBe(true);const version=db.prepare('PRAGMA user_version').get()!.user_version;
+  writer.exec("UPDATE bridge_components SET version=6 WHERE name='metadata'");
+  expect(db.isTransaction).toBe(true);return {version,metadata:db.prepare("SELECT version FROM bridge_components WHERE name='metadata'").get()!.version};
+ });
+ expect(observed).toEqual({version:15,metadata:7});
+ expect(()=>preflightMessagingHome(path)).toThrow(/metadata component 6/);
+ // Concurrent writer effects are intentionally not attributed by a whole-tree hash.
 });
 it('provides a read-only exact-home plan and a finite m1/s9 isolated migration',async()=> {
- const f=shipping(),before=tree(f.source).map(path=>[path,sha(path)]);
+ const f=shipping(),before=fileState(f.source);
  const plan=await migrateMessagingHome({source:f.source,destination:f.destination});
- expect(plan.applied).toBe(false);expect(existsSync(f.destination)).toBe(false);expect(tree(f.source).map(path=>[path,sha(path)])).toEqual(before);
+ expect(plan.applied).toBe(false);expect(existsSync(f.destination)).toBe(false);expectInspectionPreserved(f.source,join(f.source,'bridge.db'),before);
  await expect(migrateMessagingHome({source:f.source,destination:f.destination,apply:true})).rejects.toThrow('attestation');
  await migrateMessagingHome({source:f.source,destination:f.destination,apply:true,offlineIsolated:true});
  const db=database(join(f.destination,'bridge.db'));expect(db.prepare('SELECT * FROM messages ORDER BY id,recipient').all()).toEqual(f.messages);

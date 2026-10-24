@@ -7,7 +7,7 @@ import { liveStorePeers, metadataRelease } from "./store-compatibility.js";
 import { assertCompatibleMailboxReaders, hasMaintenanceExclusion, maintenanceLock, storageLease, withMaintenanceExclusion } from "./storage-lock.js";
 import { snapshotMetadataTables } from "./metadata-snapshot.js";
 import { METADATA_COMPONENT_VERSION } from "./store-version.js";
-import { assertCurrentMailboxEnvelope, preflightMessagingHome, offlineMetadataAdmitted, withOfflineMetadataAdmission } from "./mailbox-layout.js";
+import { assertCurrentMailboxEnvelope, preflightMessagingHome, offlineMetadataAdmitted, withOfflineMetadataAdmission, inspectMailbox, assertMessagingLayout } from "./mailbox-layout.js";
 import { admissionSqliteBusy, storageAdmissionRemaining, storageAdmissionTimeout } from "./storage-admission.js";
 import { assertSqliteAuthority, configureSqlite } from "./sqlite-policy.js";
 import { snapshotDatabase } from "./sqlite-maintenance.js";
@@ -644,11 +644,13 @@ export async function migrateMessagingHome(options: MessagingMigrationOptions) {
  // The original shipping schema is inspected before destination/backup effects.
  withOfflineMetadataAdmission({kind:'offline-isolated',home:source},()=>preflightMessagingHome(source));
  for (const mailbox of options.mailboxes??[]) withOfflineMetadataAdmission({kind:'offline-isolated',home:source},()=>preflightMessagingHome(source,join(source,mailbox)));
- const inputDb = new DatabaseSync(join(source,'bridge.db'),{readOnly:true,timeout:0});
- try {
+ const inputVersion=inspectMailbox(join(source,'bridge.db'),inputDb=> {
+  withOfflineMetadataAdmission({kind:'offline-isolated',home:source},()=>assertMessagingLayout(inputDb,join(source,'bridge.db')));
   const version = Number(inputDb.prepare('PRAGMA user_version').get()!.user_version);
   if (version<1 || version>9) throw migrationRefusal('Only explicitly supported shipping schemas1..9 are admitted');
- } finally { inputDb.close(); }
+  return version;
+ });
+ if (inputVersion===undefined) throw migrationRefusal('Missing shipping input database');
  const plan = {source,destination,inputId,inputs:inventory.inputs,retainedUnknown:inventory.retainedUnknown,originalsRetained:true,applied:false};
  if (!options.apply) return plan;
  if (options.offlineIsolated!==true) throw migrationRefusal('Apply requires explicit coordinated shutdown and offline-isolated attestation');
@@ -674,13 +676,14 @@ export async function migrateMessagingHome(options: MessagingMigrationOptions) {
   const file = join(destination,'bridge.db'), existed = existsSync(file);
   if (!existed && readdirSync(destination).some(name=>name!=='.maintenance-lock' && name!=='.storage-users')) throw migrationRefusal('Destination is not isolated and empty');
   if (existed) {
-   const inspect = new DatabaseSync(file,{readOnly:true,timeout:0});
-   try {
+   const inspected=inspectMailbox(file,inspect=> {
     const prior = inspect.prepare('SELECT value FROM bridge_metadata WHERE domain=? AND key=?').get(MIGRATION_DOMAIN,MIGRATION_KEY);
     const attempt = prior && JSON.parse(String(prior.value)) as MigrationAttempt | undefined;
     if (!attempt || attempt.inputId!==inputId || attempt.source!==source || attempt.destination!==destination || !/^[a-f0-9-]{36}$/.test(attempt.id) || !['copying','imported','ready'].includes(attempt.phase) || JSON.stringify(attempt.inputs)!==JSON.stringify(inventory.inputs) || !attempt.snapshots || typeof attempt.snapshots!=='object' || Array.isArray(attempt.snapshots) || Object.entries(attempt.snapshots).some(([path,hash])=>!inventory.inputs.some(input=>input.path===path && input.role!=='wal') || !/^[a-f0-9]{64}$/.test(hash))) throw migrationRefusal('Existing destination has no matching immutable attempt');
-    withOfflineMetadataAdmission({kind:'offline-isolated',home:destination},()=>preflightMessagingHome(destination));
-   } finally { inspect.close(); }
+    withOfflineMetadataAdmission({kind:'offline-isolated',home:destination},()=>assertMessagingLayout(inspect,file));
+    return true;
+   });
+   if (!inspected) throw migrationRefusal('Interrupted destination disappeared');
   }
   coordinator = new DatabaseSync(file,{timeout:0}); configureSqlite(coordinator);
   if (!existed) coordinator.exec("CREATE TABLE bridge_metadata(domain TEXT NOT NULL,key TEXT NOT NULL,value TEXT NOT NULL,updated_at INTEGER NOT NULL,PRIMARY KEY(domain,key))");

@@ -1,4 +1,4 @@
-import { assertMailboxVersion, preflightMessagingHome, assertCurrentMailboxEnvelope, withFreshMessagingInitialization } from './mailbox-layout.js';
+import { assertMailboxVersion, preflightMessagingHome, assertCurrentMailboxEnvelope, withFreshMessagingInitialization, inspectMailbox } from './mailbox-layout.js';
 import { metadataDb, metadataDbOpen, metadataReaderRetained, closeMetadataDb } from './metadata-db.js';
 import { assertCompatibleMailboxReaders, maintenanceLock, withMaintenanceExclusion } from './storage-lock.js';
 import { admissionSqliteBusy, storageAdmissionRemaining, storageAdmissionTimeout, withStorageAdmission } from './storage-admission.js';
@@ -1145,9 +1145,7 @@ export function openMessageStore(file: string, log: Logger, check: () => number)
       // Existing compatible readers may continue on an already complete layout.
       const initialize = () => { check(); store = new MessageStore(file, log, ordinaryInitialization); check(); return store; };
       if (existsSync(file)) {
-        const inspection = new DatabaseSync(file,{readOnly:true,timeout:0});
-        let fresh: boolean;
-        try { fresh = Number(inspection.prepare('PRAGMA user_version').get()!.user_version) === 0; } finally { inspection.close(); }
+        const fresh=inspectMailbox(file,db=>Number(db.prepare('PRAGMA user_version').get()!.user_version)===0);
         if (!fresh) return initialize();
       }
       const release = maintenanceLock(dirname(file), true, true);
