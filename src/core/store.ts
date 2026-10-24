@@ -1,4 +1,4 @@
-import { assertMailboxVersion, preflightMessagingHome, assertCurrentMailboxEnvelope, withFreshMessagingInitialization, inspectMailbox } from './mailbox-layout.js';
+import { assertMailboxVersion, preflightMessagingHome, assertCurrentMailboxEnvelope, withFreshMessagingInitialization, inspectMailbox, assertSqliteFamily } from './mailbox-layout.js';
 import { metadataDb, metadataDbOpen, metadataReaderRetained, closeMetadataDb } from './metadata-db.js';
 import { assertCompatibleMailboxReaders, maintenanceLock, withMaintenanceExclusion } from './storage-lock.js';
 import { admissionSqliteBusy, storageAdmissionRemaining, storageAdmissionTimeout, withStorageAdmission } from './storage-admission.js';
@@ -459,6 +459,7 @@ export class MessageStore {
     this.file = file;
     storageAdmissionRemaining();
     if (file !== ':memory:') preflightMessagingHome(dirname(file), file);
+    if(file!==':memory:')for(const name of ['archive.db','history.db','store-compatibility.db'])assertSqliteFamily(resolve(dirname(file),name));
     const existed = file !== ":memory:" && existsSync(file);
     this.home = file === ":memory:" ? null : dirname(file);
     storageAdmissionRemaining();if (file !== ":memory:") mkdirSync(dirname(file), { recursive: true, mode: 0o700 }); // owner-only on Unix

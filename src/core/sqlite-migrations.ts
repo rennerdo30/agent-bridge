@@ -9,7 +9,7 @@ import { SQLITE_BUSY_TIMEOUT_MS } from "./sqlite-maintenance.js";
 import { migrationLock } from "./migration-lock.js";
 import { assertStoreUpgrade } from "./store-compatibility.js";
 import { assertCompatibleMailboxReaders, hasMaintenanceExclusion, maintenanceLock, withMaintenanceExclusion } from "./storage-lock.js";
-import { offlineMetadataAdmitted } from "./mailbox-layout.js";
+import { offlineMetadataAdmitted, assertSqliteFamily } from "./mailbox-layout.js";
 
 export interface SqliteMigration { version: number; sql: string; backupTables?: readonly string[] }
 const MAX_SNAPSHOT_ATTEMPTS = 10;
@@ -18,6 +18,7 @@ const MAX_SNAPSHOT_ATTEMPTS = 10;
  * These protected snapshots are labeled separately and never offered as full DB restores.
  */
 function metadataSnapshot(db: DatabaseSync, path: string, tables: string[], version: number, target: number): void {
+  assertSqliteFamily(path);
   storageAdmissionRemaining();
   const snapshot = new DatabaseSync(path);
   const quote = (name: string) => `"${name.replaceAll('"', '""')}"`;
@@ -114,7 +115,7 @@ function migrateLocked(db: DatabaseSync, file: string, existed: boolean, target:
         backup = join(protectedDir, `${basename(legacyBackup)}-v${version}-to-v${target}`);
         db.prepare("VACUUM INTO ?").run(backup);
         storageAdmissionRemaining();
-        const snapshot = new DatabaseSync(backup, { readOnly: true });
+        assertSqliteFamily(backup);const snapshot = new DatabaseSync(backup, { readOnly: true });
         try {
           if (snapshot.prepare("PRAGMA integrity_check").all().some((row) => row.integrity_check !== "ok")) throw new Error(`invalid pre-migration snapshot: ${backup}`);
         } finally { snapshot.close(); }
@@ -153,7 +154,7 @@ function migrateLocked(db: DatabaseSync, file: string, existed: boolean, target:
     // The savepoint restores schema first. Restore original table contents from the verified snapshot,
     // under the same writer lock, without replacing a database another reader has open.
     if (backup) {
-      const original = new DatabaseSync(backup, { readOnly: true, timeout: storageAdmissionTimeout(SQLITE_BUSY_TIMEOUT_MS) });
+      assertSqliteFamily(backup);const original = new DatabaseSync(backup, { readOnly: true, timeout: storageAdmissionTimeout(SQLITE_BUSY_TIMEOUT_MS) });
       try {
         // Virtual tables and their shadows were restored by the savepoint. Never rewrite FTS internals.
         const tables = original.prepare("PRAGMA table_list").all().filter((r) => r.schema === "main" && r.type === "table" && !String(r.name).startsWith("sqlite_"));

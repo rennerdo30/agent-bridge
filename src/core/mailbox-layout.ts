@@ -26,12 +26,12 @@ const sameInspectionFile = (a:BigIntStats,b:BigIntStats) => a.dev===b.dev && a.i
  * Header bytes only exclude unsafe partial opens; SQL in one read transaction
  * classifies the committed view, including WAL. Neither is old-writer exclusion.
  */
-export function inspectMailbox<T>(file:string, inspect:(db:DatabaseSync)=>T): T | undefined {
+export function inspectSqliteFamily<T>(file:string, inspect:(db:DatabaseSync)=>T): T | undefined {
   storageAdmissionRemaining();
   const family = [file,file+'-wal',file+'-shm',file+'-journal'];
   for (let path=dirname(resolve(file)); ; path=dirname(path)) {
-    const stat=lstatSync(path);
-    if (!stat.isDirectory() || stat.isSymbolicLink()) throw inspectionRefusal();
+    try{const stat=lstatSync(path);if (!stat.isDirectory() || stat.isSymbolicLink()) throw inspectionRefusal();}
+    catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}
     if (path===dirname(path)) break;
   }
   const original=family.map(inspectionEntry), descriptors: {path:string;fd:number;stat:BigIntStats}[]=[];
@@ -72,6 +72,17 @@ export function inspectMailbox<T>(file:string, inspect:(db:DatabaseSync)=>T): T 
       try { if (db) check(); } finally { for (const entry of descriptors.reverse()) closeSync(entry.fd); }
     }
   }
+}
+/** Same committed-view inspector, with mailbox compatibility supplied only by
+ * its caller. Differently shaped auxiliary databases never inherit that role. */
+export function inspectMailbox<T>(file:string, inspect:(db:DatabaseSync)=>T):T|undefined {
+  return inspectSqliteFamily(file,inspect);
+}
+/** Before a known exact family is opened/reused. Absence is fresh only when the
+ * complete family is absent. No schema/namespace upgrade or writer fallback. */
+export function assertSqliteFamily(file:string):boolean {
+  if(file===':memory:')return true;
+  return inspectSqliteFamily(file,db=>{storageAdmissionRemaining();db.prepare('PRAGMA user_version').get();storageAdmissionRemaining();return true;})===true;
 }
 export function withFreshMessagingInitialization<T>(home: string, effect: () => T, file = join(home,'bridge.db')): T {
   preflightMessagingHome(home,file);

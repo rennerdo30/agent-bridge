@@ -6,6 +6,7 @@ import { registerHistoryFunctions } from "./history-codec.js";
 import { configureSqlite, isSqliteBusy } from "./sqlite-policy.js";
 import { admissionSqliteBusy, storageAdmissionTimeout, storageAdmissionRemaining } from "./storage-admission.js";
 import { migrationLock } from "./migration-lock.js";
+import { assertSqliteFamily } from "./mailbox-layout.js";
 import { liveStorePeers, refreshStorePeerIdentities } from "./store-compatibility.js";
 import { encodeHistoryRow, decodeHistoryRow, HISTORY_V1_PREFIX, resumableHistoryMigration, type HistoryMigrationOptions } from "./history-migration.js";
 export type { HistoryMigrationOptions } from "./history-migration.js";
@@ -55,6 +56,7 @@ const historyReaderCaptures = new WeakMap<DatabaseSync, HistoryReaderCapture>();
 const retainedHistoryReaderCaptures = new Set<HistoryReaderCapture>();
 let unknownHistoryReaderOpens = 0;
 function capturedHistoryReader(file: string, kind: HistoryReaderCapture["kind"], timeout: number): HistoryReaderCapture & { db: DatabaseSync } {
+  assertSqliteFamily(file);
   const record: HistoryReaderCapture = { identity: Symbol("actual readonly history open"), requestedFile: file, kind,
     open: "attempted", initialize: "not_attempted", close: "not_attempted" };
   retainedHistoryReaderCaptures.add(record);
@@ -86,8 +88,10 @@ export function historyReaderObservation(db: DatabaseSync) {
 /** Readers stay on preserved legacy rows until the complete copy has been verified; never on a partial copy. */
 export function historyReadPath(file: string): string { return historyReadStatus(file).path; }
 export function historyReadStatus(file: string): HistoryReadStatus {
+  assertSqliteFamily(file);
   if (basename(file) !== "bridge.db") return { path: file };
   const path = historyDbPath(file);
+  assertSqliteFamily(path);
   if (!existsSync(path)) return { path: file };
   const capture = capturedHistoryReader(path, "status", 100), db = capture.db;
   capture.initialize = "attempted";
@@ -168,6 +172,7 @@ export function historyInitializationObservation(db: DatabaseSync): Readonly<{
     ownerBound: false, ownershipReleased: false });
 }
 export function openHistoryStore(file: string): DatabaseSync {
+  assertSqliteFamily(file);
   const db = new DatabaseSync(file, { timeout: storageAdmissionTimeout(3000) });
   const record: HistoryInitialization = { identity: Symbol(), db, file, state: "initializing", close: "not_attempted" };
   historyInitializations.set(db, record); // Capture before configuration or migration can fail.

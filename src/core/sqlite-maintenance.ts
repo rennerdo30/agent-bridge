@@ -9,6 +9,7 @@ import { admissionSqliteBusy, storageAdmissionRemaining, storageAdmissionTimeout
 export { SQLITE_BUSY_TIMEOUT_MS } from "./sqlite-policy.js";
 import { SQLITE_BUSY_TIMEOUT_MS } from "./sqlite-policy.js";
 import { openPreservedReader, preserveArchiveTarget } from "./storage-preservation.js";
+import { assertSqliteFamily } from "./mailbox-layout.js";
 
 export const ARCHIVE_DB_NAME = "archive.db";
 export const ARCHIVE_STORE_VERSION = 1;
@@ -21,12 +22,13 @@ export function checkDatabase(db: DatabaseSync): string[] {
 
 /** VACUUM INTO works on Node 22.13 and includes committed WAL pages. Publish only verified copies. */
 export function snapshotDatabase(source: string, target: string): void {
+  assertSqliteFamily(source);assertSqliteFamily(target);
   const db = new DatabaseSync(source, { readOnly: true });
   try {
     db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
     db.prepare("VACUUM INTO ?").run(target);
   } finally { db.close(); }
-  const copy = new DatabaseSync(target, { readOnly: true, timeout: SQLITE_BUSY_TIMEOUT_MS });
+  assertSqliteFamily(target);const copy = new DatabaseSync(target, { readOnly: true, timeout: SQLITE_BUSY_TIMEOUT_MS });
   try {
     const findings = checkDatabase(copy);
     if (findings.length) throw new Error(`invalid database backup: ${findings.join(", ")}`);
@@ -65,6 +67,7 @@ export function archiveInitializationObservation(db: DatabaseSync): Readonly<{
     ownerBound: false, ownershipReleased: false });
 }
 export function openArchive(path: string, options: { migrate?: boolean; home?: string } = {}): DatabaseSync {
+  assertSqliteFamily(path);
   const existed = existsSync(path);
   let admitted: ReturnType<typeof preserveArchiveTarget> | undefined;
   let original: DatabaseSync | undefined;
@@ -87,6 +90,7 @@ export function openArchive(path: string, options: { migrate?: boolean; home?: s
     record = { identity: Symbol(), file: path, construction: "attempted_unconfirmed", state: "initializing", close: "not_attempted" };
     retainedArchiveInitializations.add(record); // Register BEFORE native construction; an unreturned attempt remains unknown.
     storageAdmissionRemaining();
+    assertSqliteFamily(path);
     db = new DatabaseSync(path, { timeout: storageAdmissionTimeout(SQLITE_BUSY_TIMEOUT_MS) });
     record.db = db; record.construction = "returned";
     archiveInitializations.set(db, record); // Capture the actual returned writer BEFORE checks or page SQL.

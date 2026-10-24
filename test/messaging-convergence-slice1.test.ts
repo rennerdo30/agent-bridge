@@ -754,7 +754,7 @@ it.each([false,true])('round5: actual handover retry owns metadata through sibli
  vi.spyOn(BridgeClient,'connect').mockResolvedValueOnce(first as never).mockResolvedValue(second as never);const initial=metadataDb(f.path),connected=vi.fn();node.on('connected',connected);
  try{const started=node.start();await vi.advanceTimersByTimeAsync(1000);await started;expect(first.isClosed).toBe(true);expect(connected).toHaveBeenCalledOnce();expect(node.isConnected).toBe(true);
   const serving=metadataDb(f.path);expect(metadataReaderRetained(f.path)).toBe(true);if(sibling){await sibling.stop();expect(serving.isOpen).toBe(true);expect(metadataReaderRetained(f.path)).toBe(true);}else expect(initial.isOpen).toBe(false);
-  await vi.advanceTimersByTimeAsync(11_000);second.emit('event','peer_joined',{pid:process.pid,name:'synthetic-after-budget',version:APP_VERSION});expect(node.isConnected).toBe(true);expect(serving.isOpen).toBe(true);
+  await vi.advanceTimersByTimeAsync(11_000);second.emit('event','peer_joined',{pid:process.pid,name:'synthetic-after-budget',version:APP_VERSION});expect(node.isConnected).toBe(true);expect(serving.isOpen).toBe(true);await node.start();await node.start();
   await node.stop();await node.stop();expect(serving.isOpen).toBe(false);expect(metadataDbOpen(f.path)).toBe(false);expect(metadataReaderRetained(f.path)).toBe(false);
  }finally{await sibling?.stop();await node.stop();}
 });
@@ -762,5 +762,10 @@ it.each(['handover-cancel','protocol-failure'])('round5: continuing reader acqui
  vi.useFakeTimers();const f=candidate();f.store.close();closeMetadataDbs();const node=new BridgeNode({pipePath:'synthetic-round5',token:'synthetic-only',dbPath:join(f.path,'bridge.db'),agent:'other',name:'synthetic',cwd:f.path,autoWake:false,log:nullLogger}),client=retryClient(true),db=metadataDb(f.path);
  if(kind==='protocol-failure')vi.spyOn(BridgeClient,'connect').mockRejectedValue(new BridgeError('protocol_mismatch','synthetic incompatible protocol'));else vi.spyOn(BridgeClient,'connect').mockResolvedValue(client as never);
  const started=node.start(),rejected=expect(started).rejects.toThrow();
- try{if(kind==='handover-cancel'){await vi.advanceTimersByTimeAsync(0);const stop=node.stop();await vi.advanceTimersByTimeAsync(1000);await stop;}await rejected;expect(metadataReaderRetained(f.path)).toBe(false);expect(metadataDbOpen(f.path)).toBe(false);expect(db.isOpen).toBe(false);await node.stop();await node.stop();}finally{await node.stop();}
+ try{if(kind==='handover-cancel'){await vi.advanceTimersByTimeAsync(0);const stop=node.stop();await vi.advanceTimersByTimeAsync(1000);await stop;}await rejected;expect(metadataReaderRetained(f.path)).toBe(false);expect(metadataDbOpen(f.path)).toBe(false);expect(db.isOpen).toBe(false);if(kind==='protocol-failure'){await expect(node.start()).rejects.toThrow();expect(metadataReaderRetained(f.path)).toBe(false);}await node.stop();await node.stop();}finally{await node.stop();}
+});
+it('round5: simulated absent cached family refuses without closing a sibling-owned handle',async()=>{
+ const f=candidate(),db=metadataDb(f.path),reader=retainMetadataReader(f.path);closes.push(reader);const file=join(f.path,'bridge.db'),fs=await import('node:fs'),original=fs.lstatSync;
+ vi.spyOn(fs,'lstatSync').mockImplementation(((...args:any[])=>{if([file,file+'-wal',file+'-shm',file+'-journal'].includes(String(args[0])))throw Object.assign(Error('synthetic absent family'),{code:'ENOENT'});return(original as any)(...args);}) as never);
+ expect(()=>metadataDb(f.path)).toThrow('Cached metadata family');expect(db.isOpen).toBe(true);expect(metadataDbOpen(f.path)).toBe(true);
 });

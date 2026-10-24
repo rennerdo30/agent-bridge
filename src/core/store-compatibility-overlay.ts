@@ -5,7 +5,7 @@ import type { Logger } from "./logger.js";
 import { migrateSqlite } from "./sqlite-migrations.js";
 import { configureSqlite } from "./sqlite-policy.js";
 import { storageAdmissionRemaining, storageAdmissionTimeout } from "./storage-admission.js";
-import { inspectMailbox } from "./mailbox-layout.js";
+import { inspectMailbox, assertSqliteFamily } from "./mailbox-layout.js";
 
 const TABLES = ["session_bindings", "peer_names", "peer_name_owners", "job_delivery_routes", "peer_last_seen"] as const;
 const SCHEMA = `
@@ -48,6 +48,7 @@ export function attachStoreCompatibility(db: DatabaseSync, file: string, log: Lo
   if(callerOwned&&(create||!db.isTransaction))throw new Error('Overlay merge requires the caller-owned current primary transaction');
   if(callerOwned)for(const table of TABLES){storageAdmissionRemaining();if(!db.prepare("SELECT 1 FROM main.sqlite_master WHERE type='table' AND name=?").get(table))throw new Error('Outer-owned merge refuses missing primary tables; supplemental originals retained');}
   const path = join(dirname(file), "store-compatibility.db");
+  assertSqliteFamily(path);
   const existed = existsSync(path);
   if (!create && !existed) return;
   const capture: OverlayCapture = { identity: Symbol("compatibility overlay admission"), main: db, file: path,

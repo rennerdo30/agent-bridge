@@ -13,7 +13,7 @@ import { loadConfig } from "../core/config.js";
 import { historyBudget } from "../core/history-budget.js";
 import { StartupBudget } from "../core/startup-budget.js";
 import { openAdmittedMessageStore } from "../core/prior-endpoints.js";
-import { preflightMessagingHome } from "../core/mailbox-layout.js";
+import { preflightMessagingHome, assertSqliteFamily } from "../core/mailbox-layout.js";
 
 type Batch = RequestMap["reindexHistory"][1];
 
@@ -42,7 +42,7 @@ export async function runReindex(home: string, pipe: string, log: Logger, out: (
       finally { startup.close(); }
       await migrateHistoryStore(store.file, store.history.storageDatabase, undefined, undefined, undefined, true);
       const index = store.history;
-      source = new DatabaseSync(store.file,{readOnly:true,timeout:100});
+      assertSqliteFamily(store.file);source = new DatabaseSync(store.file,{readOnly:true,timeout:100});
       ingest=new ConversationIngestor(index.database,home,transcriptPaths(),source);
       batch = async (reset) => {
         const budget = await historyBudget(home, loadConfig(home, "other", log).history.budgetBytes);

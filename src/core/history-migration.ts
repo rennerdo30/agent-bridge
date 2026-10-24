@@ -7,6 +7,7 @@ import { decodeBytes, decodeText, encodeBytes, encodeText, registerHistoryFuncti
 import { HISTORY_V2_COPY_TABLES } from "./history-schema-v2.js";
 import { HISTORY_BATCH_MS, HISTORY_COPY_BYTES, HISTORY_COPY_ROWS, HISTORY_IO_BYTES_PER_SECOND, HISTORY_STORE_VERSION, type HistoryMigrationProgress } from "./history-store.js";
 import { fastSnapshot } from "./sqlite-fast-snapshot.js";
+import { assertSqliteFamily } from "./mailbox-layout.js";
 
 type Row = Record<string, SQLInputValue>;
 type State = { snapshot: string; status: string; manifest: string | null; source: string | null };
@@ -149,6 +150,7 @@ export async function resumableHistoryMigration(bridge: string, target: Database
       target.prepare("INSERT INTO history_migration(version,snapshot,status,manifest,source) VALUES(?,?,'snapshotting',NULL,?)").run(HISTORY_STORE_VERSION, state.snapshot, kind);
     }
     const sourceFile = state.source === "history-v1" ? join(dirname(bridge), "history.db") : bridge;
+    assertSqliteFamily(sourceFile);assertSqliteFamily(state.snapshot);
     const prefix = state.source === "history-v1" ? HISTORY_V1_PREFIX : "";
     if (state.status === "snapshotting") {
       emit({ phase: "snapshot" });
@@ -156,7 +158,7 @@ export async function resumableHistoryMigration(bridge: string, target: Database
       // An interrupted snapshot is never trusted or overwritten; it is kept beside the new one.
       if (existsSync(state.snapshot)) renameSync(state.snapshot, `${state.snapshot}.interrupted-${Date.now()}`);
       await (options.snapshot ?? fastSnapshot)(sourceFile, state.snapshot, { method: "copy", allowCheckpoint: true });
-      source = new DatabaseSync(state.snapshot, { readOnly: true });
+      assertSqliteFamily(state.snapshot);source = new DatabaseSync(state.snapshot, { readOnly: true });
       target.exec("BEGIN IMMEDIATE");
       try {
         for (const name of HISTORY_V2_COPY_TABLES) {
@@ -169,7 +171,7 @@ export async function resumableHistoryMigration(bridge: string, target: Database
       } catch (err) { target.exec("ROLLBACK"); throw err; }
       state.status = "copying";
     }
-    source ??= new DatabaseSync(state.snapshot, { readOnly: true });
+    if(!source)assertSqliteFamily(state.snapshot);source ??= new DatabaseSync(state.snapshot, { readOnly: true });
     source.exec("PRAGMA query_only=ON; PRAGMA cache_size=-8192");
     start = Date.now(); startRows = readHistoryMigrationProgress(target, limit).completedRows;
     emit({ phase: "copy" });

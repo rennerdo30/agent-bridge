@@ -7,6 +7,7 @@ import { decisionScopeSchema, type DecisionScope } from "./decisions.js";
 import type { Logger } from "./logger.js";
 import type { MessageAddress } from "./protocol.js";
 import { migrateSqlite } from "./sqlite-migrations.js";
+import { assertSqliteFamily } from "./mailbox-layout.js";
 
 export const QUESTIONS_FILE = "owner-questions.db";
 export const MAX_OPEN_QUESTIONS = 5;
@@ -78,6 +79,7 @@ export class QuestionVersionConflict extends Error {
 export class OwnerQuestionStore {
   private readonly db: DatabaseSync;
   constructor(home: string, log: Logger) {
+    assertSqliteFamily(join(home,QUESTIONS_FILE));
     mkdirSync(home, { recursive: true, mode: 0o700 });
     const file = join(home, QUESTIONS_FILE), existed = existsSync(file);
     this.db = new DatabaseSync(file);
@@ -173,7 +175,7 @@ export class OwnerQuestionStore {
   }
 }
 export function readOwnerQuestions(home: string): OwnerQuestion[] {
-  const file = join(home, QUESTIONS_FILE); if (!existsSync(file)) return [];
+  const file = join(home, QUESTIONS_FILE);assertSqliteFamily(file);if (!existsSync(file)) return [];
   const db = new DatabaseSync(file, { readOnly: true, timeout: 100 });
   try { return db.prepare("SELECT record FROM questions ORDER BY rowid DESC").all().map(r => JSON.parse(String(r.record))); } finally { db.close(); }
 }

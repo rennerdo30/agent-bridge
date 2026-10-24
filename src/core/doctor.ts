@@ -13,7 +13,7 @@ import { archiveJobs } from "./job-archive.js";
 import { nullLogger } from "./logger.js";
 import { acquireLock } from "../mcp/jobs.js";
 import { isOversizedBody, QUARANTINE_DIR } from "./oversize.js";
-import { preflightMessagingHome, assertCurrentMailboxEnvelope } from "./mailbox-layout.js";
+import { preflightMessagingHome, assertCurrentMailboxEnvelope, assertSqliteFamily } from "./mailbox-layout.js";
 
 export interface DoctorFinding {
   severity: "info" | "warning" | "error";
@@ -56,6 +56,7 @@ export function doctor(home: string, now = Date.now()): DoctorReport {
   for (const [name, expected] of [[DB_FILE_NAME, SQLITE_STORE_VERSION], [ARCHIVE_DB_NAME, ARCHIVE_STORE_VERSION]] as const) {
     const path = join(home, name);
     let actual: number | null = null;
+    try{assertSqliteFamily(path);}catch(error){finding('error','sqlite-unreadable',path,String(error));report.schema.push({path,actual,expected});continue;}
     if (existsSync(path)) {
       let db: DatabaseSync | null = null;
       try {

@@ -6,6 +6,7 @@ import { configureSqlite } from "./sqlite-policy.js";
 import { isSqliteBusy } from "./sqlite-policy.js";
 import { setTimeout as delay } from "node:timers/promises";
 import { storageAdmissionRemaining, storageAdmissionTimeout, admissionSqliteBusy } from "./storage-admission.js";
+import { assertSqliteFamily } from "./mailbox-layout.js";
 
 const ROOT_LIMIT_DB = "root-limits.sqlite";
 const LOCK_WAIT_MS = 3_000;
@@ -17,6 +18,7 @@ export class RootConcurrency {
   private readonly resource: string;
 
   constructor(home: string, private readonly rootSession: string) {
+    assertSqliteFamily(join(home,ROOT_LIMIT_DB));
     this.resource = `root-${createHash("sha256").update(rootSession).digest("hex").slice(0, 40)}`;
     this.slots = new ResourceSlots(home);
     let owned:DatabaseSync|undefined;

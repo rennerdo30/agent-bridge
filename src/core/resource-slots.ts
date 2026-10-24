@@ -7,6 +7,7 @@ import { configureSqlite, isSqliteBusy } from "./sqlite-policy.js";
 import { slotLiveness } from "./slot-liveness.js";
 import { identityStartedAfter } from "./process-identity.js";
 import { storageAdmissionRemaining, storageAdmissionTimeout, admissionSqliteBusy } from "./storage-admission.js";
+import { assertSqliteFamily } from "./mailbox-layout.js";
 
 export const SLOT_OWNER_ENV = "AGENT_BRIDGE_SLOT_OWNER";
 export const SLOT_PID_ENV = "AGENT_BRIDGE_SLOT_PID";
@@ -28,6 +29,7 @@ export class ResourceSlots {
   private readonly captureId = ++nextStoreId;
   private closed = false;
   constructor(home: string, private readonly isAlive: (pid: number, identity?: string | null, recordedAt?: number) => boolean = slotLiveness.alive, private readonly now = Date.now) {
+    assertSqliteFamily(join(home,SLOT_DB_NAME));
     storageAdmissionRemaining();
     mkdirSync(home, { recursive: true });
     let owned:DatabaseSync|undefined;

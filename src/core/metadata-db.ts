@@ -7,7 +7,7 @@ import { liveStorePeers, metadataRelease } from "./store-compatibility.js";
 import { assertCompatibleMailboxReaders, hasMaintenanceExclusion, maintenanceLock, storageLease, withMaintenanceExclusion } from "./storage-lock.js";
 import { snapshotMetadataTables } from "./metadata-snapshot.js";
 import { METADATA_COMPONENT_VERSION } from "./store-version.js";
-import { assertCurrentMailboxEnvelope, preflightMessagingHome, offlineMetadataAdmitted, withOfflineMetadataAdmission, inspectMailbox, assertMessagingLayout } from "./mailbox-layout.js";
+import { assertCurrentMailboxEnvelope, preflightMessagingHome, offlineMetadataAdmitted, withOfflineMetadataAdmission, inspectMailbox, assertMessagingLayout, assertSqliteFamily } from "./mailbox-layout.js";
 import { admissionSqliteBusy, storageAdmissionRemaining, storageAdmissionTimeout, withStorageAdmission } from "./storage-admission.js";
 import { assertSqliteAuthority, configureSqlite } from "./sqlite-policy.js";
 import { attachStoreCompatibility } from "./store-compatibility-overlay.js";
@@ -156,7 +156,8 @@ export function existingMetadataDb(home: string): DatabaseSync | undefined {
  storageAdmissionRemaining();
  preflightMessagingHome(home);
  const file = join(resolve(home),"bridge.db"), cached = connections.get(handleKey(file));
- if (cached) { admissionSqliteBusy(cached);assertSqliteAuthority(cached);storageAdmissionRemaining();return escapeMetadataReference(cached); }
+ const present=assertSqliteFamily(file);
+ if (cached) { if(!present)throw Object.assign(new Error('Cached metadata family is absent; retained handle unavailable'),{code:'STORE_LAYOUT_UNSUPPORTED'});admissionSqliteBusy(cached);assertSqliteAuthority(cached);storageAdmissionRemaining();return escapeMetadataReference(cached); }
  if (!existsSync(file)) return undefined;
  physicalMetadataPath(file);
  const admission = observeExistingMetadataAdmission(file);
@@ -226,8 +227,9 @@ export function metadataDb(home: string): DatabaseSync {
  storageAdmissionRemaining();
  preflightMessagingHome(home);
  const file = join(resolve(home), "bridge.db");
+ const present=assertSqliteFamily(file);
  const cached = connections.get(handleKey(file));
- if (cached) { admissionSqliteBusy(cached);assertSqliteAuthority(cached);storageAdmissionRemaining();return escapeMetadataReference(cached); }
+ if (cached) { if(!present)throw Object.assign(new Error('Cached metadata family is absent; retained handle unavailable'),{code:'STORE_LAYOUT_UNSUPPORTED'});admissionSqliteBusy(cached);assertSqliteAuthority(cached);storageAdmissionRemaining();return escapeMetadataReference(cached); }
  physicalMetadataPath(file);
  mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
  const existed = existsSync(file);
@@ -643,6 +645,7 @@ function messagingMigrationInventory(home: string, mailboxes: string[]) {
  * schema, original ordinary rows and metadata. FTS is a derived search index;
  * its exact original pages remain in the protected input snapshot. */
 function importMigrationSnapshot(target: DatabaseSync, snapshot: string, beforeCommit: () => void): void {
+ assertSqliteFamily(snapshot);
  const source = new DatabaseSync(snapshot,{readOnly:true,timeout:0});
  try {
   const tables = source.prepare("PRAGMA table_list").all().filter(row=>row.schema==='main' && row.type==='table' && !String(row.name).startsWith('sqlite_'));
@@ -761,7 +764,7 @@ export async function migrateMessagingHome(options: MessagingMigrationOptions) {
    });
    if (!inspected) throw migrationRefusal('Interrupted destination disappeared');
   }
-  coordinator = new DatabaseSync(file,{timeout:0}); configureSqlite(coordinator);
+  assertSqliteFamily(file);coordinator = new DatabaseSync(file,{timeout:0}); configureSqlite(coordinator);
   if (!existed) coordinator.exec("CREATE TABLE bridge_metadata(domain TEXT NOT NULL,key TEXT NOT NULL,value TEXT NOT NULL,updated_at INTEGER NOT NULL,PRIMARY KEY(domain,key))");
   let attempt: MigrationAttempt;
   const row = coordinator.prepare('SELECT value FROM bridge_metadata WHERE domain=? AND key=?').get(MIGRATION_DOMAIN,MIGRATION_KEY);
@@ -827,7 +830,7 @@ export async function migrateMessagingHome(options: MessagingMigrationOptions) {
   if (attempt.phase==='copying') {
    // Coordinator owns only its migration row before import. Avoid replacing its
    // SQL authority or losing the immutable attempt at a filesystem rename.
-   const canonical = new DatabaseSync(join(snapshots,'bridge.db'),{readOnly:true,timeout:0});
+   assertSqliteFamily(join(snapshots,'bridge.db'));const canonical = new DatabaseSync(join(snapshots,'bridge.db'),{readOnly:true,timeout:0});
    const reserved = canonical.prepare("SELECT 1 FROM sqlite_master WHERE name='bridge_metadata'").get() && canonical.prepare('SELECT 1 FROM bridge_metadata WHERE domain=? AND key=?').get(MIGRATION_DOMAIN,MIGRATION_KEY);
    canonical.close(); if (reserved) throw migrationRefusal('Source contains a conflicting candidate attempt');
    // Import + phase CAS are one SQLite transaction via a savepoint around the
@@ -854,6 +857,7 @@ export async function migrateMessagingHome(options: MessagingMigrationOptions) {
   withOfflineMetadataAdmission({kind:'offline-isolated',home:destination},()=>withMaintenanceExclusion(releases[1]!,guardSource,()=>withStorageAdmission(()=>{guardSource();return Infinity;},()=> {
    for (const input of attempt.inputs.filter(input=>input.role==='sqlite' && (input.path==='bridge.db' || mailboxes.includes(input.path)))) {
     guardSource();if(completedAlternates.has(input.path))continue;
+    if(input.path!=='bridge.db')assertSqliteFamily(join(destination,input.path));
     const db = input.path==='bridge.db' ? coordinator! : new DatabaseSync(join(destination,input.path),{timeout:0});
     try {
      configureSqlite(db); migrateMessageSchema(db,join(destination,input.path),true,nullLogger,()=>{

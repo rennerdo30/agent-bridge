@@ -1,12 +1,14 @@
 import { createHash } from "node:crypto";
 import { closeSync, existsSync, fsyncSync, openSync, writeFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
+import { assertSqliteFamily } from "./mailbox-layout.js";
 
 const quote = (name: string) => `"${name.replaceAll('"','""')}"`;
 const encode = (row: unknown) => JSON.stringify(row,(_,value) => typeof value === 'bigint' ? {bigint:String(value)} : value);
 
 /** Scope is explicit: this is an additive-component recovery snapshot, never a full DB restore. */
 export function snapshotMetadataTables(source: DatabaseSync, file: string, tables: readonly string[], component: string, targetVersion: number): void {
+ assertSqliteFamily(file);
  if (existsSync(file) || existsSync(`${file}.manifest.json`)) throw new Error("Metadata snapshot destination exists; retained.");
  const snapshot = new DatabaseSync(file);
  const manifest = {version:1,kind:"metadata-component-snapshot",component,targetVersion,

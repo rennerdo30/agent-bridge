@@ -241,9 +241,8 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   }
 
   async start(): Promise<void> {
-    if (!this.releaseMetadata && this.opts.dbPath !== ":memory:") this.releaseMetadata = retainMetadataReader(dirname(this.opts.dbPath));
-    // Registration needs the host CLI's creation identity (a PowerShell query on Windows). Start the shared,
-    // memoized read now so it overlaps discovery and daemon creation instead of following broker readiness.
+    // Election/adoption register under the original budget, including retries.
+    // A held refusal must not create an otherwise idle metadata reader.
     await this.ensureConnected();
   }
 
@@ -323,10 +322,15 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     if (this.startupHeld) return Promise.reject(this.startupHeld);
     if (!this.electing) { this.startupBudget = new StartupBudget(Infinity,()=>!this.stopping); this.initializedThisAttempt = false; }
     this.electing ??= this.elect()
-      .catch((err) => {
-        if (this.startupBudget?.signal.aborted || this.initializedThisAttempt || ['STORE_OFFLINE_REQUIRED','STORE_LAYOUT_UNSUPPORTED','STORE_COMMIT_UNKNOWN','protocol_mismatch'].includes(errCode(err))) this.startupHeld = err;
+      .catch(async(err) => {
+        const cleanup:unknown[]=[],broker=this.broker;this.broker=null;
+        try{await broker?.close();}catch(error){cleanup.push(error);}
+        const reader=this.releaseMetadata;this.releaseMetadata=undefined;
+        try{reader?.();}catch(error){cleanup.push(error);}
+        const failure=cleanup.length?new AggregateError([err,...cleanup],'Election cleanup remains unknown'):err;
+        if (cleanup.length || this.startupBudget?.signal.aborted || this.initializedThisAttempt || ['STORE_OFFLINE_REQUIRED','STORE_LAYOUT_UNSUPPORTED','STORE_COMMIT_UNKNOWN','protocol_mismatch'].includes(errCode(err))) this.startupHeld = failure;
         else this.scheduleReconnect(this.nextBackoff());
-        throw err;
+        throw failure;
       })
       .finally(() => {
         this.startupBudget?.close(); this.startupBudget = undefined;
@@ -360,11 +364,22 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     const budget = this.startupBudget;
     return BridgeClient.connect(this.opts.pipePath,this.log,budget ? Math.min(CONNECT_TIMEOUT_MS,budget.remaining()) : CONNECT_TIMEOUT_MS,{signal:budget?.signal});
   }
+  /** One exact registration per current node attempt; no deadline is retained
+   * by the reader callback or the shared metadata cache after admission. */
+  private retainStartupMetadataReader(budget:StartupBudget):(()=>void)|undefined {
+    budget.remaining();
+    if(this.opts.dbPath===':memory:')return undefined;
+    if(this.releaseMetadata)return this.releaseMetadata;
+    const release=retainMetadataReader(dirname(this.opts.dbPath));this.releaseMetadata=release;
+    try{budget.remaining();return release;}
+    catch(error){if(this.releaseMetadata===release)this.releaseMetadata=undefined;release();throw error;}
+  }
   private async elect(): Promise<void> {
     const budget = this.startupBudget!;
+    this.retainStartupMetadataReader(budget);
     if (this.opts.dbPath !== ':memory:' && !await budget.wait(ownProcessIdentity(budget.signal,()=>budget.remaining()))) throw new BridgeError('internal','Own startup identity unknown');
     for (let attempt = 1; attempt <= ELECTION_MAX_ATTEMPTS && !this.stopping; attempt++) {
-      budget.remaining();
+      this.retainStartupMetadataReader(budget);
       try {
         const client = await this.connectForStartup();
         await this.adopt(client);
@@ -441,7 +456,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     if (this.stopping) return false;
     // The store's migration lock and the TCP fallback record need this process's identity; read it without
     // blocking the session's event loop (a synchronous PowerShell query on Windows otherwise).
-    const budget = this.startupBudget!; budget.remaining();
+    const budget = this.startupBudget!; this.retainStartupMetadataReader(budget);
     const { Broker } = await import("./broker.js");
     const { EndpointReservation } = await import("./endpoint-reservation.js");
     let reservation: import("./endpoint-reservation.js").EndpointReservation;
@@ -521,6 +536,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
 
   private async adopt(client: BridgeClient): Promise<void> {
     const budget = this.startupBudget!;
+    let reader=this.releaseMetadata;
     let adopted = false, admission: StartupBudget | undefined = budget, eventFailure: unknown, failed=false, failure:unknown;
     const check=()=>{if(eventFailure)throw eventFailure;return budget.remaining();};
     const event=(ev:string,data:unknown)=>{
@@ -530,7 +546,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     };
     const closed=()=>{if(adopted)this.onClose(client);};
     try {
-    check();client.on("event", event);
+    check();reader=this.retainStartupMetadataReader(budget);client.on("event", event);
     let brokerVersion: string | undefined;
     // Read presence before hello can trigger writes in a newer broker.
       await client.request("auth", { protocol: PROTOCOL_VERSION, token: this.opts.token, ...(this.canHostDaemon ? { canHost: true } : {}) },budget.remaining());
@@ -567,7 +583,8 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
       const broker=this.broker;this.broker=null;
       try{await broker?.close();}catch(error){cleanup.push(error);}
       await Promise.allSettled([...this.pendingAcks]);
-      try{this.releaseMetadata?.();this.releaseMetadata=undefined;}catch(error){cleanup.push(error);}
+      if(this.releaseMetadata===reader)this.releaseMetadata=undefined;
+      try{reader?.();}catch(error){cleanup.push(error);}
       if(cleanup.length)throw new AggregateError(failed?[failure,...cleanup]:cleanup,'Client adoption cleanup remains unknown');
     } }
   }
