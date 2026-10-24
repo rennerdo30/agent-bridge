@@ -1,4 +1,4 @@
-> Latest: the parent-authorized importer binding correction froze at `e185e18550774802a0304eed56315a294ba80bff`. NoEmit passed. Its one anchored selection confirmed `decisions.rowid` returns as `revision` and shipping migration passed, then stopped at1 passed/1 failed/42 skipped: the new fidelity regression refused at the pre-import inventory recheck. Four later selected cases remain unaccepted. Both allowances are spent; no retry or post-failure source/test edit occurred. Candidate remains WIP pending the parent's inventory diagnosis decision. All earlier freezes and red evidence below remain retained and qualified to their own runs.
+> Latest: the inventory diagnostic confirmed only newly created zero-byte WAL/volatile SHM coordination, with main identity/size/hash unchanged. The parent-authorized correction froze at `d4f8e17d0bff563f45b5f495b0f1a9f5b4489ed0`. NoEmit and the anchored seven-case selection passed (42 cases excluded). Slice1 WIP is ready for independent source review, with exact protected patches/baselines unchanged and hosted Node24/platform acceptance pending. Earlier red runs, including the diagnostic, remain red and qualified to their own freezes; no full49-case final-head pass is claimed.
 
 # AB-458 convergence slice1 WIP receipt
 
@@ -651,3 +651,89 @@ The binding correction changes zero protected methods. Complete broker.ts/node.t
 New artifact root: `E:/AgentData/claude-codex-comm/t3-6416720d/.agent-bridge-test/slice1-binding-review`. Static packaging PID22256,09:51:58.150–09:51:59.105 JST,external10000ms,exit0. All previous artifact roots and synthetic originals/snapshots remain retained. Final commit/push PIDs/times/exits and a new complete retained-file inventory are recorded after this receipt's artifact-only commit.
 
 **Parent decision needed:** authorize a narrowly scoped diagnosis of the pre-import inventory drift, or hold the candidate at this preserved WIP. The confirmed binding correction and shipping pass are available for independent inspection, but fidelity/interruption/CAS/late-recovery acceptance remains incomplete; there is no slice1-review-ready, merge, PR, installed migration or release claim. PR141 and its original writer remain untouched.
+
+## Confirmed empty-WAL coordination correction and slice1 source handoff
+
+Parent authorized static inventory tracing, one bounded synthetic diagnostic if needed, then a correction **conditional on confirmed owned coordination**, one focused selection and one noEmit. The previous paragraph's inventory decision is now resolved within that authorization. The diagnostic failure remains historical RED evidence; it is not counted as an accepted test.
+
+Continuation head: `7456c17e711831a7e9c971d4acab54984b2d0a6e`, tree `9750c6e97d70d4a5f56b1f5b79b52b8fbe4baca9`. Original base remains `5e3fa8aa17d22d57cb5d24549c16381c5843edeb`, tree `099261e3f7c378f38bf2ecb2dcf4ca4479d9fabf`. Same assigned checkout/branch is retained for later slices. Reviewed design and attributed copies above are unchanged.
+
+### Static trace, diagnostic freeze and exact difference
+
+Before correction, `migrateMessagingHome` captured inventory/inputId at645–646, performed ordinary read-only preflight/inspection at648–655 and compared a new inventory under maintenance exclusion at668. Inventory ignores exact SHM, but previously included every exact WAL as a durable input. Each input records `path`, `role`, `identity=dev:ino:size:mtimeNs:ctimeNs`, `bytes` and `sha256`; unknown names remain separately retained. Static tracing explained the possible discrepancy but lacked the old runtime census, so it could not establish the actual differing record.
+
+Diagnostic test-only freeze: `79be5784672e229421803362314d7da8a20d07d6`, tree `a452617e8e2aff4337b1aa2c184b9d90900835e5`, test SHA256 `abe67a48f9b9ffc269141a774458478faf6c8fd6749a3a5b49fbcdad3a79245f`. Production was unchanged. The only selected case was `preserves INTEGER PRIMARY KEY aliases, shadowed rowids and WITHOUT ROWID value fidelity`. A temporary test-only flag recorded known synthetic file names, roles, size, identity and hashes, then rethrew the original failure. No row/payload/config/secret values or separate SQLite probe were logged.
+
+Observed before/after:
+
+| Exact path | Before | After | Inventory effect before correction |
+| --- | --- | --- | --- |
+| bridge.db |sqlite;323584 bytes |same identity, size and SHA256 |unchanged durable record |
+| bridge.db-wal |absent |wal;0 bytes;empty-file SHA256 |new durable input record |
+| bridge.db-shm |absent |excluded-coordination;32768 bytes |already excluded |
+
+Main identity in both censuses: `3901952415:5066549592081503:323584:1792803437569863100:1792803437569863100`; main SHA256 `62450def3b4c523e51cef7469451d3b2b9a405b62ffd58e875d4365028ad37b1`. New WAL identity: `3901952415:5629499545502817:0:1792803437578363000:1792803437578363000`; SHA256 `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`. No other entry changed. SHM's32768-byte observation belongs only to this small fixture, not a production cap.
+
+The before/after census plus static role mapping confirms the failure: old inventory changed from one durable record to two despite identical original durable bytes. The new empty WAL was created during the owned ordinary read-only path. Exact reconstructed inventory shapes, all observed identity/hash fields and the corrected equal durable census are retained in `inventory-difference.json`, SHA256 `d9fa845740b94bdf6f781af474c7a3e51038d97e1e4c6d34a95f0a822a9b923c`. The immutable inputId was not refreshed/replaced; this artifact does not compute a replacement identity for changed source data.
+
+Diagnostic raw result: **1 failed /47 skipped (48)**, same source-inventory refusal, external30s,exit1/no timeout. It remains RED. The temporary diagnostic test block was removed by the subsequent ordinary correction commit; the frozen code/logs remain in history/artifacts.
+
+### Selected correction and retained refusal boundary
+
+Chosen option: **classify only an exact, validated zero-byte WAL as coordination**. `messagingMigrationInventory` still passes every known WAL through `migrationInput`'s regular/unlinked/path checks, stable descriptor/path identity and complete hash read. Only afterward, `.filter(input=>input.role!=='wal' || input.bytes!==0)` excludes empty WAL coordination from the immutable durable-input list. No file is removed, truncated, repaired, checkpointed or copied by this classification.
+
+All fields remain exact for every nonempty WAL and every other durable input. Empty-to-nonempty WAL growth adds a durable record and refuses; a previously nonempty WAL changing or disappearing changes the exact comparison and refuses. Database/body/schema and other inventoried evidence still receive the original identity/size/hash checks. SHM exclusion is unchanged. Unknown journal/name handling is unchanged; they are not classified as empty WAL or inferred to be fresh data. Missing-main/retained-sidecar and read-only recovery guards remain in the existing preflight.
+
+Inventory capture/inputId ordering and the under-lock change guard remain unchanged (now650–651 and673). There is no changed-inputId refresh, relaxed durable hash, snapshot of accepted changed input, immutable/custom VFS, scratch copy, new ledger/subsystem, version/dependency change or broader admission change. Reader/endpoint exclusion, operator attestation, owned cleanup, transaction/rollback/unknown-COMMIT and WAL/FULL authority policies remain unchanged.
+
+Corrected source/test freeze: `d4f8e17d0bff563f45b5f495b0f1a9f5b4489ed0`, tree `cfb03f4cbdecfaa0f03908679c1961fca1b8b381`; `src` directory tree `fc8031127deb1117417ce2522055b8de64fec4a3`; test SHA256 `1c1e904bad2150302390b21492ee54f7aa558d3874c89c31e70693c03983bda5`. Relative to7456c17e, only metadata-db.ts and the focused test changed (25 insertions/1 deletion); the later receipt commit is artifact-only.
+
+Exact production-only patch SHA256 `6d0680220accb6c5325c2b6c600aba46a47dd4c2d66485069b1c8681e1699232`; full source/test patch SHA256 `e0b4a23a399500ec98e0e2690e64f1a0b04a9f1347a9401b1f37cb7869fdd2c4`. Both are in `.agent-bridge-test/slice1-inventory-review`.
+
+### Corrected selection and qualified pass
+
+The source file's literal names and existing parameterized interruption template supply the exact anchored pattern in `selection.json` and raw first headers. The shipping positive joins because this inventory contract directly changes immutable shipping inputId and plan/apply behavior; this written reason is also retained in selection metadata. Previous guard/journal passes were excluded.
+
+| Exact selected test | Result on d4f8e17d |
+| --- | --- |
+| provides a read-only exact-home plan and a finite m1/s9 isolated migration | PASS |
+| preserves INTEGER PRIMARY KEY aliases, shadowed rowids and WITHOUT ROWID value fidelity | PASS |
+| refuses a real committed WAL change after planning and retains its durable input identity | PASS |
+| resumes one immutable interrupted attempt after snapshot, retaining all originals | PASS |
+| resumes one immutable interrupted attempt after committed-ddl, retaining all originals | PASS |
+| holds candidate-ready CAS failure even with complete tables and a metadata fence row | PASS |
+| keeps a late mocked recovery from activating or starting a subsequent phase | PASS |
+
+Raw Vitest5.0.2 result: **7 passed /42 skipped (49 registered)**. Fidelity now reaches destination row/schema comparisons for INTEGER PRIMARY KEY, real alias-like column, shadowed rowid, WITHOUT ROWID, large signed integers, BLOB bytes and NULL, while preserving source bytes. The new negative first verifies the exact nonempty WAL's role/size/identity/hash in a plan, then commits another synthetic record through an in-process connection after planning. It verifies source-change refusal before destination effects, unchanged main hash and retention of the original WAL prefix. The new durable change is never re-planned or imported.
+
+Both interruption schedules retain one immutable attempt/input identity and originals through resume; unknown COMMIT does not receive external retry. CAS failure still prevents admission despite complete tables/fence row. Late mocked recovery cannot activate or start a subsequent phase. These are focused source/test results, not installed migration or native platform acceptance.
+
+### Exact process/version receipts
+
+| Operation | Own wrapper/shell/check PID | JST start–end | External limit/result |
+| --- | --- | --- | --- |
+| Diagnostic freeze commit |Git67016/shell67024 |2026-10-24 09:57:06.808–09:57:06.957 |60000ms;exit0 |
+| Red diagnostic |29768/21660/77220 |2026-10-24 09:57:15.481–09:57:17.644 |30000ms;2163ms elapsed;exit1;no timeout |
+| Corrected source commit |Git23952/shell66556 |2026-10-24 09:58:42.111–09:58:42.289 |60000ms;exit0 |
+| noEmit |49620/19144/43384 |2026-10-24 09:59:03.222–09:59:04.521 |60000ms;1299ms elapsed;exit0;no timeout |
+| Anchored seven-case selection |21892/54740/60648 |2026-10-24 09:59:11.442–09:59:14.374 |60000ms;2932ms elapsed;exit0;no timeout |
+
+All check receipts observed their exact commit/tree before and after, including final test hashes for the corrected checks. Each stdout/stderr line1 retains the source freeze, PIDs, UTC start/deadline and exact argv; selected names/pattern are retained without reconstructing a broader command. All owned check processes exited. No retries or other verification launches occurred; diagnostic30s, focused60s and noEmit60s allowances are consumed.
+
+Actual versions inside diagnostic77220 and corrected focused60648 were Node `v26.4.0`, SQLite `3.53.2`, source ID `2026-06-03 19:12:13 d6e03d8c777cfa2d35e3b60d8ec3e0187f3e9f99d8e2ee9cac695fd6fcdf1a24`. No separate version/native helper launch, installation or PATH change occurred. **Hosted Node24/exact-platform validation remains mandatory and NOT RUN.**
+
+NoEmit **PASS** and seven focused cases **PASS** belong only to d4f8e17d. Earlier37 guard and5 journal/inspection results remain qualified to their original freezes, with the earlier shipping pass separately recorded; no49-case final-head or whole-suite pass is claimed. Original19/1,37/1,5/1,1/1 and diagnostic red histories remain intact.
+
+### Independent source review packet and remaining gates
+
+This correction changes zero protected normalized methods. Full broker.ts/node.ts/dashboard.ts blobs match7456c17e; copied exact13-method before/after JSON, cumulative patch and manifest are unchanged. Baseline/UI/normalizer/retention raw hashes were reread and match. Original five proposed protected deltas/eight unchanged bodies remain for parent review before any separate pin amendment; baseline and pin tests were not changed or run.
+
+- Protected manifest SHA256 `2713b6127ca809af80d7dade24c5325077c9434e51eac8501e931e88d995f5fd`.
+- Normalized JSON patch SHA256 `5c2b4be8c4ccf3811e32673d7adfe23286d1a868d5b489b8bcf4c3207ffb98d1`.
+- Readable protected patch SHA256 `ffb5efda7a9168e366dfa56f4f5737b530476420a81877d5e35ae9f3c7121b1e`.
+- Corrected focused stdout/stderr SHA256 `f8c044cbaedcb0fd2c452e5d0d63a0f2b9c971b9900b6f4212762d5f0ac223d2` / `893986eebdb7e446a2bc662cfc6e4eacd7d4f7d3265a0ea858a8348c293b714d`.
+- Pre-receipt artifact index SHA256 `73cf86f2ecccce8630623b66e8b4fd65034d7fa21342742752af60bdeeed5f65`; excludes itself and later packaging/Git/final-inventory artifacts.
+
+Artifact root: `E:/AgentData/claude-codex-comm/t3-6416720d/.agent-bridge-test/slice1-inventory-review`; static packaging PID32836,10:00:31.369–10:00:32.420 JST,external10000ms,exit0. Previous artifact roots, raw first headers/logs, original data and interrupted snapshots remain untouched. New final retained-file inventory and explicit WIP commit/push receipts follow the artifact-only receipt commit and are reported in the parent handoff.
+
+**Slice1 source candidate is ready for independent review.** No new unresolved fork was introduced by this confirmed conditional correction. Parent review of the full design/source and exact protected deltas, subsequent slices and hosted Node24/Windows/Linux/macOS gates remain separate. There is no new PR, integration, release, installed migration, native connector enablement or whole-product completion claim. PR141/c94 history and the original writer checkout remain untouched. Keep this same worktree/branch for later slices.
