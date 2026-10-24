@@ -1,4 +1,4 @@
-> Latest: round-five source is frozen at `d9837435c099b6a3143e98d2ebca5b1f9e85e9ad`, tree `f2915de5ab82af77fb07134d0c8efdbd83923531`. NoEmit FAILED on one test-only retained-tuple TS2345; the corrected whole guarded file was NOT RUN and no source/test correction or retry followed. The unchanged7ab red run retained39 intended failures/4 controls. Safe-family and continuing-reader corrections are implemented but unaccepted on this freeze. Historical protectedBodies misattribution is explicitly corrected in the new artifact packet; old artifacts remain untouched. Parent gate renewal is required before the type-only correction and further checks; all older source/runtime qualifications remain retained.
+> Latest: parent-approved tuple-only test freeze `fd3610e284a9d0435f319d2e010780cb37c2166b`, tree `08b2dff5f782aa6bb17fe1dfa44f86355cc0b89b`, passed one renewed noEmit followed by one complete guarded slice1 file (141/141). Production is byte-identical to `d9837435`; that freeze and failed noEmit/PID57844 remain retained. Node26/SQLite3.53.2 evidence only; hosted Node24/platform and independent source/protected review remain pending. Exact regenerated protected13 attribution is8 changed/5 unchanged from main; no baseline approval. Historical holds, failures and unused allowances below describe their original freezes and are superseded only by the explicitly approved continuation receipt at the end.
 
 # AB-458 convergence slice1 WIP receipt
 
@@ -1131,3 +1131,53 @@ Runtime inside the allowed red process74396: Node `v26.4.0`, SQLite `3.53.2`, so
 Red commit Git50948/shell23324,13:07:01.142–13:07:01.278 JST; source commit Git80092/shell39872,13:14:41.451–13:14:41.629 JST; each external60000ms,exit0. Static packaging PID11168/shell78104,13:16:37.736–13:16:39.084 JST,external10000ms,exit0. Later receipt-only commit/push and final retained-file inventory have separate receipts; source attribution staysd9837435. All preceding3125 indexed evidence files, prior reviews/closures and synthetic-WAL qualifications remain retained unchanged and are checked by the new final inventory.
 
 **Parent gate decision:** approve the exact test-only tuple annotation, one renewed noEmit and the unused complete guarded-file run, each external60000ms. Until then this source is WIP, not ready for renewed independent acceptance or later slices. All original PR141c94/writer/history, rule files and current design/versions remain untouched; no Bridge call/agent/PR/integration/config/force/reset or owner plan/status/handoff/verdict change.
+
+## 2026-10-24 approved tuple-only continuation and renewed gates
+
+Parent inspected `proposed-type-only.patch` and test733–738, then approved only `as const` on `[path, sha(path)]`. This continuation changes that annotation and this receipt only. Runtime expressions, retained-file assertions, test adapters and all production bytes are unchanged. Historical d983 source, failed noEmit/PID57844 and prior receipts remain attributed exactly as recorded above.
+
+- Starting receipt: `24d58b60548f8633bfcd4ff985243002cea3fbc2`, tree `4262b01a6cc9a443f13180b0c705b4f6800cd766`.
+- Corrected source/test freeze: `fd3610e284a9d0435f319d2e010780cb37c2166b`, tree `08b2dff5f782aa6bb17fe1dfa44f86355cc0b89b`.
+- Production tree: `92ce3dfcc6eee32a6f8fda8c7d8262441b07ba84`, identical to d983; original main remains `5e3fa8aa17d22d57cb5d24549c16381c5843edeb`.
+- Test SHA256: `930f17e3f6621e3549767595e01e60e00f2fa10af18b1aed2ee7767a3ae19339`.
+- Approved exact delta: `.agent-bridge-test/slice1-round5-tuple/approved-tuple-only.patch`, SHA256 `e8bb1d4fbf52c6e4a0b7f026a15ceae0ece66cd14289668879d38de83b45a5fb`.
+- Source/test commit Git PID39348/shell47056,13:22:38.351–13:22:38.523 JST,external60000ms,exit0.
+
+### Single renewed noEmit first, then unused whole-file allowance
+
+| Gate | Own wrapper/shell/check PID | JST check start–end | External bound/result |
+| --- | --- | --- | --- |
+| Renewed noEmit first |29700/22304/51764 |2026-10-24 13:22:47.748–13:22:49.725 |60000ms;1977ms;exit0;no timeout |
+| Complete guarded slice1 file |61864/12556/42132 |2026-10-24 13:22:52.935–13:23:14.502 |60000ms;21567ms;exit0;141/141;no timeout |
+
+Commands: `node node_modules/typescript/bin/tsc --noEmit`, then `node node_modules/vitest/vitest.mjs run test/messaging-convergence-slice1.test.ts --maxWorkers=1 --pool=threads --no-file-parallelism --reporter=verbose --bail=1`. Existing offline dependencies reused. Both launched once, under their own external60000ms check and wrapper bounds. All owned processes exited; no retry or extra selection.
+
+Raw first stdout/stderr headers, matching before/after commit/tree/test identities, runtime/PID/start/end/exit and launcher receipts are retained in `.agent-bridge-test/slice1-round5-tuple`. Node `v26.4.0`, SQLite `3.53.2`, source ID `2026-06-03 19:12:13 d6e03d8c777cfa2d35e3b60d8ec3e0187f3e9f99d8e2ee9cac695fd6fcdf1a24` were observed inside allowed focused PID42132. Compiler wrapper observed Node26 without a separate SQLite launch.
+
+This is141 passes on fd3610e2. Earlier7ab97/97, all historical reds and d983's failed compiler are not relabelled. Cached-absence/repeated-start assertions added after red now pass but remain not separately red-proven. Unsafe malformed-WAL constructors remain intercepted BEFORE real SQLite; symlink lstat is simulated and hardlinks synthetic. No actual unsafe pager loss/recovery or hosted-platform proof is claimed.
+
+### Current closure and exact protected attribution
+
+| Finding | Unchanged d983 correction | Current evidence |
+| --- | --- | --- |
+| P1 ordinary safe-family admission | Common role-neutral selected-family guard at actual ordinary/direct/offline/cache boundaries; differently shaped auxiliaries retain their own schema semantics | Guarded malformed archive/history/supplemental/direct/cached cases and valid/fresh controls passed. Unsafe native attempts simulated, not real WAL pager evidence |
+| P2 continuing reader ownership | Exact callback acquisition per continued election/adoption attempt, bound failed-adopt release and joined owned failure cleanup; no expired serving scope | Actual handover→success with/without sibling, sibling release, own last-reader closure, failure/cancel and serving-after-budget controls passed |
+| P3 protectedBodies attribution | New structured count derived from regenerated bodies; historical stale string and explicit correction retained |13 methods:8 changed/5 unchanged from main; node.start/node.tryBecomeBroker since7ab; zero changes since d983. No pin approval |
+
+The full selected input/opener and reader-lifetime audit is copied verbatim with a labelled continuation note to `slice1-round5-tuple/operation-audit.md`; SHA256 `06f66498d0b00091a93f2d8ca1b611f4ac150b15f6efbe54020462f48c20d19f`. It distinguishes exact ordinary/direct/offline/cache inputs and unaffected general/background paths, retains normal READONLY/default VFS/consistent read transaction/coordination allowance, and makes no general filesystem/native-handle fstat or old-writer revocation claim. No production boundary or policy changed now.
+
+All13 normalized before/after bodies regenerated against main,7ab,bb1f and d983; extra exact reader-method artifacts included. Old round4/round5 artifacts remain unchanged. Patch hashes include the new artifact-directory spelling; actual normalized production bodies remain identical to d983.
+
+- Protected manifest SHA256 `3425ab9175141d4a420f4ad95fcd6fdd31c0802fa581a6351734697c5da5f71f`.
+- Explicit attribution correction `808c189fbd333f75f71be59a6f2f90f1ca9ebe6d3f1df80fd56602a199c64461`.
+- Main normalized patch `91ec598358ea45142fd4688985066d63df1add592396258922234d1cfeba7d88`.
+- Main readable patch `31bee6d58785c61dea171c3dc8badd13110ce5d1a690298069f4b42d3bdf819e`.
+- Reviewed7ab readable patch `2c0aee48af9513a00622e811c12971240430ea8a3003ba45f716346d09f3018c`.
+- Closure `5132ed917032652c3d05300b969b1ef950fc1c2cff6c06fc7ab13ee33db665e7`.
+- Source packet manifest `1f47fa62fe37912bb4d640400f2dae5374e5d6b792953004eeb18032393a7f46`.
+
+`packet-manifest.json` contains the exact freeze, full source inventory and original red/failed/new gate receipts. Final `final-handoff.json` records the final receipt-only commit/tree, public identity/explicit assigned-ref push, complete51-path inventory (48 production, one test, two docs), source/artifact separation, closure/audit/protected packet and NOT RUN. `retained-final-files.json` verifies all3598 previously indexed files unchanged and indexes all old/new evidence and synthetic fixtures, excluding itself and its live generation outputs/receipt. Original files/proofs are retained, with no deletion or reattribution.
+
+NOT RUN: new independent full source/protected review, pin acceptance/baseline amendments, hosted Node24/Windows/Linux/macOS, actual unsafe pager/native/helper/DPAPI/ACL/socket/TLS/provider/daemon/production Worker/lifecycle checks, repository/full suite/build/install/release/installed or live-home migration/restore. Baseline/UI/dashboard/normalizer/retention/flaky/rules, PR141c94/writer/history, design24a650e1 and p12/m7/s15 remain unchanged. No install/PATH/persistent environment/Git config, secret access, agent/Bridge/branch/PR/integration or owner plan/status/handoff/verdict/build change.
+
+This is WIP for the parent's next independent source review. Both renewed gate allowances are spent successfully; no further local test launch is authorized. Parent retains coordination and later-slice/integration decisions.
