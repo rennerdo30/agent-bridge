@@ -545,7 +545,7 @@ export class MessageStore {
         AND (conversation_id = ? OR from_name IN (SELECT value FROM json_each(?)))
         AND (? IS NULL OR created_at >= ?) AND id != ?
         AND conversation_id NOT LIKE '%:note' AND conversation_id NOT LIKE '%:ack'
-        AND conversation_id NOT LIKE 'files-progress-%' ORDER BY created_at, id LIMIT 50`)),
+        AND conversation_id NOT LIKE 'files-progress-%' ${this.frontendOwnership ? `AND ${this.ownershipSql("deliverable_messages")}` : ""} ORDER BY created_at, id LIMIT 50`)),
     };
     log.debug("message store opened", { file });
     this.lifecycleConstruction.construction = "returned"; retainedStoreConstructions.delete(this.lifecycleConstruction);
