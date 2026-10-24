@@ -1324,20 +1324,20 @@ export class Broker {
    */
   private replayMail(conn: Conn, peer: PeerInfo, before?: () => void): void {
     const registration = conn.mailReady && { ...conn.mailReady }, frontend = peer.frontend && { ...peer.frontend }, native = nativeOwner(peer);
-    const current = () => Boolean(registration && registration.namespace === this.store.namespace &&
-      registration.owner === recipientKey(frontend, native) && this.queueReady(conn, peer) && conn.mailGeneration === registration.generation &&
+    const current = () => Boolean(registration && this.queueReady(conn, peer) && registration.namespace === this.store.namespace &&
+      registration.owner === recipientKey(frontend, native) && conn.mailGeneration === registration.generation &&
       peer.id === registration.id && peer.name === registration.name && peer.sessionId === registration.sessionId);
     setImmediate(() => {
-      if (!current()) return;
       try {
+        if (!current()) return;
         before?.();
         if (!current()) return;
         const mail = this.unreadMail(registration!.name, PENDING_MAX_LIMIT, frontend, native);
         if (!current()) return;
         let at = 0;
         const pump = () => {
-          if (!current()) return;
           try {
+          if (!current()) return;
           while (at < mail.length) {
             if (!current()) return;
             const m = mail[at++]!;
