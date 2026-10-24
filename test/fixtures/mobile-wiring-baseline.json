@@ -2,14 +2,14 @@
   "base": "8deb0286773a6b61243caaae237e16227dc2f591",
   "methods": {
     "src/core/broker.ts:constructor": "e7c1745f8b8e42bc9859fb663bfe091b629905bc20a30471711f266df7fbef7b",
-    "src/core/broker.ts:listen": "bd39e0afecb5a74d76161f26d5923f2c1e41da8cc490ed1448a9260b850ce4b0",
-    "src/core/broker.ts:startServices": "07bc9bdb56bea9ae2c5c3f0c89639469f7fa5ccfb0d8e5bc97fc1efbfd93fe2f",
-    "src/core/broker.ts:abortStartup": "6132967fa78fd39cff064a581f4f49bb9c1c75b644fba78b291708c58733118c",
-    "src/core/broker.ts:close": "fb5a92326cac082ae181f38208c0af708a2b342297038d021f67a13bcd8b9b27",
-    "src/core/node.ts:constructor": "0094b2611e538459faa5577274f1a9b2437e7a3c1f6e9361cbe2c02428f0dd07",
-    "src/core/node.ts:start": "c2444cc1c41903a2489d3142952a79d2d562b37cea8bf617ae4db5a2b2e10299",
-    "src/core/node.ts:stop": "b98b5631cf7643be62bce61fac172fc79c0da09db2c7720abf14502736b57359",
-    "src/core/node.ts:tryBecomeBroker": "54662336fe5017d38e0ea9cfd79638255e9f2860c3a7aa0cda2a8c5408dfb5a3",
+    "src/core/broker.ts:listen": "5cd75eaecf77933395633b71b3927e269f35315858b313d58e30c19dd2dfa095",
+    "src/core/broker.ts:startServices": "aa5aae8c1c2505091e4b99a407afcb6768612b7127e51ddee847eb2dc617fd82",
+    "src/core/broker.ts:abortStartup": "1021c04e914baccb05e9b4f995d511a936682da7b3431d398e567d99439693ed",
+    "src/core/broker.ts:close": "cc19f59de9b413c6ab615e39aed09c524618e4aa91fac74f34ae5e2701c1c86d",
+    "src/core/node.ts:constructor": "c67f1d31ca97c17d3c6871b7d88df7428ed9a82da8395ee8b23ffdbb37ca30cd",
+    "src/core/node.ts:start": "0413d31bfe78ec54fbf03e70ba28de133c7778c26816befb9b6c289007fcb2be",
+    "src/core/node.ts:stop": "43183d9fe4bb133d6690fb9095b4e74ed4012d145e3dfa79ef656567012592db",
+    "src/core/node.ts:tryBecomeBroker": "7661e29c25c559bf86d2a6924283531d1f64875432dd9c91133e2cae9b6746d5",
     "src/cli/dashboard.ts:constructor": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
     "src/cli/dashboard.ts:open": "6eacbb835304e2a5d3c303c54c3c674910cbf4f9a5411b3af62a7747fe2d211b",
     "src/cli/dashboard.ts:ensure": "d19ca8a9485ccc07d588997e3497bc11545e730a264e9a6f59bf1ceb0dfcda49",
@@ -17,6 +17,56 @@
   },
   "uiSha256": "f2a5b28254d4bb467f28bdee139e3b23bd9d4bd0c7c15fee116b4ed85a6ac385",
   "updates": {
+    "AB-458-slice1": {
+      "base": "5e3fa8aa17d22d57cb5d24549c16381c5843edeb",
+      "sourceCommit": "fd3610e284a9d0435f319d2e010780cb37c2166b",
+      "sourceTree": "08b2dff5f782aa6bb17fe1dfa44f86355cc0b89b",
+      "manifestSha256": "3425ab9175141d4a420f4ad95fcd6fdd31c0802fa581a6351734697c5da5f71f",
+      "review": "AB-458 independent round6 desk43859; exact parent source/pin approval",
+      "changes": [
+        {
+          "method": "src/core/broker.ts:listen",
+          "previous": "bd39e0afecb5a74d76161f26d5923f2c1e41da8cc490ed1448a9260b850ce4b0",
+          "current": "5cd75eaecf77933395633b71b3927e269f35315858b313d58e30c19dd2dfa095"
+        },
+        {
+          "method": "src/core/broker.ts:startServices",
+          "previous": "07bc9bdb56bea9ae2c5c3f0c89639469f7fa5ccfb0d8e5bc97fc1efbfd93fe2f",
+          "current": "aa5aae8c1c2505091e4b99a407afcb6768612b7127e51ddee847eb2dc617fd82"
+        },
+        {
+          "method": "src/core/broker.ts:abortStartup",
+          "previous": "6132967fa78fd39cff064a581f4f49bb9c1c75b644fba78b291708c58733118c",
+          "current": "1021c04e914baccb05e9b4f995d511a936682da7b3431d398e567d99439693ed"
+        },
+        {
+          "method": "src/core/broker.ts:close",
+          "previous": "fb5a92326cac082ae181f38208c0af708a2b342297038d021f67a13bcd8b9b27",
+          "current": "cc19f59de9b413c6ab615e39aed09c524618e4aa91fac74f34ae5e2701c1c86d"
+        },
+        {
+          "method": "src/core/node.ts:constructor",
+          "previous": "0094b2611e538459faa5577274f1a9b2437e7a3c1f6e9361cbe2c02428f0dd07",
+          "current": "c67f1d31ca97c17d3c6871b7d88df7428ed9a82da8395ee8b23ffdbb37ca30cd"
+        },
+        {
+          "method": "src/core/node.ts:start",
+          "previous": "c2444cc1c41903a2489d3142952a79d2d562b37cea8bf617ae4db5a2b2e10299",
+          "current": "0413d31bfe78ec54fbf03e70ba28de133c7778c26816befb9b6c289007fcb2be"
+        },
+        {
+          "method": "src/core/node.ts:stop",
+          "previous": "b98b5631cf7643be62bce61fac172fc79c0da09db2c7720abf14502736b57359",
+          "current": "43183d9fe4bb133d6690fb9095b4e74ed4012d145e3dfa79ef656567012592db"
+        },
+        {
+          "method": "src/core/node.ts:tryBecomeBroker",
+          "previous": "54662336fe5017d38e0ea9cfd79638255e9f2860c3a7aa0cda2a8c5408dfb5a3",
+          "current": "7661e29c25c559bf86d2a6924283531d1f64875432dd9c91133e2cae9b6746d5"
+        }
+      ],
+      "reason": "AB458 slice1: original startup-budget/effect and owned cleanup closure, required recovery before activation and lifetime-owned optional maintenance; continuing election/adoption metadata-reader ownership. Parent inspected the complete exact normalized M-to-source patch and these eight hashes. Other five method hashes, historical top base/UI hash, all prior update records, actual UI/dashboard, normalizer and assertions remain unchanged. Source/pin qualification only; not runtime, merge, install or release acceptance."
+    },
     "AB-428": {
       "base": "42ac9a2b8018fe9abe5adac196b4a770e54290a0",
       "sourceCommit": "82b5730c76edc587e69b693b9325d2ac94a85fc6",
