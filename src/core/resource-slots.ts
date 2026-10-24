@@ -32,7 +32,7 @@ export class ResourceSlots {
     mkdirSync(home, { recursive: true });
     let owned:DatabaseSync|undefined;
     try {
-    const left=storageAdmissionRemaining();this.db=owned=new DatabaseSync(join(home,SLOT_DB_NAME),left===undefined?undefined:{timeout:storageAdmissionTimeout(LOCK_WAIT_MS)});
+    const left=storageAdmissionRemaining();this.db=owned=left===undefined?new DatabaseSync(join(home,SLOT_DB_NAME)):new DatabaseSync(join(home,SLOT_DB_NAME),{timeout:storageAdmissionTimeout(LOCK_WAIT_MS)});
     configureSqlite(this.db);
     admissionSqliteBusy(this.db,LOCK_WAIT_MS,true);storageAdmissionRemaining();
     this.db.exec(`

@@ -21,7 +21,7 @@ export class RootConcurrency {
     this.slots = new ResourceSlots(home);
     let owned:DatabaseSync|undefined;
     try {
-      const left=storageAdmissionRemaining();this.db=owned=new DatabaseSync(join(home,ROOT_LIMIT_DB),left===undefined?undefined:{timeout:storageAdmissionTimeout(LOCK_WAIT_MS)});
+      const left=storageAdmissionRemaining();this.db=owned=left===undefined?new DatabaseSync(join(home,ROOT_LIMIT_DB)):new DatabaseSync(join(home,ROOT_LIMIT_DB),{timeout:storageAdmissionTimeout(LOCK_WAIT_MS)});
       configureSqlite(this.db);admissionSqliteBusy(this.db,LOCK_WAIT_MS,true);
       storageAdmissionRemaining();this.db.exec('CREATE TABLE IF NOT EXISTS root_limits (root TEXT PRIMARY KEY, capacity INTEGER NOT NULL);');storageAdmissionRemaining();
     }catch(error){try{owned?.close();}finally{this.slots.close();}throw error;}
