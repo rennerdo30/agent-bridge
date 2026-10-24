@@ -1,4 +1,4 @@
-> Latest: the parent-approved two-expression constructor correction is frozen at `d643c4b7d494d8107e0a03686a36e1b6d5d24afc`. One noEmit and the five failed-plus-unaccepted cases passed;77 previous cases were excluded and retain their attribution to515bce87. The complete closure/audit/protected packet is ready for the parent's new independent source review. This is a slice1 WIP/source-review candidate, not protected-baseline approval, hosted Node24/platform acceptance, integration or product completion. The original515bce87 red source and ad639653 receipt remain unchanged.
+> Latest: round-three correction source is frozen at `7e50adb0482d783a6057d7658e835d5426b3668e`, tree `5af2e6a555109bc8be12965f4f93215b93c44a6c`. NoEmit and the complete guarded slice1 file90/90 passed once on that freeze. Eight meaningful counterexamples remain RED against unchanged553cd863 production. The three-finding closure and exact regenerated13-method packet await a new parent independent source review. No baseline approval, hosted Node24/platform acceptance, integration or product completion is claimed; all prior freezes/qualifications remain retained.
 
 # AB-458 convergence slice1 WIP receipt
 
@@ -953,3 +953,60 @@ Static packaging used PID64584/shell46424,11:42:49.213–11:42:50.955 JST,extern
 Routing notice only: parent reported an automatic project-main change to this child at02:39UTC. The injected Bridge event `075c78e5-cc50-40bf-bed6-c086fa5faa92`, sent02:39:58.094UTC, reports routing changed **back from this child to codex-claude-codex-comm**. Automatic-registration causation is not established. `routing-notice.json` retains the source event; no Bridge call, coordinator-role assumption, routing edit or main handoff was performed. Parent retains coordination/owner communication.
 
 **Next:** parent performs a new independent review of the complete slice1 pipeline and protected13-method packet. Same candidate is retained for later slices. No PR/integration, owner verdict/status/build/handoff, pin amendment, release, installed/live-home migration, dependency/cache change or later-slice work was performed. Original PR141c94 and its writer remain untouched.
+
+## Round-three FIX FIRST: caller ownership, owned rollback and WAL completion proof
+
+Parent's full review of `553cd86344e95976271cc9f5360253e11189619e` required two P1s and one P2 in one correction batch. This section records that batch, not acceptance of the full pipeline. Original main `5e3fa8aa17d22d57cb5d24549c16381c5843edeb`, design24a650e1, p12/m7/s15, pairing1/JSON4/runner-ledger-v2 and the assigned candidate checkout/branch remain unchanged. No new module, architecture, helper, dependency, product default, rule edit, baseline amendment, PR or integration.
+
+### Audit, freezes and exact scope
+
+Before regression edits/testing, the exact caller/store/recovery/proof ownership table was recorded under `.agent-bridge-test/slice1-round3/operation-audit.md`. It distinguishes ordinary effects, required recovery, cancellation, owned cleanup and unknown native settlement. It retains the old full startup audit by reference. Its implementation clarification was appended after the red run and is explicitly labelled; `operation-audit-before-tests.md` preserves the initial table separately. Complete audit SHA256 `3f9c28d83040e9e2e0ef7fb9abacef65d7fec0ce319b9ac74f10da09a8b6a8b1`.
+
+Intentional red test-only freeze: `80349ded2218fbc96b8d5aee6baedd743621f928`, tree `8c761787b00ef872b4de1e67139ad4e4bd03a260`; its `src` tree is byte-identical to553cd863 (`b46db63834ce65430a3dd16c841a881ffaaaa107`). Red test SHA256 `385b95027b0bfc793b7975f0ad54cd4840bf6d06a4671c1e560cd1ea2c2f741d`. One anchored run of `round3:*` plus the strengthened existing real-route-recovery case produced **8 failed/81 skipped (89)**. All eight reached intended assertions, without fixture failure: four activated node/daemon caller variants observed zero broker.close calls, two actual recovery schedules left open transactions, unknown COMMIT lacked unknown status, and WAL-only alternate tamper incorrectly returned applied=true. The original main-hash/marker/namespace fixture assertions passed before the unexpected resume success. The red freeze/logs remain unchanged.
+
+Corrected source freeze: `7e50adb0482d783a6057d7658e835d5426b3668e`, tree `5af2e6a555109bc8be12965f4f93215b93c44a6c`, source directory tree `bbfcf5d15916898016e369152949d55a75162012`. Test SHA256 `a855470208bb4393756f6021358d4fead869e9a22bf3b52ad4995ee5261b2d45`. Exactly six existing production files changed: broker-daemon.ts, broker.ts, metadata-db.ts, node.ts, sqlite-policy.ts and store.ts, plus the focused test. sqlite-policy.ts is the already-audited recovery retry callee: its narrow startup path preserves STORE_COMMIT_UNKNOWN before a deadline check could replace it; ordinary no-budget retry policy is unchanged. No new callee/module expansion occurred. The late unknown-COMMIT test variant was added with corrected source; it is not separately red-proven.
+
+The source/test freeze remains unchanged after checks. This appended receipt is the sole later tracked artifact change. `packet-manifest.json` lists the complete45 cumulative paths from main and exact batch paths from553cd863; `source-test.patch`, `production-only.patch` and `source-from-M.patch` retain exact deltas. Full source/test patch SHA256 `64824f30b976edeeb6bfa6a028b8f3df17e12bc8529c03dec7d2ffb5c7dd3107`.
+
+### Three-finding closure table
+
+| Finding | Correction in frozen source | Corrected guarded evidence | Qualification |
+| --- | --- | --- | --- |
+| P1 post-activation expiry leaves an unowned broker | Embedded caller retains the returned Broker through setup/listen/final check and transfers only on success; rejected/stopped attempts close it once, while constructor failure directly closes the caller-owned store. Daemon always joins retained Broker teardown regardless of listening flag and avoids duplicate store.close. Broker.close revokes pipe/network authority and queued maintenance before its first await | Both actual callers run actual listen/activation under fake Linux/network and Windows/TCP adapters; all four expiry variants pass, observing one broker close, one store close, revoked ingress, closed/null listeners/network, cancelled optional start and settled fake timers | No entire startup caller was mocked. Native transport/helper/Worker execution remains forbidden; complete source cleanup/unknown-settlement review remains pending |
+| P1 generic admission refuses owned ROLLBACK | ReturnNativeChild captures its own returned BEGIN inside the cleanup region before a late post-check. Only that captured still-active transaction can directly roll back after expiry; operational SQL/COMMIT still use admission. Successful late COMMIT data stays retained; throwing native COMMIT is reported unknown and never automatically retried | Strengthened actual recovery asserts isTransaction=false, exact original route/message rows, restored busy timeout and another connection acquiring BEGIN IMMEDIATE. Late BEGIN cleanup and normal/late unknown-COMMIT cases also pass; unknown cases observe one COMMIT/no rollback | No arbitrary SQL-string whitelist/global cancellation bypass; no rollback of foreign/nested transaction, no claim of undoing committed native work |
+| P2 raw-main equality bypasses alternate completion proof | Offline classifier always inspects the committed SQLite view in one inspectMailbox read transaction. Current s15 completion requires exact snapshot/marker/attempt/namespace/logical digest proof irrespective of raw-main hash. Unfinished copies require original raw and logical snapshot view; the already-ready return also validates completion | Interrupted candidate has unchanged raw main, retained nonempty WAL, changed committed row and unchanged ready marker/attempt/namespace. Resume now refuses on completion proof and preserves source/snapshot/main/WAL hashes. Existing valid two-alternate resume/no-repeat spy and tamper negative pass | Existing offline migration context only; no startup-wide hashing. The already-ready source path is covered by the correction but no separate ready-tamper runtime result is claimed |
+
+Closure SHA256 `385a5739952f4ea680fcfbb8abeee4e4562ff102d564835f6f9c79b61eec4d08`. There is no new unresolved policy/architecture fork. These are stated mocked/synthetic counterexample results, not source-review approval or installed/native acceptance.
+
+### One-shot checks and runtime receipts
+
+| Check | Own wrapper/shell/check PID | JST start–end | External deadline/result |
+| --- | --- | --- | --- |
+| Intentional unchanged-production red |51092/58480/32120 |2026-10-24 12:02:27.130–12:02:30.473 |60000ms;3343ms;exit1;no timeout |
+| noEmit |18512/65112/61012 |2026-10-24 12:05:32.406–12:05:33.686 |60000ms;1280ms;exit0;no timeout |
+| Complete guarded slice1 file |47560/26668/54632 |2026-10-24 12:05:40.523–12:05:51.749 |60000ms;11226ms;exit0;no timeout |
+
+Exact raw first headers retain commit/tree/test SHA256, PIDs, UTC start,60000ms external deadline and argv. Both corrected receipts record identical before/after freeze/tree/test hashes. The complete file ran once with `--maxWorkers=1 --pool=threads --no-file-parallelism --reporter=verbose --bail=1`: **90/90 passed, no skipped cases**. This is the expressly authorized guarded slice1 file, not a repository/full/lifecycle suite. Both corrected allowances are consumed; no retry occurred and all owned check processes exited.
+
+All prior82 cases, including the now-strengthened real recovery case, pass on this same corrected source. The prior seven corrections and round-two history/network/Muse/slot/activation cases remain required and pass. `passed-test-names.json` records all90 names; `prior-negative-status.json` preserves the separate historical qualifications. Older19/1,37/1,journal/import/inventory/red-review failures,515b77/1/4 andd643five-case results remain attributed to their original freezes, not relabelled by this result. The alternate no-replay spy stays active through resume.
+
+Actual versions inside allowed corrected process54632 (and separately inside allowed red32120): Node `v26.4.0`, SQLite `3.53.2`, source ID `2026-06-03 19:12:13 d6e03d8c777cfa2d35e3b60d8ec3e0187f3e9f99d8e2ee9cac695fd6fcdf1a24`. No separate runtime/probe launch, installation or PATH change. Hosted Node24/Windows/Linux/macOS remains mandatory and NOT RUN. No actual helper/DPAPI/ACL/socket/TLS/discovery/provider/daemon/production Worker/runner was launched; guarded fake adapters and synthetic SQLite temp data only.
+
+Red commit Git76684/shell66796,12:02:22.691–12:02:22.820 JST; corrected source commit Git34300/shell68956,12:05:26.124–12:05:26.273 JST. Both external60000ms,exit0. Later static packet PID12896/shell12148,12:07:36.546–12:07:37.801 JST,external10000ms,exit0. Final receipt-only commit/push PIDs/times/exit and final commit/tree follow in the artifact receipts; source/test attribution remains7e50adb0.
+
+### Exact protected packet, retained evidence and next gate
+
+All13 normalized before/after bodies were regenerated with the unchanged actual normalizer against original main, reviewed553cd863 and round-two bb1f. Two bodies change in this batch: **broker.close and node.tryBecomeBroker**. Cumulative main remains7 changed/6 unchanged; bb1f remains five proposed deltas. All baseline/UI/normalizer/retention/flaky bytes are unchanged; no baseline amendment or protected pin run. Artifact attribution is not protected-gate approval.
+
+Artifact root: `E:/AgentData/claude-codex-comm/t3-6416720d/.agent-bridge-test/slice1-round3`.
+
+- Protected manifest SHA256 `64921d6eb905c1bd15d4bf751339b9891f34464c3e4b0b824e1aebe9c6c50353`.
+- Normalized JSON main-to-source patch SHA256 `d7b1487b3bf646252dc8714468867cedb7661e9d2e0d58bdec5eabca340f7ebb`.
+- Main-to-source readable method patch SHA256 `87a788fc61a0750d6cca1543521280c93d469666048aeb9232780bbdfce0ad49`.
+- Reviewed553cd863-to-source readable method patch SHA256 `7dcadce1e35980cb9de8af84ead4222fcb1207ffbf966458dc1b9dc0f373ebdf`.
+- bb1f-to-source readable method patch SHA256 `a721676ef978667c20a1093688e62f6ae20d8f3a4edc9b666d34387980b1b808`.
+- Source packet manifest SHA256 `2ffa349bc515c38fdaef74fb6c34558374fa68beee057a86f011f00f1beb0593`.
+
+All original source/artifact freezes and raw/synthetic evidence are retained in this assigned checkout. Final retained-file inventory additionally compares every entry in the preceding1727-file inventory for unchanged retention; its result/hash and the final source/artifact separation are reported in `final-handoff.json` and inventory receipts after the explicit assigned-ref WIP push. No owner-home data or foreign process was touched.
+
+**Next:** parent performs another independent complete-pipeline source review and protected-delta gate. Hosted Node24/platform and native acceptance remain separate. Same worktree/branch is retained for later slices; no later slice, PR/integration, release, build/install, installed/live-home migration, restore, main-role handoff, Bridge call, agent, environment/Git configuration, force/reset or rule edit occurred. PR141c94 and its original writer remain untouched.
