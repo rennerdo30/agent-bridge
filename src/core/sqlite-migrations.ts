@@ -63,7 +63,7 @@ function metadataSnapshot(db: DatabaseSync, path: string, tables: string[], vers
 }
 
 /** Every change is versioned. Keep the writer lock through recovery from the pre-migration backup. */
-export function migrateSqlite(db: DatabaseSync, file: string, existed: boolean, target: number, migrations: readonly SqliteMigration[], log: Logger): void {
+export function migrateSqlite(db: DatabaseSync, file: string, existed: boolean, target: number, migrations: readonly SqliteMigration[], log: Logger, beforeCommit?: () => void): void {
   // Already current: nothing to migrate, so never block the event loop on another process's migration lock (AB-223).
   admissionSqliteBusy(db, SQLITE_BUSY_TIMEOUT_MS);
   if (Number(db.prepare("PRAGMA user_version").get()!.user_version) === target) return;
@@ -72,17 +72,17 @@ export function migrateSqlite(db: DatabaseSync, file: string, existed: boolean, 
   if (storageAdmissionRemaining() !== undefined && file !== ':memory:') {
     const home = dirname(file);
     assertCompatibleMailboxReaders(home);
-    if (hasMaintenanceExclusion(home)) { migrateLocked(db,file,existed,target,migrations,log); return; }
+    if (hasMaintenanceExclusion(home)) { migrateLocked(db,file,existed,target,migrations,log,beforeCommit); return; }
     const release = maintenanceLock(home,true,true);
-    try { withMaintenanceExclusion(release, () => storageAdmissionRemaining()!, () => migrateLocked(db,file,existed,target,migrations,log)); }
+    try { withMaintenanceExclusion(release, () => storageAdmissionRemaining()!, () => migrateLocked(db,file,existed,target,migrations,log,beforeCommit)); }
     finally { release(); }
     return;
   }
   const release = migrationLock(file);
-  try { migrateLocked(db, file, existed, target, migrations, log); } finally { release(); }
+  try { migrateLocked(db, file, existed, target, migrations, log,beforeCommit); } finally { release(); }
 }
 
-function migrateLocked(db: DatabaseSync, file: string, existed: boolean, target: number, migrations: readonly SqliteMigration[], log: Logger): void {
+function migrateLocked(db: DatabaseSync, file: string, existed: boolean, target: number, migrations: readonly SqliteMigration[], log: Logger, beforeCommit?: () => void): void {
   storageAdmissionRemaining();
   admissionSqliteBusy(db, SQLITE_BUSY_TIMEOUT_MS);
   const version = Number(db.prepare("PRAGMA user_version").get()!.user_version);
@@ -140,6 +140,7 @@ function migrateLocked(db: DatabaseSync, file: string, existed: boolean, target:
       storageAdmissionRemaining(); db.exec(migration.sql); storageAdmissionRemaining();
     }
     if (Number(db.prepare("PRAGMA user_version").get()!.user_version) !== target) throw new Error("migration did not reach expected schema version");
+    storageAdmissionRemaining(); beforeCommit?.(); storageAdmissionRemaining();
     storageAdmissionRemaining();
     db.exec("RELEASE schema_migration");
     storageAdmissionRemaining(); committing = true; db.exec("COMMIT"); transaction = false; committing = false;

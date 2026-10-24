@@ -27,15 +27,17 @@ export function isSqliteBusy(err: unknown): boolean {
 }
 
 /** Retry a single atomic/idempotent storage step, yielding so peers and pings remain responsive. */
-export async function retrySqlite<T>(operation: () => T, timeoutMs = 8_000, signal?: AbortSignal): Promise<T> {
+export async function retrySqlite<T>(operation: () => T, timeoutMs = 8_000, signal?: AbortSignal, remaining?: () => number): Promise<T> {
   const deadline = Date.now() + timeoutMs;
   let attempt = 0;
   for (;;) {
     signal?.throwIfAborted();
-    try { return operation(); }
+    remaining?.();
+    try { const value = operation(); remaining?.(); return value; }
     catch (err) {
+      remaining?.();
       if (!isSqliteBusy(err) || Date.now() >= deadline) throw err;
-      await delay(Math.min(25 * 2 ** Math.min(attempt++, 4), Math.max(1, deadline - Date.now())), undefined, { signal });
+      await delay(Math.min(25 * 2 ** Math.min(attempt++, 4), Math.max(1, deadline - Date.now()), remaining?.() ?? Infinity), undefined, { signal });
     }
   }
 }

@@ -15,7 +15,10 @@ vi.mock('node:sqlite',async original=> {
   return Reflect.construct(target,args,newTarget);
  }})};
 });
-vi.mock('node:child_process',async original=>({...await original<object>(),spawn:()=>{throw Error('subprocess forbidden in slice1 selection');},execFile:()=>{throw Error('subprocess forbidden');},execFileSync:()=>{throw Error('subprocess forbidden');}}));
+vi.mock('node:child_process',async original=>{
+ const forbidden=()=>{throw Error('subprocess forbidden in slice1 selection');};
+ return {...await original<object>(),spawn:forbidden,spawnSync:forbidden,exec:forbidden,execSync:forbidden,execFile:forbidden,execFileSync:forbidden,fork:forbidden};
+});
 vi.mock('node:worker_threads',async original=>({...await original<object>(),Worker:class {constructor(){throw Error('production Worker forbidden in slice1 selection');}}}));
 vi.mock('../src/core/process-identity.js',async original=>({...await original<object>(),
  processIdentity:(pid:number)=>pid===process.pid ? '638968000000000000' : undefined,

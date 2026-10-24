@@ -912,7 +912,7 @@ export class Broker {
   }
   private async startServices(optional: (what: string, step: () => void) => void, budget?: StartupBudget): Promise<void> {
         budget?.remaining();
-        await this.nativeChildren.recover();
+        await this.nativeChildren.recover(budget);
         if (budget) await this.checkStartupAdmission(budget);
         if (this.jobsPath) void startBrokerJobRunIndex(dirname(this.jobsPath)).catch(error => this.log.warn("job run index preparing", { err: String(error) }));
         if (this.jobsPath && this.store.file !== ":memory:") optional("job archive worker", () => { this.jobArchiveBackground = new JobArchiveBackground(this.jobsPath!, this.log); });

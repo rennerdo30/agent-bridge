@@ -3,6 +3,7 @@ import { isJobSendTarget, DEFAULT_SIBLING_MAX_HOPS, MAX_JOB_SEND_TARGETS } from 
 import type { MessageStore } from "./store.js";
 import { randomUUID } from "node:crypto";
 import { nativeRouteDigest, NATIVE_LIFECYCLE_ROUTE_LIMIT } from "./native-lifecycle-reader.js";
+import type { StartupBudget } from "./startup-budget.js";
 
 export const NATIVE_AGENT_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 export function isNativeChildAddress(address: unknown): boolean { return typeof address === "string" && address.includes("/sub:"); }
@@ -24,8 +25,8 @@ export class NativeChildren {
   constructor(private readonly store: MessageStore) {}
   private parentKey(peer: PeerInfo): string { return JSON.stringify([peer.id, peer.sessionId, peer.name]); }
 
-  recover(): Promise<void> {
-    return this.recovery ??= this.recoverOrphans().then(() => { this.recoverySettled = true; });
+  recover(startup?: StartupBudget): Promise<void> {
+    return this.recovery ??= this.recoverOrphans(startup).then(() => { startup?.remaining(); this.recoverySettled = true; });
   }
   private admitNative(): void { if (this.lifecycleFrozen) throw new BridgeError("bad_request", "Native subagent admission is draining; retry later."); }
   private trackNative<T>(operation: () => Promise<T>): Promise<T> {
@@ -81,9 +82,14 @@ export class NativeChildren {
     const current = await this.observeNativeLifecycle(deadline);
     return !current.blocker && current.generation === observation.generation && current.memoryActive === 0 && current.durableActive === 0 && current.pending === 0;
   }
-  private async recoverOrphans(): Promise<void> {
+  private async recoverOrphans(startup?: StartupBudget): Promise<void> {
     // No connection survived a broker restart. The retained mapping makes orphan recovery exact.
-    for (const route of this.store.nativeChildRoutes()) await this.store.retryWrite(() => this.store.returnNativeChild(route.address, route.parent));
+    startup?.remaining(); const routes = this.store.nativeChildRoutes(); startup?.remaining();
+    for (const route of routes) {
+      startup?.remaining();
+      await this.store.retryWrite(() => this.store.returnNativeChild(route.address, route.parent,startup),startup);
+      startup?.remaining();
+    }
   }
   private parent(peer: PeerInfo): string {
     if (peer.agent !== "claude" || peer.jobAgent || peer.subagent || !peer.sessionId) throw new BridgeError("unauthorized", "Native child addresses require a registered Claude parent session.");

@@ -8,7 +8,7 @@ import { assertCompatibleMailboxReaders, hasMaintenanceExclusion, maintenanceLoc
 import { snapshotMetadataTables } from "./metadata-snapshot.js";
 import { METADATA_COMPONENT_VERSION } from "./store-version.js";
 import { assertCurrentMailboxEnvelope, preflightMessagingHome, offlineMetadataAdmitted, withOfflineMetadataAdmission, inspectMailbox, assertMessagingLayout } from "./mailbox-layout.js";
-import { admissionSqliteBusy, storageAdmissionRemaining, storageAdmissionTimeout } from "./storage-admission.js";
+import { admissionSqliteBusy, storageAdmissionRemaining, storageAdmissionTimeout, withStorageAdmission } from "./storage-admission.js";
 import { assertSqliteAuthority, configureSqlite } from "./sqlite-policy.js";
 import { snapshotDatabase } from "./sqlite-maintenance.js";
 import { ownProcessIdentity } from "./process-identity.js";
@@ -527,27 +527,52 @@ type MigrationInput = { path: string; role: "sqlite" | "evidence" | "wal"; ident
 interface MigrationAttempt {
  id: string; inputId: string; source: string; destination: string;
  inputs: MigrationInput[]; snapshots: Record<string, string>; phase: "copying" | "imported" | "ready";
+ alternates?: Record<string,{snapshot:string;namespace:string;digest:string}>;
 }
+const MIGRATION_DATABASES = ["bridge.db","archive.db","history.db","store-compatibility.db","owner-questions.db"];
 const MIGRATION_DOMAIN = "messaging-migration", MIGRATION_KEY = "candidate-p12-m7-s15";
 const migrationRefusal = (message: string) => Object.assign(new Error(message + "; all originals and interrupted destination retained"), { code: "STORE_MIGRATION_HELD" });
 const privateMigrationName = (name: string) => /(?:^|[-_.])(token|secret|credential|key|cert|config|pairing)(?:$|[-_.])/i.test(name);
 const quoteSql = (name: string) => '"' + name.replaceAll('"','""') + '"';
-function migrationSqliteDigest(file: string): string {
- const db = new DatabaseSync(file,{readOnly:true,timeout:0}), hash = createHash('sha256');
+function migrationDbDigest(db: DatabaseSync): string {
+ const hash = createHash('sha256');
  const encode = (value:unknown) => JSON.stringify(value,(_,item)=>typeof item==='bigint' ? {bigint:String(item)} : item);
- try {
-  db.exec('BEGIN');
+  hash.update(encode(db.prepare('PRAGMA user_version').get()));
   const schema = db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_master ORDER BY type,name LIMIT 513").all();
   if (schema.length>512) throw migrationRefusal('SQLite schema census bound exceeded');
   hash.update(encode(schema));
   for (const table of db.prepare('PRAGMA table_list').all().filter(row=>row.schema==='main' && (row.type==='table' || row.type==='virtual') && !String(row.name).startsWith('sqlite_')).sort((a,b)=>String(a.name).localeCompare(String(b.name)))) {
    const q = quoteSql(String(table.name));
    const columns = db.prepare(`PRAGMA table_xinfo(${q})`).all().filter(row=>row.hidden===0).map(row=>String(row.name));
-   const read = db.prepare(`SELECT * FROM ${q} ORDER BY ${columns.map(quoteSql).join(',')}`); read.setReadBigInts(true);
+   const rowid = table.wr===0 ? ['rowid','_rowid_','oid'].find(name=>!columns.some(column=>column.toLowerCase()===name)) : undefined;
+   const all = rowid ? [rowid,...columns] : columns;
+   const read = db.prepare(`SELECT ${all.map((name,index)=>`${quoteSql(name)} AS ${quoteSql('__digest_'+index)}`).join(',')} FROM ${q} ORDER BY ${all.map(quoteSql).join(',')}`); read.setReadBigInts(true);
    hash.update(String(table.name)); for (const row of read.iterate()) hash.update(encode(row));
   }
+  if (db.prepare("SELECT 1 FROM sqlite_master WHERE name='sqlite_sequence'").get()) {
+   const sequence=db.prepare('SELECT name,seq FROM sqlite_sequence ORDER BY name');sequence.setReadBigInts(true);hash.update(encode(sequence.all()));
+  }
   return hash.digest('hex');
- } finally { db.close(); }
+}
+function migrationSqliteDigest(file: string): string {
+ return inspectMailbox(file,db=>migrationDbDigest(db)) ?? (()=>{throw migrationRefusal('Missing protected SQLite view');})();
+}
+
+/** Resolve declared roles by platform comparison, never by content sniffing. */
+function messagingMigrationMailboxes(home:string, requested:string[]):string[] {
+ if(requested.length>64)throw migrationRefusal('Mailbox inventory bound exceeded');
+ const fold=(name:string)=>process.platform==='win32'?name.toLowerCase():name;
+ const names=readdirSync(home),roles=[...MIGRATION_DATABASES,'token','config.json','broker-tcp.json','.maintenance-lock','.storage-users'];
+ if(process.platform==='win32')for(const name of names)if(roles.some(role=>fold(role)===fold(name)&&role!==name))throw migrationRefusal('Infrastructure case variant has no unique storage role');
+ const result:string[]=[];
+ for(const name of requested){
+  if(!name||basename(name)!==name||/[/\\]/.test(name)||name==='.'||name==='..'||roles.some(role=>fold(role)===fold(name))||privateMigrationName(name)||/-(?:wal|shm|journal)$/i.test(name))throw migrationRefusal('Alternate mailbox collides with infrastructure/private role');
+  const matches=names.filter(actual=>fold(actual)===fold(name));
+  if(matches.length!==1||result.some(actual=>fold(actual)===fold(name)))throw migrationRefusal('Explicit mailbox missing, duplicated or ambiguous');
+  result.push(matches[0]!);
+ }
+ if(process.platform==='win32')for(const name of names)for(const main of [...MIGRATION_DATABASES,...result])for(const suffix of ['-wal','-shm','-journal'])if(fold(name)===fold(main+suffix)&&name!==main+suffix)throw migrationRefusal('SQLite sidecar case variant has no unique storage role');
+ return result;
 }
 
 /** Bounded descriptor hashing; a changed inode/name never supplies the old input's identity. */
@@ -566,7 +591,7 @@ function migrationInput(home: string, path: string, role: MigrationInput["role"]
 }
 function messagingMigrationInventory(home: string, mailboxes: string[]) {
  physicalMetadataPath(home);
- const databases = new Set(["bridge.db","archive.db","history.db","store-compatibility.db","owner-questions.db",...mailboxes]);
+ const databases = new Set([...MIGRATION_DATABASES,...mailboxes]);
  if (mailboxes.length>64) throw migrationRefusal('Mailbox inventory bound exceeded');
  for (const name of mailboxes) if (!name || basename(name) !== name || /[/\\]/.test(name) || name === "." || name === ".." || ['token','config.json','broker-tcp.json','.maintenance-lock','.storage-users'].includes(name) || /-(?:wal|shm)$/.test(name)) throw migrationRefusal("Alternate mailbox name collides with another exact storage role");
  const paths: {path:string;role:MigrationInput['role']}[] = [], retainedUnknown: string[] = [];
@@ -607,11 +632,20 @@ function importMigrationSnapshot(target: DatabaseSync, snapshot: string, beforeC
   const schema = source.prepare("SELECT type,name,sql FROM sqlite_master WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%' ORDER BY type,name").all();
   target.exec('BEGIN IMMEDIATE');
   try {
+   if(tables.some(table=>table.name==='bridge_metadata'&&table.wr===0)) {
+    const owned=target.prepare('SELECT value FROM bridge_metadata WHERE domain=? AND key=?').get(MIGRATION_DOMAIN,MIGRATION_KEY);
+    if(!owned||target.prepare('SELECT count(*) AS n FROM bridge_metadata').get()!.n!==1)throw migrationRefusal('Unproved coordinator metadata ownership');
+    // SQLite computes a source-free signed integer exactly; no JS Number alias.
+    const free=source.prepare(`SELECT -9223372036854775808 AS slot WHERE NOT EXISTS(SELECT 1 FROM bridge_metadata WHERE rowid=-9223372036854775808)
+     UNION ALL SELECT a.rowid+1 AS slot FROM bridge_metadata a WHERE a.rowid<9223372036854775807 AND NOT EXISTS(SELECT 1 FROM bridge_metadata b WHERE b.rowid=a.rowid+1) LIMIT 1`);free.setReadBigInts(true);
+    const slot=free.get()?.slot;if(typeof slot!=='bigint'||source.prepare('SELECT 1 FROM bridge_metadata WHERE rowid=?').get(slot))throw migrationRefusal('No exact metadata rowid allocation');
+    if(target.prepare('UPDATE bridge_metadata SET rowid=? WHERE domain=? AND key=? AND value=?').run(slot,MIGRATION_DOMAIN,MIGRATION_KEY,owned.value!).changes!==1)throw migrationRefusal('Owned metadata relocation CAS failed');
+   }
    for (const table of tables) {
     const name = String(table.name), q = quoteSql(name);
     if (!target.prepare('SELECT 1 FROM sqlite_master WHERE name=?').get(name)) target.exec(String(schema.find(row=>row.name===name)!.sql));
     const columns = source.prepare(`PRAGMA table_xinfo(${q})`).all().filter(row=>row.hidden===0).map(row=>String(row.name));
-    const rowid = table.wr===0 && name!=='bridge_metadata' ? ['rowid','_rowid_','oid'].find(name=>!columns.includes(name)) : undefined;
+    const rowid = table.wr===0 ? ['rowid','_rowid_','oid'].find(name=>!columns.some(column=>column.toLowerCase()===name)) : undefined;
     const all = rowid ? [rowid,...columns] : columns;
     // SQLite may name an implicit rowid result after its INTEGER PRIMARY KEY.
     // Alias every projection uniquely, including real columns named like aliases.
@@ -626,7 +660,8 @@ function importMigrationSnapshot(target: DatabaseSync, snapshot: string, beforeC
     } else if (entry.type!=='table') target.exec(String(entry.sql));
    }
    if (source.prepare("SELECT 1 FROM sqlite_master WHERE name='sqlite_sequence'").get()) {
-    for (const row of source.prepare('SELECT name,seq FROM sqlite_sequence').all()) {
+    const sequence=source.prepare('SELECT name,seq FROM sqlite_sequence');sequence.setReadBigInts(true);
+    for (const row of sequence.all()) {
      if (!target.prepare('UPDATE sqlite_sequence SET seq=? WHERE name=?').run(row.seq!,row.name!).changes) target.prepare('INSERT INTO sqlite_sequence(name,seq) VALUES (?,?)').run(row.name!,row.seq!);
     }
    }
@@ -647,11 +682,17 @@ export async function migrateMessagingHome(options: MessagingMigrationOptions) {
  const key = (home:string) => process.platform==='win32' ? home.replace(/^[de]:/i,'E:').toLowerCase() : home;
  if (key(source)===key(destination) || key(destination).startsWith(key(source)+sep) || key(source).startsWith(key(destination)+sep)) throw migrationRefusal('Source and destination must be distinct nonnested homes');
  physicalMetadataPath(source); physicalMetadataPath(destination);
- const inventory = messagingMigrationInventory(source,options.mailboxes??[]);
+ const mailboxes = messagingMigrationMailboxes(source,options.mailboxes??[]);
+ const inventory = messagingMigrationInventory(source,mailboxes);
  const inputId = createHash('sha256').update(JSON.stringify({source:key(source),inputs:inventory.inputs,unknown:inventory.retainedUnknown})).digest('hex');
+ // Every known selected family, including absent mains with retained sidecars,
+ // is structurally inspected before any destination or snapshot construction.
+ for(const name of MIGRATION_DATABASES.slice(1))inspectMailbox(join(source,name),db=>{
+  db.prepare('PRAGMA user_version').get();db.prepare('SELECT type,name FROM sqlite_master LIMIT 513').all();
+ });
  // The original shipping schema is inspected before destination/backup effects.
  withOfflineMetadataAdmission({kind:'offline-isolated',home:source},()=>preflightMessagingHome(source));
- for (const mailbox of options.mailboxes??[]) withOfflineMetadataAdmission({kind:'offline-isolated',home:source},()=>preflightMessagingHome(source,join(source,mailbox)));
+ for (const mailbox of mailboxes) withOfflineMetadataAdmission({kind:'offline-isolated',home:source},()=>preflightMessagingHome(source,join(source,mailbox)));
  const inputVersion=inspectMailbox(join(source,'bridge.db'),inputDb=> {
   withOfflineMetadataAdmission({kind:'offline-isolated',home:source},()=>assertMessagingLayout(inputDb,join(source,'bridge.db')));
   const version = Number(inputDb.prepare('PRAGMA user_version').get()!.user_version);
@@ -660,6 +701,14 @@ export async function migrateMessagingHome(options: MessagingMigrationOptions) {
  });
  if (inputVersion===undefined) throw migrationRefusal('Missing shipping input database');
  const plan = {source,destination,inputId,inputs:inventory.inputs,retainedUnknown:inventory.retainedUnknown,originalsRetained:true,applied:false};
+ const guardSource = () => {
+  options.signal?.throwIfAborted();
+  if(JSON.stringify(messagingMigrationInventory(source,mailboxes))!==JSON.stringify(inventory))throw migrationRefusal('Source changed after planning');
+  options.signal?.throwIfAborted();
+ };
+ const validateAlternateProofs = (attempt:MigrationAttempt) => {
+  if(attempt.alternates && (typeof attempt.alternates!=='object'||Array.isArray(attempt.alternates)||Object.entries(attempt.alternates).some(([path,proof])=>!mailboxes.includes(path)||!proof||typeof proof!=='object'||proof.snapshot!==attempt.snapshots[path]||!/^[a-f0-9]{64}$/.test(proof.namespace)||!/^[a-f0-9]{64}$/.test(proof.digest))))throw migrationRefusal('Invalid alternate completion proof');
+ };
  if (!options.apply) return plan;
  if (options.offlineIsolated!==true) throw migrationRefusal('Apply requires explicit coordinated shutdown and offline-isolated attestation');
  options.signal?.throwIfAborted();
@@ -670,7 +719,7 @@ export async function migrateMessagingHome(options: MessagingMigrationOptions) {
  let coordinator: DatabaseSync | undefined;
  try {
   releases.push(maintenanceLock(source,false,true));
-  if (JSON.stringify(messagingMigrationInventory(source,options.mailboxes??[]))!==JSON.stringify(inventory)) throw migrationRefusal('Source changed after planning');
+  guardSource();
   mkdirSync(destination,{recursive:true,mode:0o700});
   releases.push(maintenanceLock(destination,false,true));
   const {guardPriorEndpoints} = await import('./prior-endpoints.js');
@@ -681,6 +730,7 @@ export async function migrateMessagingHome(options: MessagingMigrationOptions) {
    finally { budget.close(); }
   };
   await checkEndpoints();
+  guardSource();
   const file = join(destination,'bridge.db'), existed = existsSync(file);
   if (!existed && readdirSync(destination).some(name=>name!=='.maintenance-lock' && name!=='.storage-users')) throw migrationRefusal('Destination is not isolated and empty');
   if (existed) {
@@ -688,6 +738,7 @@ export async function migrateMessagingHome(options: MessagingMigrationOptions) {
     const prior = inspect.prepare('SELECT value FROM bridge_metadata WHERE domain=? AND key=?').get(MIGRATION_DOMAIN,MIGRATION_KEY);
     const attempt = prior && JSON.parse(String(prior.value)) as MigrationAttempt | undefined;
     if (!attempt || attempt.inputId!==inputId || attempt.source!==source || attempt.destination!==destination || !/^[a-f0-9-]{36}$/.test(attempt.id) || !['copying','imported','ready'].includes(attempt.phase) || JSON.stringify(attempt.inputs)!==JSON.stringify(inventory.inputs) || !attempt.snapshots || typeof attempt.snapshots!=='object' || Array.isArray(attempt.snapshots) || Object.entries(attempt.snapshots).some(([path,hash])=>!inventory.inputs.some(input=>input.path===path && input.role!=='wal') || !/^[a-f0-9]{64}$/.test(hash))) throw migrationRefusal('Existing destination has no matching immutable attempt');
+    validateAlternateProofs(attempt);
     withOfflineMetadataAdmission({kind:'offline-isolated',home:destination},()=>assertMessagingLayout(inspect,file));
     return true;
    });
@@ -706,29 +757,29 @@ export async function migrateMessagingHome(options: MessagingMigrationOptions) {
    coordinator.prepare('INSERT INTO bridge_metadata VALUES (?,?,?,?)').run(MIGRATION_DOMAIN,MIGRATION_KEY,JSON.stringify(attempt),Date.now());
   }
   const save = (previous:string) => {
+   guardSource();
    if (coordinator!.prepare('UPDATE bridge_metadata SET value=?,updated_at=? WHERE domain=? AND key=? AND value=?').run(JSON.stringify(attempt),Date.now(),MIGRATION_DOMAIN,MIGRATION_KEY,previous).changes!==1) throw migrationRefusal('Migration attempt CAS failed');
   };
   const snapshots = join(destination,'.migration-snapshots',`messaging-${attempt.id}`);
   mkdirSync(snapshots,{recursive:true,mode:0o700});
   for (const input of attempt.inputs.filter(input=>input.role!=='wal')) {
-   options.signal?.throwIfAborted();
+   guardSource();
    const snapshot = join(snapshots,input.path); physicalMetadataPath(snapshot); mkdirSync(dirname(snapshot),{recursive:true,mode:0o700});
    if (!existsSync(snapshot)) {
-    if (input.role==='sqlite') snapshotDatabase(join(source,input.path),snapshot);
+    if (input.role==='sqlite') inspectMailbox(join(source,input.path),()=>snapshotDatabase(join(source,input.path),snapshot));
     else copyFileSync(join(source,input.path),snapshot,fsConstants.COPYFILE_EXCL);
    }
    const captured = migrationInput(snapshots,input.path,'evidence');
    if (input.role==='evidence' && captured.sha256!==input.sha256 || attempt.snapshots[input.path] && attempt.snapshots[input.path]!==captured.sha256) throw migrationRefusal('Protected snapshot changed');
    if (input.role==='sqlite') {
-    const check = new DatabaseSync(snapshot,{readOnly:true,timeout:0});
-    try { if (check.prepare('PRAGMA quick_check').all().some(row=>row.quick_check!=='ok')) throw migrationRefusal('Incomplete protected snapshot'); } finally { check.close(); }
+    inspectMailbox(snapshot,check=>{if(check.prepare('PRAGMA quick_check').all().some(row=>row.quick_check!=='ok'))throw migrationRefusal('Incomplete protected snapshot');});
     if (!attempt.snapshots[input.path] && migrationSqliteDigest(join(source,input.path))!==migrationSqliteDigest(snapshot)) throw migrationRefusal('Snapshot does not preserve exact source view');
    }
    const previous = JSON.stringify(attempt); attempt.snapshots[input.path]=captured.sha256; save(previous);
   }
   if (attempt.phase==='ready') {
    preflightMessagingHome(destination);
-   for (const mailbox of options.mailboxes??[]) preflightMessagingHome(destination,join(destination,mailbox));
+   for (const mailbox of mailboxes) preflightMessagingHome(destination,join(destination,mailbox));
    return {...plan,attemptId:attempt.id,applied:true};
   }
   if (attempt.phase==='copying') {
@@ -743,42 +794,68 @@ export async function migrateMessagingHome(options: MessagingMigrationOptions) {
     const previous = JSON.stringify(attempt); attempt.phase='imported'; save(previous);
    });
   }
+  const completedAlternates = new Set<string>();
   for (const input of attempt.inputs.filter(input=>input.role!=='wal' && input.path!=='bridge.db')) {
+   guardSource();
    const target = join(destination,input.path), snapshot = join(snapshots,input.path);
    mkdirSync(dirname(target),{recursive:true,mode:0o700}); physicalMetadataPath(target);
    if (!existsSync(target)) copyFileSync(snapshot,target,fsConstants.COPYFILE_EXCL);
-   if (migrationInput(destination,input.path,'evidence').sha256!==attempt.snapshots[input.path]) throw migrationRefusal('Destination copy does not match retained snapshot');
+   if (migrationInput(destination,input.path,'evidence').sha256!==attempt.snapshots[input.path]) {
+    const proof=attempt.alternates?.[input.path];
+    if(!mailboxes.includes(input.path)||!proof||proof.snapshot!==attempt.snapshots[input.path])throw migrationRefusal('Destination copy does not match retained snapshot');
+    const accepted=inspectMailbox(target,db=>{
+     assertCurrentMailboxEnvelope(db);
+     const marker=db.prepare('SELECT state,attempt FROM messaging_candidate WHERE id=1').get();
+     return Number(db.prepare('PRAGMA user_version').get()!.user_version)===15&&marker?.state==='ready'&&marker.attempt===attempt.id&&db.prepare('SELECT namespace FROM mailbox_store WHERE id=1').get()?.namespace===proof.namespace&&migrationDbDigest(db)===proof.digest;
+    });
+    if(!accepted)throw migrationRefusal('Alternate completion proof does not match retained candidate');
+    completedAlternates.add(input.path);
+   }
   }
   options.signal?.throwIfAborted();
-  if (JSON.stringify(messagingMigrationInventory(source,options.mailboxes??[]))!==JSON.stringify(inventory)) throw migrationRefusal('Source changed during migration');
+  guardSource();
   await checkEndpoints();
   const {migrateMessageSchema} = await import('./store.js');
-  withOfflineMetadataAdmission({kind:'offline-isolated',home:destination},()=>withMaintenanceExclusion(releases[1]!,()=>1,()=> {
-   for (const input of attempt.inputs.filter(input=>input.role==='sqlite' && (input.path==='bridge.db' || options.mailboxes?.includes(input.path)))) {
+  // No await remains between this exact original-input recheck and activation.
+  guardSource();
+  withOfflineMetadataAdmission({kind:'offline-isolated',home:destination},()=>withMaintenanceExclusion(releases[1]!,guardSource,()=>withStorageAdmission(()=>{guardSource();return Infinity;},()=> {
+   for (const input of attempt.inputs.filter(input=>input.role==='sqlite' && (input.path==='bridge.db' || mailboxes.includes(input.path)))) {
+    guardSource();if(completedAlternates.has(input.path))continue;
     const db = input.path==='bridge.db' ? coordinator! : new DatabaseSync(join(destination,input.path),{timeout:0});
     try {
-     configureSqlite(db); migrateMessageSchema(db,join(destination,input.path),true,nullLogger);
-     if (db!==coordinator) {
-      assertCurrentMailboxEnvelope(db);
-      if (db.prepare("UPDATE messaging_candidate SET state='ready',attempt=? WHERE id=1 AND contract='p12/m7/s15' AND attempt IN ('',?)").run(attempt.id,attempt.id).changes!==1) throw migrationRefusal('Alternate mailbox ready CAS failed');
-     }
+     configureSqlite(db); migrateMessageSchema(db,join(destination,input.path),true,nullLogger,()=>{
+      guardSource();
+      if(db!==coordinator){
+       assertCurrentMailboxEnvelope(db);
+       if(db.prepare("UPDATE messaging_candidate SET state='ready',attempt=? WHERE id=1 AND contract='p12/m7/s15' AND attempt IN ('',?)").run(attempt.id,attempt.id).changes!==1)throw migrationRefusal('Alternate mailbox ready CAS failed');
+       const namespace=db.prepare('SELECT namespace FROM mailbox_store WHERE id=1').get()!.namespace;
+       if(typeof namespace!=='string'||!/^[a-f0-9]{64}$/.test(namespace))throw migrationRefusal('Alternate namespace missing');
+       // Expected proof is committed first in the coordinator. The alternate
+       // COMMIT is separate and may be unknown; resume must verify BOTH sides.
+       const previous=JSON.stringify(attempt);(attempt.alternates??={})[input.path]={snapshot:attempt.snapshots[input.path]!,namespace,digest:migrationDbDigest(db)};save(previous);
+      }
+      guardSource();
+     });
+     guardSource();
+     if(db!==coordinator && (!attempt.alternates?.[input.path]||db.prepare('SELECT attempt FROM messaging_candidate WHERE id=1').get()?.attempt!==attempt.id))throw migrationRefusal('Alternate did not produce a same-attempt completion');
     }
     finally { if (db!==coordinator) db.close(); }
    }
    // Reuse the ordinary metadata initializer and its backup-first component migration.
-   metadataDb(destination); closeMetadataDb(destination);
-  }));
+   guardSource();metadataDb(destination); closeMetadataDb(destination);guardSource();
+  })));
   // Publish candidate-ready and migration completion together, never by a fence
   // row alone. Validate all layout/namespace evidence under the same exclusion.
-  coordinator.exec('BEGIN IMMEDIATE');
+  guardSource();coordinator.exec('BEGIN IMMEDIATE');
   try {
    withOfflineMetadataAdmission({kind:'offline-isolated',home:destination},()=>assertCurrentMailboxEnvelope(coordinator!));
    if (Number(coordinator.prepare("SELECT version FROM bridge_components WHERE name='metadata'").get()?.version)!==7) throw migrationRefusal('Component verification failed');
    const previous = JSON.stringify(attempt); attempt.phase='ready';
    const changed = coordinator.prepare("UPDATE messaging_candidate SET state='ready',attempt=? WHERE id=1 AND contract='p12/m7/s15' AND state IN ('preparing','ready') AND attempt IN ('',?)").run(attempt.id,attempt.id).changes;
-   if (changed!==1) throw migrationRefusal('Candidate-ready CAS failed'); save(previous);
+   if (changed!==1) throw migrationRefusal('Candidate-ready CAS failed'); save(previous);guardSource();
   } catch (error) { coordinator.exec('ROLLBACK'); throw error; }
   coordinator.exec('COMMIT'); // Unknown outcome is retained and reported; no external retry.
+  options.signal?.throwIfAborted();
   return {...plan,attemptId:attempt.id,applied:true};
  } finally {
   try { coordinator?.close(); } finally { for (const release of releases.reverse()) release(); }

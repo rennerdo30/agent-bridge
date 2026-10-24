@@ -28,6 +28,7 @@ import { physicalPath } from "./project-identity.js";
 import { t3BindingSchema } from "./t3-identity.js";
 
 import { SQLITE_STORE_VERSION } from "./store-version.js";
+import type { StartupBudget } from "./startup-budget.js";
 export { SQLITE_STORE_VERSION } from "./store-version.js";
 
 /** Offline broadcasts retain recently observed sessions for one day. */
@@ -192,9 +193,9 @@ const MIGRATIONS = [
 ] as const;
 
 /** Upgrade only the schema, without broker startup, archive movement or retention. */
-export function migrateMessageSchema(db: DatabaseSync, file: string, existed: boolean, log: Logger): void {
+export function migrateMessageSchema(db: DatabaseSync, file: string, existed: boolean, log: Logger, beforeCommit?: () => void): void {
   assertMailboxVersion(db, file);
-  migrateSqlite(db, file, existed, SQLITE_STORE_VERSION, MIGRATIONS, log);
+  migrateSqlite(db, file, existed, SQLITE_STORE_VERSION, MIGRATIONS, log, beforeCommit);
 }
 
 export function registrationIdentity(peer: PeerInfo): string | null {
@@ -664,7 +665,7 @@ export class MessageStore {
   }
 
   /** Keep lock waits out of the broker event loop. Callbacks must be synchronous atomic steps. */
-  retryWrite<T>(operation: () => T): Promise<T> {
+  retryWrite<T>(operation: () => T, startup?: StartupBudget): Promise<T> {
     return this.acceptedOperation("retry", () => {
     this.#callbackUnknown = true; this.producerChanged();
     // Register before the first synchronous attempt, including its lock wait.
@@ -680,10 +681,11 @@ export class MessageStore {
     };
     void tracked.then(settled, () => { this.lifecycleWriteUnknown = true; settled(); });
     void retrySqlite(() => {
-      this.exec(this.db, `PRAGMA busy_timeout = ${SQLITE_REQUEST_BUSY_MS}`);
-      try { return operation(); }
+      startup?.remaining();
+      this.exec(this.db, `PRAGMA busy_timeout = ${Math.min(SQLITE_REQUEST_BUSY_MS,startup?.remaining() ?? Infinity)}`);
+      try { return startup ? withStorageAdmission(()=>startup.remaining(),operation) : operation(); }
       finally { this.exec(this.db, `PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`); }
-    }, Infinity, this.writeAbort.signal).then(resolve, reject);
+    }, Infinity, startup ? AbortSignal.any([this.writeAbort.signal,startup.signal]) : this.writeAbort.signal, startup ? ()=>startup.remaining() : undefined).then(resolve, reject);
     return tracked;
     });
   }
@@ -887,16 +889,20 @@ export class MessageStore {
   }
 
   /** Return unread child mail and retire its route atomically; retained rows are never removed. */
-  returnNativeChild(address: string, parent: string): void {
+  returnNativeChild(address: string, parent: string, startup?: StartupBudget): void {
     return this.acceptedOperation("direct", () => {
-    this.exec(this.db, "BEGIN IMMEDIATE");
+    startup?.remaining(); this.exec(this.db, "BEGIN IMMEDIATE");
     try {
-      this.stmt.claim.run(parent, address);
-      this.statement(this.db, `UPDATE messages SET read_at=? WHERE recipient=? AND read_at IS NULL AND ${unquarantined("messages")} AND id IN (SELECT id FROM deliverable_messages WHERE recipient=?)`).run(Date.now(), address, parent);
-      this.statement(this.db, "UPDATE native_child_routes SET active=0 WHERE address=?").run(address);
+      startup?.remaining(); this.stmt.claim.run(parent, address); startup?.remaining();
+      const messages = this.statement(this.db, `UPDATE messages SET read_at=? WHERE recipient=? AND read_at IS NULL AND ${unquarantined("messages")} AND id IN (SELECT id FROM deliverable_messages WHERE recipient=?)`);
+      startup?.remaining(); messages.run(Date.now(), address, parent); startup?.remaining();
+      const route = this.statement(this.db, "UPDATE native_child_routes SET active=0 WHERE address=?");
+      startup?.remaining(); route.run(address); startup?.remaining();
       this.exec(this.db, "COMMIT");
-      this.notifyHistoryChanged();
-    } catch (err) { this.exec(this.db, "ROLLBACK"); throw err; }
+      if (!startup) this.notifyHistoryChanged();
+    } catch (err) { if (!startup || this.db.isTransaction) this.exec(this.db, "ROLLBACK"); throw err; }
+    // A synchronous COMMIT can return late. Keep its data; admit no next effect.
+    if (startup) { startup.remaining(); this.notifyHistoryChanged(); }
     });
   }
 
