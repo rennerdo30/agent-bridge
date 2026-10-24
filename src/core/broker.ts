@@ -6,9 +6,10 @@ import { HealthMonitor } from "./health.js";
 import { loadConfig } from "./config.js";
 import { conversationPageSchema } from "./conversations.js";
 import { historySearchSchema } from "./history.js";
-import { ReadJournal } from "./read-journal.js";
+import { ReadJournal, readJournalIdentities } from "./read-journal.js";
 import { recordStorePeer, refreshStorePeerIdentities, validStoreCapabilities } from "./store-compatibility.js";
 import { randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import { existsSync, lstatSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { readMusePrivateJson, readMusePrivateJsonAsync, writeMusePrivateJsonAsync } from "./muse-context.js";
 import { ownProcessIdentity, processIdentity, readProcessIdentities } from "./process-identity.js";
@@ -145,6 +146,7 @@ const HANDOFF_STORE_READY_MS = 5_500;
 type StoredSibling = SiblingPeer & { id: string; report: string | null };
 type QueueRegistration = Pick<PeerInfo, "id" | "name" | "sessionId"> & { generation: number; owner: string | null; namespace: string };
 type ProjectMainIdentity = Pick<PeerInfo, "id" | "agent" | "sessionId" | "name" | "frontend"> & { owner?: string | null };
+const projectMainOwner = (peer: ProjectMainIdentity) => peer.owner ?? recipientKey(peer.frontend, "cwd" in peer ? nativeOwner(peer as PeerInfo) : undefined);
 const ownsProjectMain = (owner: ProjectMainIdentity, peer: ProjectMainIdentity) => owner.agent === peer.agent && sameFrontend(owner, peer) &&
   (owner.frontend ? true : owner.sessionId ? owner.sessionId === peer.sessionId : owner.id === peer.id);
 
