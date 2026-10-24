@@ -1,13 +1,21 @@
 import { EventEmitter } from 'node:events';
 import { createHash, randomUUID } from 'node:crypto';
-import { copyFileSync, existsSync, linkSync, lstatSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, linkSync, lstatSync, mkdirSync, readFileSync, readdirSync, writeFileSync, utimesSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { afterEach, beforeAll, expect, it, vi } from 'vitest';
 
 // This selection cannot launch a provider, process, native helper, socket server
 // or production Worker, including through a newly introduced indirect call.
-const transport = vi.hoisted(()=>({active:'',protocol:0,writes:[] as string[],nativeOpens:[] as {file:string;readOnly:boolean}[]}));
+const transport = vi.hoisted(()=>({active:'',protocol:0,writes:[] as string[],nativeOpens:[] as {file:string;readOnly:boolean}[],hooks:{} as Record<string,any>}));
+vi.mock('node:fs',async original=>{
+ const fs=await original<Record<string,any>>(),wrapped={...fs};
+ for(const name of ['openSync','readFileSync','writeFileSync','renameSync','mkdirSync','statSync'])wrapped[name]=(...args:any[])=>{const value=fs[name](...args);transport.hooks.fs?.(name,args[0]);return value;};
+ return wrapped;
+});
+vi.mock('node:tls',async original=>({...await original<object>(),createServer:(...args:any[])=>{if(!transport.hooks.tls)throw Error('native TLS forbidden');return transport.hooks.tls(...args);},connect:()=>{throw Error('native TLS connection forbidden');}}));
+vi.mock('node:dgram',async original=>({...await original<object>(),createSocket:()=>{if(!transport.hooks.udp)throw Error('native UDP forbidden');return transport.hooks.udp();}}));
+vi.mock('node:os',async original=>({...await original<object>(),networkInterfaces:()=>({})}));
 vi.mock('node:sqlite',async original=> {
  const sqlite=await original<typeof import('node:sqlite')>();
  return {...sqlite,DatabaseSync:new Proxy(sqlite.DatabaseSync,{construct(target,args,newTarget){
@@ -17,8 +25,19 @@ vi.mock('node:sqlite',async original=> {
 });
 vi.mock('node:child_process',async original=>{
  const forbidden=()=>{throw Error('subprocess forbidden in slice1 selection');};
- return {...await original<object>(),spawn:forbidden,spawnSync:forbidden,exec:forbidden,execSync:forbidden,execFile:forbidden,execFileSync:forbidden,fork:forbidden};
+ return {...await original<object>(),spawn:forbidden,spawnSync:forbidden,exec:forbidden,execSync:forbidden,execFile:(...args:any[])=>transport.hooks.execFile?transport.hooks.execFile(...args):forbidden(),execFileSync:(...args:any[])=>transport.hooks.execFileSync?transport.hooks.execFileSync(...args):forbidden(),fork:forbidden};
 });
+vi.mock('../src/core/history-background.js',async original=>({...await original<object>(),HistoryBackground:class {
+ constructor(){if(!transport.hooks.maintenance)throw Error('production history worker forbidden');transport.hooks.maintenance('history');}
+ reconcileAsks(){return Promise.resolve();} close(){transport.hooks.maintenance?.('history-close');return Promise.resolve();}
+}}));
+vi.mock('../src/core/job-archive-background.js',async original=>({...await original<object>(),JobArchiveBackground:class {
+ constructor(){if(!transport.hooks.maintenance)throw Error('production archive worker forbidden');transport.hooks.maintenance('archive');}
+ repack(){} close(){transport.hooks.maintenance?.('archive-close');return Promise.resolve();}
+}}));
+vi.mock('../src/core/job-run-index.js',async original=>{const actual=await original<Record<string,any>>();return {...actual,
+ startBrokerJobRunIndex:(...args:any[])=>transport.hooks.maintenance?(transport.hooks.maintenance('index'),Promise.resolve()):actual.startBrokerJobRunIndex(...args),
+ stopJobRunBackfill:(...args:any[])=>transport.hooks.maintenance?(transport.hooks.maintenance('index-close'),Promise.resolve()):actual.stopJobRunBackfill(...args)};});
 vi.mock('node:worker_threads',async original=>({...await original<object>(),Worker:class {constructor(){throw Error('production Worker forbidden in slice1 selection');}}}));
 vi.mock('../src/core/process-identity.js',async original=>({...await original<object>(),
  processIdentity:(pid:number)=>pid===process.pid ? '638968000000000000' : undefined,
@@ -29,7 +48,7 @@ vi.mock('../src/core/process-identity.js',async original=>({...await original<ob
 }));
 vi.mock('node:net',async original=> {
  const {EventEmitter} = await import('node:events');
- return {...await original<object>(),createServer:()=>{throw Error('native server forbidden in slice1 selection');},connect:(path:string)=> {
+  return {...await original<object>(),createServer:(...args:any[])=>{if(!transport.hooks.net)throw Error('native server forbidden in slice1 selection');return transport.hooks.net(...args);},connect:(path:string)=> {
   const socket = new class extends EventEmitter {
    destroyed=false; setEncoding(){return this;} end(){return this;} destroy(){this.destroyed=true;return this;}
    write(raw:string){const frame=JSON.parse(raw.trim());transport.writes.push(frame.op);queueMicrotask(()=>this.emit('data',JSON.stringify({t:'res',id:frame.id,ok:true,result:{protocol:transport.protocol,brokerPid:1}})+'\n'));return true;}
@@ -49,6 +68,12 @@ import { guardPriorEndpoints, priorEndpoints } from '../src/core/prior-endpoints
 import { BridgeClient } from '../src/core/client.js';
 import { Broker } from '../src/core/broker.js';
 import { NativeChildren } from '../src/core/native-children.js';
+import { EndpointReservation } from '../src/core/endpoint-reservation.js';
+import { NetworkService } from '../src/network/link.js';
+import { NetworkDiscovery } from '../src/network/discovery.js';
+import { writeMusePrivateJsonAsync } from '../src/core/muse-context.js';
+import { JobRunners } from '../src/mcp/job-host.js';
+import { RootConcurrency } from '../src/core/root-concurrency.js';
 import { openHistoryStore } from '../src/core/history-store.js';
 import { nullLogger } from '../src/core/logger.js';
 import { PROTOCOL_VERSION } from '../src/core/constants.js';
@@ -61,7 +86,7 @@ const sha = (path:string) => createHash('sha256').update(readFileSync(path)).dig
 const tree = (path:string):string[]=>existsSync(path) ? readdirSync(path,{withFileTypes:true}).flatMap(item=>item.isDirectory()?tree(join(path,item.name)):[join(path,item.name)]).sort() : [];
 const database = (path:string)=>{const db=new DatabaseSync(path);closes.push(()=>{if(db.isOpen)db.close();});return db;};
 beforeAll(()=>{const db=new DatabaseSync(':memory:');try {console.log('SLICE1_SQLITE_RUNTIME '+JSON.stringify({node:process.version,pid:process.pid,...db.prepare('SELECT sqlite_version() AS sqlite,sqlite_source_id() AS sqliteSourceId').get()}));}finally{db.close();}});
-afterEach(()=>{vi.restoreAllMocks();vi.useRealTimers();for(const close of closes.splice(0).reverse())close();closeMetadataDbs();transport.active='';transport.protocol=0;transport.writes=[];transport.nativeOpens=[];});
+afterEach(async()=>{vi.restoreAllMocks();vi.useRealTimers();for(const close of closes.splice(0).reverse())await close();closeMetadataDbs();transport.active='';transport.protocol=0;transport.writes=[];transport.nativeOpens=[];transport.hooks={};});
 const fileState = (path:string) => tree(path).map(file=>[file,sha(file)] as const);
 /** Approved quiescent inspection allowance only. Every original file survives;
  * only exact inspected SHM is volatile. New exact WAL must be empty, and this
@@ -430,7 +455,7 @@ it.each([false,true])('review7: resumes two alternates only with same-attempt co
  const f=shipping(),names=['alpha.db','beta.db'];for(const name of names)copyFileSync(join(f.source,'bridge.db'),join(f.source,name));
  const originals=names.map(name=>sha(join(f.source,name))),exec=DatabaseSync.prototype.exec;let interrupted=false,alphaCommits=0;
  const spy=vi.spyOn(DatabaseSync.prototype,'exec').mockImplementation(function(this:DatabaseSync,sql:string){const result=exec.call(this,sql);if(sql==='COMMIT'&&this.location('main')===join(f.destination,'alpha.db')&&Number(this.prepare('PRAGMA user_version').get()!.user_version)===15){alphaCommits++;if(!interrupted){interrupted=true;throw Error('synthetic first alternate unknown COMMIT');}}return result;});
- const options={source:f.source,destination:f.destination,mailboxes:names,apply:true,offlineIsolated:true};await expect(migrateMessagingHome(options)).rejects.toThrow();expect(interrupted).toBe(true);spy.mockRestore();
+ const options={source:f.source,destination:f.destination,mailboxes:names,apply:true,offlineIsolated:true};await expect(migrateMessagingHome(options)).rejects.toThrow();expect(interrupted).toBe(true);
  const coordinator=database(join(f.destination,'bridge.db')),attempt=JSON.parse(String(coordinator.prepare("SELECT value FROM bridge_metadata WHERE domain='messaging-migration'").get()!.value));coordinator.close();
  if(tamper){const changed=database(join(f.destination,'alpha.db'));changed.exec("UPDATE bridge_metadata SET value='tampered' WHERE domain='synthetic-retained'");changed.close();await expect(migrateMessagingHome(options)).rejects.toThrow();}
  else {await migrateMessagingHome(options);for(const name of names){const db=database(join(f.destination,name));expect(db.prepare('SELECT state,attempt FROM messaging_candidate').get()).toMatchObject({state:'ready',attempt:attempt.id});assertCurrentMailboxEnvelope(db);}expect(alphaCommits).toBe(1);}
@@ -463,4 +488,96 @@ it('review7: sparse metadata rowids survive collision-safe owned-attempt relocat
  const spy=vi.spyOn(DatabaseSync.prototype,'prepare').mockImplementation(function(this:DatabaseSync,sql:string){if(!interrupted&&sql==='VACUUM INTO ?'){interrupted=true;throw Error('synthetic snapshot interruption');}return prepare.call(this,sql);});
  const options={source:f.source,destination:f.destination,apply:true,offlineIsolated:true};await expect(migrateMessagingHome(options)).rejects.toThrow();expect(interrupted).toBe(true);spy.mockRestore();const held=database(join(f.destination,'bridge.db')),before=JSON.parse(String(held.prepare("SELECT value FROM bridge_metadata WHERE domain='messaging-migration'").get()!.value));held.close();
  await migrateMessagingHome(options);const target=database(join(f.destination,'bridge.db'));expect(read(target)).toEqual(expected);const own=target.prepare("SELECT rowid AS saved_rowid,value FROM bridge_metadata WHERE domain='messaging-migration'");own.setReadBigInts(true);const row=own.get()!;expect(expected.some(input=>input.saved_rowid===row.saved_rowid)).toBe(false);expect(JSON.parse(String(row.value))).toMatchObject({id:before.id,inputId:before.inputId,phase:'ready'});expect(sha(join(f.source,'bridge.db'))).toBe(original);
+});
+
+class StartupServer extends EventEmitter {
+ listening=false;closed=0;pending:(()=>void)|undefined;maxConnections=0;
+ constructor(readonly hold=false){super();}
+ listen(...args:any[]){const options=args[0],done=args.at(-1);this.pending=()=>{this.listening=true;if(typeof done==='function')done();this.emit('listening');};
+  options?.signal?.addEventListener('abort',()=>this.close(),{once:true});if(!this.hold)queueMicrotask(()=>this.complete());return this;}
+ complete(){const done=this.pending;this.pending=undefined;done?.();}
+ address(){return {address:'127.0.0.1',port:4242};}
+ close(done?:()=>void){this.closed++;this.listening=false;queueMicrotask(()=>{this.emit('close');done?.();});return this;}
+}
+class StartupDatagram extends StartupServer {
+ sends=0;effects=0;
+ bind(...args:any[]){return this.listen(...args);}
+ setBroadcast(){this.effects++;}setMulticastTTL(){this.effects++;}setMulticastInterface(){this.effects++;}addMembership(){this.effects++;}dropMembership(){this.effects++;}
+ send(...args:any[]){this.sends++;const done=args.at(-1);if(typeof done==='function')done();}
+}
+function startupPlatform(platform:NodeJS.Platform){const descriptor=Object.getOwnPropertyDescriptor(process,'platform')!;Object.defineProperty(process,'platform',{value:platform,configurable:true});closes.push(()=>Object.defineProperty(process,'platform',descriptor));}
+function startupNetwork(path=home(),budget?:StartupBudget,discovery=false){
+ mkdirSync(join(path,'network'),{recursive:true});writeFileSync(join(path,'network','keys.json'),JSON.stringify({identity:{id:'11111111-1111-4111-8111-111111111111',key:'a'.repeat(64)},invitations:[],pairs:[]}));
+ const service=new NetworkService(path,{enabled:true,name:'synthetic',port:4242,bind:'127.0.0.1',discovery,remoteJobs:{enabled:false,allowRoots:[],agents:[],allowPeers:[]}}, {peers:()=>[],receive:()=>({delivered:0,queued:0})} as never,nullLogger,{},budget);return service;
+}
+function fakeProtection(holdClose=false){
+ let callback:((error:Error|null,value:string)=>void)|undefined,child:any,options:any;
+ transport.hooks.execFile=(_file:string,_args:string[],opts:any,done:any)=>{
+  options=opts;callback=done;child=Object.assign(new EventEmitter(),{pid:700001,stdin:Object.assign(new EventEmitter(),{end:()=>{}}),exitCode:null,signalCode:null,kill:vi.fn(()=>true)});
+  opts.signal?.addEventListener('abort',()=>{done(Error('synthetic abort'),'');if(!holdClose){child.exitCode=1;child.emit('close',1,null);}},{once:true});return child;
+ };
+ return {get options(){return options;},get child(){return child;},finish:(text='synthetic protected')=>{callback?.(null,text);if(!holdClose){child.exitCode=0;child.emit('close',0,null);}},close:()=>{child.exitCode=1;child.emit('close',1,null);}};
+}
+it('round2: history admission refuses a busy legacy lock without an independent wait',()=>{
+ vi.useFakeTimers();const file=join(home(),'history.db'),budget=new StartupBudget();closes.push(()=>budget.close());writeFileSync(file+'.migration-lock',JSON.stringify({pid:process.pid,nonce:'synthetic held'}));
+ const wait=vi.spyOn(Atomics,'wait').mockImplementation(()=>{vi.setSystemTime(Date.now()+10_001);return 'timed-out';});
+ expect(()=>withStorageAdmission(()=>budget.remaining(),()=>openHistoryStore(file))).toThrow();expect(wait).not.toHaveBeenCalled();
+});
+it.each(['schema','commit'])('round2: actual history initializer stops after late %s with exact settlement',phase=>{
+ vi.useFakeTimers();const file=join(home(),'history.db'),budget=new StartupBudget(),exec=DatabaseSync.prototype.exec;let held:DatabaseSync|undefined,late=false;const following:string[]=[];closes.push(()=>budget.close());closes.push(()=>{if(held?.isOpen)held.close();});
+ vi.spyOn(DatabaseSync.prototype,'exec').mockImplementation(function(this:DatabaseSync,sql:string){if(late&&/^(?:CREATE|DROP|ALTER|PRAGMA user_version|COMMIT)/.test(sql))following.push(sql);const result=exec.call(this,sql);if(!late&&this.location('main')===file&&(phase==='schema'?sql.includes('CREATE TABLE history_migration'):sql==='COMMIT')){held=this;late=true;vi.setSystemTime(Date.now()+10_001);}return result;});
+ expect(()=>withStorageAdmission(()=>budget.remaining(),()=>openHistoryStore(file))).toThrow();expect(late).toBe(true);expect(following).toEqual([]);expect(held!.isOpen).toBe(false);
+ if(phase==='commit'){const retained=database(file);expect(retained.prepare('PRAGMA user_version').get()!.user_version).toBe(2);}
+});
+it('round2: pending exact endpoint bind cancels and closes its late completion',async()=>{
+ vi.useFakeTimers();const server=new StartupServer(true);transport.hooks.net=()=>server;const budget=new StartupBudget();closes.push(()=>budget.close());let reservation:EndpointReservation|undefined,state='pending';
+ const result=EndpointReservation.bind('synthetic-endpoint',budget).then(value=>{reservation=value;state='resolved';},()=>{state='rejected';});
+ try{await vi.advanceTimersByTimeAsync(10_001);for(let i=0;i<12;i++)await Promise.resolve();expect(state).toBe('rejected');server.complete();await Promise.resolve();expect(server.listening).toBe(false);}
+ finally{server.complete();await result;await reservation?.close();}
+});
+it('round2: actual TLS start cancels pending listen and never enters late discovery',async()=>{
+ vi.useFakeTimers();startupPlatform('linux');const tls=new StartupServer(true);transport.hooks.tls=()=>tls;const udp=vi.fn(()=>new StartupDatagram());transport.hooks.udp=udp;const budget=new StartupBudget();closes.push(()=>budget.close());const service=startupNetwork(home(),budget,true);let state='pending';const result=service.start(true,budget).then(()=>{state='resolved';},()=>{state='rejected';});
+ try{await vi.advanceTimersByTimeAsync(10_001);for(let i=0;i<12;i++)await Promise.resolve();expect(state).toBe('rejected');tls.complete();for(let i=0;i<6;i++)await Promise.resolve();expect(udp).not.toHaveBeenCalled();expect(service.status().ready).toBe(false);expect(tls.listening).toBe(false);}
+ finally{tls.complete();await result;await service.close();}
+});
+it('round2: discovery bind expiry creates no announcement timer or send',async()=>{
+ vi.useFakeTimers();const socket=new StartupDatagram(true),budget=new StartupBudget();closes.push(()=>budget.close());const discovery=new NetworkDiscovery({identity:{id:'synthetic',name:'synthetic',fingerprint:'a'.repeat(64)},port:4242,destination:'127.0.0.1',createSocket:()=>socket as never});let state='pending';const result=discovery.start(budget).then(()=>{state='resolved';},()=>{state='rejected';});
+ try{await vi.advanceTimersByTimeAsync(10_001);for(let i=0;i<12;i++)await Promise.resolve();expect(state).toBe('rejected');socket.complete();for(let i=0;i<6;i++)await Promise.resolve();expect(socket.sends).toBe(0);expect(socket.effects).toBe(0);}
+ finally{socket.complete();await result;await discovery.close();}
+});
+it('round2: late protection completion cannot start the actual staging write',async()=>{
+ vi.useFakeTimers();startupPlatform('win32');const budget=new StartupBudget();closes.push(()=>budget.close());const helper=fakeProtection(),file=join(home(),'synthetic-stage.json');const result=writeMusePrivateJsonAsync(file,{synthetic:true},'wx',budget);const assertion=expect(result).rejects.toThrow();await vi.advanceTimersByTimeAsync(10_001);helper.finish();await assertion;expect(existsSync(file)).toBe(false);expect(helper.options.timeout).toBeLessThanOrEqual(10_000);expect(helper.options.signal).toBe(budget.signal);
+});
+it('round2: protection cancellation joins the exact helper close before settling',async()=>{
+ vi.useFakeTimers();startupPlatform('win32');const budget=new StartupBudget();closes.push(()=>budget.close());const helper=fakeProtection(true),file=join(home(),'synthetic-stage.json');let state='pending';const result=writeMusePrivateJsonAsync(file,{synthetic:true},'wx',budget).then(()=>{state='resolved';},()=>{state='rejected';});
+ try{budget.abort();for(let i=0;i<8;i++)await Promise.resolve();expect(helper.options.signal).toBe(budget.signal);expect(state).toBe('pending');helper.close();await result;expect(state).toBe('rejected');expect(existsSync(file)).toBe(false);}
+ finally{helper.close();helper.finish();await result;}
+});
+it('round2: network ACL preparation cannot start the next command after a late helper',async()=>{
+ vi.useFakeTimers();startupPlatform('win32');const budget=new StartupBudget();closes.push(()=>budget.close());const calls:string[]=[];const output=(file:string)=>file.toLowerCase().endsWith('whoami.exe')?'"fake-user","S-1-5-21-123"':'fake-user:(F)';
+ transport.hooks.execFileSync=(file:string)=>{calls.push('sync');if(calls.length===1)vi.setSystemTime(Date.now()+10_001);return output(file);};
+ transport.hooks.execFile=(file:string,_args:string[],options:any,done:any)=>{calls.push('async');const child=Object.assign(new EventEmitter(),{pid:700002,stdin:new EventEmitter(),exitCode:null,signalCode:null});queueMicrotask(()=>{vi.setSystemTime(Date.now()+10_001);done(null,output(file));child.emit('close',0,null);});return child;};
+ transport.hooks.tls=()=>new StartupServer();const service=startupNetwork(home(),budget);
+ try{await expect(service.start(true,budget)).rejects.toThrow();expect(calls).toEqual(['async']);expect(service.status().ready).toBe(false);}finally{await service.close();}
+});
+it('round2: transfer recovery retains partial files and starts no maintenance after revocation',async()=>{
+ vi.useFakeTimers();startupPlatform('linux');const path=home(),root=join(path,'network','transfers'),id='22222222-2222-4222-8222-222222222222';mkdirSync(root,{recursive:true});const file=join(root,id+'.json');writeFileSync(file,JSON.stringify({version:1,id,status:'sending',entries:[],direction:'send',remote:'synthetic',peer:'synthetic'}));const original=sha(file),budget=new StartupBudget();closes.push(()=>budget.close());let late=false;
+ transport.hooks.fs=(operation:string,target:unknown)=>{if(!late&&operation==='readFileSync'&&target===file){late=true;vi.setSystemTime(Date.now()+10_001);}};transport.hooks.tls=()=>new StartupServer();const service=startupNetwork(path,budget);
+ try{await expect(service.start(true,budget)).rejects.toThrow();expect(late).toBe(true);expect(sha(file)).toBe(original);}finally{transport.hooks.fs=undefined;await service.close();}expect(sha(file)).toBe(original);
+});
+it('round2: terminal runner constructor propagates expiry before either archive rename',()=>{
+ vi.useFakeTimers();const path=home(),dir=join(path,'jobs');mkdirSync(dir);const file=join(dir,'synthetic.json');writeFileSync(file,JSON.stringify({pid:process.pid,status:'done'}));writeFileSync(join(dir,'synthetic.spec.json'),'synthetic spec retained');utimesSync(file,new Date(0),new Date(0));const budget=new StartupBudget();closes.push(()=>budget.close());
+ transport.hooks.fs=(operation:string,target:unknown)=>{if(operation==='statSync'&&target===file)vi.setSystemTime(Date.now()+10_001);};expect(()=>new JobRunners({} as never,path,'synthetic-cli',nullLogger,()=>budget.remaining())).toThrow();expect(existsSync(file)).toBe(true);expect(existsSync(join(dir,'synthetic.spec.json'))).toBe(true);
+});
+it('round2: mandatory slot constructors close owned handles before next late schema effect',()=>{
+ vi.useFakeTimers();const budget=new StartupBudget();closes.push(()=>budget.close());const exec=DatabaseSync.prototype.exec,handles=new Set<DatabaseSync>(),after:string[]=[];let late=false;
+ vi.spyOn(DatabaseSync.prototype,'exec').mockImplementation(function(this:DatabaseSync,sql:string){handles.add(this);if(late&&/CREATE|ALTER|UPDATE|COMMIT/.test(sql))after.push(sql);const result=exec.call(this,sql);if(!late&&sql.includes('CREATE TABLE IF NOT EXISTS slots')){late=true;vi.setSystemTime(Date.now()+10_001);}return result;});closes.push(()=>{for(const db of handles)if(db.isOpen)db.close();});
+ expect(()=>withStorageAdmission(()=>budget.remaining(),()=>new RootConcurrency(home(),'synthetic-root'))).toThrow();expect(late).toBe(true);expect(after).toEqual([]);for(const db of handles)expect(db.isOpen).toBe(false);
+});
+it.each([false,true])('round2: actual broker starts optional services only after valid activation expire=%s',async expire=>{
+ vi.useFakeTimers();startupPlatform('linux');const f=candidate(),events:string[]=[];transport.hooks.maintenance=(name:string)=>events.push(name);writeFileSync(join(f.path,'jobs.json'),JSON.stringify({version:4,jobs:[],handoffs:[]}));const tls=new StartupServer(expire);transport.hooks.tls=()=>tls;
+ const broker=new Broker('synthetic',f.store,nullLogger,'synthetic-only',Date.now,join(f.path,'jobs.json'),{home:f.path,config:{enabled:true,name:'synthetic',port:4242,bind:'127.0.0.1',discovery:false,remoteJobs:{enabled:false,allowRoots:[],agents:[],allowPeers:[]}}});
+ const server=new StartupServer(),reservation={ownedServer:()=>server,activate:vi.fn(()=>events.push('activate')),close:vi.fn(async()=>{})};server.listening=true;const budget=new StartupBudget();closes.push(()=>budget.close());const backups=vi.spyOn(f.store,'startBackups');const result=broker.listen(reservation as never,budget);const failure=expire?expect(result).rejects.toThrow():undefined;
+ try{if(expire){await vi.advanceTimersByTimeAsync(10_001);tls.complete();await failure;expect(reservation.activate).not.toHaveBeenCalled();expect(events.filter(name=>!name.endsWith('-close'))).toEqual([]);expect(backups).not.toHaveBeenCalled();}else{await result;expect(events.indexOf('activate')).toBeLessThan(events.indexOf('history'));for(const name of ['index','archive','history'])expect(events.filter(event=>event===name)).toHaveLength(1);expect(backups).toHaveBeenCalledOnce();budget.abort();}}
+ finally{tls.complete();await result.catch(()=>{});await broker.close();}if(!expire)for(const name of ['index-close','archive-close','history-close'])expect(events.filter(event=>event===name)).toHaveLength(1);
 });
