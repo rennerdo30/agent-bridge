@@ -892,16 +892,33 @@ export class MessageStore {
   /** Return unread child mail and retire its route atomically; retained rows are never removed. */
   returnNativeChild(address: string, parent: string, startup?: StartupBudget): void {
     return this.acceptedOperation("direct", () => {
-    startup?.remaining(); this.exec(this.db, "BEGIN IMMEDIATE");
+    let ownedTransaction = false, committing = false;
     try {
+      startup?.remaining();
+      // Capture this exact BEGIN's returned ownership before the native wrapper's
+      // post-check can reject a late return. Never borrow an existing transaction.
+      this.native(this.db, () => { this.db.exec("BEGIN IMMEDIATE"); ownedTransaction = true; });
       startup?.remaining(); this.stmt.claim.run(parent, address); startup?.remaining();
       const messages = this.statement(this.db, `UPDATE messages SET read_at=? WHERE recipient=? AND read_at IS NULL AND ${unquarantined("messages")} AND id IN (SELECT id FROM deliverable_messages WHERE recipient=?)`);
       startup?.remaining(); messages.run(Date.now(), address, parent); startup?.remaining();
       const route = this.statement(this.db, "UPDATE native_child_routes SET active=0 WHERE address=?");
       startup?.remaining(); route.run(address); startup?.remaining();
-      this.exec(this.db, "COMMIT");
+      this.native(this.db, () => {
+        committing = true; this.db.exec("COMMIT");
+        committing = false; ownedTransaction = false;
+      });
       if (!startup) this.notifyHistoryChanged();
-    } catch (err) { if (!startup || this.db.isTransaction) this.exec(this.db, "ROLLBACK"); throw err; }
+    } catch (err) {
+      if (committing) throw Object.assign(new Error('Native route COMMIT outcome unknown; retained, not replayed'),{code:'STORE_COMMIT_UNKNOWN',cause:err});
+      if (ownedTransaction && this.db.isTransaction) {
+        // Only this locally acquired transaction may bypass expired admission
+        // for rollback. Operational SQL and COMMIT still use native admission.
+        this.guardNative(this.db);
+        try { this.db.exec("ROLLBACK"); }
+        catch (cleanup) { this.#producerUnknown = true; this.producerChanged(); throw new AggregateError([err,cleanup],'Owned route rollback remains unknown'); }
+      }
+      throw err;
+    }
     // A synchronous COMMIT can return late. Keep its data; admit no next effect.
     if (startup) { startup.remaining(); this.notifyHistoryChanged(); }
     });

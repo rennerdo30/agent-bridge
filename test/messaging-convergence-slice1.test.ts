@@ -646,9 +646,10 @@ it('round3: recovery owns rollback when BEGIN itself returns after expiry',async
  await expect(new NativeChildren(f.store).recover(budget)).rejects.toThrow();expect(late).toBe(true);expect(db.isTransaction).toBe(false);expect(db.prepare('SELECT active FROM native_child_routes').get()!.active).toBe(1);expect(db.prepare('PRAGMA busy_timeout').get()!.timeout).toBe(3000);
 });
 
-it('round3: unknown native recovery COMMIT is retained without rollback or replay',async()=>{
+it.each([false,true])('round3: unknown native recovery COMMIT is retained without rollback or replay late=%s',async late=>{
+ vi.useFakeTimers();
  const f=candidate(),db=(f.store as any).db as DatabaseSync;f.store.retainNativeChild('synthetic/sub:a','synthetic');const budget=new StartupBudget();closes.push(()=>budget.close());const exec=DatabaseSync.prototype.exec;let commits=0,rollbacks=0;
- vi.spyOn(DatabaseSync.prototype,'exec').mockImplementation(function(this:DatabaseSync,sql:string){if(this===db&&sql==='ROLLBACK')rollbacks++;const result=exec.call(this,sql);if(this===db&&sql==='COMMIT'){commits++;throw Error('synthetic unknown native settlement');}return result;});
+ vi.spyOn(DatabaseSync.prototype,'exec').mockImplementation(function(this:DatabaseSync,sql:string){if(this===db&&sql==='ROLLBACK')rollbacks++;const result=exec.call(this,sql);if(this===db&&sql==='COMMIT'){commits++;if(late)vi.setSystemTime(Date.now()+10_001);throw Error('synthetic unknown native settlement');}return result;});
  await expect(new NativeChildren(f.store).recover(budget)).rejects.toMatchObject({code:'STORE_COMMIT_UNKNOWN'});expect(commits).toBe(1);expect(rollbacks).toBe(0);expect(db.isTransaction).toBe(false);expect(db.prepare('SELECT active FROM native_child_routes').get()!.active).toBe(0);expect(db.prepare('PRAGMA busy_timeout').get()!.timeout).toBe(3000);
 });
 

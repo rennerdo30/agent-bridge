@@ -1069,6 +1069,8 @@ export class Broker {
   }
 
   async close(): Promise<void> {
+    this.startupAuthorityRevoked = true;
+    this.network?.deferAuthority();
     if(this.maintenanceStart)clearImmediate(this.maintenanceStart);this.maintenanceStart=null;
     this.healthMonitor.close();
     this.closing = true;

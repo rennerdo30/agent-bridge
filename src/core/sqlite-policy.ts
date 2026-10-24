@@ -35,6 +35,9 @@ export async function retrySqlite<T>(operation: () => T, timeoutMs = 8_000, sign
     remaining?.();
     try { const value = operation(); remaining?.(); return value; }
     catch (err) {
+      // A deadline cannot turn an already unknown native COMMIT into a proved
+      // cancellation/rollback or an externally retried callback.
+      if (remaining && (err as {code?:unknown})?.code === 'STORE_COMMIT_UNKNOWN') throw err;
       remaining?.();
       if (!isSqliteBusy(err) || Date.now() >= deadline) throw err;
       await delay(Math.min(25 * 2 ** Math.min(attempt++, 4), Math.max(1, deadline - Date.now()), remaining?.() ?? Infinity), undefined, { signal });

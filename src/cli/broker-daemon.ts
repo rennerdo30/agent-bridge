@@ -65,13 +65,13 @@ export async function runBrokerDaemon(home: string, pipe: string, log: Logger): 
     config.network = startup.network; config.mobile = startup.mobile; config.dashboardPort = startup.dashboardPort;
   }
   const store = await openAdmittedMessageStore(resolveDbPath(home),home,pipe,log.child('store'),budget);
+  let ownedBroker: Broker | undefined, brokerClosing: Promise<void> | undefined, failed = false, failure: unknown;
   try {
-  const broker = new Broker(pipe, store, log.child("broker"), token, Date.now, join(home, JOBS_FILE), { home, config: config.network }, { ensure: (force, port) => ensureDashboard(force, port) });
+  const broker = ownedBroker = new Broker(pipe, store, log.child("broker"), token, Date.now, join(home, JOBS_FILE), { home, config: config.network }, { ensure: (force, port) => ensureDashboard(force, port) });
   broker.setHostingMode("daemon");
   let stopping = false, release!: () => void;
   const stopped = new Promise<void>(resolve => { release = resolve; });
   const stop = () => { stopping = true; release(); };
-  process.on("SIGTERM", stop); process.on("SIGINT", stop);
   // Handover: an authenticated newer release asked this daemon to step aside. Idle: nobody is left to serve.
   // Both stop like SIGTERM: admit nothing new, drain admitted requests, close the store and the endpoint, exit.
   broker.onNewerClient(stop);
@@ -84,7 +84,6 @@ export async function runBrokerDaemon(home: string, pipe: string, log: Logger): 
   // Besides pipe clients, pending remote-job work and paired-PC links (checked by the broker), open or recent
   // dashboard HTTP/SSE and phone HTTPS connections keep the daemon serving.
   const idleMs = daemonIdleExitMs();
-  broker.exitWhenIdle(idleMs, stop, () => dashboard?.activity?.active(idleMs) ? "dashboard_client" : mobile?.clientActivity(idleMs) ? "mobile_client" : undefined);
   const ensureDashboard = (force: boolean, requestedPort?: number): Promise<DashboardInfo | null> => {
     if (stopping) return Promise.reject(new BridgeError("bad_request", "Daemon is draining."));
     if (!force && !config.dashboard) return Promise.resolve(null);
@@ -111,6 +110,8 @@ export async function runBrokerDaemon(home: string, pipe: string, log: Logger): 
     return dashboardOpening;
   };
   try {
+    process.on("SIGTERM", stop); process.on("SIGINT", stop);
+    broker.exitWhenIdle(idleMs, stop, () => dashboard?.activity?.active(idleMs) ? "dashboard_client" : mobile?.clientActivity(idleMs) ? "mobile_client" : undefined);
     try { await broker.listen(reservation,budget); budget.remaining(); listening = true; budget.close(); }
     catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EADDRINUSE") throw error;
@@ -124,15 +125,20 @@ export async function runBrokerDaemon(home: string, pipe: string, log: Logger): 
     return 0;
   } finally {
     process.off("SIGTERM", stop); process.off("SIGINT", stop);
+    // Revoke a failed attempt before any asynchronous accessory cleanup yields.
+    // Retain this exact close promise; outer ownership cleanup joins it once.
+    if (!listening) brokerClosing = broker.close();
     // Admitted requests answer first (accepted mail is committed when its send answers); new ones are refused.
     if (listening && !(await broker.drain())) log.warn("daemon stopped with requests still running after the drain period");
     await dashboardOpening?.catch(() => {});
     await mobile?.close().catch(() => {});
     await dashboard?.close().catch(() => {});
-    // Losing listeners must not close/unlink the winner's endpoint.
-    if (listening) await broker.close(); else store.close();
   }
-  } catch (error) { store.close(); throw error; }
+  } catch (error) { failed = true; failure = error; throw error; }
+  finally {
+    try { if (ownedBroker) await (brokerClosing ??= ownedBroker.close()); else store.close(); }
+    catch (cleanup) { if (failed) throw new AggregateError([failure,cleanup],'Daemon broker teardown remains unknown'); throw cleanup; }
+  }
   } finally { await reservation.close(); }
   } finally { budget.close(); }
 }

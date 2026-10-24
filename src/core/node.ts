@@ -465,23 +465,32 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
       this.log.error("cannot open message store", { err, db: this.opts.dbPath });
       throw err;
     }
+    let broker: Broker | undefined, transferred = false, failed = false, failure: unknown;
     try {
-      const broker = new Broker(this.opts.pipePath, store, this.log.child("broker"), this.opts.token, Date.now, join(dirname(this.opts.dbPath), JOBS_FILE), this.opts.network);
+      broker = new Broker(this.opts.pipePath, store, this.log.child("broker"), this.opts.token, Date.now, join(dirname(this.opts.dbPath), JOBS_FILE), this.opts.network);
       if (this.degradedReason) broker.setHostingMode("embedded_degraded", this.degradedReason);
       await broker.listen(reservation,budget);
       budget.remaining();
       if (this.stopping) {
         // stop() ran while this node was opening the store or listening: never keep a broker nobody will close.
-        await broker.close();
         return false;
       }
-      this.broker = broker;
       this.log.info("became broker", { pipe: this.opts.pipePath });
+      this.broker = broker;
+      transferred = true;
       return true;
     } catch (err) {
-      store.close();
-      await reservation.close();
+      failed = true; failure = err;
       throw err;
+    } finally {
+      if (!transferred) {
+        const cleanup: unknown[] = [];
+        // A returned Broker owns its store even when listen/final admission fails.
+        // A constructor that never returned leaves that store with this caller.
+        try { if (broker) await broker.close(); else store.close(); } catch (error) { cleanup.push(error); }
+        try { await reservation.close(); } catch (error) { cleanup.push(error); }
+        if (cleanup.length) throw new AggregateError(failed ? [failure,...cleanup] : cleanup,'Broker attempt teardown remains unknown');
+      }
     }
   }
 

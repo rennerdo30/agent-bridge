@@ -777,9 +777,34 @@ export async function migrateMessagingHome(options: MessagingMigrationOptions) {
    }
    const previous = JSON.stringify(attempt); attempt.snapshots[input.path]=captured.sha256; save(previous);
   }
+  const alternateCompleted = (path:string):boolean => {
+   const target=join(destination,path),snapshot=join(snapshots,path),proof=attempt.alternates?.[path];
+   const rawMatches=migrationInput(destination,path,'evidence').sha256===attempt.snapshots[path];
+   const completed=inspectMailbox(target,db=>{
+    // Raw main bytes can still be the shipping snapshot while all committed
+    // candidate pages live in WAL. Classify and prove this one SQLite view.
+    const version=Number(db.prepare('PRAGMA user_version').get()!.user_version);
+    if(version===15){
+     if(!proof||proof.snapshot!==attempt.snapshots[path])throw migrationRefusal('Alternate completion proof missing');
+     assertCurrentMailboxEnvelope(db);
+     const marker=db.prepare('SELECT state,attempt FROM messaging_candidate WHERE id=1').get();
+     if(marker?.state!=='ready'||marker.attempt!==attempt.id||db.prepare('SELECT namespace FROM mailbox_store WHERE id=1').get()?.namespace!==proof.namespace||migrationDbDigest(db)!==proof.digest)throw migrationRefusal('Alternate completion proof does not match retained candidate');
+     return true;
+    }
+    // An uncommitted alternate is reusable only as the exact original SQLite
+    // snapshot view; WAL-only changes are not validated by its raw main hash.
+    if(!rawMatches||migrationDbDigest(db)!==migrationSqliteDigest(snapshot))throw migrationRefusal('Destination copy does not match retained snapshot');
+    return false;
+   });
+   if(completed===undefined)throw migrationRefusal('Alternate completion proof target missing');
+   return completed;
+  };
   if (attempt.phase==='ready') {
    preflightMessagingHome(destination);
-   for (const mailbox of mailboxes) preflightMessagingHome(destination,join(destination,mailbox));
+   for (const mailbox of mailboxes) {
+    preflightMessagingHome(destination,join(destination,mailbox));
+    if(!alternateCompleted(mailbox))throw migrationRefusal('Alternate completion proof missing for ready attempt');
+   }
    return {...plan,attemptId:attempt.id,applied:true};
   }
   if (attempt.phase==='copying') {
@@ -800,17 +825,8 @@ export async function migrateMessagingHome(options: MessagingMigrationOptions) {
    const target = join(destination,input.path), snapshot = join(snapshots,input.path);
    mkdirSync(dirname(target),{recursive:true,mode:0o700}); physicalMetadataPath(target);
    if (!existsSync(target)) copyFileSync(snapshot,target,fsConstants.COPYFILE_EXCL);
-   if (migrationInput(destination,input.path,'evidence').sha256!==attempt.snapshots[input.path]) {
-    const proof=attempt.alternates?.[input.path];
-    if(!mailboxes.includes(input.path)||!proof||proof.snapshot!==attempt.snapshots[input.path])throw migrationRefusal('Destination copy does not match retained snapshot');
-    const accepted=inspectMailbox(target,db=>{
-     assertCurrentMailboxEnvelope(db);
-     const marker=db.prepare('SELECT state,attempt FROM messaging_candidate WHERE id=1').get();
-     return Number(db.prepare('PRAGMA user_version').get()!.user_version)===15&&marker?.state==='ready'&&marker.attempt===attempt.id&&db.prepare('SELECT namespace FROM mailbox_store WHERE id=1').get()?.namespace===proof.namespace&&migrationDbDigest(db)===proof.digest;
-    });
-    if(!accepted)throw migrationRefusal('Alternate completion proof does not match retained candidate');
-    completedAlternates.add(input.path);
-   }
+   if(mailboxes.includes(input.path)) { if(alternateCompleted(input.path))completedAlternates.add(input.path); }
+   else if(migrationInput(destination,input.path,'evidence').sha256!==attempt.snapshots[input.path])throw migrationRefusal('Destination copy does not match retained snapshot');
   }
   options.signal?.throwIfAborted();
   guardSource();
