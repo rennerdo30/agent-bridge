@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { createHash, randomUUID } from 'node:crypto';
-import { copyFileSync, existsSync, linkSync, lstatSync, mkdirSync, readFileSync, readdirSync, writeFileSync, utimesSync } from 'node:fs';
+import { copyFileSync, existsSync, linkSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync, utimesSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { afterEach, beforeAll, expect, it, vi } from 'vitest';
@@ -20,6 +20,7 @@ vi.mock('node:sqlite',async original=> {
  const sqlite=await original<typeof import('node:sqlite')>();
  return {...sqlite,DatabaseSync:new Proxy(sqlite.DatabaseSync,{construct(target,args,newTarget){
   transport.nativeOpens.push({file:String(args[0]),readOnly:args[1]?.readOnly===true});
+  transport.hooks.sqliteOpen?.(String(args[0]),args[1]); // Trap unsafe synthetic inputs BEFORE the real SQLite pager.
   return Reflect.construct(target,args,newTarget);
  }})};
 });
@@ -59,7 +60,11 @@ vi.mock('node:net',async original=> {
 });
 
 import { MessageStore, openMessageStore } from '../src/core/store.js';
-import { metadataDb, closeMetadataDbs, migrateMessagingHome, retainMetadataReader } from '../src/core/metadata-db.js';
+import { metadataDb, closeMetadataDbs, migrateMessagingHome, retainMetadataReader, metadataDbOpen, metadataReaderRetained } from '../src/core/metadata-db.js';
+import { openArchive, snapshotDatabase } from '../src/core/sqlite-maintenance.js';
+import { attachStoreCompatibility } from '../src/core/store-compatibility-overlay.js';
+import { ResourceSlots } from '../src/core/resource-slots.js';
+import { BridgeError } from '../src/core/protocol.js';
 import { assertCurrentMailboxEnvelope, preflightMessagingHome, inspectMailbox } from '../src/core/mailbox-layout.js';
 import { configureSqlite, assertSqliteAuthority } from '../src/core/sqlite-policy.js';
 import { admissionSqliteBusy, storageAdmissionTimeout, withStorageAdmission } from '../src/core/storage-admission.js';
@@ -700,4 +705,62 @@ it.each(['peers','presence','own-presence','read-state','import','legacy-backup'
    if(owned){expect((owned as any).server).toBeNull();expect((owned as any).startupAuthorityRevoked).toBe(true);expect((owned as any).maintenanceStart).toBeNull();}
    await vi.advanceTimersByTimeAsync(0);expect(connected).not.toHaveBeenCalled();expect((node as any).pendingRefreshTimer).toBeNull();}
  }finally{await node.stop();}
+});
+
+function ordinaryAuxiliaryFixture(name:string){
+ const f=candidate();f.store.close();closeMetadataDbs();const file=join(f.path,name);
+ if(name==='store-compatibility.db'){const db=database(file);db.exec(`CREATE TABLE session_bindings(identity TEXT NOT NULL,session_id TEXT NOT NULL,learned_at INTEGER NOT NULL,PRIMARY KEY(identity,session_id));CREATE TABLE peer_names(identity TEXT NOT NULL,name TEXT NOT NULL,session_id TEXT,agent TEXT NOT NULL,learned_at INTEGER NOT NULL,PRIMARY KEY(identity,name));CREATE TABLE peer_name_owners(name TEXT PRIMARY KEY,identity TEXT NOT NULL);CREATE TABLE job_delivery_routes(id TEXT PRIMARY KEY,recipient TEXT NOT NULL,consumed_at INTEGER);CREATE TABLE peer_last_seen(name TEXT PRIMARY KEY,seen_at INTEGER NOT NULL);PRAGMA user_version=1;`);db.close();}
+ return {...f,file};
+}
+function directAuxiliary(f:ReturnType<typeof ordinaryAuxiliaryFixture>,name:string){
+ if(name==='archive.db'){openArchive(f.file).close();return;}
+ if(name==='history.db'){openHistoryStore(f.file).close();return;}
+ const db=database(join(f.path,'bridge.db'));try{attachStoreCompatibility(db,join(f.path,'bridge.db'),nullLogger,true);}finally{db.close();}
+}
+const unsafeAuxiliaryCases=['archive.db','history.db','store-compatibility.db'].flatMap(name=>[
+ ...['orphan-wal','empty-wal','truncated-wal','orphan-shm','orphan-journal','hard-main','hard-wal','simulated-main-link'].map(kind=>[name,kind,'store']),
+ ...['orphan-wal','hard-main','simulated-sidecar-link'].map(kind=>[name,kind,'direct'])]);
+it.each(unsafeAuxiliaryCases)('round5: exact %s %s refuses before unsafe native open via %s',async(name,kind,entry)=>{
+ const f=ordinaryAuxiliaryFixture(name);renameSync(f.file,f.file+'.fixture-valid');let simulated:string|undefined;
+ if(kind==='empty-wal'||kind==='truncated-wal')writeFileSync(f.file,Buffer.alloc(kind==='empty-wal'?0:100));
+ else if(kind==='hard-main'||kind==='simulated-main-link'||kind==='hard-wal'||kind==='simulated-sidecar-link')copyFileSync(f.file+'.fixture-valid',f.file);
+ if(kind==='hard-main')linkSync(f.file,f.file+'.fixture-linked');
+ else if(kind==='orphan-shm')writeFileSync(f.file+'-shm','synthetic retained coordination');
+ else if(kind==='orphan-journal')writeFileSync(f.file+'-journal',Buffer.alloc(1024));
+ else if(kind!=='hard-main'&&kind!=='simulated-main-link')writeFileSync(f.file+'-wal','synthetic retained WAL bytes; never passed to native SQLite');
+ if(kind==='hard-wal')linkSync(f.file+'-wal',f.file+'.fixture-wal-linked');
+ if(kind==='simulated-main-link')simulated=f.file;if(kind==='simulated-sidecar-link')simulated=f.file+'-wal';
+ const retained=tree(f.path).filter(path=>path.startsWith(f.file)).map(path=>[path,sha(path)]),opened=transport.nativeOpens.length;
+ if(simulated){const fs=await import('node:fs'),original=fs.lstatSync;vi.spyOn(fs,'lstatSync').mockImplementation(((...args:any[])=>{const value=(original as any)(...args);if(String(args[0])===simulated)Object.defineProperty(value,'isSymbolicLink',{value:()=>true});return value;}) as never);}
+ transport.hooks.sqliteOpen=(path:string)=>{if(path===f.file)throw Error('guarded unsafe native constructor attempted; simulated only');};
+ let returned:MessageStore|undefined;
+ try{expect(()=>{if(entry==='store')returned=new MessageStore(join(f.path,'bridge.db'),nullLogger);else directAuxiliary(f,name);}).toThrow(/partial|substitut|family/i);
+  expect(transport.nativeOpens.slice(opened).filter(open=>open.file===f.file)).toEqual([]);for(const [path,hash]of retained)expect(sha(path)).toBe(hash);
+ }finally{returned?.close();}
+});
+it.each(['archive.db','history.db','store-compatibility.db'])('round5: valid and truly absent %s families retain ordinary and direct behavior',name=>{
+ const f=ordinaryAuxiliaryFixture(name);let opened=new MessageStore(join(f.path,'bridge.db'),nullLogger);opened.close();directAuxiliary(f,name);renameSync(f.file,f.file+'.fixture-fresh-control');
+ opened=new MessageStore(join(f.path,'bridge.db'),nullLogger);opened.close();directAuxiliary(f,name);expect(existsSync(f.file)).toBe(true);opened=new MessageStore(join(f.path,'bridge.db'),nullLogger);opened.close();
+});
+it.each(['root-limits.sqlite','resource-slots.sqlite','snapshot-source.db'])('round5: selected direct %s rejects orphan WAL before native open',name=>{
+ const path=home(),file=join(path,name);writeFileSync(file+'-wal','synthetic retained direct WAL');const before=sha(file+'-wal'),opened=transport.nativeOpens.length;
+ transport.hooks.sqliteOpen=(target:string)=>{if(target===file)throw Error('guarded unsafe direct constructor attempted; simulated only');};
+ expect(()=>{if(name==='root-limits.sqlite')new RootConcurrency(path,'synthetic').close();else if(name==='resource-slots.sqlite')new ResourceSlots(path).close();else snapshotDatabase(file,join(path,'snapshot-output.db'));}).toThrow(/partial|substitut|family/i);
+ expect(transport.nativeOpens.slice(opened).some(open=>open.file===file)).toBe(false);expect(existsSync(file)).toBe(false);expect(sha(file+'-wal')).toBe(before);
+});
+function retryClient(handover=false){return Object.assign(new EventEmitter(),{isClosed:false,close:vi.fn(function(this:{isClosed:boolean}){this.isClosed=true;}),request:vi.fn(async(op:string)=>{if(op==='auth'&&handover)throw new BridgeError('protocol_mismatch','synthetic handover',{handover:true});if(op==='ping')return{brokerVersion:APP_VERSION};if(op==='peers'||op==='pending')return[];if(op==='hello')return{name:'synthetic-retry',brokerPid:process.pid,sessionId:'synthetic-retry-session'};return{};})});}
+it.each([false,true])('round5: actual handover retry owns metadata through sibling stop=%s and final own stop',async siblingPresent=>{
+ vi.useFakeTimers();const f=candidate();f.store.close();closeMetadataDbs();const options={pipePath:'synthetic-round5',token:'synthetic-only',dbPath:join(f.path,'bridge.db'),agent:'other' as const,name:'synthetic',cwd:f.path,autoWake:false,log:nullLogger},node=new BridgeNode(options),sibling=siblingPresent?new BridgeNode(options):undefined,first=retryClient(true),second=retryClient();
+ vi.spyOn(BridgeClient,'connect').mockResolvedValueOnce(first as never).mockResolvedValue(second as never);const initial=metadataDb(f.path),connected=vi.fn();node.on('connected',connected);
+ try{const started=node.start();await vi.advanceTimersByTimeAsync(1000);await started;expect(first.isClosed).toBe(true);expect(connected).toHaveBeenCalledOnce();expect(node.isConnected).toBe(true);
+  const serving=metadataDb(f.path);expect(metadataReaderRetained(f.path)).toBe(true);if(sibling){await sibling.stop();expect(serving.isOpen).toBe(true);expect(metadataReaderRetained(f.path)).toBe(true);}else expect(initial.isOpen).toBe(false);
+  await vi.advanceTimersByTimeAsync(11_000);second.emit('event','peer_joined',{pid:process.pid,name:'synthetic-after-budget',version:APP_VERSION});expect(node.isConnected).toBe(true);expect(serving.isOpen).toBe(true);
+  await node.stop();await node.stop();expect(serving.isOpen).toBe(false);expect(metadataDbOpen(f.path)).toBe(false);expect(metadataReaderRetained(f.path)).toBe(false);
+ }finally{await sibling?.stop();await node.stop();}
+});
+it.each(['handover-cancel','protocol-failure'])('round5: continuing reader acquisition has exact %s cleanup',async kind=>{
+ vi.useFakeTimers();const f=candidate();f.store.close();closeMetadataDbs();const node=new BridgeNode({pipePath:'synthetic-round5',token:'synthetic-only',dbPath:join(f.path,'bridge.db'),agent:'other',name:'synthetic',cwd:f.path,autoWake:false,log:nullLogger}),client=retryClient(true),db=metadataDb(f.path);
+ if(kind==='protocol-failure')vi.spyOn(BridgeClient,'connect').mockRejectedValue(new BridgeError('protocol_mismatch','synthetic incompatible protocol'));else vi.spyOn(BridgeClient,'connect').mockResolvedValue(client as never);
+ const started=node.start(),rejected=expect(started).rejects.toThrow();
+ try{if(kind==='handover-cancel'){await vi.advanceTimersByTimeAsync(0);const stop=node.stop();await vi.advanceTimersByTimeAsync(1000);await stop;}await rejected;expect(metadataReaderRetained(f.path)).toBe(false);expect(metadataDbOpen(f.path)).toBe(false);expect(db.isOpen).toBe(false);await node.stop();await node.stop();}finally{await node.stop();}
 });
