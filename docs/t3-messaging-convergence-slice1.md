@@ -1,4 +1,4 @@
-> Latest: round-four correction source is frozen at `7ab0ce49948f49e0cc34d1f8ee801920cd65865c`, tree `03c9565adf431f2024dab49c0797b0fefcd12594`. NoEmit and the complete guarded slice1 file97/97 passed once on that freeze. The7fail/1pass red run remains attributed to unchanged7e50 production. Alternate ordinary open/reopen/ready-resume and bounded actual adoption are now exercised, with strict completion proofs and no baseline amendment. The new closure/audit/protected packet awaits parent independent review; hosted Node24/platform and native acceptance remain pending. All earlier freezes and qualifications remain retained.
+> Latest: round-five source is frozen at `d9837435c099b6a3143e98d2ebca5b1f9e85e9ad`, tree `f2915de5ab82af77fb07134d0c8efdbd83923531`. NoEmit FAILED on one test-only retained-tuple TS2345; the corrected whole guarded file was NOT RUN and no source/test correction or retry followed. The unchanged7ab red run retained39 intended failures/4 controls. Safe-family and continuing-reader corrections are implemented but unaccepted on this freeze. Historical protectedBodies misattribution is explicitly corrected in the new artifact packet; old artifacts remain untouched. Parent gate renewal is required before the type-only correction and further checks; all older source/runtime qualifications remain retained.
 
 # AB-458 convergence slice1 WIP receipt
 
@@ -1069,3 +1069,65 @@ The separate adoption source-review manifest also records exact normalized befor
 Artifact root: `E:/AgentData/claude-codex-comm/t3-6416720d/.agent-bridge-test/slice1-round4`. The final inventory verifies every preceding2393 indexed evidence file remains unchanged and lists the full retained source/log/synthetic packet after the explicit assigned-ref WIP push. No original receipts/snapshots were deleted or rewritten.
 
 **Next:** parent independent full pipeline/protected review, followed separately by hosted Node24/platform/native acceptance. Same candidate retained for later slices. PR141c94 and its writer remain untouched. No new PR/integration/later slice, build/install/release/restore/live migration, Bridge call/agent/main-role handoff, persistent environment/Git configuration, force/reset or rule edit occurred.
+
+## Round-five AB45843831: family admission and retry-reader ownership, typing gate stopped
+
+The complete independent reviewAB45843831 and prior round4 closure/audit/source/protected packet were read before edits. Continuation head `d02bf58b4eab2d7df8bf792de4cb4c5b2b513f7e`, tree `4bf4e0bb5c7f8d2be3e4e18c33fb240eb3ce9058`; reviewed production `7ab0ce49948f49e0cc34d1f8ee801920cd65865c`. Original main/design/contract tuple and the same assigned checkout/branch remain unchanged. Parent retains coordination; no delegation/Bridge/new branch/PR/integration or later-slice scope.
+
+### Read-only audit and exact scope
+
+`operation-audit.md` in `.agent-bridge-test/slice1-round5` records the complete selected input/opener and reader-lifetime audit before edits/testing, with later clarifications explicitly labelled. Review text is retained as `review-AB45843831.md`. Audit SHA256 `fac46c0581dc0d74f03ecac714cc75d359a1cc8242fb5ef89f388cf9a9aa3ed5`.
+
+The common family implementation is extracted from the existing inspector; mailbox schema/envelope compatibility remains a separate callback. It validates only known exact main/-wal/-shm/-journal families, existing safe ancestors, regular/unlinked entries, descriptors/path identities, orphan and empty/truncated/header bounds, then uses the same normal READONLY committed-view transaction. Native read-only coordination allowance remains unchanged; no writable repair/retry, checkpoint/delete, immutable/nolock, custom VFS, helper or new inspection framework. Genuine complete absence permits ordinary initialization. Header bytes are rejection guards, never authority over live WAL.
+
+MessageStore preflights archive/history/supplemental families before constructor effects, and relevant direct openers recheck before native construction. Exact guarded paths include store/metadata canonical and alternate owners/cache reuse; archive/history/supplemental writer/readers; selected migration snapshot inputs/outputs; root/slot ownership databases; owner-question selected service DB; doctor/reindex selected readers. New source-file scope is limited to family checks at these existing boundaries. Cached metadata reuse refuses a currently absent family without closing retained sibling-owned handles or changing shared refcounts/cache closing policy. This is not native-handle fstat identity, cached-old-writer revocation or general filesystem safety.
+
+The audit explicitly excludes unrelated background Worker/job-index/archive/backup/lifecycle/finalize/absorb/provider and general conversation/project/checklist/transcript readers. Existing stricter storage-preservation admission remains unchanged; no unrelated file/secret probing or production worker/helper launch. In-memory databases bypass filesystem family inspection. Existing normal schema/history, quota, retention, acquisition/release and supported auxiliary behavior remain intended.
+
+### Immutable red/corrected freezes and stopped gate
+
+Intentional test-only red: `02080f730d907c0af96292116dc9b4044239350c`, tree `62171abec83418528fbad7cb0951c9ded7960183`; src is identical to7ab (`16fc98a2fa28b1991ecd9f12cacbae7760368639`). Red test SHA256 `43207f590899ffdac8b97bde7f163e34d53be84f948a8934be36e878839f1cb8`. One `^round5:.*$` selection produced **39 failed/4 passed/97 skipped (140)** with no fixture-failure classification.
+
+Thirty auxiliary constructor attempts and three direct root/slot/snapshot attempts were trapped by the test adapter **before actual SQLite**; three supplemental orphan families were incorrectly ignored. These are pre-native ordering/static-path counterexamples, not actual unsafe WAL pager execution, file loss or recovery evidence. Hardlinks are real synthetic links; symlinks are explicitly simulated lstat results. Actual handover retries reproduced missing serving registration and sibling-triggered handle closure; protocol failure retained an idle registration. Valid/fresh controls and handover-cancel cleanup already passed on the red freeze and are not newly reproduced defects.
+
+Corrected source: `d9837435c099b6a3143e98d2ebca5b1f9e85e9ad`, tree `f2915de5ab82af77fb07134d0c8efdbd83923531`, src tree `92ce3dfcc6eee32a6f8fda8c7d8262441b07ba84`. Test SHA256 `8e0b99f3a27fc9ec15e9a6ef9af794e23ef0ae60a26d9904e9f8a9247ce81a4c`. Fifteen existing production files and the focused test changed in this source batch; complete inventories from main/reviewed source and exact patches are retained. Only this receipt changes afterward. Source/test patch SHA256 `020620d790991985e09dacaa7993000a441d3f6e0557734fb4e5e80815e4e18f`.
+
+NoEmit stopped with exactly the reported diagnostic:
+
+```text
+test/messaging-convergence-slice1.test.ts(738,136): error TS2345:
+Argument of type 'string | undefined' is not assignable to parameter of type 'string'.
+```
+
+The newly written retained pairs infer string[] rather than a fixed tuple; destructuring therefore makes the path possibly undefined. This is a test-only type error, not a reported production type error. The concrete proposed correction adds `as const` to that map result, preserving every value/assertion. It is retained as `proposed-type-only.patch` and **NOT applied**. The failed source/test freeze remains exact; no post-failure source edit, compiler retry or whole-file launch occurred.
+
+| Gate | Own wrapper/shell/check PID | JST start–end | External limit/result |
+| --- | --- | --- | --- |
+| Intentional unchanged-production red |68804/38236/74396 |2026-10-24 13:07:02.138–13:07:09.808 |60000ms;7670ms;exit1;no timeout |
+| noEmit |51544/28404/57844 |2026-10-24 13:14:49.765–13:14:51.069 |60000ms;1304ms;exit1;no timeout |
+| Corrected complete guarded slice1 file |NOT RUN |NOT RUN |Stopped after failed typing gate; no retry |
+
+Raw line1 of each stdout/stderr retains exact source/tree/test/PID/UTC-start/deadline/argv. Before/after freeze hashes matched. NoEmit allowance is spent; whole-file allowance is unused but held by the stop-on-failure instruction until parent renewal. All owned check processes exited. Prior97/97 remains attributed only to7ab, not this unaccepted corrected freeze. The added cached-absence and repeated-start assertions were written after red and are not separately red-proven.
+
+Runtime inside the allowed red process74396: Node `v26.4.0`, SQLite `3.53.2`, source ID `2026-06-03 19:12:13 d6e03d8c777cfa2d35e3b60d8ec3e0187f3e9f99d8e2ee9cac695fd6fcdf1a24`. NoEmit wrapper also observed Nodev26.4.0; no SQLite query was launched in that compiler process. Corrected runtime, hosted Node24/all-platform/native acceptance, protected pins, full/lifecycle/build/install/release/live or installed migration/restore are NOT RUN. No actual unsafe pager/helper/provider/daemon/TLS/socket/production Worker execution occurred.
+
+### Closure and explicit historical attribution correction
+
+| Review finding | Implemented correction | Current evidence/status |
+| --- | --- | --- |
+| P1 safe exact auxiliary family | Role-neutral common guard, store-wide selected auxiliary preflight and actual direct owner/reader boundaries; safe absence versus existing cached presence distinguished | Meaningful guarded red retained. IMPLEMENTED/UNACCEPTED: corrected runtime NOT RUN after test-only typing failure |
+| P2 reader lifetime across recoverable retry | Budget-checked exact reader acquisition at election entry/each continued iteration/adoption; failed adopt releases its bound callback only. Overall failure joins its broker cleanup/releases remaining callback. start cannot acquire a registration before a held refusal | Actual elect/adopt retry and sibling/final-stop negatives red-proven; cancellation control retained. Corrected runtime NOT RUN; no changed shared-cache close/refcount policy |
+| P3 machine-readable protectedBodies | New explicit correction preserves stale round4 string/file hash, records verified historical8/5 and node.start/node.stop since7e50, then derives current attribution from regenerated manifests | CORRECTED artifact attribution only. Old round4 JSON/receipts not rewritten, no baseline approval |
+
+`protected-attribution-correction.json` SHA256 `a8b8531ec94929d7802bc7918af8db04c037dd770373853eeca906e13239114c`. All13 normalized bodies were regenerated against M,7ab and bb1f with unchanged actual normalizer. Current M comparison remains **8 changed/5 unchanged**; this batch changes protected **node.start and node.tryBecomeBroker** from7ab. Extra exact reader-method before/after artifacts cover adopt/elect/ensureConnected/new reader helper as source evidence only. No baseline/UI/dashboard/normalizer/retention/flaky changes or protected tests.
+
+- Protected manifest SHA256 `9dcad0a467aaca361caeedde00c6e8d4ffca9ef5e5f72aed9c6c8e37e25670d8`.
+- Main normalized JSON patch SHA256 `d6ac5b7f46bf8adbd911ed1c5e6cf7155122a2354ea98258c6c598ffd9ba31c5`.
+- Main readable patch SHA256 `3826e797345b11e127999a12c045d0541b063a66b88c2969600001f8d8864ffb`.
+- Reviewed7ab readable patch SHA256 `980d3c21cbd5ebbd212df01fa9546efbbb31dde9cde2b347fc177a38efe9a355`.
+- Closure SHA256 `cdbaee3308b93379d9605abadfa444276564448080e8d104e28800c0fc613d9c`.
+- Source packet manifest SHA256 `f266719a0ada44fd2e04d51a9bcb7c7533c34ab22565292655df8c9bec45fe1d`.
+
+Red commit Git50948/shell23324,13:07:01.142–13:07:01.278 JST; source commit Git80092/shell39872,13:14:41.451–13:14:41.629 JST; each external60000ms,exit0. Static packaging PID11168/shell78104,13:16:37.736–13:16:39.084 JST,external10000ms,exit0. Later receipt-only commit/push and final retained-file inventory have separate receipts; source attribution staysd9837435. All preceding3125 indexed evidence files, prior reviews/closures and synthetic-WAL qualifications remain retained unchanged and are checked by the new final inventory.
+
+**Parent gate decision:** approve the exact test-only tuple annotation, one renewed noEmit and the unused complete guarded-file run, each external60000ms. Until then this source is WIP, not ready for renewed independent acceptance or later slices. All original PR141c94/writer/history, rule files and current design/versions remain untouched; no Bridge call/agent/PR/integration/config/force/reset or owner plan/status/handoff/verdict change.
