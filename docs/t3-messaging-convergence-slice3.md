@@ -115,3 +115,49 @@ The reviewed slice-two baseline amendment is the only pin change authorized here
 Any new protected13 body delta is a proposal requiring exact regenerated normalized
 before/after packet and parent review; no slice-three baseline update is approved.
 UI/dashboard/mobile normalizers/assertions/retention guard/flaky/rules stay unchanged.
+
+## Stopped first red launch — fixture failure, no production proof
+
+Freeze `1da2aed8acb1a816bca4c14facd97603c2babaac`, tree
+`a453b415de4d4037d7023668a1851bab4754c820`, test checkout SHA256
+`bf8be9f2151a7e61ce706e6580a402b5ebf2c8cb00e78b4d1067ae79935c5a69`.
+Production `src` remains exactly reviewed 870a (`86d0d91da04b26402ca2ba913b9d455bac45598a`).
+
+The one admitted red selection executed six cases, but all six stopped in fixture
+construction before their contract assertions: the new fixture called
+`new MessageStore(path)` instead of the actual required `new MessageStore(path, log)`.
+`store.ts:550` therefore threw `Cannot read properties of undefined (reading 'debug')`.
+The ordinary merge control failed too. This is **not meaningful red evidence** for
+any of the five intended counterexamples; there is no production finding from it.
+The existing slice-two fixture supplies `nullLogger`; that actual signature was
+missed during this fixture composition audit. No assertion or production change
+is justified by this failed setup.
+
+Raw logs/first immutable headers: `.agent-bridge-test/slice3/red.stdout.log` and
+`red.stderr.log`; `red.receipt.json` and `red.launcher.receipt.json` retain the mismatch.
+PID59960, wrapper45356, shell30132, 2026-10-24 16:36:46.223–16:36:50.288 JST,
+4065ms, external60s, process exit1, six failed; expected five counterexample
+failures and one passing control. Node26.4.0 / SQLite3.53.2 were printed inside
+that already-authorized process. All owned processes settled; no timeout/retry.
+
+Per the parent's stop rule, the fixture remains unchanged and no further check
+has run. **Requested renewal:** only supply the already-imported `nullLogger` to
+that constructor, freeze an attributable fixture correction, and renew one same
+six-case unchanged-production red selection. The corrected-source noEmit and whole
+slice3/71-case slice2/141-case slice1 allowances have not been used. Slice3 production
+implementation has not begun; its typed delegate/provider seams are approved scope,
+not implemented or validated effects. No slice-three closure/acceptance is claimed.
+
+Separately, reference-only assembler PID72672 failed before producing its final
+manifest because it attempted to resolve a design-named new module in HEAD where
+that module is absent. Its raw failure and two partial M/P reference patches are
+retained. It was not retried, and no complete selective-reference manifest is
+claimed. This was source/artifact assembly, not a production launch or validation
+run; the committed readable extraction/callgraph table is the current audit.
+
+The source/pin packet for 870a remains exact: protected13 manifest SHA256
+`90a1ac8b9f842ec4a27e320ae9fa6ee532ce754b3e7316efe1d966e970386f3e`,
+normalizer SHA256 `93ca63b8638622cc790c0d776b544af0840133e4c144ce792836e718a93b664a`.
+There is no new production body delta to regenerate. The three approved slice-two
+hashes now match the separate baseline-only commit; the other ten and UI source
+remain unchanged. All prior receipts and the original PR141 evidence are retained.
