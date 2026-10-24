@@ -315,7 +315,19 @@ it('preserves INTEGER PRIMARY KEY aliases, shadowed rowids and WITHOUT ROWID val
   [{a:'synthetic key',b:9007199254740997n,payload:blob,nullable:null}],
  ]);
  source.close();const original=sha(join(f.source,'bridge.db'));
- await migrateMessagingHome({source:f.source,destination:f.destination,apply:true,offlineIsolated:true});
+ const diagnostic=process.env.AB458_SLICE1_INVENTORY_DIAGNOSTIC==='1';
+ const inventoryState=()=>readdirSync(f.source).sort().map(path=>{
+  const file=join(f.source,path),stat=lstatSync(file,{bigint:true});
+  const role=path==='bridge.db'?'sqlite':path==='bridge.db-wal'?'wal':path==='bridge.db-shm'?'excluded-coordination':'retainedUnknown';
+  return {path,role,bytes:Number(stat.size),identity:`${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`,
+   sha256:['bridge.db','bridge.db-wal','bridge.db-shm'].includes(path)&&stat.isFile()?sha(file):undefined};
+ });
+ const before=diagnostic?inventoryState():undefined;
+ try {await migrateMessagingHome({source:f.source,destination:f.destination,apply:true,offlineIsolated:true});}
+ catch(error) {
+  if(before)console.log('SLICE1_INVENTORY_DIAGNOSTIC '+JSON.stringify({before,after:inventoryState()}));
+  throw error; // Diagnostic preserves the original failure; no retry/repair.
+ }
  const migrated=database(join(f.destination,'bridge.db'));
  expect(read(migrated)).toEqual(expected);
  expect(migrated.prepare("SELECT name,sql FROM sqlite_master WHERE name LIKE 'binding_%' ORDER BY name").all()).toEqual(schema);
