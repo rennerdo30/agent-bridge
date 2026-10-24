@@ -1,4 +1,4 @@
-> Latest: production is unchanged from `eeae258fb01df64b50e1df46054f10bc086061b2`. The authorized test-only journal correction froze at `0b1f3dc080417e4f19e9bde202252c05ffd83865`; its one anchored run stopped at5 passed/1 failed/37 skipped, with4 selected cases unaccepted. The journal boundary passed; shipping migration failed binding SQLite parameter1. No retry/noEmit was run. Candidate remains WIP pending the parent's production-fix brief and verification budget. Original receipts and both earlier red runs below remain historical evidence, not current acceptance.
+> Latest: the parent-authorized importer binding correction froze at `e185e18550774802a0304eed56315a294ba80bff`. NoEmit passed. Its one anchored selection confirmed `decisions.rowid` returns as `revision` and shipping migration passed, then stopped at1 passed/1 failed/42 skipped: the new fidelity regression refused at the pre-import inventory recheck. Four later selected cases remain unaccepted. Both allowances are spent; no retry or post-failure source/test edit occurred. Candidate remains WIP pending the parent's inventory diagnosis decision. All earlier freezes and red evidence below remain retained and qualified to their own runs.
 
 # AB-458 convergence slice1 WIP receipt
 
@@ -572,3 +572,82 @@ All13 normalized protected bodies are unchanged by this fixture correction becau
 New artifact directory: `E:/AgentData/claude-codex-comm/t3-6416720d/.agent-bridge-test/slice1-journal-fixture-review`. Earlier `slice1-review`, `slice1-corrected-review` and all synthetic originals/snapshots remain retained. A new final inventory is written after the explicit WIP push and reported in the handoff; older inventories stay untouched. Packaging used static source/file/hash operations only, PID9316,external10000ms,exit0; its precise UTC times are in `artifact-pack.receipt.json`.
 
 **Parent decision required:** the authorized test fixture boundary now passes, but slice1 cannot be handed off as ready for independent source review while shipping migration fails. A separately scoped production importer correction and explicit verification allowance are needed before further implementation/checks. This WIP preserves the failed source freeze and all evidence; no additional correction, retry, integration or PR was made.
+
+## Narrow importer binding correction: confirmed cause, new pre-import refusal
+
+Parent authorized a correction **only inside `importMigrationSnapshot`'s projection/binding**, one small synthetic fidelity regression, metadata-only diagnosis in the existing focused process, one noEmit and one external60s focused selection. This section supersedes the preceding next-decision paragraph without changing its historical evidence.
+
+Continuation starts at pushed artifact head `7566bec952c9b18526c506677b03ed43ff143f75`, tree `00f460bf7f8f41aeeb077d918e89e133b58a6023`. Original main remains `5e3fa8aa17d22d57cb5d24549c16381c5843edeb`. New source/test freeze is `e185e18550774802a0304eed56315a294ba80bff`, tree `33712923dc186e858f1d836f8dadc274097faba4`; its `src` directory tree is `521361624c07ea0b04702ca495bf295040e14341`. Only `src/core/metadata-db.ts` and `test/messaging-convergence-slice1.test.ts` changed in that freeze (45 insertions/2 deletions); the later receipt commit is artifact-only.
+
+### Confirmed table/key and exact source change
+
+The shipping fixture's first legacy missing projection key was confirmed **inside the authorized focused run**, bounded to32 fixture projections and one metadata record. No row values or independent probe were logged:
+
+```json
+{"table":"decisions","requestedKey":"rowid","returnedKeys":["revision","id","topic","body","scope","author_id","author_name","author_agent","created_at","source_message_id","supersedes"]}
+```
+
+The table declares `revision INTEGER PRIMARY KEY AUTOINCREMENT` (`src/core/decisions.ts:57`). The test reconstructs the old projection on the immutable synthetic snapshot, confirms the returned object lacks the requested key and records only table/column metadata. No production diagnostic hook was added. [Node24.10 statement metadata and object results](https://nodejs.org/download/release/v24.10.0/docs/api/sqlite.html#statementcolumns) document the APIs used; actual behavior above belongs to the observed Node26 build, not hosted Node24 acceptance.
+
+The importer now assigns every result expression a unique explicit `__migration_column_<position>` alias and binds values by those result keys. Every projection is aliased, so an actual source column named `__migration_column_0` cannot collide with an unaliased field. Destination column names/order, implicit-rowid selection, `setReadBigInts(true)` and the direct value bindings remain intact. There is no undefined-to-NULL conversion, dropped field, BLOB conversion or skipped table.
+
+Schema construction, source opening/closing, BEGIN/ROLLBACK/COMMIT boundaries, phase callback, sqlite_sequence handling and unknown-COMMIT policy are unchanged. This correction introduces no importer framework, version/dependency change, inspector/admission adjustment or scope expansion.
+
+Exact production-only patch SHA256: `caa42a6f6ddb36c6fca698c6a324013b2b7461ef21a693f21321161bf366fa50`; full source/test patch SHA256: `14b5d4929a750a69343f9476a92b56b831471d25fd1094b29c82d35a1690b285`. Both are retained in `.agent-bridge-test/slice1-binding-review` as `production-only.patch` and `source-test.patch`.
+
+### Focused selection and stopped result
+
+The anchored names were derived from actual literal test names and the existing `it.each(['snapshot','committed-ddl'])` template. Exact full pattern/argv are retained in `selection.json`, both raw first headers and `focused.receipt.json`. Forty-two prior cases, including journal/guard checks, were excluded.
+
+| Exact selected test | Result on e185e185 |
+| --- | --- |
+| provides a read-only exact-home plan and a finite m1/s9 isolated migration | PASS; includes projection diagnosis |
+| preserves INTEGER PRIMARY KEY aliases, shadowed rowids and WITHOUT ROWID value fidelity | FAIL before import |
+| resumes one immutable interrupted attempt after snapshot, retaining all originals | NOT RUN/unaccepted |
+| resumes one immutable interrupted attempt after committed-ddl, retaining all originals | NOT RUN/unaccepted |
+| holds candidate-ready CAS failure even with complete tables and a metadata fence row | NOT RUN/unaccepted |
+| keeps a late mocked recovery from activating or starting a subsequent phase | NOT RUN/unaccepted |
+
+Raw Vitest5.0.2 summary: **1 failed /1 passed /42 skipped (48 registered)**. The small regression creates three ordinary synthetic tables: INTEGER PRIMARY KEY plus a real alias-like column, a real `rowid` column with separately assigned implicit rowid, and a composite-primary-key WITHOUT ROWID table. It asserts explicit expected large positive/negative integers, BLOB bytes and NULLs before migration, then is intended to compare destination rows/schema and retained source bytes. Its source expectations passed, but destination fidelity was **not reached or accepted** because migration refused first.
+
+```text
+FAIL preserves INTEGER PRIMARY KEY aliases, shadowed rowids and WITHOUT ROWID value fidelity
+Error: Source changed after planning; all originals and interrupted destination retained
+  at migrationRefusal src/core/metadata-db.ts:532:61
+  at Module.migrateMessagingHome src/core/metadata-db.ts:668:116
+  at test/messaging-convergence-slice1.test.ts:318:2
+```
+
+Call graph: new regression -> `migrateMessagingHome` -> locked-source inventory comparison, **before destination construction/import**. That regression calls apply directly; the passing shipping case first invokes the read-only plan. The current log does not capture the inventory delta, so it does not prove whether the differing record is a coordination sidecar, identity change or another effect. No guard was weakened, new cause inferred as fact, production expansion made or extra probe launched. Diagnosis of this separate pre-import refusal requires the parent's decision.
+
+### Exact frozen-process receipts
+
+| Operation | Own wrapper/shell/check PID | JST start–end | External limit/result |
+| --- | --- | --- | --- |
+| Source commit |Git11836/shell22880 |2026-10-24 09:50:42.413–09:50:42.563 |60000ms;exit0 |
+| noEmit |50252/48636/45280 |2026-10-24 09:50:48.916–09:50:50.207 |60000ms;1291ms elapsed;exit0;no timeout |
+| Anchored six-case selection |26852/8028/4956 |2026-10-24 09:50:54.960–09:50:56.992 |60000ms;2032ms elapsed;exit1;no timeout |
+
+Both checks observed the same source commit/tree and test SHA256 `f910604125d34f319e9851a32563eabc70426b29a9c1d254d841b4ce0ec4ed3c` before and after. Raw line1 of each stdout/stderr file names the exact freeze, test hash, all PIDs, UTC start,60000ms deadline, wrapper Node version and argv; focused headers also retain the exact six names. All owned check processes exited; no timeout cleanup or foreign-process termination occurred.
+
+Actual version query in the already-authorized focused process only:
+
+```json
+{"node":"v26.4.0","pid":4956,"sqlite":"3.53.2","sqliteSourceId":"2026-06-03 19:12:13 d6e03d8c777cfa2d35e3b60d8ec3e0187f3e9f99d8e2ee9cac695fd6fcdf1a24"}
+```
+
+NoEmit **PASS** on this source freeze. Focused selection **RED**; both new allowances are consumed. No automatic retry, second initialization, post-failure source/test change, native worker/helper/provider/daemon/TLS/full suite/build/install/live-home migration or version/PATH change occurred. Hosted Node24/platform verification remains **NOT RUN**. The original19/1,37/1 and5/1 red runs remain unchanged and separately qualified; no combined final-head pass count is claimed.
+
+### Protected patch and artifacts
+
+The binding correction changes zero protected methods. Complete broker.ts/node.ts/dashboard.ts Git blobs match the previous head, establishing that all13 normalized bodies and their exact cumulative main-to-candidate patch remain identical. `preservation-manifest.json` records those blob proofs, fresh baseline/UI/retention/normalizer byte hashes and copied artifact hashes. Baselines are untouched; the original five proposed protected-method deltas still require parent review before any separate pin amendment.
+
+- Protected manifest: `2713b6127ca809af80d7dade24c5325077c9434e51eac8501e931e88d995f5fd`.
+- Normalized JSON patch: `5c2b4be8c4ccf3811e32673d7adfe23286d1a868d5b489b8bcf4c3207ffb98d1`.
+- Readable cumulative method patch: `ffb5efda7a9168e366dfa56f4f5737b530476420a81877d5e35ae9f3c7121b1e`.
+- Focused stdout/stderr: `e5abe10797679e41d32a91473396c1ccda1e0df15683fd3152943abea541d160` / `4869d82e9e443f171dce80237799ed28c6ada9ffd57c0ec18100baa2f51c1ff4`.
+- Settled pre-receipt artifact index: `914159c87d533fe5aba52216f63c66a6cc129e40e359efc3fe2ac85d8427232d`; excludes itself and later packaging/Git/final-inventory artifacts.
+
+New artifact root: `E:/AgentData/claude-codex-comm/t3-6416720d/.agent-bridge-test/slice1-binding-review`. Static packaging PID22256,09:51:58.150–09:51:59.105 JST,external10000ms,exit0. All previous artifact roots and synthetic originals/snapshots remain retained. Final commit/push PIDs/times/exits and a new complete retained-file inventory are recorded after this receipt's artifact-only commit.
+
+**Parent decision needed:** authorize a narrowly scoped diagnosis of the pre-import inventory drift, or hold the candidate at this preserved WIP. The confirmed binding correction and shipping pass are available for independent inspection, but fidelity/interruption/CAS/late-recovery acceptance remains incomplete; there is no slice1-review-ready, merge, PR, installed migration or release claim. PR141 and its original writer remain untouched.
