@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
-import { closeSync, fsyncSync, mkdirSync, openSync, renameSync, statSync, unlinkSync, writeSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { closeSync, constants, fstatSync, fsyncSync, linkSync, lstatSync, mkdirSync, openSync, readSync, unlinkSync, writeSync, type Stats } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { MAX_BODY_CHARS } from "./constants.js";
 
 /** Directory under the bridge home holding full texts that were too large to send (AB-380). */
@@ -16,27 +16,77 @@ function safeName(id: string): string {
   return id.replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 120) || "message";
 }
 
+/** Only private attempt files computed below, never a published evidence record. */
+function discardTemporary(tmp: string, owned: Stats): void {
+  try { const current = lstatSync(tmp); if (current.isFile() && !current.isSymbolicLink() && current.dev === owned.dev && current.ino === owned.ino) unlinkSync(tmp); } catch { /* Changed or already gone: preserve. */ }
+}
+
+const unsafe = () => new Error("Quarantine evidence path/content ownership is unproven; original data preserved");
+const identity = (s: Stats) => `${s.dev}:${s.ino}:${s.birthtimeMs}:${s.ctimeMs}:${s.mtimeMs}:${s.size}`;
+function physicalDirectories(path: string): string[] {
+  const observed: string[] = [];
+  for (let at = resolve(path);;) {
+    const s = lstatSync(at);
+    if (!s.isDirectory() || s.isSymbolicLink()) throw unsafe();
+    observed.push(`${at}:${s.dev}:${s.ino}:${s.birthtimeMs}`);
+    const parent = dirname(at); if (parent === at) return observed;
+    at = parent;
+  }
+}
+function regular(path: string, bytes: number): Stats {
+  const s = lstatSync(path);
+  if (!s.isFile() || s.isSymbolicLink() || s.nlink !== 1 || s.size !== bytes ||
+    process.getuid && (s.uid !== process.getuid() || (s.mode & 0o077) !== 0)) throw unsafe();
+  return s;
+}
+function verify(path: string, data: Buffer, admittedDirectories?: string[]): void {
+  const dirs = physicalDirectories(dirname(path)), before = regular(path, data.length);
+  if (admittedDirectories && JSON.stringify(dirs) !== JSON.stringify(admittedDirectories)) throw unsafe();
+  const fd = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+  try {
+    if (identity(fstatSync(fd)) !== identity(before)) throw unsafe();
+    const bytes = Buffer.alloc(data.length), tail = Buffer.alloc(1);
+    for (let at = 0; at < bytes.length;) { const n = readSync(fd, bytes, at, bytes.length - at, at); if (!n) throw unsafe(); at += n; }
+    if (readSync(fd, tail, 0, 1, data.length) || !bytes.equals(data) || identity(fstatSync(fd)) !== identity(before)) throw unsafe();
+  } finally { closeSync(fd); }
+  if (identity(regular(path, data.length)) !== identity(before) || JSON.stringify(physicalDirectories(dirname(path))) !== JSON.stringify(dirs)) throw unsafe();
+}
+function existsVerified(file: string, data: Buffer): boolean {
+  try { lstatSync(file); } catch (e) { if ((e as NodeJS.ErrnoException).code === "ENOENT") return false; throw e; }
+  verify(file, data); return true;
+}
+function prepareDirectory(home: string): string {
+  physicalDirectories(home);
+  const dir = join(home, QUARANTINE_DIR);
+  try { physicalDirectories(dir); } catch (e) { if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e; mkdirSync(dir, { mode: 0o700 }); }
+  physicalDirectories(dir); return dir;
+}
+
 /**
- * Keeps the full text in `<home>/quarantine/<id>-<content hash>.txt` (fsynced, then renamed into place) and returns
+ * Keeps the full text in `<home>/quarantine/<id>-<content hash>.txt` (fsynced, then exclusively linked into place) and returns
  * its path. The name carries the content hash, so an existing file is only reused for the same text, and a different
  * text under the same id never overwrites or aliases another one. Throws if the text could not be written.
  */
 export function quarantineText(home: string, id: string, text: string): string {
   const data = Buffer.from(text, "utf8");
-  const file = join(home, QUARANTINE_DIR, `${safeName(id)}-${createHash("sha256").update(data).digest("hex").slice(0, 16)}.txt`);
-  try { if (statSync(file).size === data.length) return file; } catch { /* Not written yet. */ }
-  mkdirSync(dirname(file), { recursive: true });
+  const file = join(prepareDirectory(home), `${safeName(id)}-${createHash("sha256").update(data).digest("hex").slice(0, 16)}.txt`);
+  const admittedDirectories = physicalDirectories(dirname(file));
+  if (existsVerified(file, data)) return file;
   const tmp = `${file}.${process.pid}.${randomUUID()}.tmp`;
   const fd = openSync(tmp, "wx", 0o600);
+  const owned = fstatSync(fd);
   try {
     try {
       for (let at = 0; at < data.length;) at += writeSync(fd, data, at);
       fsyncSync(fd);
     } finally { closeSync(fd); }
-    renameSync(tmp, file);
+    physicalDirectories(dirname(file));
+    try { linkSync(tmp, file); } catch (e) { if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e; }
+    discardTemporary(tmp, owned);
+    verify(file, data, admittedDirectories);
   } catch (err) {
     // A failed attempt must not leave a partial copy behind: each retry uses a fresh temp name.
-    try { unlinkSync(tmp); } catch { /* Already gone. */ }
+    discardTemporary(tmp, owned);
     throw err;
   }
   return file;

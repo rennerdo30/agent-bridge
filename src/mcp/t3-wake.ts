@@ -20,7 +20,7 @@ export class T3Waker {
   constructor(private readonly host: T3Host, private readonly node: BridgeNode,
     private readonly cfg: BridgeConfig, private readonly log: Logger, private readonly debounceMs = 1500, home?: string) {
     // No default storage fallback: a missing explicit session home must never dispatch without a journal.
-    if (home) this.journal = new T3WakeJournal(home, host.binding);
+    if (home) this.journal = new T3WakeJournal(home, host.binding,()=>host.wakeRequestNamespace());
     node.on("message", this.schedule);
     node.on("notification_waits_changed", this.schedule);
     node.on("connected", this.schedule);
@@ -38,6 +38,8 @@ export class T3Waker {
       admitted = true;
       let outcome: T3WakeOutcome;
       try {
+        if(this.stopped)throw new T3WakeJournalError('unavailable');
+        this.journal.assertDispatch(operation);
         const result = await this.host.send({ clientRequestId: operation.clientRequestId, mode: operation.mode, message: operation.message });
         outcome = { state: "accepted", receipt: result.receipt };
       } catch (error) {

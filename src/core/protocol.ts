@@ -62,6 +62,10 @@ export interface SiblingPeer {
 export interface ProjectRoute { address: string; main: string; since: number; previous?: string }
 
 export interface PeerInfo {
+  /** Derived by the owning broker; an authenticated paired advertisement only. */
+  mailboxNamespace?: string;
+  /** Authenticated host advertisement only; local brokers derive this from typed provenance. */
+  nativeOwner?: string;
   projectRoute?: ProjectRoute;
   /** Derived local project identity; paired-PC projections never confer group authority. */
   projectRoot?: string;
@@ -96,7 +100,7 @@ export interface PeerInfo {
   /** agent-bridge version of this peer. */
   version?: string;
   /** Maximum readable shared formats. Optional for retained legacy peers. */
-  storeCapabilities?: { json: number; sqlite: number; jobArchive?: number };
+  storeCapabilities?: { json: number; sqlite: number; metadata?: number; jobArchive?: number };
   /** Set for a job runner (it hosts a background subagent of a session): that subagent's agent. Hidden from peer lists. */
   jobAgent?: AgentKind;
   /** Stable supervisor session identity, shared only by its jobs. */
@@ -122,6 +126,22 @@ export interface MessageAddress {
 }
 
 export interface BridgeMessage {
+  /** Broker-minted local job delivery generation; never a routing grant from callers. */
+  jobRoute?: import("./job-mail-routing.js").JobRouteProof;
+  /** Explicit local role authority, replaced by a concrete owner on the first claim. */
+  recipientRole?: import("./role-queue.js").RoleQueue;
+  /** Mailbox direction and authority are independent of colliding provider/frontend IDs. */
+  recipientMailbox?: import("./recipient-ownership.js").MailboxProvenance;
+  /** Authenticated source host or the original local store namespace. */
+  senderMailbox?: import("./recipient-ownership.js").MailboxProvenance;
+  /** Authenticated sender ownership retained for remote duplicate/receipt fencing. */
+  senderOwner?: string;
+  /** Durable hosted ownership. Absence alone proves neither native nor hosted authority. */
+  recipientFrontend?: T3Binding;
+  /** Internal recipient evidence from an authenticated native registration/route. */
+  recipientNative?: string;
+  /** Retained content whose recipient ownership cannot be proven. Never deliver/ACK. */
+  recipientAmbiguous?: true;
   /** Local broker's live authorization; omitted from retained mail so replay fails closed. */
   jobControlAuthorized?: boolean;
   id: string;
@@ -150,6 +170,8 @@ export interface HelloArgs {
   canHost?: boolean;
 }
 export interface HelloResult {
+  mailboxNamespace?: string;
+  nativeOwner?: string;
   frontend?: T3Binding;
   brokerPid: number;
   brokerVersion?: string;
@@ -232,7 +254,11 @@ export interface SendResult {
 }
 
 export interface AckArgs {
+  jobRoutes?: Record<string, import("./job-mail-routing.js").JobRouteProof>;
+  mailboxProofs?: Record<string, import("./recipient-ownership.js").MailboxProvenance>;
   ids: string[];
+  /** Original per-copy native ownership; never reconstructed from a later registration. */
+  nativeOwners?: Record<string, string>;
 }
 
 export interface PendingArgs {
@@ -257,7 +283,7 @@ export interface UpdatePeerArgs {
 export interface AuthArgs {
   protocol: number;
   token: string;
-  /** As HelloArgs.canHost: omitted (CLI commands, job runners, older clients) never triggers a handover. */
+  /** Legacy wire field. Protocol mismatch never authorizes handover; new clients omit this during auth. */
   canHost?: boolean;
 }
 
@@ -273,14 +299,15 @@ export interface RequestMap {
   nativeChildren: [Record<string, never>, NativeChildAddress[]];
   nativeChildrenEnd: [Record<string, never>, { ended: boolean }];
   nativeChildPending: [{ agentId: string }, BridgeMessage[]];
-  nativeChildAck: [{ agentId: string; ids: string[] }, { acked: number }];
+  nativeChildAck: [{ agentId: string; ids: string[]; mailboxProofs?: AckArgs["mailboxProofs"] }, { acked: number }];
   nativeChildSend: [SendArgs & { agentId: string }, SendResult];
   /** Authenticated owner connection only; senderId selects the dashboard's reply listener. */
   dashboardJobSend: [SendArgs & { senderId: string }, SendResult];
   health: [Record<string, never>, import("./health.js").BrokerHealth];
   /** Older brokers must refuse this opcode rather than discard the durable identity. */
   trackedSend: [SendArgs & { messageId: string }, SendResult];
-  sendState: [{ id: string }, { id: string; state: "stored" | "pending" | "not_stored"; checkedAt: number; message: BridgeMessage | null; receipts: MessageReceipt[] }];
+  sendState: [{ id: string }, { id: string; state: "stored" | "pending" | "not_stored"; checkedAt: number; message: BridgeMessage | null; receipts: MessageReceipt[];
+    blockedRecipients?: { recipient: string; reason: "recipient_ownership_unproven" }[] }];
   /** Separate opcode so an older broker refuses rather than silently ignoring the guard. */
   guardedSend: [SendArgs, SendResult];
   askOwner: [import("./owner-questions.js").AskOwnerArgs, { question: import("./owner-questions.js").OwnerQuestion; merged: boolean; similar: string[] }];
@@ -315,7 +342,7 @@ export interface RequestMap {
   siblings: [Record<string, never>, SiblingPeer[]];
   sendSibling: [SendArgs & { maxHops: number }, SendResult];
   ack: [AckArgs, { acked: number }];
-  messageReceipt: [{ id: string }, MessageReceipt[]];
+  messageReceipt: [{ id: string; nativeChild?: string }, MessageReceipt[]];
   pending: [PendingArgs, BridgeMessage[]];
   updatePeer: [UpdatePeerArgs, PeerInfo];
   /** Take over the unread mail of "-N" stand-in names of this peer that no one holds (after a reload). */

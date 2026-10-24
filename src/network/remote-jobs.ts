@@ -18,12 +18,15 @@ import { isInside, resumeArgs, type DelegateArgs } from "../mcp/delegate-run.js"
 import { JobRunners, readRunnerState } from "../mcp/job-host.js";
 import { changedJobArgs, JOB_SETTING_KEYS, parseJobSettings, type JobSettings } from "../mcp/job-settings.js";
 import type { Job, RunnerControl, RunnerState } from "../mcp/jobs.js";
-import type { NetworkService } from "./link.js";
+import type { NetworkService, RemoteDestination } from "./link.js";
+import { mailboxSchema, recipientKey, type InternalMessageOrigin } from "../core/recipient-ownership.js";
 import type { NetworkPair } from "./pairing.js";
 import { MAX_REMOTE_JOBS, REMOTE_JOB_ANTIGRAVITY_OPTIONS_CAPABILITY, REMOTE_JOB_CAPABILITY, REMOTE_JOB_CANCELLED_CAPABILITY, REMOTE_JOB_FRAME, REMOTE_JOB_RATE_LIMIT, REMOTE_JOB_RATE_WINDOW_MS, REMOTE_JOB_REQUEST_TIMEOUT_MS, REMOTE_JOB_SPAWN_LIMIT, remoteJobRequestSchema, remoteJobWireSchema, remoteJobSnapshotSchema, remoteSnapshotForPeer, type RemoteJobRequest } from "./remote-job-protocol.js";
 
 export interface RemoteJobSnapshot { state: RunnerState | null; alive: boolean; approvals: PendingApproval[]; usageTurn?: string }
-interface RemoteRecord { pair: string; peer: string; owner: string; job: Job; args: DelegateArgs; usageRefusal?: RunnerState; usageTurn?: string }
+interface RemoteSupervisorRoute { kind:"remote-supervisor"; address:string; supervisor:string; destination:RemoteDestination; generation:number }
+export interface RemoteRegistrationPrincipal extends Record<string,unknown> { readonly kind:"remote-registration";readonly id:string;readonly name:string;readonly agent:Job["agent"];readonly supervisor:string;readonly workdir:string|null;readonly ownerAddress:string;readonly returnRoute:Readonly<RemoteSupervisorRoute> }
+interface RemoteRecord { pair: string; peer: string; owner: string; job: Job; args: DelegateArgs; returnRoute?:RemoteSupervisorRoute; usageRefusal?: RunnerState; usageTurn?: string }
 type StoredRemoteRecord = Omit<RemoteRecord, "job"> & { job: Omit<Job, "controller" | "queue"> };
 const REMOTE_JOBS_FILE = "remote-jobs.json";
 interface Pending { host: string; resolve: (value: RemoteJobSnapshot) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }
@@ -42,6 +45,8 @@ export function allowedRemoteDirectory(directory: string, roots: string[]): stri
 
 /** One per elected broker. The requester can choose spawn args, never the executable or runner config. */
 export class RemoteJobs {
+  /** Observes only successful existing record persistence/read; never a new ledger. */
+  private readonly persistedMessageRecords=new WeakSet<RemoteRecord>();
   private readonly records = new Map<string, RemoteRecord>();
   private readonly pending = new Map<string, Pending>();
   private readonly rates = new Map<string, { at: number; requests: number; spawns: number }>();
@@ -59,7 +64,7 @@ export class RemoteJobs {
   private closed = false;
 
   constructor(private readonly network: NetworkService, private readonly home: string, private readonly log: Logger,
-    private readonly control: (record: { owner: string; name: string; id: string }, control: RunnerControl) => Promise<void>,
+    private readonly control: (record: { owner: string; name: string; id: string }, control: RunnerControl, origin:InternalMessageOrigin) => Promise<void>,
     startupCheck?:()=>void,
   ) {
     startupCheck?.();
@@ -70,7 +75,8 @@ export class RemoteJobs {
     startupCheck?.();
     if (isRecord(stored) && Array.isArray(stored.jobs)) for (const r of stored.jobs as StoredRemoteRecord[]) {
       if (typeof r.pair !== "string" || typeof r.peer !== "string" || !r.job?.id || !r.args) continue;
-      this.records.set(r.job.id, { ...r, job: { ...r.job, controller: new AbortController(), queue: [] } });
+      const record={ ...r, job: { ...r.job, controller: new AbortController(), queue: [] } };
+      this.records.set(r.job.id,record);this.persistedMessageRecords.add(record);
     }
     network.registerExtension(REMOTE_JOB_FRAME, REMOTE_JOB_CAPABILITY, (payload, pair) => this.receive(payload, pair), [REMOTE_JOB_CANCELLED_CAPABILITY, REMOTE_JOB_ANTIGRAVITY_OPTIONS_CAPABILITY, REMOTE_JOB_USAGE_CAPABILITY]);
   }
@@ -163,6 +169,8 @@ export class RemoteJobs {
   private async handle(pair: NetworkPair, peer: { id: string; name: string; supervisor: string }, request: RemoteJobRequest): Promise<RemoteJobSnapshot> {
     let record = this.records.get(request.job);
     if (record && (record.pair !== pair.id || record.peer !== peer.supervisor)) throw new Error("Remote job belongs to another supervisor.");
+    const originalRecord=record, generation=Date.now(), captured=request.op==='spawn'?this.captureMessageRoute(pair,peer,generation):undefined;
+    if (record&&(request.op==='spawn'||request.op==='control')) this.assertMessageRecord(record,pair,peer);
     if (request.op === "spawn") {
       const cfg = loadConfig(this.home, request.target, this.log, {});
       const policy = loadConfig(this.home, "other", this.log, {}).network.remoteJobs;
@@ -200,15 +208,17 @@ export class RemoteJobs {
         cwd = allowedRemoteDirectory(worktree.cwd, policy.allowRoots);
         args = { ...args, cwd, worktree: false, _worktree: worktree };
       }
-      const owner = `${pair.name}/${peer.name}`;
+      if(this.records.get(request.job)!==originalRecord)throw new Error("Remote job generation changed while preparing original message authority");
+      this.assertCapturedRoute(captured!,pair,peer);
+      const owner = originalRecord?.owner ?? captured!.address;
       const job: Job = { id: request.job, name: `${request.target}-job-${request.job}`, agent: request.target,
         model: args.model ?? null, prompt: args.prompt, args: { ...args }, owner, supervisor: `${pair.id}/${peer.supervisor}`,
-        startedAt: Date.now(), controller: new AbortController(), queue: [], status: "running", progress: null,
+        startedAt: generation, controller: new AbortController(), queue: [], status: "running", progress: null,
         sessionId: args.session_id ?? null, workdir: cwd, worktree, usageRunId: randomUUID(), usagePendingControls: request.usageControls };
       job.providerUsage = { runId: job.usageRunId, turnStartedAt: job.startedAt, decision: usage, warningReported: false,
         ...(usage.type === "block" ? { retainedControls: job.usagePendingControls } : {}) };
       const previous = this.records.get(request.job);
-      record = { pair: pair.id, peer: peer.supervisor, owner, job, args: { ...args, cwd, _job: job.name }, usageTurn: request.usageTurn };
+      record = { pair: pair.id, peer: peer.supervisor, owner, job, args: { ...args, cwd, _job: job.name }, returnRoute:{...(originalRecord?.returnRoute??captured!),generation}, usageTurn: request.usageTurn };
       this.records.set(job.id, record);
       if (usage.type === "block") {
         job.status = "failed";
@@ -234,7 +244,7 @@ export class RemoteJobs {
         admission.committed = true;
         if (admission.cancelRequested) {
           this.persist();
-          await this.control({ owner: staged.owner, name: job.name, id: job.id }, { type: "cancel" });
+          await this.control({ owner: staged.owner, name: job.name, id: job.id }, { type: "cancel" },this.controlOrigin(staged,pair,peer));
         }
       } catch (err) {
         // Admission is ephemeral until the first successful persist. Restore
@@ -263,7 +273,9 @@ export class RemoteJobs {
           if (typeof settings === "string") throw new Error(settings);
           parsedSettings = settings;
         }
-        await this.control({ owner: record.owner, name: record.job.name, id: record.job.id }, request.control as RunnerControl);
+        const original=record,turn=record.job.startedAt;
+        await this.control({ owner: record.owner, name: record.job.name, id: record.job.id }, request.control as RunnerControl,this.controlOrigin(record,pair,peer));
+        if(this.records.get(request.job)!==original||original.job.startedAt!==turn)throw new Error("Remote control generation changed after dispatch; outcome retained, not replayed");
         if (parsedSettings) {
           record.args = { ...changedJobArgs({ ...record.args }, parsedSettings), prompt: record.args.prompt, title: record.args.title };
           record.job.args = changedJobArgs(record.job.args, parsedSettings);
@@ -296,6 +308,39 @@ export class RemoteJobs {
       const { controller, queue, ...job } = r.job;
       return { ...r, job };
     }) }, readJsonStore(join(this.home, REMOTE_JOBS_FILE)));
+    for(const record of committed)this.persistedMessageRecords.add(record);
+  }
+
+  private captureMessageRoute(pair:NetworkPair,peer:{id:string;name:string;supervisor:string},generation:number):RemoteSupervisorRoute {
+    const advertised=this.network.peers().find(p=>p.id===`${pair.id}/${peer.id}`&&p.name===`${pair.name}/${peer.name}`);
+    const owner=advertised&&recipientKey(advertised.frontend,advertised.nativeOwner);
+    if(!advertised||advertised.jobAgent||!owner||!advertised.mailboxNamespace||!mailboxSchema.safeParse({kind:'remote',hostId:pair.id,hostFingerprint:pair.fingerprint,namespace:advertised.mailboxNamespace}).success)
+      throw new Error('Original authenticated remote supervisor owner/namespace is unproven');
+    return {kind:'remote-supervisor',address:`${pair.name}/${peer.name}`,supervisor:`${pair.id}/${peer.supervisor}`,generation,
+      destination:{hostId:pair.id,hostFingerprint:pair.fingerprint,mailboxNamespace:advertised.mailboxNamespace,name:peer.name,...(advertised.frontend?{frontend:{...advertised.frontend}}:{native:advertised.nativeOwner})}};
+  }
+  private assertCapturedRoute(route:RemoteSupervisorRoute,pair:NetworkPair,peer:{id:string;name:string;supervisor:string}):void {
+    const current=this.captureMessageRoute(pair,peer,route.generation),left=route.destination,right=current.destination;
+    if(route.kind!=='remote-supervisor'||route.address!==current.address||route.supervisor!==current.supervisor||left.hostId!==right.hostId||left.hostFingerprint!==right.hostFingerprint||left.name!==right.name||left.mailboxNamespace!==right.mailboxNamespace||recipientKey(left.frontend,left.native)!==recipientKey(right.frontend,right.native))
+      throw new Error('Original remote supervisor host/owner/namespace changed; no name-based replacement');
+  }
+  private assertMessageRecord(record:RemoteRecord,pair:NetworkPair,peer:{id:string;name:string;supervisor:string}):void {
+    if(this.records.get(record.job.id)!==record||record.pair!==pair.id||record.peer!==peer.supervisor||!record.returnRoute||record.returnRoute.generation!==record.job.startedAt||record.returnRoute.address!==record.owner||record.returnRoute.supervisor!==record.job.supervisor)
+      throw new Error('Original remote job message authority is unproven or superseded; legacy bytes retained');
+    this.assertCapturedRoute(record.returnRoute,pair,peer);
+  }
+  private controlOrigin(record:RemoteRecord,pair:NetworkPair,peer:{id:string;name:string;supervisor:string}):InternalMessageOrigin {
+    this.assertMessageRecord(record,pair,peer);
+    if(!this.persistedMessageRecords.has(record))throw new Error('Original remote control message authority has not completed normal record persistence');
+    const d=record.returnRoute!.destination,owner=recipientKey(d.frontend,d.native)!;
+    return Object.freeze({kind:'remote-job-control',operation:record.job.id,owner,source:Object.freeze({kind:'remote',hostId:d.hostId,hostFingerprint:d.hostFingerprint,namespace:d.mailboxNamespace})});
+  }
+  /** Detached exact-job registration/report projection; never mutable state/controller. */
+  jobForRegistration(id:string):RemoteRegistrationPrincipal|undefined {
+    const record=this.records.get(id),route=record?.returnRoute;
+    if(!record||!this.persistedMessageRecords.has(record)||this.pendingStarts.get(id)?.committed===false||record.job.id!==id||!isRecord(route)||!isRecord(route.destination)||!Number.isSafeInteger(record.job.startedAt)||route.generation!==record.job.startedAt||record.job.supervisor!==`${record.pair}/${record.peer}`||record.job.owner!==record.owner||route.address!==record.owner||route.supervisor!==record.job.supervisor||route.destination.hostId!==record.pair||!recipientKey(route.destination.frontend,route.destination.native)||!mailboxSchema.safeParse({kind:'remote',hostId:route.destination.hostId,hostFingerprint:route.destination.hostFingerprint,namespace:route.destination.mailboxNamespace}).success)return undefined;
+    const destination=Object.freeze({...route.destination,frontend:route.destination.frontend?Object.freeze({...route.destination.frontend}):undefined});
+    return Object.freeze({kind:'remote-registration',id,name:record.job.name,agent:record.job.agent,supervisor:record.job.supervisor,workdir:record.job.workdir??null,ownerAddress:record.owner,startedAt:record.job.startedAt,returnRoute:Object.freeze({...route,destination})});
   }
 
   private async mirror(host: string, peer: Pick<PeerInfo, "id" | "name">, request: RemoteJobRequest, snapshot: RemoteJobSnapshot, supervisor: string, localJobName?: string): Promise<void> {

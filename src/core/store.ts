@@ -3,6 +3,7 @@ import { metadataDb, metadataDbOpen, metadataReaderRetained, closeMetadataDb } f
 import { assertCompatibleMailboxReaders, maintenanceLock, withMaintenanceExclusion } from './storage-lock.js';
 import { admissionSqliteBusy, storageAdmissionRemaining, storageAdmissionTimeout, withStorageAdmission } from './storage-admission.js';
 import { existsSync, mkdirSync, realpathSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { dirname, resolve } from "node:path";
 import { DatabaseSync, type StatementSync } from "node:sqlite";
 import type { SQLInputValue } from "node:sqlite";
@@ -24,8 +25,12 @@ import { DECISIONS_SCHEMA, DecisionStore } from "./decisions.js";
 import { configureSqlite, isSqliteBusy, retrySqlite, SQLITE_BUSY_TIMEOUT_MS, SQLITE_REQUEST_BUSY_MS } from "./sqlite-policy.js";
 import { attachStoreCompatibility } from "./store-compatibility-overlay.js";
 import { NativeLifecycleReader, type NativeRouteSnapshot } from "./native-lifecycle-reader.js";
-import { physicalPath } from "./project-identity.js";
-import { t3BindingSchema } from "./t3-identity.js";
+import { physicalPath, projectKey } from "./project-identity.js";
+import { t3BindingSchema, type T3Binding } from "./t3-identity.js";
+import { roleQueueSchema } from "./role-queue.js";
+import { jobMailGrantSchema, jobRouteSchema, type JobMailGrant, type JobMailSuccessor, type JobRouteProof } from "./job-mail-routing.js";
+import type { RemoteDestination } from "../network/link.js";
+import { localMailbox, mailboxSchema, nativeOwner, nativeIdentitySchema, ownershipFromKey, peerOwnership, recipientKey, sameMailbox, verifiedNative } from "./recipient-ownership.js";
 
 import { SQLITE_STORE_VERSION } from "./store-version.js";
 import type { StartupBudget } from "./startup-budget.js";
@@ -432,6 +437,7 @@ export class MessageStore {
   /** Told about every stored or claimed message, so a backed-off history worker indexes it promptly. */
   historyMessageSink: (() => void) | undefined;
   readonly file!: string;
+  private ownershipReady = false;
   private readonly stmt!: {
     insert: StoreStatement;
     unread: StoreStatement;
@@ -492,6 +498,7 @@ export class MessageStore {
       }
       const ready=this.db.prepare("UPDATE messaging_candidate SET state='ready' WHERE id=1 AND attempt='' AND state='preparing'");storageAdmissionRemaining();ready.run();storageAdmissionRemaining();
       assertCurrentMailboxEnvelope(this.db);
+      this.ownershipReady = true;
       ensureMessageQuarantine(this.db);
     } catch (err) {
       this.closeCapturedHandle(this.db);
@@ -590,7 +597,8 @@ export class MessageStore {
   /** Retain names only with CLI or hook identity; a similar spelling is never an alias. */
   rememberName(peer: PeerInfo, at: number): void {
     return this.acceptedOperation("direct", () => {
-    const identity = registrationIdentity(peer) ?? (!peer.jobAgent && peer.sessionId ? JSON.stringify(["session", peer.agent, peer.sessionId]) : null);
+    const jobOwner = peer.jobAgent ? nativeOwner(peer) : undefined;
+    const identity = jobOwner ? JSON.stringify(["job", jobOwner]) : registrationIdentity(peer) ?? (!peer.jobAgent && peer.sessionId ? JSON.stringify(["session", peer.agent, peer.sessionId]) : null);
     this.exec(this.db, "BEGIN IMMEDIATE");
     try {
       if (identity) this.statement(this.db, `INSERT INTO peer_names VALUES (?,?,?,?,?) ON CONFLICT(identity,name)
@@ -599,6 +607,9 @@ export class MessageStore {
       // Even an older or unidentified server supersedes historical ownership of its exact name.
       this.statement(this.db, `INSERT INTO peer_name_owners VALUES (?,?) ON CONFLICT(name)
         DO UPDATE SET identity=excluded.identity`).run(peer.name, identity ?? `unidentified:${peer.id}`);
+      if (this.frontendOwnership) this.statement(this.db, `INSERT INTO recipient_registrations VALUES (?,?,?,?,?,?)
+        ON CONFLICT(name) DO UPDATE SET identity=excluded.identity,binding=excluded.binding,state=excluded.state,peer_id=excluded.peer_id,owner=excluded.owner`)
+        .run(peer.name, identity ?? `unidentified:${peer.id}`, frontendKey(peer.frontend), peer.frontend ? "hosted" : nativeOwner(peer) ? "native" : "ambiguous", peer.id, nativeOwner(peer) ?? "");
       if (!peer.jobAgent && !peer.subagent) this.markPeerSeen(peer.name, at);
       this.exec(this.db, "COMMIT");
     } catch (err) { this.exec(this.db, "ROLLBACK"); throw err; }
@@ -615,10 +626,12 @@ export class MessageStore {
 
   namesFor(peer: PeerInfo): string[] {
     return this.acceptedOperation("direct", () => {
+    if (peer.jobAgent) return this.jobNames(nativeOwner(peer));
     const identity = registrationIdentity(peer);
-    if (peer.jobAgent || (!identity && !peer.sessionId)) return [];
+    if (!identity && !peer.sessionId) return [];
     return this.statement(this.db, `SELECT name FROM peer_names JOIN peer_name_owners USING(name,identity)
-      WHERE identity=? OR (session_id=? AND agent=? AND (CASE WHEN json_valid(identity) THEN json_extract(identity,'$[1]') END) IS NOT 't3') GROUP BY name ORDER BY MIN(learned_at) ASC, MIN(peer_names.rowid) ASC`)
+      WHERE identity=? OR (session_id=? AND agent=? AND (CASE WHEN json_valid(identity) THEN json_extract(identity,'$[1]') END) IS NOT 't3'
+        AND (CASE WHEN json_valid(identity) THEN json_extract(identity,'$[0]') END) IS NOT 'job') GROUP BY name ORDER BY MIN(learned_at) ASC, MIN(peer_names.rowid) ASC`)
       .all(identity, peer.frontend ? null : peer.sessionId, peer.agent).map((r) => String(r.name));
     });
   }
@@ -633,6 +646,7 @@ export class MessageStore {
         try {
           const parts: unknown = JSON.parse(identity);
           if (Array.isArray(parts)) {
+            if (parts[0] === "job") return false;
             if (parts[0] === "session" && typeof parts[2] === "string") session = parts[2];
             else if (typeof parts[1] === "number" && typeof parts[3] === "string") return !isPluginCacheCwd(parts[3]);
           }
@@ -733,6 +747,26 @@ export class MessageStore {
 
   insert(m: BridgeMessage): void {
     return this.acceptedOperation("direct", () => {
+    if (!this.frontendOwnership) throw new Error("Verified recipient ownership storage upgrade is required; mail was not stored.");
+    // Only fresh locally produced envelopes can acquire this store's namespace.
+    // An outbound address without its authenticated remote proof stays blocked.
+    if (!m.recipientMailbox && (!m.recipient.includes("/") || m.recipient.includes("/sub:"))) m.recipientMailbox = localMailbox(this.namespace);
+    const parsedMailbox = mailboxSchema.safeParse(m.recipientMailbox), mailbox = parsedMailbox.success ? JSON.stringify(parsedMailbox.data) : "";
+    if (parsedMailbox.success && parsedMailbox.data.kind === "local" && parsedMailbox.data.namespace !== this.namespace) throw new Error("Envelope belongs to a different local store namespace.");
+    if (!m.senderMailbox && !m.from.id.includes("/")) m.senderMailbox = localMailbox(this.namespace);
+    const parsedSource = mailboxSchema.safeParse(m.senderMailbox), source = parsedSource.success ? JSON.stringify(parsedSource.data) : "";
+    if (parsedSource.success && parsedSource.data.kind === "local" && parsedSource.data.namespace !== this.namespace) throw new Error("Sender belongs to a different local store namespace.");
+    const role = m.recipientRole ? roleQueueSchema.parse(m.recipientRole) : undefined;
+    if (role && (m.to !== agentQueueKey(role.agent) || m.recipient !== m.to || role.namespace !== this.namespace ||
+        !sameMailbox(m.recipientMailbox, localMailbox(this.namespace)) || m.recipientFrontend || m.recipientNative || m.recipientAmbiguous ||
+        !sameMailbox(m.senderMailbox, localMailbox(this.namespace)) || !m.senderOwner)) throw new Error("Explicit local role-queue authority is invalid");
+    const state = role ? "role" : m.recipientAmbiguous ? "ambiguous" : m.recipientFrontend ? "hosted" : verifiedNative(m.recipientNative) ? "native" : "ambiguous";
+    const binding = frontendKey(m.recipientFrontend), identity = role ? JSON.stringify(role) : state === "hosted" ? binding : m.recipientNative ?? "";
+    const owner = role ? identity : state === "hosted" ? binding : state === "native" ? verifiedNative(m.recipientNative)! : "";
+    const retainedOwner = this.statement(this.db, "SELECT binding,state,identity,owner,sender,mailbox,source FROM message_frontends WHERE id=? AND recipient=?").get(m.id, m.recipient);
+    if (retainedOwner && (retainedOwner.binding !== binding || retainedOwner.state !== state || retainedOwner.identity !== identity || retainedOwner.owner !== owner || retainedOwner.sender !== (m.senderOwner ?? "") || retainedOwner.mailbox !== mailbox || retainedOwner.source !== source)) throw new Error("Retained message ownership cannot be overwritten.");
+    this.exec(this.db, "SAVEPOINT owned_message_insert");
+    try {
     this.stmt.insert.run(
       m.id,
       m.recipient,
@@ -747,12 +781,19 @@ export class MessageStore {
       m.createdAt,
     );
     this.notifyHistoryChanged();
+    this.statement(this.db, "INSERT OR IGNORE INTO message_frontends(id,recipient,binding,state,identity,owner,sender,mailbox,source) VALUES (?,?,?,?,?,?,?,?,?)")
+      .run(m.id, m.recipient, binding, state, identity, owner, m.senderOwner ?? "", mailbox, source);
+    this.exec(this.db, "RELEASE owned_message_insert");
+    } catch (error) { cleanupSavepoint(this.db, "owned_message_insert", true, error); }
     });
   }
 
-  unread(recipient: string, limit: number): BridgeMessage[] {
+  unread(recipient: string, limit: number, frontend?: T3Binding, native?: string): BridgeMessage[] {
     return this.acceptedOperation("direct", () => {
-    return (this.stmt.unread.all(recipient, limit) as unknown as Row[]).map(toMessage);
+    if (!this.frontendOwnership) return [];
+    return (this.statement(this.db, `SELECT * FROM deliverable_messages WHERE recipient=? AND read_at IS NULL AND ${this.ownershipSql("deliverable_messages")}
+      ORDER BY CASE WHEN (conversation_id LIKE '%:note' OR conversation_id LIKE '%:ack' OR conversation_id LIKE 'files-progress-%') THEN 1 ELSE 0 END, created_at,id LIMIT ?`)
+      .all(recipient, recipientKey(frontend, native), limit) as unknown as Row[]).map(row => this.decode(row));
     });
   }
 
@@ -770,16 +811,18 @@ export class MessageStore {
   }
 
   /** Query the whole inbox before a reply, independent of the hook batch limit. */
-  replyConflicts(recipient: string, from: string[], conversationId: string, anchor?: BridgeMessage): { id: string; from: { name: string }; conversationId: string }[] {
+  replyConflicts(recipient: string, from: string[], conversationId: string, anchor?: BridgeMessage, frontend?: T3Binding, native?: string): { id: string; from: { name: string }; conversationId: string }[] {
     return this.acceptedOperation("direct", () => {
+    if (!this.frontendOwnership) return [];
     const rows = this.stmt.replyConflicts
-      .all(recipient, conversationId, JSON.stringify(from), anchor?.id ?? null, anchor?.createdAt ?? 0, anchor?.id ?? "");
+      .all(recipient, conversationId, JSON.stringify(from), anchor?.id ?? null, anchor?.createdAt ?? 0, anchor?.id ?? "", ...(this.frontendOwnership ? [recipientKey(frontend, native)] : []));
     return rows.map(row => ({ id: String(row.id), from: { name: String(row.from_name) }, conversationId: String(row.conversation_id) }));
     });
   }
 
   /** Copy pending job mail to its new supervisor, retaining the old row as history. Replay is idempotent. */
-  handoffMail(from: string, to: string, job: string, at: number, fallback = false): BridgeMessage[] {
+  handoffMail(from: string, to: string, job: string, at: number, fallback = false, toFrontend?: T3Binding, toNative?: string,
+    authorize?: (grant: JobMailGrant) => JobMailSuccessor | null): BridgeMessage[] {
     return this.acceptedOperation("direct", () => {
     if (from === to) return [];
     this.exec(this.db, "BEGIN IMMEDIATE");
@@ -787,17 +830,30 @@ export class MessageStore {
       const rows = this.statement(this.db, "SELECT * FROM deliverable_messages WHERE recipient=? AND from_id=? AND read_at IS NULL AND conversation_id NOT LIKE ?").all(from, `job:${job}`, `${SIBLING_CONVERSATION_PREFIX}%`) as unknown as Row[];
       const copied: BridgeMessage[] = [];
       for (const row of rows) {
-        const route = this.statement(this.db, "SELECT recipient, consumed_at FROM job_delivery_routes WHERE id=?").get(row.id);
-        if (route && (route.consumed_at !== null || route.recipient !== from)) continue;
-        const m = { ...toMessage(row), recipient: to, to, readAt: null };
+        const original = this.decode(row), grant = this.jobRoutingGrant(row.id), successor = grant && authorize?.(grant.grant);
+        if (!grant || grant.namespace !== this.namespace || !successor || !/^[a-f0-9]{64}$/.test(successor.authority) ||
+            !this.localCopy(original) || !this.isActiveJobCopy(original) || !sameMailbox(original.senderMailbox, localMailbox(this.namespace))) continue;
+        const route = this.statement(this.db, "SELECT recipient, consumed_at,namespace FROM job_delivery_routes WHERE id=?").get(row.id);
+        if (route && (route.namespace !== this.namespace || route.consumed_at !== null || route.recipient !== from)) continue;
+        // This method is the existing authorized supervisor-transfer path, not a
+        // registration claim. Give the new copy its explicitly selected owner.
+        const evidence = toFrontend ? { recipientFrontend: toFrontend } : verifiedNative(toNative) ? { recipientNative: toNative! } : { recipientAmbiguous: true as const };
+        if ("recipientAmbiguous" in evidence || recipientKey(evidence.recipientFrontend, evidence.recipientNative) !== successor.owner) continue;
+        const m = { ...this.decode(row), recipient: to, to, readAt: null, recipientFrontend: undefined, recipientNative: undefined,
+          recipientAmbiguous: undefined, ...evidence };
         if (this.statement(this.db, "SELECT 1 FROM message_archive_conflicts WHERE source_table='messages' AND id=? AND recipient=?").get(m.id, to)) continue;
         if (fallback && !isQuietMessage(m)) m.conversationId = m.conversationId.replace(/:note$/, "") + (m.conversationId.endsWith(":fallback") ? "" : ":fallback");
-        const existing = this.statement(this.db, "SELECT read_at FROM messages WHERE id=? AND recipient=?").get(m.id, to);
+        const existing = this.statement(this.db, "SELECT * FROM messages WHERE id=? AND recipient=?").get(m.id, to) as unknown as Row | undefined;
+        if (existing && (this.decode(existing).recipientAmbiguous || frontendKey(this.decode(existing).recipientFrontend) !== frontendKey(m.recipientFrontend) ||
+          this.decode(existing).recipientNative !== m.recipientNative || !this.localCopy(this.decode(existing)) || existing.read_at !== null || this.jobBodyHash(this.decode(existing)) !== this.jobBodyHash(original))) continue;
+        if (!route || !original.jobRoute) continue;
+        const generation = original.jobRoute.generation + 1;
+        this.statement(this.db, "INSERT INTO job_mail_succession VALUES (?,?,?,?,?,?,?)").run(m.id, generation, to, successor.owner, JSON.stringify(m.recipientMailbox), successor.authority, at);
         if (!existing) this.insert(m);
-        else this.statement(this.db, "UPDATE messages SET read_at=NULL, to_target=?, conversation_id=? WHERE id=? AND recipient=?").run(to, m.conversationId, m.id, to);
-        copied.push(m);
-        this.statement(this.db, "INSERT INTO job_delivery_routes(id,recipient,consumed_at) VALUES (?,?,NULL) ON CONFLICT(id) DO UPDATE SET recipient=excluded.recipient").run(m.id, to);
-        this.stmt.markRead.run(at, m.id, from);
+        const changed = this.statement(this.db, "UPDATE job_delivery_routes SET recipient=? WHERE id=? AND recipient=? AND consumed_at IS NULL AND namespace=?").run(to, m.id, from, this.namespace);
+        if (Number(changed.changes) !== 1) throw new Error("Job report route changed during succession");
+        this.statement(this.db, "INSERT INTO job_mail_retirements VALUES (?,?,?,?,?)").run(m.id, from, original.jobRoute.generation, at, generation);
+        copied.push({ ...(existing ? this.decode(existing) : m), jobRoute: { grant: m.id, generation } });
       }
       this.exec(this.db, "COMMIT");
       return copied;
@@ -827,33 +883,61 @@ export class MessageStore {
   }
 
   /** A recovered inline envelope must never replay after a recipient consumed it or it was forwarded. */
-  insertJobDelivery(m: BridgeMessage): boolean {
+  insertJobDelivery(m: BridgeMessage, authority?: JobMailGrant, request?: { owner: string; fingerprint: string }): boolean {
     return this.acceptedOperation("direct", () => {
+    if (authority) m = { ...m, jobRoute: undefined, recipientMailbox: m.recipientMailbox ?? localMailbox(this.namespace), senderMailbox: m.senderMailbox ?? localMailbox(this.namespace) };
     if (this.statement(this.db, "SELECT 1 FROM message_archive_conflicts WHERE source_table='messages' AND id=? AND recipient=?").get(m.id, m.recipient)) return false;
-    if (this.statement(this.db, "SELECT 1 FROM job_delivery_routes WHERE id=?").get(m.id)) return false;
+    const route = this.statement(this.db, "SELECT namespace,recipient FROM job_delivery_routes WHERE id=?").get(m.id);
+    if (route) {
+      if (authority) this.retainJobGrant(m, authority);
+      const retained = this.messagesById(m.id).find(copy => copy.recipient === route.recipient);
+      const ledger = this.statement(this.db, "SELECT state,owner,mailbox FROM message_frontends WHERE id=? AND recipient=?").get(m.id, String(route.recipient));
+      const proven = this.ledgerKey(ledger) && sameMailbox(this.parseMailbox(ledger?.mailbox), localMailbox(this.namespace));
+      if (route.namespace !== this.namespace || !proven || retained && !this.localCopy(retained)) throw new Error("Historical job route provenance is unproven; pending report retained.");
+      return false;
+    }
     this.exec(this.db, "BEGIN IMMEDIATE");
     try {
+      if (request) {
+        const owner = JSON.parse(request.owner);
+        if (!authority || !Array.isArray(owner) || owner.length !== 3 || owner[0] !== m.from.name || owner[2] !== `native:${authority.principal}`)
+          throw new Error("Job dispatch request does not match the proven report sender");
+        this.rememberSendIntent(m.id, request.owner, request.fingerprint);
+      }
+      if (authority) this.retainJobGrant(m, authority);
       const inserted = this.insertOnce(m);
+      const retained = this.messagesById(m.id).find(copy => copy.recipient === m.recipient);
+      if (!retained || !this.localCopy(retained) || recipientKey(retained.recipientFrontend, retained.recipientNative) !== recipientKey(m.recipientFrontend, m.recipientNative)) throw new Error("Job delivery has no matching proven local copy; pending evidence retained.");
       const row = this.statement(this.db, "SELECT read_at FROM messages WHERE id=? AND recipient=?").get(m.id, m.recipient);
-      this.statement(this.db, "INSERT INTO job_delivery_routes(id,recipient,consumed_at) VALUES (?,?,?)").run(m.id, m.recipient, row?.read_at ?? null);
+      this.statement(this.db, "INSERT INTO job_delivery_routes(id,recipient,consumed_at,namespace) VALUES (?,?,?,?)").run(m.id, m.recipient, row?.read_at ?? null, this.namespace);
       this.exec(this.db, "COMMIT");
       return inserted;
     } catch (err) { this.exec(this.db, "ROLLBACK"); throw err; }
     });
   }
 
-  markRead(recipient: string, ids: string[], at: number = Date.now()): number {
+  markRead(recipient: string, ids: string[], at: number = Date.now(), frontend?: T3Binding, nativeOwners?: Record<string, string>, native?: string,
+    jobRoutes?: Record<string, JobRouteProof>): number {
     return this.acceptedOperation("direct", () => {
     let changed = 0;
-    const route = this.statement(this.db, "UPDATE job_delivery_routes SET consumed_at=? WHERE id=? AND recipient=? AND consumed_at IS NULL");
+    const route = this.statement(this.db, "UPDATE job_delivery_routes SET consumed_at=? WHERE id=? AND recipient=? AND consumed_at IS NULL AND namespace=?");
     // Replay acknowledgements are DB-only. Bound each durable group instead of
     // syncing every message separately; failed groups remain safe to retry.
     for (let offset = 0; offset < ids.length; offset += 100) {
       this.exec(this.db, "SAVEPOINT message_ack");
       try {
         for (const id of ids.slice(offset, offset + 100)) {
-          changed += Number(this.stmt.markRead.run(at, id, recipient).changes);
-          route.run(at, id, recipient);
+          if (this.jobRoutingGrant(id)) {
+            const supplied = jobRouteSchema.safeParse(jobRoutes?.[id]), actual = this.jobRouteFor(id, recipient);
+            if (!supplied.success || !actual || supplied.data.grant !== actual.grant || supplied.data.generation !== actual.generation) continue;
+          }
+          if (!frontend && nativeOwners && (typeof nativeOwners[id] !== "string" || !this.statement(this.db,
+            "SELECT 1 FROM message_frontends WHERE id=? AND recipient=? AND state='native' AND owner=?").get(id, recipient, nativeOwners[id]))) continue;
+          const owned = this.frontendOwnership;
+          const updated = owned ? Number(this.statement(this.db, `UPDATE messages SET read_at=? WHERE id=? AND recipient=? AND read_at IS NULL AND ${unquarantined("messages")} AND ${this.ownershipSql("messages")}`)
+            .run(at, id, recipient, recipientKey(frontend, native)).changes) : 0;
+          changed += updated;
+          if (updated) route.run(at, id, recipient, this.namespace);
         }
         this.exec(this.db, "RELEASE message_ack");
       } catch (err) {
@@ -899,9 +983,27 @@ export class MessageStore {
       // Capture this exact BEGIN's returned ownership before the native wrapper's
       // post-check can reject a late return. Never borrow an existing transaction.
       this.native(this.db, () => { this.db.exec("BEGIN IMMEDIATE"); ownedTransaction = true; });
-      startup?.remaining(); this.stmt.claim.run(parent, address); startup?.remaining();
-      const messages = this.statement(this.db, `UPDATE messages SET read_at=? WHERE recipient=? AND read_at IS NULL AND ${unquarantined("messages")} AND id IN (SELECT id FROM deliverable_messages WHERE recipient=?)`);
-      startup?.remaining(); messages.run(Date.now(), address, parent); startup?.remaining();
+      startup?.remaining();
+      const rows = this.statement(this.db, "SELECT * FROM deliverable_messages WHERE recipient=? AND read_at IS NULL").all(address);
+      startup?.remaining();
+      for (const raw of rows) {
+        startup?.remaining();
+        const m = this.decode(raw as unknown as Row);
+        if (!this.localCopy(m) || !m.recipientNative) continue;
+        const original = nativeIdentitySchema.parse(JSON.parse(m.recipientNative));
+        if (original.kind !== "child" || original.parent !== parent) continue;
+        const evidence = ownershipFromKey(original.parentOwner);
+        if (evidence.recipientAmbiguous) continue;
+        const existing = this.statement(this.db, "SELECT * FROM messages WHERE id=? AND recipient=?").get(m.id, parent);
+        if (existing) {
+          const copy = this.decode(existing as unknown as Row);
+          if (copy.recipientAmbiguous || frontendKey(copy.recipientFrontend) !== frontendKey(evidence.recipientFrontend) || copy.recipientNative !== evidence.recipientNative) continue;
+        } else this.insert({ ...m, recipient: parent, recipientFrontend: undefined, recipientNative: undefined, ...evidence });
+        // Returning a child copy is routing retirement, never a read receipt.
+        // Keep its original owner/body and raw read timestamp; only the exact
+        // parent copy can subsequently establish consumption.
+        startup?.remaining();this.statement(this.db,"UPDATE message_frontends SET state='native-returned' WHERE id=? AND recipient=? AND state='native' AND owner=?").run(m.id,address,m.recipientNative);startup?.remaining();
+      }
       const route = this.statement(this.db, "UPDATE native_child_routes SET active=0 WHERE address=?");
       startup?.remaining(); route.run(address); startup?.remaining();
       this.native(this.db, () => {
@@ -925,22 +1027,44 @@ export class MessageStore {
     });
   }
 
-  claim(fromKey: string, toName: string): number {
+  claim(fromKey: string, toName: string, frontend?: T3Binding, native?: string): number {
     return this.acceptedOperation("direct", () => {
-    if (fromKey === toName) return 0;
-    this.exec(this.db, "BEGIN IMMEDIATE");
+    if (fromKey === toName || !this.frontendOwnership) return 0;
+    this.exec(this.db, "SAVEPOINT owned_mail_claim");
     try {
-      const moved = Number(this.stmt.claim.run(toName, fromKey).changes);
-      // A broadcast can have reached both servers before their shared session id was learned.
-      // Keep the destination copy and retire the duplicate alias without replaying it later.
-      const duplicates = Number(this.statement(this.db, `UPDATE messages SET read_at = ?
-        WHERE recipient = ? AND read_at IS NULL AND ${unquarantined("messages")} AND id IN (SELECT id FROM deliverable_messages WHERE recipient = ?)`)
-        .run(Date.now(), fromKey, toName).changes);
-      this.exec(this.db, "COMMIT");
-      if (moved) this.notifyHistoryChanged();
-      return moved + duplicates;
+      if (this.frontendOwnership) {
+        const rows = this.statement(this.db, `SELECT * FROM deliverable_messages WHERE recipient=? AND read_at IS NULL AND ${this.ownershipSql("deliverable_messages")}`)
+          .all(fromKey, recipientKey(frontend, native)) as unknown as Row[];
+        let changed = 0;
+        for (const row of rows) {
+          // Granted reports retain their original copy. The broker's proven
+          // succession/alias path creates a new generation after registration.
+          if (this.jobRoutingGrant(row.id)) continue;
+          const sourceOwner = this.statement(this.db, "SELECT owner,mailbox FROM message_frontends WHERE id=? AND recipient=?").get(row.id, fromKey);
+          const targetOwner = this.statement(this.db, "SELECT owner,mailbox FROM message_frontends WHERE id=? AND recipient=?").get(row.id, toName);
+          if (targetOwner && (targetOwner.owner !== sourceOwner?.owner || targetOwner.mailbox !== sourceOwner?.mailbox)) continue;
+          const existing = this.statement(this.db, "SELECT * FROM messages WHERE id=? AND recipient=?").get(row.id, toName) as unknown as Row | undefined;
+          if (existing) {
+            if (this.decode(existing).recipientAmbiguous || frontendKey(this.decode(existing).recipientFrontend) !== frontendKey(frontend)) continue;
+            // Same-owner alias consolidation retires routing, never consumption.
+            changed += Number(this.statement(this.db, "UPDATE message_frontends SET state='alias-retired' WHERE id=? AND recipient=? AND state IN ('hosted','native')").run(row.id, fromKey).changes);
+          } else {
+            this.statement(this.db, `INSERT INTO message_frontends(id,recipient,binding,state,identity,owner,sender,mailbox,source)
+              SELECT id,?,binding,state,identity,owner,sender,mailbox,source FROM message_frontends WHERE id=? AND recipient=?
+              ON CONFLICT(id,recipient) DO NOTHING`).run(toName, row.id, fromKey);
+            changed += Number(this.statement(this.db, "UPDATE messages SET recipient=? WHERE id=? AND recipient=?").run(toName, row.id, fromKey).changes);
+          }
+          this.statement(this.db, `UPDATE job_delivery_routes SET recipient=?,consumed_at=COALESCE(consumed_at,?)
+            WHERE id=? AND recipient=? AND namespace=?`).run(toName, existing?.read_at ?? null, row.id, fromKey, this.namespace);
+        }
+        this.exec(this.db, "RELEASE owned_mail_claim");
+        if (changed) this.notifyHistoryChanged();
+        return changed;
+      }
+      this.exec(this.db, "RELEASE owned_mail_claim");
+      return 0;
     } catch (err) {
-      this.exec(this.db, "ROLLBACK");
+      cleanupSavepoint(this.db, "owned_mail_claim", true, err);
       throw err;
     }
     });
@@ -984,7 +1108,16 @@ export class MessageStore {
     const merged = new Map<string, { recipient: string; readAt: number | null }>();
     for (const [db, table] of [[this.archiveDb, "messages"], [this.db, "archived_messages"], [this.db, "messages"]] as const) {
       const rows = this.statement(db, `SELECT recipient, read_at AS readAt FROM ${table} WHERE id = ?`).all(id) as unknown as { recipient: string; readAt: number | null }[];
-      for (const row of rows) merged.set(row.recipient, row);
+      for (const row of rows) {
+        const owner = this.frontendOwnership ? this.statement(this.db, "SELECT state,owner,mailbox FROM message_frontends WHERE id=? AND recipient=?").get(id, row.recipient) : undefined;
+        // Retained role originals are routing evidence, not another pending or
+        // consumed recipient. The selected concrete copy carries the receipt.
+        if (owner?.state === "role-claimed") continue;
+        const proven = Boolean(owner?.state !== "role" && this.ledgerKey(owner) && sameMailbox(this.parseMailbox(owner?.mailbox), localMailbox(this.namespace)));
+        // Keep raw historical timestamps intact; ambiguous marks cannot establish
+        // consumption through local or remote receipt APIs. Inventory exposes them.
+        merged.set(row.recipient, proven ? row : { ...row, readAt: null });
+      }
     }
     return [...merged.values()];
     });
@@ -994,7 +1127,7 @@ export class MessageStore {
     return this.acceptedOperation("direct", () => {
     const row = (this.stmt.byId.get(id) ?? this.statement(this.archiveDb, "SELECT * FROM messages WHERE id = ? LIMIT 1").get(id) ??
       this.statement(this.db, "SELECT * FROM archived_messages WHERE id = ? LIMIT 1").get(id)) as unknown as Row | undefined;
-    return row ? toMessage(row) : null;
+    return row ? this.decode(row) : null;
     });
   }
 
@@ -1004,7 +1137,7 @@ export class MessageStore {
     const merged = new Map<string, BridgeMessage>();
     for (const [db, table] of [[this.archiveDb, "messages"], [this.db, "archived_messages"], [this.db, "messages"]] as const) {
       for (const row of this.statement(db, `SELECT * FROM ${table} WHERE id = ? ORDER BY rowid`).all(id) as unknown as Row[]) {
-        const message = toMessage(row); merged.set(message.recipient, message);
+        const message = this.decode(row); merged.set(message.recipient, message);
       }
     }
     return [...merged.values()];
@@ -1155,6 +1288,277 @@ export class MessageStore {
     this.lifecycleConstruction.ordinaryClose = "returned";
     } catch (error) { this.lifecycleConstruction.ordinaryClose = "unknown"; this.lifecycleConstruction.unknown = true; throw error; }
   }
+  jobNames(owner: string | undefined): string[] {
+    return this.acceptedOperation("direct", () => {
+      if (!this.frontendOwnership || !owner || verifiedNative(owner) !== owner || JSON.parse(owner).kind !== "job") return [];
+      return this.statement(this.db, `SELECT name FROM peer_names WHERE identity=?
+        UNION SELECT name FROM recipient_registrations WHERE state='native' AND owner=? ORDER BY name`)
+        .all(JSON.stringify(["job", owner]), owner).map(row => String(row.name));
+    });
+  }
+
+  recentProjectSenderOwners(address: string, previous: string, since: number): { name: string; owner: string }[] {
+    return this.acceptedOperation("direct", () => !this.frontendOwnership ? [] : this.statement(this.db,
+      `SELECT m.from_name,f.sender FROM deliverable_messages m JOIN message_frontends f ON f.id=m.id AND f.recipient=m.recipient
+       WHERE m.to_target=? AND m.recipient=? AND m.created_at>=? AND m.from_id NOT LIKE 'job:%' AND f.sender<>'' AND f.mailbox=? AND f.source=?
+       GROUP BY m.from_name,f.sender ORDER BY MAX(m.created_at) DESC LIMIT 64`).all(address, previous, since, JSON.stringify(localMailbox(this.namespace)), JSON.stringify(localMailbox(this.namespace)))
+      .map(row => ({ name: String(row.from_name), owner: String(row.sender) })));
+  }
+
+  get frontendOwnership(): boolean { return this.ownershipReady; }
+
+  recipientOwnership(name: string, live?: PeerInfo): Pick<BridgeMessage, "recipientFrontend" | "recipientNative" | "recipientAmbiguous"> {
+    return this.acceptedOperation("direct", () => {
+      if (live) return peerOwnership(live);
+      if (!this.frontendOwnership) return { recipientAmbiguous: true };
+      const row = this.statement(this.db, `SELECT r.* FROM recipient_registrations r JOIN peer_name_owners n
+        ON n.name=r.name AND n.identity=r.identity WHERE r.name=?`).get(name);
+      if (row?.state === "hosted") return { recipientFrontend: t3BindingSchema.parse(JSON.parse(String(row.binding))) };
+      if (row?.state === "native" && verifiedNative(String(row.owner))) return { recipientNative: String(row.owner) };
+      // Older authenticated helloT3 registrations retained the complete binding.
+      // This proves a current offline destination, not the owner of older mail.
+      const old = this.statement(this.db, `SELECT n.identity FROM peer_name_owners n JOIN peer_names p
+        ON n.name=p.name AND n.identity=p.identity WHERE n.name=?`).get(name);
+      if (old) {
+        try {
+          const parts: unknown = JSON.parse(String(old.identity));
+          if (Array.isArray(parts) && parts[1] === "t3") {
+            const frontend = t3BindingSchema.safeParse({ kind: "t3", scope: parts[2], threadId: parts[3], providerInstanceId: parts[5] });
+            if (frontend.success) return { recipientFrontend: frontend.data };
+          }
+        } catch { /* Unprovable historical registrations remain ambiguous. */ }
+      }
+      return { recipientAmbiguous: true };
+    });
+  }
+
+  blockedOwnership(limit = 100, after: { source: string; rowid: number } = { source: "main", rowid: 0 }): {
+    records: { id: string; recipient: string; source: string; readAt: number | null; reason: string }[];
+    next: { source: string; rowid: number } | null;
+  } {
+    return this.acceptedOperation("direct", () => {
+      const result: { id: string; recipient: string; source: string; readAt: number | null; reason: string }[] = [];
+      limit = Math.max(1, Math.min(1000, Math.trunc(limit) || 100));
+      let scanning = false, scanned = 0;
+      for (const [db, table, source] of [[this.db, "messages", "main"], [this.db, "archived_messages", "legacy-archive"], [this.archiveDb, "messages", "archive"]] as const) {
+        if (source === after.source) scanning = true;
+        if (!scanning) continue;
+        let rowid = source === after.source ? after.rowid : 0;
+        for (const row of this.statement(db, `SELECT rowid,id,recipient,read_at FROM ${table} WHERE rowid>? ORDER BY rowid LIMIT ?`).all(rowid, limit - scanned + 1)) {
+          if (scanned >= limit) return { records: result, next: { source, rowid } };
+          rowid = Number(row.rowid); scanned++;
+          const owner = this.frontendOwnership ? this.statement(this.db, "SELECT state,owner,mailbox FROM message_frontends WHERE id=? AND recipient=?").get(row.id!, row.recipient!) : undefined;
+          const provenance = this.parseMailbox(owner?.mailbox);
+          if (!this.ledgerKey(owner) || !provenance || provenance.kind === "local" && provenance.namespace !== this.namespace) result.push({ id: String(row.id), recipient: String(row.recipient), source,
+            readAt: row.read_at === null ? null : Number(row.read_at), reason: "Recipient provenance is missing or ambiguous; explicit reviewed recovery required." });
+        }
+      }
+      return { records: result, next: null };
+    });
+  }
+
+  private ownershipSql(table: string): string {
+    return `(SELECT CASE WHEN state='native' AND owner<>'' THEN 'native:'||owner WHEN state='hosted' AND owner<>'' THEN 'hosted:'||owner ELSE NULL END
+      FROM message_frontends f WHERE f.id=${table}.id AND f.recipient=${table}.recipient
+        AND f.mailbox=(SELECT json_object('kind','local','namespace',namespace) FROM mailbox_store WHERE id=1 AND length(namespace)=64 AND namespace NOT GLOB '*[^a-f0-9]*')) = ?
+      AND (NOT EXISTS(SELECT 1 FROM job_mail_grants g WHERE g.id=${table}.id) OR EXISTS(
+        SELECT 1 FROM job_mail_succession s WHERE s.id=${table}.id AND s.recipient=${table}.recipient
+        AND s.generation=(SELECT MAX(latest.generation) FROM job_mail_succession latest WHERE latest.id=s.id)
+        AND EXISTS(SELECT 1 FROM job_delivery_routes r WHERE r.id=s.id AND r.recipient=s.recipient AND r.consumed_at IS NULL AND r.namespace=(SELECT namespace FROM mailbox_store WHERE id=1))))`;
+  }
+
+  get namespace(): string {
+    const value = this.frontendOwnership ? this.statement(this.db, "SELECT namespace FROM mailbox_store WHERE id=1").get()?.namespace : undefined;
+    if (typeof value !== "string" || !/^[a-f0-9]{64}$/.test(value)) throw new Error("Local mailbox namespace is unavailable; restore the complete selected backup group.");
+    return value;
+  }
+
+  private parseMailbox(value: unknown): BridgeMessage["recipientMailbox"] {
+    try { return mailboxSchema.parse(JSON.parse(String(value))); } catch { return undefined; }
+  }
+
+  private ledgerKey(row?: Record<string, unknown>): string | null {
+    try { return row?.state === "role" || row?.state === "role-claimed" ? `role:${JSON.stringify(roleQueueSchema.parse(JSON.parse(String(row.owner))))}` : row?.state === "hosted" ? recipientKey(t3BindingSchema.parse(JSON.parse(String(row.owner)))) :
+      row?.state === "native" ? recipientKey(undefined, String(row.owner)) : null; } catch { return null; }
+  }
+
+  localCopy(message: BridgeMessage): boolean { return !message.recipientAmbiguous && sameMailbox(message.recipientMailbox, localMailbox(this.namespace)); }
+
+  private decode(row: Row): BridgeMessage {
+    const message = toMessage(row);
+    const owner = this.frontendOwnership ? this.statement(this.db, "SELECT binding,state,identity,owner,sender,mailbox,source FROM message_frontends WHERE id=? AND recipient=?").get(row.id, row.recipient) : undefined;
+    if (owner?.sender) message.senderOwner = String(owner.sender);
+    message.senderMailbox = this.parseMailbox(owner?.source);
+    if (owner?.state === "hosted" && owner.owner) message.recipientFrontend = t3BindingSchema.parse(JSON.parse(String(owner.owner)));
+    else if (owner?.state === "native" && verifiedNative(String(owner.owner))) message.recipientNative = String(owner.owner);
+    else if (owner?.state === "role" || owner?.state === "role-claimed") message.recipientRole = roleQueueSchema.parse(JSON.parse(String(owner.owner)));
+    else message.recipientAmbiguous = true;
+    try { message.recipientMailbox = mailboxSchema.parse(JSON.parse(String(owner?.mailbox))); } catch { message.recipientAmbiguous = true; }
+    if (message.recipientMailbox?.kind === "local" && message.recipientMailbox.namespace !== this.namespace) message.recipientAmbiguous = true;
+    if(message.recipientAmbiguous||message.recipientMailbox?.kind!=='local')message.readAt=null;
+    message.jobRoute = this.jobRouteFor(message.id, message.recipient);
+    return message;
+  }
+
+  private jobRouteFor(id: string, recipient: string): JobRouteProof | undefined {
+    if (!this.frontendOwnership) return undefined;
+    const row = this.statement(this.db, "SELECT generation FROM job_mail_succession WHERE id=? AND recipient=? ORDER BY generation DESC LIMIT 1").get(id, recipient);
+    return row ? { grant: id, generation: Number(row.generation) } : undefined;
+  }
+
+  jobRoutingGrant(id: string): { grant: JobMailGrant; namespace: string; originalRecipient: string; originalOwner: string } | null {
+    return this.acceptedOperation("direct", () => {
+      if (!this.frontendOwnership) return null;
+      const row = this.statement(this.db, "SELECT * FROM job_mail_grants WHERE id=?").get(id);
+      return row ? { grant: jobMailGrantSchema.parse(JSON.parse(String(row.authority))), namespace: String(row.namespace),
+        originalRecipient: String(row.original_recipient), originalOwner: String(row.original_owner) } : null;
+    });
+  }
+
+  isActiveJobCopy(message: BridgeMessage): boolean {
+    return this.acceptedOperation("direct", () => {
+      const grant = this.jobRoutingGrant(message.id);
+      if (!grant) return true;
+      if (grant.namespace !== this.namespace || !this.localCopy(message)) return false;
+      const latest = this.statement(this.db, "SELECT s.* FROM job_mail_succession s JOIN job_delivery_routes r USING(id) WHERE s.id=? AND r.consumed_at IS NULL AND r.recipient=s.recipient AND r.namespace=? ORDER BY generation DESC LIMIT 1").get(message.id, this.namespace);
+      return !!latest && latest.recipient === message.recipient && latest.owner === recipientKey(message.recipientFrontend, message.recipientNative) &&
+        message.jobRoute?.grant === message.id && message.jobRoute.generation === Number(latest.generation);
+    });
+  }
+
+  private jobBodyHash(message: BridgeMessage): string {
+    return createHash("sha256").update(JSON.stringify([message.id, message.from.id, message.from.agent, message.body, message.replyTo, message.hop])).digest("hex");
+  }
+
+  private retainJobGrant(message: BridgeMessage, authority: JobMailGrant): void {
+    const grant = jobMailGrantSchema.parse(authority), owner = recipientKey(message.recipientFrontend, message.recipientNative), ns = this.namespace;
+    if (!jobRouteSchema.safeParse({ grant: message.id, generation: 0 }).success || !owner || message.from.id !== `job:${grant.job}` ||
+        message.from.agent !== JSON.parse(grant.principal).agent || message.senderOwner !== `native:${grant.principal}` ||
+        !this.localCopy(message) || !sameMailbox(message.senderMailbox, localMailbox(ns)) || message.recipientRole)
+      throw new Error("Job report grant requires an exact proven local-origin copy");
+    const existing = this.statement(this.db, "SELECT * FROM job_mail_grants WHERE id=?").get(message.id);
+    if (existing) {
+      const original = jobMailGrantSchema.parse(JSON.parse(String(existing.authority)));
+      if (existing.namespace !== ns || existing.body_hash !== this.jobBodyHash(message) || original.job !== grant.job || original.incarnation !== grant.incarnation || original.principal !== grant.principal || projectKey(original.project) !== projectKey(grant.project))
+        throw new Error("Original job report grant or accepted bytes changed");
+      return;
+    }
+    // A grant cannot be added retrospectively to an existing ungranted copy.
+    if (this.byId(message.id)) throw new Error("Existing ungranted job evidence remains pending");
+    this.statement(this.db, "INSERT INTO job_mail_grants VALUES (?,?,?,?,?,?,?,?,?)")
+      .run(message.id, ns, JSON.stringify(grant), message.recipient, owner, JSON.stringify(message.recipientMailbox), this.jobBodyHash(message), JSON.stringify(message), message.createdAt);
+    this.statement(this.db, "INSERT INTO job_mail_succession VALUES (?,0,?,?,?,?,?)")
+      .run(message.id, message.recipient, owner, JSON.stringify(message.recipientMailbox), JSON.stringify(grant), message.createdAt);
+  }
+
+  rememberSendIntent(id: string, owner: string, fingerprint: string): void {
+    return this.acceptedOperation("direct", () => {
+      if (!this.frontendOwnership) throw new Error("Durable send storage upgrade is required.");
+      this.statement(this.db, "INSERT OR IGNORE INTO send_intents VALUES (?,?,?,?)").run(id, owner, fingerprint, this.namespace);
+      const original = this.statement(this.db, "SELECT owner,fingerprint,namespace FROM send_intents WHERE id=?").get(id)!;
+      if (original.namespace !== this.namespace || original.owner !== owner || original.fingerprint !== fingerprint) throw new Error("Message id already retained with different sender, namespace or content.");
+    });
+  }
+
+  sendIntentOwner(id: string): string | undefined {
+    return this.acceptedOperation("direct", () => {
+      if (!this.frontendOwnership) return undefined;
+      const record = this.statement(this.db, "SELECT owner,namespace FROM send_intents WHERE id=?").get(id);
+      if (record && record.namespace !== this.namespace) throw new Error("Retained sender namespace is unproven; recovery requires explicit reviewed evidence.");
+      return record ? String(record.owner) : undefined;
+    });
+  }
+
+  admitRemoteSend(message: BridgeMessage, destination: RemoteDestination, request: { owner: string; fingerprint: string }): void {
+    this.acceptedOperation("direct", () => {
+      if (!mailboxSchema.safeParse({ kind: "remote", hostId: destination.hostId, hostFingerprint: destination.hostFingerprint, namespace:destination.mailboxNamespace }).success ||
+          !destination.name || !recipientKey(destination.frontend, destination.native) || !message.senderOwner ||
+          !sameMailbox(message.senderMailbox, localMailbox(this.namespace)) ||
+          !sameMailbox(message.recipientMailbox, { kind: "remote", hostId: destination.hostId, hostFingerprint: destination.hostFingerprint, namespace:destination.mailboxNamespace }) ||
+          recipientKey(message.recipientFrontend, message.recipientNative) !== recipientKey(destination.frontend, destination.native))
+        throw new Error("Complete authenticated remote destination is required before admission");
+      this.exec(this.db, "SAVEPOINT remote_send_admission");
+      try {
+        this.rememberSendIntent(message.id, request.owner, request.fingerprint);
+        this.pinDestination(message, destination);
+        this.exec(this.db, "RELEASE remote_send_admission");
+      } catch (error) {
+        this.exec(this.db, "ROLLBACK TO remote_send_admission");
+        this.exec(this.db, "RELEASE remote_send_admission");
+        throw error;
+      }
+    });
+  }
+
+  pinDestination(message: BridgeMessage, destination: RemoteDestination): { message: BridgeMessage; destination: RemoteDestination } {
+    return this.acceptedOperation("direct", () => {
+      if (!this.frontendOwnership) throw new Error("Durable destination storage upgrade is required.");
+      // SQLite commits this immutable intent before the caller can dispatch a wire frame.
+      const routeKey = message.to === "*" ? message.recipient : message.to;
+      const { jobControlAuthorized: _liveAuthorization, ...durableMessage } = message;
+      this.statement(this.db, "INSERT OR IGNORE INTO send_destinations VALUES (?,?,?,?,?)")
+        .run(message.id, routeKey, JSON.stringify(durableMessage), JSON.stringify(destination), this.namespace);
+      const original = this.statement(this.db, "SELECT message,destination,namespace FROM send_destinations WHERE id=? AND recipient=?").get(message.id, routeKey)!;
+      if (original.namespace !== this.namespace) throw new Error("Retained destination namespace is unproven; no dispatch or retarget.");
+      const retained = JSON.parse(String(original.message)) as BridgeMessage;
+      if (retained.id !== message.id || retained.body !== message.body || retained.to !== message.to || retained.replyTo !== message.replyTo || retained.hop !== message.hop ||
+          retained.from.name !== message.from.name || retained.from.agent !== message.from.agent) throw new Error("Message id already retained with different content.");
+      return { message: retained, destination: JSON.parse(String(original.destination)) as RemoteDestination };
+    });
+  }
+
+  pinnedDestinations(id: string): RemoteDestination[] {
+    return this.pinnedSends(id).map(send => send.destination);
+  }
+
+  pinnedSends(id: string): { message: BridgeMessage; destination: RemoteDestination }[] {
+    return this.acceptedOperation("direct", () => this.frontendOwnership ? this.statement(this.db, "SELECT message,destination,namespace FROM send_destinations WHERE id=?")
+      .all(id).map(row => {
+        if (row.namespace !== this.namespace) throw new Error("Retained destination namespace is unproven; no dispatch or retarget.");
+        return { message: JSON.parse(String(row.message)) as BridgeMessage, destination: JSON.parse(String(row.destination)) as RemoteDestination };
+      }) : []);
+  }
+
+  frontendRecipients(frontend?: T3Binding, native?: string): string[] {
+    return this.acceptedOperation("direct", () => this.frontendOwnership && recipientKey(frontend, native) ? this.statement(this.db,
+      `SELECT DISTINCT m.recipient FROM message_frontends f JOIN messages m ON m.id=f.id AND m.recipient=f.recipient
+       WHERE f.mailbox=? AND f.state=? AND f.owner=? AND m.read_at IS NULL`)
+      .all(JSON.stringify(localMailbox(this.namespace)), frontend ? "hosted" : "native", frontend ? frontendKey(frontend) : verifiedNative(native)!).map(row => String(row.recipient)) : []);
+  }
+
+  claimRole(peer: PeerInfo, project: string): number {
+    return this.acceptedOperation("direct", () => {
+      const evidence = peerOwnership(peer), concrete = recipientKey(evidence.recipientFrontend, evidence.recipientNative);
+      if (peer.host || peer.jobAgent || peer.subagent || !concrete) return 0;
+      const from = agentQueueKey(peer.agent), namespace = this.namespace, mailbox = JSON.stringify(localMailbox(namespace));
+      this.exec(this.db, "SAVEPOINT role_mail_claim");
+      try {
+        let count = 0;
+        for (const raw of this.statement(this.db, `SELECT m.* FROM deliverable_messages m JOIN message_frontends f USING(id,recipient)
+          WHERE m.recipient=? AND m.to_target=? AND m.read_at IS NULL AND f.state='role' AND f.mailbox=?`).all(from, from, mailbox)) {
+          const message = this.decode(raw as unknown as Row), role = message.recipientRole;
+          if (!role || role.namespace !== namespace || role.agent !== peer.agent || projectKey(role.project) !== projectKey(project) || !this.localCopy(message)) continue;
+          if (this.statement(this.db, "SELECT 1 FROM messages WHERE id=? AND recipient=?").get(message.id, peer.name)) continue;
+          // Retire the role grant before insertion can invoke a retained sink.
+          // The same savepoint restores this state if either effect fails. Keep
+          // the original envelope and every proof byte; never fake a read ACK.
+          const retired = this.statement(this.db, "UPDATE message_frontends SET state='role-claimed' WHERE id=? AND recipient=? AND state='role' AND mailbox=?")
+            .run(message.id, from, mailbox);
+          if (Number(retired.changes) !== 1) throw new Error("Role claim changed before concrete copy admission");
+          this.insert({ ...message, recipient: peer.name, recipientRole: undefined, ...evidence });
+          count++;
+        }
+        this.exec(this.db, "RELEASE role_mail_claim");
+        if (count) this.notifyHistoryChanged(); return count;
+      } catch (error) { cleanupSavepoint(this.db, "role_mail_claim", true, error); throw error; }
+    });
+  }
+
+  pendingJobCopies(recipient: string, job: string, limit = 500): BridgeMessage[] {
+    return this.acceptedOperation("direct", () => this.statement(this.db,
+      "SELECT * FROM deliverable_messages WHERE recipient=? AND from_id=? AND read_at IS NULL ORDER BY created_at,id LIMIT ?")
+      .all(recipient, `job:${job}`, Math.max(1, Math.min(500, limit))).map(row => this.decode(row as unknown as Row)).filter(m => this.localCopy(m)));
+  }
 }
 
 /** One admitted ordinary initializer, also used by direct/offline consumers.
@@ -1181,3 +1585,5 @@ export function openMessageStore(file: string, log: Logger, check: () => number)
     throw error;
   }
 }
+
+function frontendKey(frontend?: T3Binding): string { return frontend ? JSON.stringify(t3BindingSchema.parse(frontend)) : ""; }

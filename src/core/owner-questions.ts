@@ -41,8 +41,8 @@ export const questionAnswerSchema = z.object({
   pin: z.object({ scope: decisionScopeSchema, topic: z.string().trim().min(1).max(160) }).strict().optional(),
 }).strict().refine(a => Boolean(a.option) !== Boolean(a.text), "Choose an option or write an answer");
 export type QuestionAnswerArgs = z.infer<typeof questionAnswerSchema>;
-export interface QuestionAsker { session: string; sessionId: string | null; peerId?: string; agent: MessageAddress["agent"]; main: string; mainSessionId?: string | null; mainPeerId?: string; job?: string; }
-export interface QuestionDelivery { recipient: string; messageId?: string; state: "pending" | "wake-requested" | "busy" | "wake-unavailable" | "offline" | "failed" | "unconfirmed"; detail: string; readAt: number | null; }
+export interface QuestionAsker { session: string; sessionId: string | null; peerId?: string; agent: MessageAddress["agent"]; main: string; mainSessionId?: string | null; mainPeerId?: string; job?: string; owner?: string; mainOwner?: string; jobOwner?: string; mailboxNamespace?:string }
+export interface QuestionDelivery { recipient: string; owner?: string;mailboxNamespace?:string; main?: boolean; messageId?: string; state: "pending" | "wake-requested" | "busy" | "wake-unavailable" | "offline" | "failed" | "unconfirmed"; detail: string; readAt: number | null; }
 export interface OwnerQuestion extends z.output<typeof askOwnerSchema> {
   id: string; kind: "question"; project: string; dedupeKey: string;
   status: "open" | "answered" | "cancelled" | "superseded"; askedAt: number;
@@ -50,6 +50,8 @@ export interface OwnerQuestion extends z.output<typeof askOwnerSchema> {
   deliveries: QuestionDelivery[]; dismissal?: { reason: string; at: number; supersededBy?: string };
   mirror?: { state: "pending" | "saved" | "failed"; detail?: string; nextAttempt?: number; issues?: string[] };
   deliveryComplete?: boolean;
+  /** Explicit project-role fallback selected once, then fenced across retries. */
+  fallbackTargets?: { name: string; owner: string; mailboxNamespace?:string }[];
 }
 const migrations = [{ version: 1, sql: `
 CREATE TABLE questions (id TEXT PRIMARY KEY, project TEXT NOT NULL, dedupe_key TEXT NOT NULL, status TEXT NOT NULL, record TEXT NOT NULL);
@@ -67,7 +69,7 @@ CREATE TABLE IF NOT EXISTS mobile_question_answers (principal TEXT NOT NULL, rep
 
 /** Equality token covers displayed terms and outcome, excluding asynchronous delivery metadata. */
 export function ownerQuestionVersion(q: OwnerQuestion): string {
-  const { deliveries, mirror, deliveryComplete, ...terms } = q;
+  const { deliveries, mirror, deliveryComplete, fallbackTargets, ...terms } = q;
   return createHash("sha256").update(JSON.stringify(terms)).digest("base64url");
 }
 export class QuestionVersionConflict extends Error {
@@ -94,6 +96,9 @@ export class OwnerQuestionStore {
   list(): OwnerQuestion[] { return this.db.prepare("SELECT record FROM questions ORDER BY rowid DESC").all().map(r => JSON.parse(String(r.record))); }
   work(): OwnerQuestion[] { return this.db.prepare(`SELECT record FROM questions WHERE status='open' OR
     (status='answered' AND (coalesce(json_extract(record,'$.deliveryComplete'),0)=0 OR
+      EXISTS(SELECT 1 FROM json_each(record,'$.deliveries') WHERE json_extract(value,'$.owner') IS NULL) OR
+      json_array_length(record,'$.deliveries')=0 OR
+      EXISTS(SELECT 1 FROM json_each(record,'$.askers') WHERE json_extract(value,'$.owner') IS NULL OR json_extract(value,'$.mainOwner') IS NULL) OR
       json_extract(record,'$.mirror.state') IN ('pending','failed'))) ORDER BY rowid`).all().map(r => JSON.parse(String(r.record))); }
   get(id: string): OwnerQuestion | undefined { const row = this.db.prepare("SELECT record FROM questions WHERE id=?").get(id); return row ? JSON.parse(String(row.record)) : undefined; }
   save(q: OwnerQuestion): void {
@@ -106,7 +111,7 @@ export class OwnerQuestionStore {
     if (args.default && args.default.deadline <= at) throw new Error("Default deadline must be in the future");
     return this.transaction(() => {
       const open = this.list().filter(q => q.status === "open");
-      const sameAsker=(a:QuestionAsker) => a.sessionId && asker.sessionId ? a.agent === asker.agent && a.sessionId === asker.sessionId : a.peerId && asker.peerId ? a.peerId === asker.peerId : a.session === asker.session;
+      const sameAsker=(a:QuestionAsker) => a.owner || asker.owner ? Boolean(a.owner && a.owner === asker.owner && a.mailboxNamespace===asker.mailboxNamespace) : a.sessionId && asker.sessionId ? a.agent === asker.agent && a.sessionId === asker.sessionId : a.peerId && asker.peerId ? a.peerId === asker.peerId : a.session === asker.session;
       const issue = args.links.filter(l => l.kind === "issue").map(l => l.value.toUpperCase()).sort().join(",");
       const key = JSON.stringify([project, issue, args.topic.toLowerCase()]);
       const same = open.find(q => q.dedupeKey === key);

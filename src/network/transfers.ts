@@ -4,6 +4,7 @@ import { open, link, unlink, statfs, lstat, opendir, type FileHandle } from "nod
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { z } from "zod";
 import type { Logger } from "../core/logger.js";
+import { sameMailbox, type InternalMessageOrigin } from "../core/recipient-ownership.js";
 import { AGENT_KINDS, TRANSFER_PROGRESS_PREFIX, type BridgeMessage } from "../core/protocol.js";
 import { OWNER_DIR_MODE, OWNER_FILE_MODE, NETWORK_NAME_PATTERN, MAX_NETWORK_FRAME_BYTES } from "./constants.js";
 import { assertTransferPath, ensureTransferDirectory, safeTransferPath, MAX_TRANSFER_DEPTH, collectTransfer, type FileTransfer, type TransferResult } from "./files.js";
@@ -59,14 +60,17 @@ interface State {
   from: Sender; to: string; status: TransferStatus; createdAt: number; updatedAt: number;
   paths: string[]; cwd: string; entries: Entry[]; totalBytes: number; error?: string;
   pull?: boolean; cancelPending?: boolean; abortPending?: boolean; legacy?: boolean; legacySent?: boolean; fetched?: boolean; initialized?: boolean;
+  /** Locally authenticated admission evidence, never accepted from wire fields. */
+  notification?: InternalMessageOrigin;
 }
 interface TransferTransport {
   supports(remote: string): boolean;
   window?(remote: string): number;
   send(remote: string, payload: Record<string, unknown>): Promise<void>;
-  validSender(remote: string, sender: Sender): boolean;
+  validSender(remote: string, sender: Sender, retained?: InternalMessageOrigin): boolean;
   localPeer(name: string): (Sender & { cwd: string }) | undefined;
-  notify(message: BridgeMessage): void;
+  captureNotification?(remote: string, id: string, direction: "send" | "receive", from: Sender, to: string, retained?: InternalMessageOrigin): InternalMessageOrigin;
+  notify(message: BridgeMessage, remote?: string, origin?: InternalMessageOrigin): void;
   legacy(remote: string, transfer: FileTransfer): Promise<TransferResult>;
 }
 interface Pending { remote: string; id: string; resolve: (value: Reply) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }
@@ -225,10 +229,10 @@ export class TransferManager {
     return transferSummary(this.home, state);
   }
   list(): TransferProgress[] { return readTransferHistory(this.home); }
-  recordLegacy(transfer: FileTransfer, remote: string, peer: string): void {
+  recordLegacy(transfer: FileTransfer, remote: string, peer: string, notification?: InternalMessageOrigin): void {
     const entries: Entry[] = transfer.entries.map((entry) => ({ kind: entry.kind, path: entry.path, size: entry.kind === "file" ? Buffer.byteLength(entry.data, "base64") : 0,
       offset: entry.kind === "file" ? Buffer.byteLength(entry.data, "base64") : 0, complete: true, ...(entry.kind === "file" ? { sha256: entry.sha256 } : {}) }));
-    this.save({ version: 1, id: transfer.id, direction: "receive", remote, peer, from: transfer.from, to: transfer.to,
+    this.save({ version: 1, id: transfer.id, direction: "receive", remote, peer, from: transfer.from, to: transfer.to, notification,
       paths: [], cwd: "", entries, totalBytes: entries.reduce((sum, entry) => sum + entry.size, 0), status: "completed", legacy: true, initialized: true, createdAt: Date.now(), updatedAt: Date.now() });
   }
   private report(state: State, force = false): void {
@@ -238,11 +242,12 @@ export class TransferManager {
     this.notified.set(state.id, now);
     const progress = this.summary(state);
     this.log.info("file transfer progress", { ...progress });
-    const recipient = state.direction === "send" ? state.from.name : state.to;
-    const from = state.direction === "receive" ? { ...state.from, id: `${state.remote}/${state.from.id}`, name: `${state.peer.split("/")[0]}/${state.from.name}` } : { id: `files-${state.id}`, name: "files", agent: "other" as const };
+    const receiving = state.direction === "receive" && !state.pull;
+    const recipient = receiving ? state.to : state.from.name;
+    const from = receiving ? { ...state.from, id: `${state.remote}/${state.from.id}`, name: `${state.peer.split("/")[0]}/${state.from.name}` } : { id: `files-${state.id}`, name: "files", agent: "other" as const };
     this.transport.notify({ id: state.direction === "receive" && state.status === "completed" ? state.id : randomUUID(), from, to: recipient, recipient,
       conversationId: TERMINAL.has(state.status) ? state.id : `${TRANSFER_PROGRESS_PREFIX}${state.id}`, replyTo: null, hop: 0, createdAt: now, readAt: null,
-      body: `files: ${progress.percent}% · ${progress.bytes} / ${progress.totalBytes} bytes · ${state.status} · ${state.id}${progress.inbox ? ` · ${progress.inbox}` : ""}${state.error ? ` · ${state.error}` : ""}` });
+      body: `files: ${progress.percent}% · ${progress.bytes} / ${progress.totalBytes} bytes · ${state.status} · ${state.id}${progress.inbox ? ` · ${progress.inbox}` : ""}${state.error ? ` · ${state.error}` : ""}` }, receiving ? state.remote : undefined, state.notification);
     if (TERMINAL.has(state.status)) this.notified.delete(state.id);
   }
   private ensureCapacity(): void {
@@ -251,6 +256,7 @@ export class TransferManager {
   start(remote: string, peer: string, to: string, paths: string[], cwd: string, from: Sender, pull = false, id: string = randomUUID(), legacy = false): TransferStarted {
     this.ensureCapacity();
     const state: State = { version: 1, id, direction: pull ? "receive" : "send", remote, peer, to, paths, cwd, from,
+      notification: this.transport.captureNotification?.(remote, id, "send", from, to),
       status: "queued", entries: [], totalBytes: 0, createdAt: Date.now(), updatedAt: Date.now(), ...(pull ? { pull: true } : {}), ...(legacy ? { legacy: true } : {}) };
     this.save(state); this.report(state, true);
     setImmediate(() => this.resume());
@@ -477,7 +483,9 @@ export class TransferManager {
       state.status = state.legacy || !RETRYABLE_TRANSFER_ERROR.test((error as Error).message) ? "failed" : "paused";
       state.error = (error as Error).message.slice(0, MAX_ERROR_CHARS);
       state.abortPending = state.status === "failed" && !state.legacy;
-      this.save(state); this.report(state, true);
+      this.save(state);
+      try { this.report(state, true); }
+      catch (notificationError) { this.log.warn("file notification remains owner-fenced; transfer evidence retained", { id: state.id, error: String(notificationError) }); }
     }
   }
   private part(state: State, index: number): string { return join(this.root, state.id, `${index}.part`); }
@@ -592,13 +600,21 @@ export class TransferManager {
       return { status: state?.status ?? "queued" };
     }
     if (request.op === "offer") {
-      if (!this.transport.validSender(remote, request.from)) throw new Error("sender not advertised by paired instance");
+      // Existing admission evidence may survive a registration-ID change. It
+      // is local durable state, never a proof supplied by this request.
+      const retained = state && !state.pull ? state.notification : undefined;
+      if (!this.transport.validSender(remote, request.from, retained)) throw new Error("sender not advertised by paired instance with the original ownership");
       if (!this.transport.localPeer(request.to)) throw new Error("file recipient is not online");
+      const notification = this.transport.captureNotification?.(remote, request.id, "receive", request.from, request.to, retained);
+      if (state && notification && (!state.notification || state.notification.recipientOwner !== notification.recipientOwner ||
+          !sameMailbox(state.notification.recipientMailbox, notification.recipientMailbox) ||
+          !state.pull && (state.notification.owner !== notification.owner || !sameMailbox(state.notification.source, notification.source))))
+        throw new Error("Transfer notification ownership/host binding changed or was never captured; original evidence retained");
       const entries: Entry[] = request.entries.map((entry) => ({ ...entry, offset: 0 }));
       const totalBytes = this.validateEntries(entries);
       if (state?.pull && !state.entries.length) {
         if (state.to !== request.from.name || state.from.name !== request.to) throw new Error("pull offer does not match request");
-        state.from = request.from; state.to = request.to; state.pull = false;
+        state.from = request.from; state.to = request.to; state.pull = false; state.notification = notification;
       } else if (state && (state.direction !== "receive" || JSON.stringify(state.entries.map(({ path, kind, size }) => ({ path, kind, size }))) !== JSON.stringify(request.entries) || state.from.name !== request.from.name || state.from.agent !== request.from.agent || state.to !== request.to)) throw new Error("transfer manifest changed");
       if (state) state.from = request.from;
       if (this.receiving.has(request.id)) throw new Error("transfer operation already in progress");
@@ -609,6 +625,7 @@ export class TransferManager {
           const inbox = join(this.home, "inbox"); ensureTransferDirectory(inbox);
           if (existsSync(join(inbox, request.id)) || existsSync(join(this.root, request.id))) throw new Error("transfer destination already exists");
           const receiving: State = { version: 1, id: request.id, direction: "receive", remote, peer: `${remoteName}/${request.from.name}`, from: request.from, to: request.to,
+            notification,
             paths: [], cwd: "", status: "preparing", entries, totalBytes, createdAt: state?.createdAt ?? Date.now(), updatedAt: Date.now() };
           state = state ? Object.assign(state, receiving, { pull: false }) : receiving;
           this.save(state);

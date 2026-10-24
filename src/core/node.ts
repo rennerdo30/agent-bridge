@@ -28,7 +28,8 @@ import type { Logger } from "./logger.js";
 import { launchDaemon, RelaunchBackoff, type DaemonLaunch } from "./daemon-launcher.js";
 import { BridgeError, isQuietMessage, isUnsupportedOperation, type AgentKind, type BridgeMessage, type EventMap, type PeerActivity, type PeerInfo, type RequestMap, type SendArgs, type SendResult, type SiblingPeer, type ModeSendArgs, type ModeSendResult } from "./protocol.js";
 import { completionMessageId, COMPLETION_DEDUPE_PREFIX } from "./completion.js";
-import { ReadJournal } from "./read-journal.js";
+import { ReadJournal, readJournalIdentities } from "./read-journal.js";
+import { localMailbox, nativeOwner, recipientKey, sameMailbox } from "./recipient-ownership.js";
 import { existingMetadataDb, retainMetadataReader } from "./metadata-db.js";
 import { recordLocalResult } from "./local-result-receipts.js";
 import { compareProjectJobSummaries, summarizeProjectJob, type ProjectJobSummary, type ProjectJobSummaryPage } from "./project-job-summary.js";
@@ -47,7 +48,7 @@ import type { RemoteJobSnapshot } from "../network/remote-jobs.js";
 import type { HistorySearch, HistoryResult } from "./history.js";
 import type { TransferStarted } from "../network/transfers.js";
 import type { DecideArgs, DecisionsArgs, OwnerDecision } from "./decisions.js";
-import { sameFrontend, type T3Binding } from "./t3-identity.js";
+import { sameFrontend, t3BindingSchema, type T3Binding } from "./t3-identity.js";
 
 export interface BridgeNodeOptions {
   frontend?: T3Binding;
@@ -127,7 +128,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
    * AB-399: the session's CLI as of this server's start. A POSIX server whose CLI ended is re-parented (ppid 1 or a
    * subreaper); reporting the new parent would let a dead session look live again on its next hello.
    */
-  private readonly agentHostPid: number | null = process.ppid ?? null;
+  private readonly agentHostPid: number | null;
   private retiredBy: "host_exited" | "pid_reused" | undefined;
   private electing: Promise<void> | null = null;
   private startupBudget: StartupBudget | undefined;
@@ -141,12 +142,19 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   private readonly readJournal: ReadJournal;
   private releaseMetadata: (() => void) | undefined;
   private readonly unflushedAcks = new Set<string>();
+  private readonly ackMailboxes = new Map<string, BridgeMessage["recipientMailbox"]>();
+  private readonly nativeChildMailboxes = new Map<string, Map<string, BridgeMessage["recipientMailbox"]>>();
+  private readonly ackOwners = new Map<string, string>();
+  private readonly ackJobRoutes = new Map<string, BridgeMessage["jobRoute"]>();
   private readonly pendingAcks = new Set<Promise<unknown>>();
   private pendingRefreshTimer: NodeJS.Timeout | null = null;
   private refreshingPending: Promise<void> | null = null;
   private ackFlushScheduled = false;
   private ackFlush: NodeJS.Immediate | null = null;
   private sessionId: string | null = null;
+  private agentCreation: string | null = null;
+  private nativeIdentity: string | undefined;
+  private mailboxNamespace: string | undefined;
   private autoWake: boolean;
   private wakeOnDirect = false;
   private wakeAvailable = false;
@@ -166,6 +174,8 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
 
   constructor(private readonly opts: BridgeNodeOptions) {
     super();
+    this.agentHostPid = opts.agent === "other" && !opts.jobAgent ? process.pid : process.ppid ?? null;
+    this.opts = { ...opts, frontend: opts.frontend ? Object.freeze(t3BindingSchema.parse(opts.frontend)) : undefined };
     this.id = opts.id ?? randomUUID();
     this.currentName = opts.name;
     this.currentCwd = opts.cwd;
@@ -556,9 +566,11 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
         for(const peer of peers){check();withStorageAdmission(check,()=>recordStorePeer(dirname(this.opts.dbPath),peer));check();}
       }
     check();
-    const agentStartedAt = this.opts.jobAgent ? null : await budget.wait(parentProcessIdentity(budget.signal,()=>budget.remaining()));
+    const agentStartedAt = this.opts.jobAgent ? null : await budget.wait(this.opts.agent === "other" ? ownProcessIdentity(budget.signal,()=>budget.remaining()) : parentProcessIdentity(budget.signal,()=>budget.remaining()));
     check();
-    withStorageAdmission(check,()=>this.restoreReadState(`name:${this.currentName}`));check();
+    this.agentCreation = agentStartedAt ?? null;
+    this.nativeIdentity = this.currentNativeIdentity();
+    withStorageAdmission(check,()=>this.restoreReadState());check();
     const args = this.helloArgs();
     // Older brokers publish hello capabilities directly to their observers,
     // which then rewrite each foreign PID record using their legacy shape.
@@ -618,19 +630,20 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     };
   }
 
-  private afterHello(client: BridgeClient, hello: { name: string; brokerPid: number; sessionId?: string | null }): void {
+  private afterHello(client: BridgeClient, hello: { name: string; brokerPid: number; sessionId?: string | null; nativeOwner?: string; mailboxNamespace?: string }): void {
     storageAdmissionRemaining();if (this.stopping) throw new BridgeError('timeout','Startup owner stopped before adoption');
     // Any authenticated registration settles creation, including an ambiguous attempt: a broker is serving, so
     // after a later loss (crash, idle exit, handover) discovery may demand-start again.
     this.daemonLaunch = undefined;
     this.relaunchBackoff.reset();
     this.currentName = hello.name;
+    if (!hello.mailboxNamespace || !/^[a-f0-9]{64}$/.test(hello.mailboxNamespace)) throw new BridgeError("protocol_mismatch", "Broker lacks schema15 local mailbox provenance; exact owner admission refused.");
+    this.mailboxNamespace = hello.mailboxNamespace;
+    if (!this.sessionId && hello.sessionId) this.sessionId=hello.sessionId;
+    this.nativeIdentity = this.currentNativeIdentity();
+    if (!this.opts.frontend && (!this.nativeIdentity || hello.nativeOwner !== this.nativeIdentity)) throw new BridgeError("protocol_mismatch", "Broker did not attest the exact native identity; mailbox access refused.");
     storageAdmissionRemaining();this.recordOwnStorePeer();storageAdmissionRemaining();
-    if (!this.sessionId && hello.sessionId) {
-      this.sessionId = hello.sessionId;
-      storageAdmissionRemaining();this.restoreReadState(`session:${this.sessionId}`);storageAdmissionRemaining();
-    }
-    storageAdmissionRemaining();this.restoreReadState(`name:${this.currentName}`);storageAdmissionRemaining();
+    storageAdmissionRemaining();this.restoreReadState();storageAdmissionRemaining();
     if(this.opts.dbPath!==':memory:')this.recordStorePresence();storageAdmissionRemaining();
     this.client=client;
     this.reconnectDelay = RECONNECT_BACKOFF_MIN_MS;
@@ -668,11 +681,17 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
       storageAdmissionRemaining();this.emit("inline_job_control", data as BridgeNodeEvents["inline_job_control"][0]);
     } else if (ev === "message") {
       const m = data as BridgeMessage;
-      if (this.readIds.has(m.id)) {
-        this.acknowledge([m.id]);
+      if (!this.mailboxNamespace || !sameMailbox(m.recipientMailbox, localMailbox(this.mailboxNamespace)) || m.recipientAmbiguous || (!m.recipientFrontend && !m.recipientNative) ||
+          !sameFrontend(this.opts, { frontend: m.recipientFrontend }) || !this.opts.frontend && (!this.nativeIdentity || m.recipientNative !== this.nativeIdentity)) return;
+      const consumed = this.opts.frontend && !m.jobRoute ? this.readIds.has(m.id) : this.readIdentities(m).some(key => this.readJournal.receipt(key, m.id).read);
+      if (consumed) {
+        this.readIds.add(m.id);
+        this.acknowledge([m.id], [m]);
         return;
       }
-      if (this.inbox.has(m.id)) return;
+      this.readIds.delete(m.id);
+      const held = this.inbox.get(m.id);
+      if (held && JSON.stringify(held.jobRoute) === JSON.stringify(m.jobRoute)) return;
       this.inbox.set(m.id, m);
       if (m.conversationId === DASHBOARD_JOB_CONVERSATION) {
         this.markRead([m.id]);
@@ -783,8 +802,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
         await Promise.all([...this.pendingAcks]);
         while (this.unflushedAcks.size) {
           const ids = [...this.unflushedAcks].slice(0, 500);
-          await c.request("ack", { ids });
-          ids.forEach(id => this.unflushedAcks.delete(id));
+          await this.flushAcks(c,ids);
         }
       }
       submitted = true;
@@ -888,12 +906,9 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
         return this.trackedSend(next, args, explicitId, true);
       }
       if (isUnsupportedOperation(error, "trackedSend")) {
-        // The first attempt may already be stored by the lost broker: a fresh-id legacy send could duplicate it.
+        // p12 has no owner-blind legacy opcode downgrade or fresh-ID retry.
         if (reconnected) throw unknown(error);
-        if (explicitId || args.ifNoNewerThan) throw error;
-        // An explicit refusal proves nothing was applied. Legacy sends retain their own dedupe key.
-        const { messageId: _unused, ...legacy } = args;
-        return this.sendRequest(client, "send", legacy);
+        throw error;
       }
       if (!transientRequestError(error)) {
         if (error instanceof BridgeError) throw error;
@@ -939,15 +954,20 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     return this.lastSent;
   }
 
-  messageReceipt(id: string) {
-    return this.withClient((c) => c.request("messageReceipt", { id }));
+  messageReceipt(id: string, nativeChild?: string) {
+    return this.withClient((c) => c.request("messageReceipt", { id, ...(nativeChild !== undefined ? { nativeChild } : {}) }));
   }
 
   nativeChild(args: RequestMap["nativeChild"][0]) { return this.withClient(c => c.request("nativeChild", args)); }
   nativeChildren() { return this.withClient(c => c.request("nativeChildren", {})); }
   nativeChildrenEnd() { return this.withClient(c => c.request("nativeChildrenEnd", {})); }
-  nativeChildPending(agentId: string) { return this.withClient(c => c.request("nativeChildPending", { agentId })); }
-  nativeChildAck(agentId: string, ids: string[]) { return this.withClient(c => c.request("nativeChildAck", { agentId, ids })); }
+  nativeChildPending(agentId: string) { return this.withClient(async c => {
+    const messages = await c.request("nativeChildPending", { agentId });
+    const proofs = new Map(messages.map(m => [m.id, m.recipientMailbox ? Object.freeze({ ...m.recipientMailbox }) : undefined])); this.nativeChildMailboxes.set(agentId, proofs);
+    return messages;
+  }); }
+  nativeChildAck(agentId: string, ids: string[]) { return this.withClient(c => c.request("nativeChildAck", { agentId, ids,
+    mailboxProofs: Object.fromEntries(ids.flatMap(id => this.nativeChildMailboxes.get(agentId)?.get(id) ? [[id, this.nativeChildMailboxes.get(agentId)!.get(id)!]] : [])) })); }
   nativeChildSend(agentId: string, args: SendArgs) { return this.withClient(c => c.request("nativeChildSend", { ...args, agentId })); }
 
   peers(signal?: AbortSignal): Promise<PeerInfo[]> {
@@ -1111,8 +1131,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     await Promise.all(this.pendingAcks);
     if (this.unflushedAcks.size) {
       const ids = [...this.unflushedAcks];
-      await this.client!.request("ack", { ids });
-      ids.forEach((id) => this.unflushedAcks.delete(id));
+      await this.flushAcks(this.client!,ids);
     }
     const messages = await this.client!.request("pending", { limit: 500 });
     for (const m of messages) this.onEvent("message", m);
@@ -1146,6 +1165,9 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
    * background subagent. It is handled exactly like a peer message (hooks, wait_for_message, channel).
    */
   deliverLocal(m: BridgeMessage): void {
+    if (m.recipientAmbiguous || !this.mailboxNamespace || !sameMailbox(m.recipientMailbox,localMailbox(this.mailboxNamespace)) ||
+        !sameFrontend(this.opts,{frontend:m.recipientFrontend}) || !this.opts.frontend && (!this.nativeIdentity || m.recipientNative!==this.nativeIdentity))
+      throw new BridgeError("unauthorized","Local result lacks its original exact recipient and mailbox proof; retained producer recovery required.");
     try { if (this.opts.dbPath !== ":memory:") recordLocalResult(dirname(this.opts.dbPath), m); }
     catch (err) { this.log.warn("could not retain local result receipt", { id: m.id, err: String(err) }); }
     this.onEvent("message", m);
@@ -1156,15 +1178,18 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     storageAdmissionRemaining();
     const real = ids.filter((id) => this.inbox.has(id));
     if (!real.length) return;
-    this.readJournal.append(`name:${this.currentName}`, real);
-    storageAdmissionRemaining();if (this.sessionId) this.readJournal.append(`session:${this.sessionId}`, real);storageAdmissionRemaining();
     const messages = real.map((id) => this.inbox.get(id)!);
+    const marks = new Map<string, string[]>();
+    for (const message of messages) for (const identity of this.readIdentities(message)) {
+      storageAdmissionRemaining();const ids = marks.get(identity) ?? [];ids.push(message.id);marks.set(identity, ids);
+    }
+    for (const [identity, ids] of marks) { storageAdmissionRemaining();this.readJournal.append(identity,ids);storageAdmissionRemaining(); }
     for (const id of real) {
       storageAdmissionRemaining();
       this.inbox.delete(id);
       this.readIds.add(id);
     }
-    this.acknowledge(real);
+    this.acknowledge(real, messages);
     // Complete notification waits only after the durable delivery receipt, never on arrival or hand-out.
     try { storageAdmissionRemaining();this.notificationConsumed(messages);storageAdmissionRemaining(); }
     catch (err) { storageAdmissionRemaining();this.log.warn("could not archive completed notification wait", { err: String(err) }); }
@@ -1178,17 +1203,32 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   isNotificationAwaited(m: BridgeMessage): boolean { return this.notificationMatch(m); }
   notificationWaitsChanged(): void { this.emit("notification_waits_changed"); }
 
-  private restoreReadState(identity: string): void {
-    storageAdmissionRemaining();const read=this.readJournal.read(identity);storageAdmissionRemaining();
-    for (const id of read) {storageAdmissionRemaining();this.readIds.add(id);}
-    const consumed = [...this.inbox.keys()].filter((id) => this.readIds.has(id));
-    consumed.forEach((id) => {storageAdmissionRemaining();this.inbox.delete(id);});
-    storageAdmissionRemaining();this.acknowledge(consumed);
+  private restoreReadState(): void {
+    storageAdmissionRemaining();
+    for (const [id,message] of this.inbox) {
+      storageAdmissionRemaining();
+      if (message.jobRoute || !this.mailboxNamespace || !sameMailbox(message.recipientMailbox,localMailbox(this.mailboxNamespace)) || !this.opts.frontend && (!this.nativeIdentity || message.recipientNative!==this.nativeIdentity)) this.inbox.delete(id);
+    }
+    storageAdmissionRemaining();this.readIds.clear();
+    for (const identity of this.readIdentities()) {
+      storageAdmissionRemaining();const read=this.readJournal.read(identity);storageAdmissionRemaining();
+      for (const id of read) {storageAdmissionRemaining();this.readIds.add(id);}
+    }
+    const messages=[...this.inbox.values()].filter(m=>this.opts.frontend?this.readIds.has(m.id):this.readIdentities(m).some(key=>this.readJournal.receipt(key,m.id).read));
+    const consumed=messages.map(m=>m.id);
+    for (const id of consumed) {storageAdmissionRemaining();this.inbox.delete(id);}
+    storageAdmissionRemaining();this.acknowledge(consumed,messages);
   }
 
-  private acknowledge(ids: string[]): void {
+  private acknowledge(ids: string[], messages: BridgeMessage[] = []): void {
     storageAdmissionRemaining();
     if (!ids.length) return;
+    for (const m of messages) {
+      storageAdmissionRemaining();
+      if (m.recipientNative) this.ackOwners.set(m.id,m.recipientNative);
+      if (m.recipientMailbox) this.ackMailboxes.set(m.id,Object.freeze({...m.recipientMailbox}));
+      if (m.jobRoute) this.ackJobRoutes.set(m.id,Object.freeze({...m.jobRoute}));else this.ackJobRoutes.delete(m.id);
+    }
     ids.forEach((id) => {storageAdmissionRemaining();this.unflushedAcks.add(id);});
     if (!this.isConnected || this.ackFlushScheduled) return;
     // A channel can consume hundreds of replayed messages in one stream chunk. One ack per
@@ -1200,10 +1240,8 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
       this.ackFlushScheduled = false;
       if (!this.isConnected || !this.unflushedAcks.size) return;
       const batch = [...this.unflushedAcks].slice(0, 500);
-      batch.forEach((id) => this.unflushedAcks.delete(id));
-      const pending = this.client!.request("ack", { ids: batch }).catch((err) => {
+      const pending = this.flushAcks(this.client!,batch).catch((err) => {
         this.log.warn("ack failed; retained for pending recovery", { err: (err as Error).message });
-        batch.forEach((id) => this.unflushedAcks.add(id));
       });
       this.pendingAcks.add(pending);
       void pending.finally(() => { this.pendingAcks.delete(pending); this.schedulePendingRefresh(); });
@@ -1246,7 +1284,8 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     // The broker may hand us the name of an older server of this session that we replace.
     if (this.isConnected) this.currentName = (await this.updatePeer({ sessionId })).name;
     this.recordOwnStorePeer();
-    if (sessionId) this.restoreReadState(`session:${sessionId}`);
+    this.nativeIdentity=this.currentNativeIdentity();
+    if (sessionId) this.restoreReadState();
     this.notificationWaitsChanged();
   }
 
@@ -1315,5 +1354,44 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
 
   private recordOwnStorePeer(): void {
     if (this.opts.dbPath !== ":memory:") recordStorePeer(dirname(this.opts.dbPath), { pid: process.pid, name: this.currentName, version: APP_VERSION, storeCapabilities: candidateStoreCapabilities }, { authoritative: true });
+  }
+  private readIdentities(message?: BridgeMessage): string[] {
+    return readJournalIdentities(this.currentName, this.sessionId, this.opts.frontend, message?.recipientNative, message?.recipientMailbox ?? (this.mailboxNamespace ? localMailbox(this.mailboxNamespace) : undefined), message?.jobRoute);
+  }
+
+  private currentNativeIdentity(): string | undefined {
+    return nativeOwner({ ...this.helloArgs().peer, agentStartedAt: this.agentCreation });
+  }
+
+  prepareLocalMessage(message: BridgeMessage): BridgeMessage {
+    const owner = this.currentNativeIdentity();
+    if (message.recipientFrontend && !sameFrontend(this.opts, { frontend: message.recipientFrontend }) || message.recipientNative && message.recipientNative !== owner)
+      throw new BridgeError("unauthorized", "Local envelope belongs to a different proven recipient.");
+    if (message.recipientMailbox && (!this.mailboxNamespace || !sameMailbox(message.recipientMailbox, localMailbox(this.mailboxNamespace)))) throw new BridgeError("unauthorized", "Local envelope belongs to a different mailbox authority.");
+    return { ...message, recipientFrontend: this.opts.frontend, recipientNative: this.opts.frontend ? undefined : owner,
+      recipientMailbox: this.mailboxNamespace ? localMailbox(this.mailboxNamespace) : undefined,
+      recipientAmbiguous: !recipientKey(this.opts.frontend, owner) || !this.mailboxNamespace ? true : undefined };
+  }
+
+  mailboxOwner(): string | null { return recipientKey(this.opts.frontend, this.currentNativeIdentity()); }
+
+  mailboxProvenance(): BridgeMessage["recipientMailbox"] { return this.mailboxNamespace ? localMailbox(this.mailboxNamespace) : undefined; }
+
+  private ackArgs(ids: string[]) {
+    return { ids, mailboxProofs: Object.fromEntries(ids.flatMap(id => this.ackMailboxes.get(id) ? [[id, this.ackMailboxes.get(id)!]] : [])),
+      jobRoutes: Object.fromEntries(ids.flatMap(id => this.ackJobRoutes.get(id) ? [[id, this.ackJobRoutes.get(id)!]] : [])),
+      ...(!this.opts.frontend ? { nativeOwners: Object.fromEntries(ids.flatMap(id => this.ackOwners.has(id) ? [[id, this.ackOwners.get(id)!]] : [])) } : {}) };
+  }
+
+  private async flushAcks(client: BridgeClient, ids: string[]): Promise<void> {
+    const args = this.ackArgs(ids);
+    ids.forEach(id => this.unflushedAcks.delete(id));
+    try {
+      await client.request("ack", args);
+      for (const id of ids) if (!this.unflushedAcks.has(id) && this.ackOwners.get(id) === args.nativeOwners?.[id] && this.ackMailboxes.get(id) === args.mailboxProofs[id] && this.ackJobRoutes.get(id) === args.jobRoutes[id]) { this.ackOwners.delete(id); this.ackMailboxes.delete(id); this.ackJobRoutes.delete(id); }
+    } catch (error) {
+      ids.forEach(id => this.unflushedAcks.add(id));
+      throw error;
+    }
   }
 }

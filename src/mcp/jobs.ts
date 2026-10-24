@@ -1,5 +1,6 @@
 import { canonicalProjectRoot, migrateProjectJobs } from "../core/project-identity.js";
-import { canControlJob } from "../core/job-ownership.js";
+import { canControlJob, primaryFor } from "../core/job-ownership.js";
+import { jobMailDraftDigest, makeJobMailGrant, type JobMailDraft } from "../core/job-mail-routing.js";
 import { confirmUsageAdmission, currentUsage, holdUsageSubmission, settleUsageAttempt, usageContinuationMessage, usageRefused } from "../core/usage.js";
 import { createHash, randomUUID } from "node:crypto";
 import { worktreeProcesses, worktreeProcessReport } from "../core/worktree-processes.js";
@@ -18,6 +19,7 @@ import { isPureAcknowledgement } from "../core/job-messaging.js";
 import type { Worktree } from "../core/worktree.js";
 import { assertWritableStore, backupPath, isRecord, JSON_STORE_VERSION, mergeStoreFields, readJsonStore, retainBackups, retentionLimit, writeJsonStore } from "../core/json-store.js";
 import { changedJobArgs, JOB_SETTING_KEYS, type JobSettings } from "./job-settings.js";
+import { ownershipFromKey, recipientKey, sameMailbox, type MailboxProvenance } from "../core/recipient-ownership.js";
 import { assertStoreUpgrade } from "../core/store-compatibility.js";
 import { archiveJobs, readArchivedJobs, readArchivedJobSnapshot } from "../core/job-archive.js";
 import { indexedJobProjectionCurrent, readIndexedJobs } from "../core/job-archive-index.js";
@@ -94,6 +96,9 @@ export interface Job {
   queuedMessages?: string[];
   /** Append-only inline envelopes: the broker can recover delivery after executor/connection loss. */
   deliveryHistory?: BridgeMessage[];
+  /** Authenticated local producer evidence captured with a fresh durable report;
+   * not a message/wire flag and never inferred for historical drafts. */
+  reportRouting?: Record<string, JobMailDraft>;
   /** Paired PC hosting this job; remote PIDs must never be signalled locally. */
   remote?: { host: string; name: string };
   /** Blocking remote asks forward next-turn settings through the same authenticated control path. */
@@ -125,6 +130,10 @@ export interface Job {
   args?: Record<string, unknown>;
   /** Peer name of the session that started it. */
   owner?: string;
+  deliveryOwner?: string;
+  deliveryOwners?: Record<string, string>;
+  /** Immutable first authenticated producer capture; absent legacy proof stays absent. */
+  producerOrigin?: Readonly<{job:string;generation:number;owner:string;mailbox:MailboxProvenance}>;
   /** Stable session identity used to restrict direct sibling chat, including after a server reload. */
   supervisor?: string;
   /** The subagent's own session (Codex thread, Claude session, opencode session) once known. */
@@ -411,6 +420,9 @@ export interface FollowUpResult {
  * job while maxJobs are running waits for a free slot (first come, first served) instead of being refused.
  */
 export interface JobCoordinator {
+  mailboxOwner?(): string | null;
+  mailboxProvenance?(): MailboxProvenance | undefined;
+  prepareLocalMessage?(message: BridgeMessage): BridgeMessage;
   jobAuthority?(job: string): Promise<Job | null>;
   cwd?: string;
   controlInlineJob?(job: string, control: RunnerControl): Promise<unknown>;
@@ -638,12 +650,18 @@ export class JobManager {
           const envelopes = [...(Array.isArray(old.deliveryHistory) ? old.deliveryHistory as BridgeMessage[] : [])];
           for (const message of j.deliveryHistory ?? []) if (!envelopes.some(existing => isDeepStrictEqual(existing, message))) envelopes.push(message);
           j.deliveryHistory = envelopes;
+          // Existing originals, including missing legacy proof, cannot be
+          // upgraded by a later manager or a new holder of the same name.
+          j.producerOrigin=isRecord(old.producerOrigin)?cloneJson(old.producerOrigin) as Job['producerOrigin']:undefined;
+          j.deliveryOwner=typeof old.deliveryOwner==='string'?old.deliveryOwner:undefined;
+          j.deliveryOwners=isRecord(old.deliveryOwners)?cloneJson(old.deliveryOwners) as Record<string,string>:undefined;
+          j.reportRouting = { ...j.reportRouting, ...(isRecord(old.reportRouting) ? old.reportRouting as Record<string, JobMailDraft> : {}) };
           // A late report from an earlier turn may add delivery evidence, but cannot roll back a continuation.
-          if (typeof old.startedAt === "number" && j.startedAt < old.startedAt) return { ...old, deliveryHistory: j.deliveryHistory } as unknown as StoredJob;
+          if (typeof old.startedAt === "number" && j.startedAt < old.startedAt) return { ...old, deliveryHistory: j.deliveryHistory, reportRouting: j.reportRouting } as unknown as StoredJob;
         }
         if (isRecord(old) && Array.isArray(old.ownershipHistory) && old.ownershipHistory.length) {
           // Durable authority wins over a stale manager's in-memory snapshot.
-          Object.assign(j, { owner: old.owner, supervisor: old.supervisor, rootSession: old.rootSession, rootName: old.rootName,
+          Object.assign(j, { owner: old.owner, deliveryOwner: old.deliveryOwner, deliveryOwners: old.deliveryOwners, producerOrigin: old.producerOrigin, supervisor: old.supervisor, rootSession: old.rootSession, rootName: old.rootName,
             parentJob: old.parentJob, ownershipHistory: old.ownershipHistory, masters: old.masters });
           if (j.startedAt === old.startedAt) j.executionOwner = old.executionOwner as string | undefined;
           j.args = { ...j.args, ...(isRecord(old.args) ? { send_to: old.args.send_to } : {}) };
@@ -770,7 +788,7 @@ export class JobManager {
       if (job && (s.executionOwner === this.node.name || mine)) {
         const executing = (this.running.get(s.id) === job || this.foreground.get(s.id) === job) &&
           (!job.executionOwner || job.executionOwner === this.node.name) || this.pendingHosts.get(s.id) === job.controller;
-        Object.assign(job, { owner: s.owner, supervisor: legacySupervisor === undefined ? s.supervisor : legacySupervisor, parentJob: s.parentJob, rootSession: s.rootSession, rootName: s.rootName,
+        Object.assign(job, { owner: s.owner, deliveryOwner: s.deliveryOwner, deliveryOwners: s.deliveryOwners, producerOrigin: s.producerOrigin, supervisor: legacySupervisor === undefined ? s.supervisor : legacySupervisor, parentJob: s.parentJob, rootSession: s.rootSession, rootName: s.rootName,
           ownershipHistory: s.ownershipHistory, executionOwner: s.executionOwner, masters: s.masters });
         if (!executing && !job.host) {
           Object.assign(job, s, legacySupervisor === undefined ? {} : { supervisor: legacySupervisor });
@@ -1231,7 +1249,7 @@ export class JobManager {
     const existing = this.history.get(saved.id);
     if (existing && (this.running.has(saved.id) || this.foreground.has(saved.id))) {
       // Durable authority may change during a live turn; recovered snapshots cannot replace its controller/facts.
-      Object.assign(existing, { owner: saved.owner, supervisor: saved.supervisor, parentJob: saved.parentJob, rootSession: saved.rootSession,
+      Object.assign(existing, { owner: saved.owner, deliveryOwner: saved.deliveryOwner, deliveryOwners: saved.deliveryOwners, producerOrigin: saved.producerOrigin, supervisor: saved.supervisor, parentJob: saved.parentJob, rootSession: saved.rootSession,
         rootName: saved.rootName, ownershipHistory: saved.ownershipHistory, masters: saved.masters });
     } else if (existing) Object.assign(existing, saved, { sessionId: saved.sessionId ?? existing.sessionId, workdir: saved.workdir ?? existing.workdir, worktree: saved.worktree ?? existing.worktree });
     else this.history.set(saved.id, { ...saved, recoveredRecord: saved as unknown as Record<string, unknown>, controller: new AbortController(), progress: null, queue: [], resume: this.restoreResume?.(saved.agent, saved.args ?? {}) });
@@ -1293,7 +1311,7 @@ export class JobManager {
     // govern a request, including grants removed while asynchronous IO yielded.
     this.recheckSharedGrant(authority);
     if (durable && durable.startedAt > current.startedAt) return undefined;
-    if (durable) Object.assign(current, cloneJson({ owner: durable.owner, masters: durable.masters, ownershipHistory: durable.ownershipHistory,
+    if (durable) Object.assign(current, cloneJson({ owner: durable.owner, deliveryOwner: durable.deliveryOwner, deliveryOwners: durable.deliveryOwners, producerOrigin: durable.producerOrigin, masters: durable.masters, ownershipHistory: durable.ownershipHistory,
       parentJob: durable.parentJob, ...(durable.supervisor !== undefined ? { supervisor: durable.supervisor } : {}),
       ...(durable.rootName !== undefined ? { rootName: durable.rootName } : {}), ...(durable.rootSession !== undefined ? { rootSession: durable.rootSession } : {}) }));
     if (!this.sharedGrants.has(current.id) && !permitted) return undefined;
@@ -1348,13 +1366,16 @@ export class JobManager {
   private newJob(agent: AgentKind, model: string | null, prompt: string, kind: "job" | "ask", resume?: Resume, args?: Record<string, unknown>): Job {
     this.refreshOwnership();
     const id = randomUUID().replace(/-/g, "").slice(0, JOB_ID_LENGTH);
+    const startedAt=Date.now(),capturedOwner=this.node.mailboxOwner?.(),capturedMailbox=this.node.mailboxProvenance?.();
+    const producerOrigin=capturedOwner&&capturedMailbox?.kind==='local'&&!ownershipFromKey(capturedOwner).recipientAmbiguous?
+      Object.freeze({job:id,generation:startedAt,owner:capturedOwner,mailbox:Object.freeze({...capturedMailbox})}):undefined;
     return {
       id,
       name: `${agent}-${kind}-${id}`,
       agent,
       model,
       prompt,
-      startedAt: Date.now(),
+      startedAt,
       usageRunId: randomUUID(),
       controller: new AbortController(),
       progress: null,
@@ -1367,6 +1388,9 @@ export class JobManager {
       args,
       projectRoot: canonicalProjectRoot(typeof args?.cwd === "string" ? args.cwd : this.node.cwd ?? process.cwd()) ?? undefined,
       owner: this.node.name,
+      deliveryOwner: producerOrigin?.owner,
+      deliveryOwners: producerOrigin?{[this.node.name]:producerOrigin.owner}:undefined,
+      producerOrigin,
       // Keep the first job's identity when hooks learn the session id later, or a server reload adopts it.
       supervisor: this.supervisorIdentity(),
       metadataVersion: DELEGATION_METADATA_VERSION,
@@ -1730,7 +1754,7 @@ export class JobManager {
       Object.assign(job, saved, { sessionId: saved.sessionId ?? job.sessionId, workdir: saved.workdir ?? job.workdir, worktree: saved.worktree ?? job.worktree });
       this.adoptRecoveredRunner(job);
     } else {
-      Object.assign(job, { owner: saved.owner, supervisor: saved.supervisor, masters: saved.masters, ownershipHistory: saved.ownershipHistory,
+      Object.assign(job, { owner: saved.owner, deliveryOwner: saved.deliveryOwner, deliveryOwners: saved.deliveryOwners, producerOrigin: saved.producerOrigin, supervisor: saved.supervisor, masters: saved.masters, ownershipHistory: saved.ownershipHistory,
         rootSession: saved.rootSession, rootName: saved.rootName, parentJob: saved.parentJob });
       if (saved.cancellingTurn === job.startedAt) job.cancellingTurn = job.startedAt;
     }
@@ -2711,7 +2735,7 @@ export class JobManager {
   }
 
   private post(job: Job, body: string, replyTo: string | null = null, suffix = "", id: string = randomUUID()): string {
-    const m: BridgeMessage = {
+    let m: BridgeMessage = {
       id,
       from: { id: `job:${job.id}`, name: job.name, agent: job.agent },
       to: job.owner ?? this.node.name,
@@ -2723,13 +2747,41 @@ export class JobManager {
       createdAt: Date.now(),
       readAt: null,
     };
+    if (job.deliveryOwner) m = { ...m, ...ownershipFromKey(job.deliveryOwner) };
+    const origin=job.producerOrigin,actor=this.node.mailboxOwner?.(),originalOwner=recipientKey(m.recipientFrontend,m.recipientNative);
+    const creator=origin&&actor&&[origin.owner,...Object.values(job.deliveryOwners??{})].includes(actor)?actor:undefined;
+    const proven=origin?.job===job.id&&Number.isSafeInteger(origin.generation)&&origin.mailbox?.kind==='local'&&Boolean(creator)&&sameMailbox(origin.mailbox,this.node.mailboxProvenance?.());
+    m={...m,recipientAmbiguous:!proven||!originalOwner?true:undefined};
+    if(proven)m={...m,senderMailbox:origin.mailbox,recipientMailbox:origin.mailbox};
+    // A proxy status is the captured local supervisor's own mail, never a
+    // receiver-side native job grant. Legacy proof is not backfilled here.
+    if (proven&&typeof job.args?.host === "string" && job.args.host && creator && originalOwner === creator && m.recipient === this.node.name)
+      m={...m,senderOwner:creator};
+    if (proven&&creator && originalOwner && !(typeof job.args?.host==='string'&&job.args.host)&&
+        [job.deliveryOwner, ...Object.values(job.deliveryOwners ?? {})].includes(creator)) {
+      m={...m,recipientAmbiguous:true};
+      const project = canonicalProjectRoot(job.projectRoot ?? job.workdir ?? this.node.cwd ?? process.cwd());
+      const parent = job.parentJob && this.storePath ? readStoredJob(this.storePath, "", job.parentJob, this.log) : undefined;
+      const grant = project && makeJobMailGrant(job as unknown as Record<string, unknown>, creator, project, primaryFor(job as unknown as Record<string, unknown>), originalOwner, parent as unknown as Record<string, unknown> | undefined);
+      if (grant && origin.mailbox.kind === "local") {
+        m = { ...m, recipientAmbiguous:undefined,senderOwner: `native:${grant.principal}`, senderMailbox: origin.mailbox, recipientMailbox: origin.mailbox };
+        job.reportRouting ??= {};
+        const draft={ namespace: origin.mailbox.namespace, grant, digest: jobMailDraftDigest(m) },old=job.reportRouting[m.id];
+        if(old&&(old.digest!==draft.digest||old.namespace!==draft.namespace||!isDeepStrictEqual(old.grant,draft.grant)))m={...m,recipientAmbiguous:true};
+        else job.reportRouting[m.id]??=draft;
+      }
+    }
     // AB-380: the original is what is stored durably (its flush sends a stub). The local path keeps no other copy,
     // so it gets a stub only once the full text is confirmed written to a file.
+    // Compare the exact JSON wire/persistence representation on replay. Optional
+    // own-inbox fields may be undefined in memory and absent after JSON storage.
+    m = JSON.parse(JSON.stringify(m)) as BridgeMessage;
+    job.deliveryHistory = [...(job.deliveryHistory ?? []), m];
     if ((job.ownershipHistory?.length || (this.storePath && !this.lineage)) && this.node.reportInlineJob) {
-      job.deliveryHistory = [...(job.deliveryHistory ?? []), m];
       this.pendingReports.set(m.id, { jobId: job.id, message: m });
       this.persist();
-    } else this.node.deliverLocal(quarantineMessage(this.bridgeHome(), m));
+    } else if(this.lineage&&!this.node.mailboxOwner||proven&&!m.recipientAmbiguous)this.node.deliverLocal(quarantineMessage(this.bridgeHome(),m));
+    else this.persist(); // Retain an unproven original without inbox notification.
     return m.id;
   }
 }
@@ -2793,7 +2845,7 @@ function executorOffline(err: unknown): boolean {
   return (err as { code?: string } | null)?.code === "unknown_target";
 }
 
-type StoredJob = Pick<Job, "usageRunId" | "usagePendingControls" | "usagePendingHeld" | "usageAdmittedControls" | "providerUsage" | "executionPid" | "cancellingTurn" | "continuationFailure" | "waitingForStart" | "projectRoot" | "deliveryHistory" | "ownershipHistory" | "masters" | "executionOwner" | "queuedMessages" | "forwarded" | "id" | "name" | "agent" | "model" | "prompt" | "startedAt" | "status" | "pauseReason" | "pausedAt" | "pausePending" | "resumeRequested" | "sessionId" | "workdir" | "worktree" | "args" | "owner" | "supervisor" | "finishedAt" | "resultStored" | "reportId" | "host" | "remote" | "metadataVersion" | "parentJob" | "rootSession" | "rootName" | "percent" | "progressNote" | "etaAt" | "etaReportedAt">;
+type StoredJob = Pick<Job, "producerOrigin" | "reportRouting" | "deliveryOwner" | "deliveryOwners" | "usageRunId" | "usagePendingControls" | "usagePendingHeld" | "usageAdmittedControls" | "providerUsage" | "executionPid" | "cancellingTurn" | "continuationFailure" | "waitingForStart" | "projectRoot" | "deliveryHistory" | "ownershipHistory" | "masters" | "executionOwner" | "queuedMessages" | "forwarded" | "id" | "name" | "agent" | "model" | "prompt" | "startedAt" | "status" | "pauseReason" | "pausedAt" | "pausePending" | "resumeRequested" | "sessionId" | "workdir" | "worktree" | "args" | "owner" | "supervisor" | "finishedAt" | "resultStored" | "reportId" | "host" | "remote" | "metadataVersion" | "parentJob" | "rootSession" | "rootName" | "percent" | "progressNote" | "etaAt" | "etaReportedAt">;
 
 /** Unknown fields survive upgrades; known next-turn settings also honor deletion. */
 function mergeJobFields(previous: Record<string, unknown>, next: Record<string, unknown>): Record<string, unknown> {
@@ -2833,6 +2885,9 @@ function toStored(j: Job): StoredJob {
     worktree: j.worktree,
     args: j.args,
     owner: j.owner,
+    deliveryOwner: j.deliveryOwner,
+    deliveryOwners: j.deliveryOwners,
+    producerOrigin: j.producerOrigin,
     ownershipHistory: j.ownershipHistory,
     masters: j.masters,
     projectRoot: j.projectRoot,
@@ -2841,6 +2896,7 @@ function toStored(j: Job): StoredJob {
     queuedMessages: [...j.queue],
     continuationFailure: j.continuationFailure,
     deliveryHistory: j.deliveryHistory,
+    reportRouting: j.reportRouting,
     forwarded: j.forwarded,
     supervisor: j.supervisor,
     metadataVersion: j.metadataVersion,

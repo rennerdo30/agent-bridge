@@ -156,7 +156,15 @@ export class T3Host {
   private readonly taskThreads = new Map<string, string>();
   private readonly active = new Set<AbortController>();
   private stopped = false;
-  constructor(private readonly config: T3TransportConfig, private readonly connect: T3Connect = connectMcp) {}
+  constructor(private readonly config: T3TransportConfig, private readonly connect: T3Connect = connectMcp,
+    private readonly originalWakeNamespace?: () => string | undefined) {}
+
+  /** App-owned nonsecret request service scope. Never derive from credentials,
+   * endpoint hashes, frontend digests or a replacement provider generation. */
+  wakeRequestNamespace(): string | undefined {
+    const value=this.originalWakeNamespace?.();
+    return typeof value==='string'&&value.length>0&&value.length<=512?value:undefined;
+  }
   get binding(): T3Binding { if (!this.bindingValue) throw new T3HostError("unavailable", "binding"); return { ...this.bindingValue }; }
 
   private rememberTask(task: z.output<typeof taskSchema>): void {

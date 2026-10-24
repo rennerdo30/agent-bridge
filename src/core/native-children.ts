@@ -2,12 +2,13 @@ import { BridgeError, type NativeChildAddress, type PeerInfo } from "./protocol.
 import { isJobSendTarget, DEFAULT_SIBLING_MAX_HOPS, MAX_JOB_SEND_TARGETS } from "./job-messaging.js";
 import type { MessageStore } from "./store.js";
 import { randomUUID } from "node:crypto";
+import { nativeOwner, recipientKey } from "./recipient-ownership.js";
 import { nativeRouteDigest, NATIVE_LIFECYCLE_ROUTE_LIMIT } from "./native-lifecycle-reader.js";
 import type { StartupBudget } from "./startup-budget.js";
 
 export const NATIVE_AGENT_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 export function isNativeChildAddress(address: unknown): boolean { return typeof address === "string" && address.includes("/sub:"); }
-interface Child extends NativeChildAddress { owner: string; session: string; active: boolean }
+interface Child extends NativeChildAddress { owner: string; session: string; active: boolean; identity: string }
 export interface NativeLifecycleObservation { generation: number; memoryActive: number; durableActive: number; pending: number;
   blocker: "native_routes_active" | "native_writes_pending" | "native_state_unknown" | null }
 
@@ -127,7 +128,10 @@ export class NativeChildren {
     const address = `${peer.name}/sub:${agentId}`, previous = this.children.get(address);
     if (previous?.owner === peer.id && previous.session === session) return this.public(this.own(peer, agentId)); // A late hook cannot resurrect a stopped child.
     if (previous?.active) throw new BridgeError("unauthorized", "Native child address belongs to another parent session.");
-    const child: Child = { address, agentId, parent: peer.name, owner: peer.id, session, active: true, sendTo: [], maxHops };
+    const parentOwner = recipientKey(peer.frontend, nativeOwner(peer));
+    if (!parentOwner) throw new BridgeError("unauthorized", "Native child parent ownership is unproven.");
+    const identity = JSON.stringify({ kind: "child", owner: peer.id, session, parent: peer.name, agentId, incarnation: randomUUID(), parentOwner });
+    const child: Child = { address, agentId, parent: peer.name, owner: peer.id, session, active: true, sendTo: [], maxHops, identity };
     await this.writeNative(() => this.store.retainNativeChild(address, peer.name));
     this.children.set(address, child);
     return this.public(child);

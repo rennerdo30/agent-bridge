@@ -7,6 +7,25 @@ import { storageLease } from "./storage-lock.js";
 import { DatabaseSync } from "node:sqlite";
 import type { Logger } from "./logger.js";
 import { storageAdmissionRemaining, admissionSqliteBusy } from "./storage-admission.js";
+import { t3BindingSchema, type T3Binding } from "./t3-identity.js";
+import { mailboxSchema, verifiedNative, type MailboxProvenance } from "./recipient-ownership.js";
+import { jobRouteSchema, type JobRouteProof } from "./job-mail-routing.js";
+
+/** Legacy name/session marks retain evidence but confer no candidate ownership. */
+export function readJournalIdentities(_name: string, _sessionId?: string | null, frontend?: T3Binding, nativeIdentity?: string, mailbox?: MailboxProvenance, jobRoute?: JobRouteProof): string[] {
+ const parsed = mailboxSchema.safeParse(mailbox);
+ if (!parsed.success || parsed.data.kind !== "local") return [];
+ const route = jobRoute === undefined ? undefined : jobRouteSchema.safeParse(jobRoute);
+ if (route && !route.success) return [];
+ const suffix = route?.success ? `:job-route:v1:${route.data.grant}:${route.data.generation}` : "";
+ const prefix = `mailbox:v1:${parsed.data.namespace}:`;
+ if (frontend) {
+  const binding = t3BindingSchema.parse(frontend);
+  return [`${prefix}frontend:v1:${JSON.stringify([binding.kind, binding.scope, binding.threadId, binding.providerInstanceId])}${suffix}`];
+ }
+ const native = verifiedNative(nativeIdentity);
+ return native ? [`${prefix}native-owner:v2:${native}${suffix}`] : [];
+}
 
 /** The metadata store cannot open yet: its fail-closed migration lease needs this process's
  * verified identity (ELEASEBUSY) or an older reader still uses the files (STORE_UPGRADE_DEFERRED). */
@@ -45,6 +64,7 @@ export class ReadJournal {
   const dir = join(this.home,"read-state"); physicalMetadataPath(dir);
   const files = existsSync(dir) ? readdirSync(dir).filter(f => /^[a-f0-9]{64}\.jsonl$/.test(f)).map(f=>join(dir,f)) : [];
   storageAdmissionRemaining();
+  if (!files.length) return db;
   retainMetadataFiles(this.home,files,(store,path,raw) => {
    const identity = path.slice("read-state/".length,-".jsonl".length);
    for (const line of raw.toString("utf8").split("\n")) {
