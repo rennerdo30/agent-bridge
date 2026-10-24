@@ -60,10 +60,14 @@ export class RemoteJobs {
 
   constructor(private readonly network: NetworkService, private readonly home: string, private readonly log: Logger,
     private readonly control: (record: { owner: string; name: string; id: string }, control: RunnerControl) => Promise<void>,
+    startupCheck?:()=>void,
   ) {
+    startupCheck?.();
     const cli = bundledCli();
-    this.runners = cli ? new JobRunners({} as BridgeNode, home, cli, log) : null;
+    this.runners = cli ? new JobRunners({} as BridgeNode, home, cli, log,startupCheck) : null;
+    startupCheck?.();
     const stored = readJsonStore(join(home, REMOTE_JOBS_FILE));
+    startupCheck?.();
     if (isRecord(stored) && Array.isArray(stored.jobs)) for (const r of stored.jobs as StoredRemoteRecord[]) {
       if (typeof r.pair !== "string" || typeof r.peer !== "string" || !r.job?.id || !r.args) continue;
       this.records.set(r.job.id, { ...r, job: { ...r.job, controller: new AbortController(), queue: [] } });

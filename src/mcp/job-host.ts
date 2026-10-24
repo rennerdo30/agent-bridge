@@ -171,7 +171,9 @@ export class JobRunners implements JobHost {
     /** The bundled CLI (dist/cli.mjs) that runs `job-runner`. */
     private readonly cli: string,
     private readonly log: Logger,
+    startupCheck?:()=>void,
   ) {
+    startupCheck?.();
     this.remote = new RemoteJobHost(node, home, log);
     try {
       const dir = join(home, RUNNERS_DIR_NAME);
@@ -180,16 +182,18 @@ export class JobRunners implements JobHost {
       // Imported runner files live in rows and cold storage; only older processes still write files here.
       if (existingMetadataDb(home) && runnerFilesImported(home) && !legacyRunnerPeers(home)) return;
       for (const f of readdirSync(dir)) {
+        startupCheck?.();
         const path = join(dir, f);
         if (!f.endsWith(".json") || f.endsWith(".spec.json") || Date.now() - statSync(path).mtimeMs <= keepMs) continue;
-        const id = f.replace(/\.json$/, "");
+        startupCheck?.();const id = f.replace(/\.json$/, "");
         const state = readRunnerState(home, id);
         if (state?.status === "done" || state?.status === "failed" || state?.status === "cancelled") {
-          archiveFile(path);
-          archiveFile(specPath(home, id));
+          archiveFile(path,startupCheck);
+          archiveFile(specPath(home, id),startupCheck);
         }
       }
     } catch (err) {
+      startupCheck?.();
       if ((err as NodeJS.ErrnoException).code !== "ENOENT") this.log.warn("could not archive runner files", { err: String(err) });
     }
   }

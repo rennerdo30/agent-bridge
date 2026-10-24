@@ -441,7 +441,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     const { Broker } = await import("./broker.js");
     const { EndpointReservation } = await import("./endpoint-reservation.js");
     let reservation: import("./endpoint-reservation.js").EndpointReservation;
-    try { reservation = await EndpointReservation.bind(this.opts.pipePath); }
+    try { budget.remaining();reservation = await EndpointReservation.bind(this.opts.pipePath,budget); }
     catch (error) {
       if (errCode(error) !== "EADDRINUSE") throw error;
       if (!this.opts.daemon && (this.opts.platform ?? process.platform) !== "win32") await this.clearStaleSocket();

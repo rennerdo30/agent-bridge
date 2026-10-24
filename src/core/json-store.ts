@@ -21,12 +21,13 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /** Archives are never pruned automatically. A unique name prevents overwriting an earlier copy. */
-export function archiveFile(path: string): string | null {
+export function archiveFile(path: string, startupCheck?:()=>void): string | null {
+  startupCheck?.();
   if (!existsSync(path)) return null;
   const dir = join(dirname(path), "archive");
-  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  startupCheck?.();mkdirSync(dir, { recursive: true, mode: 0o700 });
   const target = join(dir, `${basename(path)}-${Date.now()}-${randomUUID()}`);
-  renameSync(path, target);
+  startupCheck?.();renameSync(path, target);startupCheck?.();
   return target;
 }
 

@@ -7,6 +7,8 @@ import type { Logger } from "../core/logger.js";
 import { AGENT_KINDS, TRANSFER_PROGRESS_PREFIX, type BridgeMessage } from "../core/protocol.js";
 import { OWNER_DIR_MODE, OWNER_FILE_MODE, NETWORK_NAME_PATTERN, MAX_NETWORK_FRAME_BYTES } from "./constants.js";
 import { assertTransferPath, ensureTransferDirectory, safeTransferPath, MAX_TRANSFER_DEPTH, collectTransfer, type FileTransfer, type TransferResult } from "./files.js";
+import type { StartupBudget } from "../core/startup-budget.js";
+type NetworkStartup = Pick<StartupBudget,"signal"|"remaining">;
 
 export const FILE_STREAM_CAPABILITY = "file-stream-v1";
 export const FILE_STREAM_WINDOW_CAPABILITY = "file-stream-window-v1";
@@ -80,13 +82,14 @@ function transferSummary(home: string, state: State): TransferProgress {
     createdAt: state.createdAt, updatedAt: state.updatedAt,
     ...(state.direction === "receive" ? { inbox: join(home, "inbox", state.id) } : {}), ...(state.error ? { error: state.error } : {}) };
 }
-function persistTransfer(root: string, state: State): void {
+function persistTransfer(root: string, state: State, startupCheck?:()=>void): void {
+  startupCheck?.();
   assertTransferPath(root); state.updatedAt = Date.now();
   const file = join(root, `${state.id}.json`);
   if (existsSync(file)) assertTransferPath(file);
   const temp = `${file}.${randomUUID()}.tmp`;
-  writeFileSync(temp, JSON.stringify(state), { flag: "wx", mode: OWNER_FILE_MODE, flush: true });
-  renameSync(temp, file);
+  startupCheck?.();writeFileSync(temp, JSON.stringify(state), { flag: "wx", mode: OWNER_FILE_MODE, flush: true });
+  startupCheck?.();renameSync(temp, file);startupCheck?.();
 }
 export function cancelStoredTransfer(home: string, id: string): { id: string; cancelled: boolean } {
   z.uuid().parse(id);
@@ -145,26 +148,46 @@ export class TransferManager {
   private readonly receiveQueues = new Map<string, { tail: Promise<void>; count: number }>();
   private readonly pending = new Map<string, Pending>();
   private readonly notified = new Map<string, number>();
-  private readonly timer: NodeJS.Timeout;
+  private timer: NodeJS.Timeout|null=null;
+  private initialized=false;
+  private startup?:NetworkStartup;
   private closed = false;
   private readonly root: string;
 
   constructor(private readonly home: string, private readonly transport: TransferTransport, private readonly log: Logger,
-    private readonly options: { maxBytes?: number; fetchRoots?: string[] } = {}) {
+    private readonly options: { maxBytes?: number; fetchRoots?: string[] } = {}, startup?:NetworkStartup) {
+    this.startup=startup;
+    this.root=join(home,'network','transfers');
+    if(startup){startup.remaining();return;}
+    this.prepare();this.activateMaintenance();
+  }
+
+  prepare(startup?:NetworkStartup):void {
+    startup?.remaining();if(this.initialized)return;
+    const home=this.home;
     assertTransferPath(home);
-    this.root = join(home, "network", "transfers");
-    ensureTransferDirectory(this.root);
+    if(startup){startup.remaining();if(!existsSync(this.root)){startup.remaining();mkdirSync(this.root,{mode:OWNER_DIR_MODE});}startup.remaining();}
+    else ensureTransferDirectory(this.root);
     assertTransferPath(this.root);
     for (const file of readdirSync(this.root).filter((file) => /^[0-9a-f-]{36}\.json$/.test(file))) {
+      startup?.remaining();
       let state: State | undefined;
       try { state = this.read(file.slice(0, -5)); }
-      catch (err) { this.setAside(file, err); continue; }
+      catch (err) { startup?.remaining();this.setAside(file, err,startup); continue; }
+      startup?.remaining();
       if (state && (!TERMINAL.has(state.status) || state.cancelPending || state.abortPending)) {
         if (this.states.size >= MAX_ACTIVE_TRANSFERS) { this.log.warn("transfer recovery limit reached", { id: state.id }); continue; }
         state.status = TERMINAL.has(state.status) ? state.status : "paused";
         this.save(state);
       }
     }
+    startup?.remaining();this.initialized=true;
+  }
+
+  activateMaintenance():void {
+    this.startup?.remaining();if(this.closed||this.timer)return;
+    if(!this.initialized)throw new Error('Transfer preparation unavailable');
+    this.startup=undefined;
     this.timer = setInterval(() => this.resume(), TRANSFER_RETRY_MS);
     this.timer.unref();
   }
@@ -174,14 +197,14 @@ export class TransferManager {
    * renamed aside for inspection; a well-formed state of another format version stays in place for the release
    * that wrote it. Nothing is deleted.
    */
-  private setAside(file: string, err: unknown): void {
+  private setAside(file: string, err: unknown, startup?:NetworkStartup): void {
     const path = join(this.root, file);
     let parsed = true;
     try { JSON.parse(readFileSync(path, "utf8")); } catch { parsed = false; }
     if (parsed) { this.log.warn("skipping a transfer state this version cannot read", { file, err: String(err) }); return; }
     const aside = `${path}.unreadable-${Date.now()}`;
-    try { renameSync(path, aside); this.log.warn("set an unreadable transfer state aside", { file, aside, err: String(err) }); }
-    catch (renameErr) { this.log.warn("skipping an unreadable transfer state", { file, err: String(err), renameErr: String(renameErr) }); }
+    try { startup?.remaining();renameSync(path, aside);startup?.remaining();this.log.warn("set an unreadable transfer state aside", { file, aside, err: String(err) }); }
+    catch (renameErr) { startup?.remaining();this.log.warn("skipping an unreadable transfer state", { file, err: String(err), renameErr: String(renameErr) }); }
   }
 
   private read(id: string): State | undefined {
@@ -194,7 +217,7 @@ export class TransferManager {
   }
   private get(id: string): State | undefined { return this.states.get(id) ?? this.read(id); }
   private save(state: State): void {
-    persistTransfer(this.root, state);
+    persistTransfer(this.root, state,this.startup?()=>this.startup!.remaining():undefined);
     if (!TERMINAL.has(state.status) || state.cancelPending || state.abortPending) this.states.set(state.id, state);
     else this.states.delete(state.id);
   }
@@ -234,7 +257,7 @@ export class TransferManager {
     return { id, status: "queued" };
   }
   resume(): void {
-    if (this.closed) return;
+    if (this.closed||this.startup) return;
     for (const state of this.states.values()) {
       if (this.active.has(state.id) || (!state.legacy && !this.transport.supports(state.remote))) continue;
       if (state.cancelPending || state.abortPending) {
@@ -658,8 +681,8 @@ export class TransferManager {
     return { id, cancelled: true };
   }
   close(): void {
-    this.closed = true; clearInterval(this.timer);
-    for (const state of this.states.values()) if (!TERMINAL.has(state.status)) { state.status = "paused"; this.save(state); }
+    this.closed = true;if(this.timer)clearInterval(this.timer);this.timer=null;
+    if(!this.startup)for (const state of this.states.values()) if (!TERMINAL.has(state.status)) { state.status = "paused"; this.save(state); }
     for (const pending of this.pending.values()) { clearTimeout(pending.timer); pending.reject(new Error("transfer manager closed")); }
     this.pending.clear();
   }

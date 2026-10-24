@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { lookup } from "./procinfo.js";
 import { processIdentity, readProcessIdentity } from "./process-identity.js";
+import type { StartupBudget } from "./startup-budget.js";
 
 export const MUSE_ACCESS_ENV = "AGENT_BRIDGE_MUSE_ACCESS";
 // Only the adapter's explicit Bridge contract crosses the host boundary. In
@@ -39,14 +40,20 @@ function windowsProtect(value: string, decrypt: boolean): string {
 }
 
 /** Connection fallback and broker startup must never run synchronous DPAPI on the shared event loop. */
-function windowsProtectAsync(value: string, decrypt: boolean, signal?: AbortSignal): Promise<string> {
+function windowsProtectAsync(value: string, decrypt: boolean, signal?: AbortSignal, check?:()=>number): Promise<string> {
+  signal?.throwIfAborted();const timeout=Math.min(15_000,check?.()??15_000);
   return new Promise((resolve, reject) => {
+    let returned=false,closed=false,failure:unknown,output='';
+    const settle=()=>{if(!returned||!closed)return;try{signal?.throwIfAborted();check?.();if(failure)throw failure;resolve(output);}catch{reject(new Error(decrypt?'Protected Muse context unavailable':'Muse context protection unavailable'));}};
     const child = execFile(windowsPowerShell(), ["-NoProfile", "-NonInteractive", "-Command", windowsProtectionCommand(decrypt)],
-      { encoding: "utf8", timeout: 15_000, windowsHide: true, maxBuffer: 128 * 1024, signal },
-      (error, stdout) => error ? reject(new Error(decrypt ? "Protected Muse context unavailable" : "Muse context protection unavailable")) : resolve(stdout));
+      { encoding: "utf8", timeout, windowsHide: true, maxBuffer: 128 * 1024, signal },
+      (error, stdout) => {returned=true;failure=error;output=stdout;settle();});
+    const ownedPid=child.pid;
+    child.once('close',()=>{closed=true;if(child.pid!==ownedPid)failure=new Error('Owned protection helper settlement unknown');settle();});
     // Plaintext and ciphertext go over stdin, never argv; helper output/errors are not logged.
     child.stdin?.on("error", () => {});
-    child.stdin?.end(value);
+    try{signal?.throwIfAborted();check?.();child.stdin?.end(value);}
+    catch(error){failure=error;child.stdin?.end();if(child.pid===ownedPid)child.kill();}
   });
 }
 
@@ -56,9 +63,11 @@ export function writeMusePrivateJson(path: string, value: Record<string, unknown
 }
 
 /** writeMusePrivateJson with the DPAPI helper off the event loop; same file format, mode and flag semantics. */
-export async function writeMusePrivateJsonAsync(path: string, value: Record<string, unknown>, flag = "wx"): Promise<void> {
+export async function writeMusePrivateJsonAsync(path: string, value: Record<string, unknown>, flag = "wx", startup?:StartupBudget): Promise<void> {
+  startup?.remaining();
   const text = JSON.stringify(value);
-  const content = process.platform === "win32" ? JSON.stringify({ protected: await windowsProtectAsync(text, false) }) : text;
+  const content = process.platform === "win32" ? JSON.stringify({ protected: await windowsProtectAsync(text, false,startup?.signal,startup?()=>startup.remaining():undefined) }) : text;
+  startup?.remaining();
   writeFileSync(path, content, { mode: 0o600, flag });
 }
 
@@ -86,13 +95,13 @@ export function readMusePrivateJson(path: string): Record<string, any> {
 }
 
 /** Same private-file and DPAPI authentication checks, cancellable without blocking callbacks. */
-export async function readMusePrivateJsonAsync(path: string, signal?: AbortSignal): Promise<Record<string, any>> {
-  signal?.throwIfAborted();
+export async function readMusePrivateJsonAsync(path: string, signal?: AbortSignal, check?:()=>number): Promise<Record<string, any>> {
+  signal?.throwIfAborted();check?.();
   const stat = await lstat(path);
   if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.size > 64 * 1024 || (process.getuid && (stat.uid !== process.getuid() || (stat.mode & 0o077) !== 0))) throw new Error("Unsafe Muse context file");
-  const raw = JSON.parse(await readFile(path, { encoding: "utf8", signal }));
-  const value = process.platform === "win32" ? JSON.parse(await windowsProtectAsync(raw.protected, true, signal)) : raw;
-  signal?.throwIfAborted();
+  check?.();const raw = JSON.parse(await readFile(path, { encoding: "utf8", signal }));
+  check?.();const value = process.platform === "win32" ? JSON.parse(await windowsProtectAsync(raw.protected, true, signal,check)) : raw;
+  signal?.throwIfAborted();check?.();
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid Muse context");
   return value;
 }

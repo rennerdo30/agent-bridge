@@ -55,7 +55,7 @@ export function resolvePipePath(home: string, env: NodeJS.ProcessEnv = process.e
  * user's private directory: in a world-writable /tmp another user could otherwise pre-create it and receive
  * the session token on connect or replace the endpoint. Endpoints anywhere else are left untouched.
  */
-export function ensurePrivateSocketDirectory(pipePath: string, platform: NodeJS.Platform = process.platform, readOnly = false): void {
+export function ensurePrivateSocketDirectory(pipePath: string, platform: NodeJS.Platform = process.platform, readOnly = false, check?:()=>number): void {
   // Native socket endpoints such as { host, port } have no directory to secure.
   if (platform === "win32" || typeof pipePath !== "string") return;
   const uid = process.getuid?.();
@@ -68,14 +68,14 @@ export function ensurePrivateSocketDirectory(pipePath: string, platform: NodeJS.
     }
     return;
   }
-  try { mkdirSync(dir, { mode: 0o700 }); }
+  check?.();try { mkdirSync(dir, { mode: 0o700 }); }
   catch (error) { if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error; }
   const stat = lstatSync(dir);
   if (!stat.isDirectory() || (uid !== undefined && stat.uid !== uid)) {
     throw Object.assign(new Error(`refusing the agent-bridge socket directory ${dir}: it is not a directory owned by this user. Remove it or set ${ENV.pipe}.`), { code: "EUNSAFESOCKETDIR" });
   }
   // Our own directory with a loose mode (an old umask, a manual mkdir): tighten it rather than refuse.
-  if ((stat.mode & 0o077) !== 0) chmodSync(dir, 0o700);
+  check?.();if ((stat.mode & 0o077) !== 0) chmodSync(dir, 0o700);
 }
 
 /** Loopback fallback endpoint a Windows broker also serves (see Broker.startTcpFallback). */

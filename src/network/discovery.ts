@@ -4,6 +4,8 @@ import { networkInterfaces } from "node:os";
 import { z } from "zod";
 import { DISCOVERY_BIND, DISCOVERY_GROUP, DISCOVERY_INTERVAL_MS, DISCOVERY_MULTICAST_TTL, DISCOVERY_PORT, DISCOVERY_TTL_MS, MAX_DISCOVERED_INSTANCES, MAX_DISCOVERY_BYTES, MAX_PORT, NETWORK_VERSION } from "./constants.js";
 import { publicIdentitySchema, type NetworkIdentity } from "./pairing.js";
+import type { StartupBudget } from "../core/startup-budget.js";
+type NetworkStartup = Pick<StartupBudget,"signal"|"remaining">;
 
 const announcementSchema = publicIdentitySchema.extend({ service: z.literal("agent-bridge"), v: z.literal(NETWORK_VERSION), port: z.number().int().min(1).max(MAX_PORT) });
 export interface DiscoveredInstance extends NetworkIdentity { host: string; port: number; seenAt: number }
@@ -69,6 +71,9 @@ export class NetworkDiscovery {
   private lastSentAt: number | null = null;
   private lastReceivedAt: number | null = null;
   private lastError: DiscoveryDiagnostics["lastError"] = null;
+  private startup?:NetworkStartup;
+  private prepared=false;
+  private readonly pendingBindings=new Set<Socket>();
 
   constructor(private readonly opts: DiscoveryOptions) {
     this.now = opts.now ?? Date.now;
@@ -96,70 +101,89 @@ export class NetworkDiscovery {
     return socket;
   }
 
-  private bind(socket: Socket, port: number, address: string): Promise<void> {
+  private bind(socket: Socket, port: number, address: string, startup?:NetworkStartup): Promise<void> {
+    startup?.remaining();
     return new Promise<void>((resolve, reject) => {
-      socket.once("error", reject);
-      socket.bind(port, address, () => { socket.off("error", reject); resolve(); });
+      this.pendingBindings.add(socket);
+      const detach=()=>{startup?.signal.removeEventListener('abort',abort);socket.off('error',failed);};
+      const failed=(error:unknown)=>{this.pendingBindings.delete(socket);detach();reject(error);};
+      const abort=()=>{void this.closeSocket(socket).then(()=>failed(startup!.signal.reason),failed);};
+      startup?.signal.addEventListener('abort',abort,{once:true});socket.once('error',failed);
+      socket.bind(port,address,()=>{this.pendingBindings.delete(socket);try{startup?.remaining();if(!this.socket)throw new Error('Discovery startup owner closed');detach();resolve();}catch(error){void this.closeSocket(socket).then(()=>failed(error),failed);}});
+      if(startup?.signal.aborted)abort();
     });
   }
 
-  private async refreshInterfaces(): Promise<void> {
+  private async refreshInterfaces(startup?:NetworkStartup): Promise<void> {
+    startup?.remaining();
     const listener = this.socket;
     if (!listener) return;
     const selection = discoveryInterfaces((this.opts.interfaces ?? networkInterfaces)());
     this.skippedInterfaces = selection.skippedInterfaces;
     for (const [address, sender] of this.senders) if (!selection.interfaces.some((entry) => entry.address === address && entry.netmask === sender.info.netmask)) {
+      startup?.remaining();
       if (sender.info.multicast) { try { listener.dropMembership(DISCOVERY_GROUP, address); } catch { /* Interface may already be gone. */ } }
       await this.closeSocket(sender.socket);
+      startup?.remaining();
       this.senders.delete(address);
     }
     for (const entry of selection.interfaces) {
+      startup?.remaining();
       if (this.senders.has(entry.address)) continue;
       const socket = this.makeSocket();
       try {
         // Bound senders guarantee both source address and directed-broadcast egress.
-        await this.bind(socket, 0, entry.address);
+        await this.bind(socket, 0, entry.address,startup);startup?.remaining();
         socket.setBroadcast(true);
         const info = { ...entry, announcing: true, multicast: false, lastSentAt: null as number | null };
         this.senders.set(entry.address, { socket, info });
         try {
+          startup?.remaining();
           socket.setMulticastTTL(DISCOVERY_MULTICAST_TTL);
           socket.setMulticastInterface(entry.address);
           listener.addMembership(DISCOVERY_GROUP, entry.address);
           info.multicast = true;
-        } catch (err) { this.error(new Error(`Discovery multicast on ${entry.name} (${entry.address}): ${(err as Error).message}`)); }
+        } catch (err) { startup?.remaining();this.error(new Error(`Discovery multicast on ${entry.name} (${entry.address}): ${(err as Error).message}`)); }
       } catch (err) {
         this.error(new Error(`Discovery interface ${entry.name} (${entry.address}): ${(err as Error).message}`));
         await this.closeSocket(socket);
+        startup?.remaining();
       }
     }
   }
 
-  async start(): Promise<void> {
+  async start(startup?:NetworkStartup): Promise<void> {
     if (this.socket) throw new Error("network discovery already started");
+    startup?.remaining();this.startup=startup;
     const socket = this.makeSocket();
     this.socket = socket;
     socket.on("message", (data, source) => this.observe(data, source.address));
-    try { await this.bind(socket, this.opts.udpPort ?? DISCOVERY_PORT, this.opts.bind ?? DISCOVERY_BIND); }
+    try { await this.bind(socket, this.opts.udpPort ?? DISCOVERY_PORT, this.opts.bind ?? DISCOVERY_BIND,startup);startup?.remaining();await this.announce(undefined,startup);startup?.remaining();this.prepared=true;if(!startup)this.activate(); }
     catch (err) { await this.close(); throw err; }
-    this.timer = setInterval(() => { void this.announce(); }, DISCOVERY_INTERVAL_MS);
-    this.timer.unref();
-    await this.announce();
   }
 
-  async announce(port = this.opts.udpPort === 0 ? this.port : this.opts.udpPort ?? DISCOVERY_PORT): Promise<void> {
+  activate():void {
+    if(!this.prepared)throw new Error('Discovery startup is not ready');
+    this.startup?.remaining();this.startup=undefined;if(!this.socket||this.timer)return;
+    this.timer = setInterval(() => { void this.announce(); }, DISCOVERY_INTERVAL_MS);
+    this.timer.unref();
+  }
+
+  async announce(port = this.opts.udpPort === 0 ? this.port : this.opts.udpPort ?? DISCOVERY_PORT, startup?:NetworkStartup): Promise<void> {
+    startup?.remaining();
     if (!this.socket) return;
     const data = Buffer.from(JSON.stringify({ service: "agent-bridge", v: NETWORK_VERSION, ...this.opts.identity, port: this.opts.port }));
     if (this.opts.destination && this.opts.destination !== DISCOVERY_GROUP) {
-      this.send(this.socket, data, port, this.opts.destination);
+      startup?.remaining();this.send(this.socket, data, port, this.opts.destination);
       return;
     }
-    if (!this.refreshing) this.refreshing = this.refreshInterfaces().catch((err: Error) => this.error(err)).finally(() => { this.refreshing = null; });
+    if (!this.refreshing) this.refreshing = this.refreshInterfaces(startup).catch((err: Error) => {startup?.remaining();this.error(err);}).finally(() => { this.refreshing = null; });
     await this.refreshing;
+    startup?.remaining();
     if (!this.socket) return;
     for (const { socket, info } of this.senders.values()) {
-      this.send(socket, data, port, info.broadcast, info);
-      if (info.multicast) this.send(socket, data, port, DISCOVERY_GROUP, info);
+      startup?.remaining();this.send(socket, data, port, info.broadcast, info);
+      startup?.remaining();if (info.multicast) this.send(socket, data, port, DISCOVERY_GROUP, info);
     }
   }
 
@@ -191,18 +215,33 @@ export class NetworkDiscovery {
   }
 
   async close(): Promise<void> {
+    this.prepared=false;
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
     const socket = this.socket;
     this.socket = null;
-    await this.refreshing;
-    await Promise.all([...this.senders.values()].map((sender) => this.closeSocket(sender.socket)));
+    // Join the actual refresh settlement even when cancellation rejected it.
+    // Operational rejection does not authorize skipping any owned close.
+    await this.refreshing?.catch(()=>{});
+    const outcomes=await Promise.allSettled([...this.senders.values()].map(sender=>this.closeSocket(sender.socket)).concat(socket?[this.closeSocket(socket)]:[]));
     this.senders.clear();
-    if (socket) await this.closeSocket(socket);
     this.found.clear();
+    const failed=outcomes.filter((outcome):outcome is PromiseRejectedResult=>outcome.status==='rejected');
+    if(failed.length)throw new AggregateError(failed.map(outcome=>outcome.reason),'Discovery owned cleanup remains unknown');
   }
 
   private closeSocket(socket: Socket): Promise<void> {
-    return new Promise<void>((resolve) => { try { socket.close(() => resolve()); } catch { resolve(); } });
+    return new Promise<void>((resolve,reject) => {
+      try { socket.close(()=>{this.pendingBindings.delete(socket);resolve();}); }
+      catch(error){
+        if(this.startup&&this.pendingBindings.has(socket)){
+          // Pending native bind is not proved closed by a thrown close call.
+          // Retain and join its actual close/late-listen settlement, with no timer.
+          socket.once('close',()=>{this.pendingBindings.delete(socket);resolve();});
+          socket.once('listening',()=>{void this.closeSocket(socket).then(resolve,reject);});
+        }else if(this.startup&&(error as NodeJS.ErrnoException).code!=='ERR_SOCKET_DGRAM_NOT_RUNNING')reject(error);
+        else resolve();
+      }
+    });
   }
 }

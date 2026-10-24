@@ -51,9 +51,12 @@ export async function readProcessIdentity(pid: number, signal?: AbortSignal, che
     check?.();
     const budget = Math.min(remaining(SINGLE_QUERY_TIMEOUT_MS, started), check?.() ?? SINGLE_QUERY_TIMEOUT_MS);
     signal?.throwIfAborted();
-    const { stdout } = process.platform === "win32"
-      ? await exec("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", windowsIdentityCommand(pid)], { windowsHide: true, timeout: budget, signal })
-      : await exec("ps", ["-p", String(pid), "-o", "lstart="], { timeout: budget, env: { ...process.env, LC_ALL: "C" }, signal });
+    const operation = process.platform === "win32"
+      ? exec("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", windowsIdentityCommand(pid)], { windowsHide: true, timeout: budget, signal })
+      : exec("ps", ["-p", String(pid), "-o", "lstart="], { timeout: budget, env: { ...process.env, LC_ALL: "C" }, signal });
+    const closed=signal?new Promise<void>(resolve=>operation.child.once('close',()=>resolve())):undefined;
+    let result;try{result=await operation;}finally{await closed;}
+    signal?.throwIfAborted();check?.();const {stdout}=result;
     return stdout.trim() || null;
   } catch { return null; }
 }

@@ -545,6 +545,14 @@ it('round2: discovery bind expiry creates no announcement timer or send',async()
  try{await vi.advanceTimersByTimeAsync(10_001);for(let i=0;i<12;i++)await Promise.resolve();expect(state).toBe('rejected');socket.complete();for(let i=0;i<6;i++)await Promise.resolve();expect(socket.sends).toBe(0);expect(socket.effects).toBe(0);}
  finally{socket.complete();await result;await discovery.close();}
 });
+it('round2: late discovery interface bind cannot announce or start the next effect',async()=>{
+ vi.useFakeTimers();const listener=new StartupDatagram(),sender=new StartupDatagram(true),budget=new StartupBudget();closes.push(()=>budget.close());let created=0,state='pending';
+ const discovery=new NetworkDiscovery({identity:{id:'synthetic',name:'synthetic',fingerprint:'a'.repeat(64)},port:4242,createSocket:()=> (++created===1?listener:sender) as never,
+  interfaces:()=>({synthetic:[{family:'IPv4',internal:false,address:'192.0.2.1',netmask:'255.255.255.0',cidr:'192.0.2.1/24',mac:'00:00:00:00:00:01'}]})});
+ const result=discovery.start(budget).then(()=>{state='resolved';},()=>{state='rejected';});
+ try{for(let i=0;i<12;i++)await Promise.resolve();expect(created).toBe(2);await vi.advanceTimersByTimeAsync(10_001);for(let i=0;i<16;i++)await Promise.resolve();expect(state).toBe('rejected');sender.complete();for(let i=0;i<6;i++)await Promise.resolve();expect(sender.effects).toBe(0);expect(listener.sends+sender.sends).toBe(0);}
+ finally{sender.complete();await result;await discovery.close();}
+});
 it('round2: late protection completion cannot start the actual staging write',async()=>{
  vi.useFakeTimers();startupPlatform('win32');const budget=new StartupBudget();closes.push(()=>budget.close());const helper=fakeProtection(),file=join(home(),'synthetic-stage.json');const result=writeMusePrivateJsonAsync(file,{synthetic:true},'wx',budget);const assertion=expect(result).rejects.toThrow();await vi.advanceTimersByTimeAsync(10_001);helper.finish();await assertion;expect(existsSync(file)).toBe(false);expect(helper.options.timeout).toBeLessThanOrEqual(10_000);expect(helper.options.signal).toBe(budget.signal);
 });
@@ -574,10 +582,29 @@ it('round2: mandatory slot constructors close owned handles before next late sch
  vi.spyOn(DatabaseSync.prototype,'exec').mockImplementation(function(this:DatabaseSync,sql:string){handles.add(this);if(late&&/CREATE|ALTER|UPDATE|COMMIT/.test(sql))after.push(sql);const result=exec.call(this,sql);if(!late&&sql.includes('CREATE TABLE IF NOT EXISTS slots')){late=true;vi.setSystemTime(Date.now()+10_001);}return result;});closes.push(()=>{for(const db of handles)if(db.isOpen)db.close();});
  expect(()=>withStorageAdmission(()=>budget.remaining(),()=>new RootConcurrency(home(),'synthetic-root'))).toThrow();expect(late).toBe(true);expect(after).toEqual([]);for(const db of handles)expect(db.isOpen).toBe(false);
 });
+it('round2: mandatory moveJobs rolls back when its actual SQL preparation finishes late',()=>{
+ vi.useFakeTimers();const root=new RootConcurrency(home(),'synthetic-root');closes.push(()=>root.close());const db=(root as unknown as {slots:{db:DatabaseSync}}).slots.db;
+ db.prepare("INSERT INTO slots(resource,id,pid,held,expiresAt,identity) VALUES ('root-old','synthetic-1',?,1,?,NULL)").run(process.pid,Date.now()+60_000);
+ const prepare=DatabaseSync.prototype.prepare,budget=new StartupBudget();closes.push(()=>budget.close());let late=false;
+ vi.spyOn(DatabaseSync.prototype,'prepare').mockImplementation(function(this:DatabaseSync,sql:string){const result=prepare.call(this,sql);if(sql==='UPDATE slots SET resource=? WHERE ticket=?'){late=true;vi.setSystemTime(Date.now()+10_001);}return result;});
+ expect(()=>withStorageAdmission(()=>budget.remaining(),()=>root.moveJobs(['synthetic']))).toThrow();expect(late).toBe(true);expect(db.prepare("SELECT resource FROM slots WHERE id='synthetic-1'").get()!.resource).toBe('root-old');
+});
 it.each([false,true])('round2: actual broker starts optional services only after valid activation expire=%s',async expire=>{
  vi.useFakeTimers();startupPlatform('linux');const f=candidate(),events:string[]=[];transport.hooks.maintenance=(name:string)=>events.push(name);writeFileSync(join(f.path,'jobs.json'),JSON.stringify({version:4,jobs:[],handoffs:[]}));const tls=new StartupServer(expire);transport.hooks.tls=()=>tls;
  const broker=new Broker('synthetic',f.store,nullLogger,'synthetic-only',Date.now,join(f.path,'jobs.json'),{home:f.path,config:{enabled:true,name:'synthetic',port:4242,bind:'127.0.0.1',discovery:false,remoteJobs:{enabled:false,allowRoots:[],agents:[],allowPeers:[]}}});
  const server=new StartupServer(),reservation={ownedServer:()=>server,activate:vi.fn(()=>events.push('activate')),close:vi.fn(async()=>{})};server.listening=true;const budget=new StartupBudget();closes.push(()=>budget.close());const backups=vi.spyOn(f.store,'startBackups');const result=broker.listen(reservation as never,budget);const failure=expire?expect(result).rejects.toThrow():undefined;
- try{if(expire){await vi.advanceTimersByTimeAsync(10_001);tls.complete();await failure;expect(reservation.activate).not.toHaveBeenCalled();expect(events.filter(name=>!name.endsWith('-close'))).toEqual([]);expect(backups).not.toHaveBeenCalled();}else{await result;expect(events.indexOf('activate')).toBeLessThan(events.indexOf('history'));for(const name of ['index','archive','history'])expect(events.filter(event=>event===name)).toHaveLength(1);expect(backups).toHaveBeenCalledOnce();budget.abort();}}
+ try{if(expire){await vi.advanceTimersByTimeAsync(10_001);tls.complete();await failure;expect(reservation.activate).not.toHaveBeenCalled();expect(events.filter(name=>!name.endsWith('-close'))).toEqual([]);expect(backups).not.toHaveBeenCalled();}else{await result;await vi.advanceTimersByTimeAsync(0);expect(events.indexOf('activate')).toBeLessThan(events.indexOf('history'));for(const name of ['index','archive','history'])expect(events.filter(event=>event===name)).toHaveLength(1);expect(backups).toHaveBeenCalledOnce();budget.abort();}}
  finally{tls.complete();await result.catch(()=>{});await broker.close();}if(!expire)for(const name of ['index-close','archive-close','history-close'])expect(events.filter(event=>event===name)).toHaveLength(1);
+});
+it('round2: delayed TCP startup cancels without creating maintenance or publishing a descriptor',async()=>{
+ vi.useFakeTimers();startupPlatform('win32');const f=candidate(),events:string[]=[];transport.hooks.maintenance=(name:string)=>events.push(name);const tcp=new StartupServer(true),create=vi.fn(()=>tcp);transport.hooks.net=create;writeFileSync(join(f.path,'jobs.json'),JSON.stringify({version:4,jobs:[],handoffs:[]}));
+ const broker=new Broker('synthetic',f.store,nullLogger,'synthetic-only',Date.now,join(f.path,'jobs.json')),server=new StartupServer();server.listening=true;
+ const reservation={ownedServer:()=>server,activate:vi.fn(),close:vi.fn(async()=>{})},budget=new StartupBudget();closes.push(()=>budget.close());const result=broker.listen(reservation as never,budget),rejected=expect(result).rejects.toThrow();
+ try{await vi.advanceTimersByTimeAsync(10_001);tcp.complete();await rejected;expect(create).toHaveBeenCalledOnce();expect(reservation.activate).not.toHaveBeenCalled();expect(events.filter(name=>!name.endsWith('-close'))).toEqual([]);expect(tree(f.path).some(file=>file.includes('broker-tcp.json'))).toBe(false);}
+ finally{tcp.complete();await result.catch(()=>{});await broker.close();}
+});
+it('round2: mandatory ownership failure cannot be downgraded to optional maintenance',async()=>{
+ const store=new MessageStore(':memory:',nullLogger);closes.push(()=>store.close());const broker=new Broker('synthetic',store,nullLogger,'synthetic-only'),budget=new StartupBudget();closes.push(()=>budget.close());const server=new StartupServer();server.listening=true;
+ vi.spyOn(broker as unknown as {applyHandoffs():void},'applyHandoffs').mockImplementation(()=>{throw Error('synthetic mandatory ownership failure');});
+ const reservation={ownedServer:()=>server,activate:vi.fn(),close:vi.fn(async()=>{})};await expect(broker.listen(reservation as never,budget)).rejects.toThrow('mandatory ownership');expect(reservation.activate).not.toHaveBeenCalled();expect(reservation.close).toHaveBeenCalledOnce();
 });

@@ -333,8 +333,9 @@ export class MessageStore {
     this.producerChanged();
   }
   private native<T>(db: DatabaseSync, action: () => T): T {
+    storageAdmissionRemaining();
     this.guardNative(db);
-    try { return action(); }
+    try { const result=action();storageAdmissionRemaining();return result; }
     catch (error) { if (!isSqliteBusy(error)) this.#producerUnknown = true; this.producerChanged(); throw error; }
   }
   private exec(db: DatabaseSync, sql: string): void { this.native(db, () => db.exec(sql)); }
@@ -460,7 +461,7 @@ export class MessageStore {
     if (file !== ':memory:') preflightMessagingHome(dirname(file), file);
     const existed = file !== ":memory:" && existsSync(file);
     this.home = file === ":memory:" ? null : dirname(file);
-    if (file !== ":memory:") mkdirSync(dirname(file), { recursive: true, mode: 0o700 }); // owner-only on Unix
+    storageAdmissionRemaining();if (file !== ":memory:") mkdirSync(dirname(file), { recursive: true, mode: 0o700 }); // owner-only on Unix
     if (file !== ':memory:') assertCompatibleMailboxReaders(dirname(file));
     const lease = file === ":memory:" ? () => {} : storageLease(dirname(file));
     let released = false;
@@ -488,7 +489,7 @@ export class MessageStore {
         try { metadataDb(home); }
         finally { if (opened && !metadataReaderRetained(home)) closeMetadataDb(home); }
       }
-      this.db.prepare("UPDATE messaging_candidate SET state='ready' WHERE id=1 AND attempt='' AND state='preparing'").run();
+      const ready=this.db.prepare("UPDATE messaging_candidate SET state='ready' WHERE id=1 AND attempt='' AND state='preparing'");storageAdmissionRemaining();ready.run();storageAdmissionRemaining();
       assertCurrentMailboxEnvelope(this.db);
       ensureMessageQuarantine(this.db);
     } catch (err) {
@@ -501,7 +502,7 @@ export class MessageStore {
     catch (err) { this.closeCapturedHandle(this.db); this.release(); throw err; }
     // Legacy archived rows stay readable in their original table. Relocation
     // starts in bounded chunks only after the broker listener is available.
-    this.decisions = new DecisionStore(this.db);
+    storageAdmissionRemaining();this.decisions = new DecisionStore(this.db);
     this.#decisionConsumer = this.decisions;
     this.lifecycleConstruction.consumers.add(this.decisions);
     this.historyFile = historyDbPath(file);

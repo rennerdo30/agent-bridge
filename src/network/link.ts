@@ -12,6 +12,8 @@ import { decodePairingCode, keyFingerprint, PairingStore, publicIdentitySchema, 
 import { receiveTransfer, transferResultSchema, transferSchema, type FileTransfer, type TransferResult } from "./files.js";
 import { FILE_STREAM_CAPABILITY, FILE_STREAM_WINDOW_CAPABILITY, TRANSFER_WINDOW_CHUNKS, TransferManager, type TransferStarted } from "./transfers.js";
 import { REMOTE_JOB_USAGE_CAPABILITY } from "./remote-job-protocol.js";
+import type { StartupBudget } from "../core/startup-budget.js";
+type NetworkStartup = Pick<StartupBudget,'signal'|'remaining'>;
 
 const MAX_METADATA_CHARS = 4_096;
 const MAX_ID_CHARS = 128;
@@ -347,13 +349,19 @@ export class NetworkService {
   private closed = false;
   private authorityActive = true;
   private startupComplete = false;
+  private starting=false;
+  private startup?:NetworkStartup;
+  private readonly startupCancel?:AbortController;
+  private preparingKeys:Promise<void>|null=null;
+  private closingWork:Promise<void>|null=null;
   private readonly extensions = new Map<NetworkExtensionType, { capability: string; aliases: string[]; handler: NetworkExtensionHandler }>();
   private readonly linkListeners = new Set<(pair: NetworkPair) => void>();
 
-  constructor(private readonly home: string, private readonly cfg: NetworkConfig, private readonly broker: NetworkBroker, private readonly log: Logger, timings: NetworkTimings = {}) {
+  constructor(private readonly home: string, private readonly cfg: NetworkConfig, private readonly broker: NetworkBroker, private readonly log: Logger, timings: NetworkTimings = {}, startup?:StartupBudget) {
+    if(startup){this.authorityActive=false;const cancel=this.startupCancel=new AbortController();this.startup={signal:AbortSignal.any([startup.signal,cancel.signal]),remaining:()=>{cancel.signal.throwIfAborted();return startup.remaining();}};}
     this.timings = { refreshMs: timings.refreshMs ?? NETWORK_REFRESH_MS, heartbeatTimeoutMs: timings.heartbeatTimeoutMs ?? NETWORK_HEARTBEAT_TIMEOUT_MS };
     for (const value of Object.values(this.timings)) if (!Number.isSafeInteger(value) || value <= 0) throw new Error("network timings must be positive milliseconds");
-    this.keys = new PairingStore(home, cfg.name);
+    this.keys = new PairingStore(home, cfg.name,Date.now,this.startup);
     this.transfers = new TransferManager(home, {
       supports: (remote) => this.peerSupports(remote, FILE_STREAM_CAPABILITY),
       window: (remote) => this.peerSupports(remote, FILE_STREAM_WINDOW_CAPABILITY) ? TRANSFER_WINDOW_CHUNKS : 1,
@@ -368,7 +376,7 @@ export class NetworkService {
       },
       notify: (message) => { this.broker.receive(message); },
       legacy: (remote, transfer) => this.instanceLink(remote).files(transfer),
-    }, log, { maxBytes: cfg.maxTransferBytes, fetchRoots: cfg.fetchRoots });
+    }, log, { maxBytes: cfg.maxTransferBytes, fetchRoots: cfg.fetchRoots },this.startup);
     this.registerExtension("file-stream", FILE_STREAM_CAPABILITY, (payload, remote) => this.transfers.handle(payload, remote.id, remote.name));
   }
 
@@ -464,10 +472,15 @@ export class NetworkService {
   }
   receive(message: BridgeMessage): DeliveryResult { this.requireAuthority(); return this.broker.receive(message); }
 
-  async start(deferAuthority = false): Promise<void> {
+  async start(deferAuthority = false, startup=this.startup): Promise<void> {
+    startup=this.startup??startup;
+    startup?.remaining();
     if (!this.cfg.enabled) throw new Error("networking is disabled");
-    if (this.server || this.closed) throw new Error("network service already started or closed");
-    this.authorityActive = !deferAuthority;
+    if (this.server || this.closed || this.starting) throw new Error("network service already started or closed");
+    this.starting=true;
+    this.authorityActive = startup?false:!deferAuthority;
+    try {
+    if(startup){this.preparingKeys=this.keys.prepare(startup);try{await this.preparingKeys;}finally{this.preparingKeys=null;}startup.remaining();this.transfers.prepare(startup);startup.remaining();}
     const acceptedKeys = new WeakMap<TLSSocket, string>();
     const server = createServer({
       minVersion: "TLSv1.3", maxVersion: "TLSv1.3", ciphers: TLS_CIPHER, handshakeTimeout: NETWORK_TIMEOUT_MS,
@@ -489,23 +502,33 @@ export class NetworkService {
     server.on("connection", (socket) => { this.sockets.add(socket); socket.once("close", () => this.sockets.delete(socket)); });
     server.on("tlsClientError", () => this.log.debug("network TLS authentication failed"));
     server.on("error", (err) => this.log.warn("network listener error", { message: err.message }));
-    try {
       await new Promise<void>((resolve, reject) => {
-        server.once("error", reject);
-        server.listen(this.cfg.port, this.cfg.bind, () => { server.off("error", reject); resolve(); });
+        const pending=startup?new AbortController():undefined;
+        const detach=()=>{startup?.signal.removeEventListener('abort',abort);server.off('error',failed);};
+        const failed=(error:unknown)=>{detach();reject(error);};
+        const abort=()=>{pending?.abort(startup!.signal.reason);server.close(()=>failed(startup!.signal.reason));};
+        startup?.signal.addEventListener('abort',abort,{once:true});server.once('error',failed);
+        server.listen(startup?{port:this.cfg.port,host:this.cfg.bind,signal:pending!.signal}:{port:this.cfg.port,host:this.cfg.bind},()=>{
+          try{startup?.remaining();if(this.closed)throw new Error('Network startup owner closed');detach();resolve();}
+          catch(error){server.close(()=>failed(error));}
+        });
+        if(startup?.signal.aborted)abort();
       });
+      startup?.remaining();
       if (this.cfg.discovery) {
         this.discovery = new NetworkDiscovery({ identity: this.keys.identity, port: this.port, onError: (err) => this.log.warn("network discovery error", { message: err.message }) });
-        await this.discovery.start();
+        await this.discovery.start(startup);startup?.remaining();
       }
-      this.startupComplete = true;
+      startup?.remaining();this.startupComplete = true;
       if (!deferAuthority) this.activateAuthority();
-    } catch (err) { await this.close(); throw err; }
+    } catch (err) { await this.close(); throw err; } finally { this.starting=false; }
   }
 
   /** Called synchronously with activation of the already initialized local owner. */
   activateAuthority(): void {
+    this.startup?.remaining();
     if (this.closed || !this.startupComplete || !this.server?.listening) throw new Error("network startup is not ready");
+    this.transfers.activateMaintenance();this.discovery?.activate();this.startup?.remaining();this.startup=undefined;
     this.authorityActive = true;
     if (this.timer) return;
     this.timer = setInterval(() => {
@@ -554,6 +577,7 @@ export class NetworkService {
   }
 
   status(): NetworkStatus {
+    if(!this.keys.isPrepared)return {enabled:true,ready:false,config:this.cfg,discovered:[],paired:[]};
     return { enabled: true, ready: this.authorityActive && this.startupComplete && !this.closed, config: this.cfg, identity: this.keys.identity, port: this.port, discovered: this.discovery?.instances() ?? [], ...(this.discovery ? { discoveryDiagnostics: this.discovery.diagnostics() } : {}), paired: this.keys.pairs().map(({ id, name, fingerprint }) => ({ id, name, fingerprint, connected: this.links.has(id), ...(this.health.has(id) ? { health: this.health.get(id)! } : {}) })) };
   }
 
@@ -681,16 +705,23 @@ export class NetworkService {
   }
 
   async close(): Promise<void> {
+    if(this.closingWork)return this.closingWork;
+    this.closingWork=this.closeOwned();return this.closingWork;
+  }
+  private async closeOwned():Promise<void> {
     this.closed = true;
-    this.transfers.close();
+    this.startupCancel?.abort(new Error('Network startup owner closed'));
+    await this.preparingKeys?.catch(()=>{});
+    const failures:unknown[]=[];try{this.transfers.close();}catch(error){failures.push(error);}
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
-    await this.discovery?.close();
+    try{await this.discovery?.close();}catch(error){failures.push(error);}
     this.discovery = null;
     for (const socket of this.sockets) socket.destroy();
     this.links.clear();
     const server = this.server;
     this.server = null;
     if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
+    if(failures.length)throw new AggregateError(failures,'Network owned cleanup remains unknown');
   }
 }

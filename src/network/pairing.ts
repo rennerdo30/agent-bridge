@@ -1,4 +1,6 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, execFile } from "node:child_process";
+import type { StartupBudget } from "../core/startup-budget.js";
+type NetworkStartup = Pick<StartupBudget,"signal"|"remaining">;
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -52,6 +54,25 @@ export function protect(path: string, mode: number, ownNewPath = false): void {
   if ((acl.match(/:\(/g) ?? []).length !== 1 || acl.includes("(I)")) throw new Error("network key location has additional ACL grants; restrict it to the current account");
 }
 
+/** Same ACL commands as protect; only startup uses cancellable owned children. */
+async function protectStartup(path:string,mode:number,startup:NetworkStartup):Promise<void> {
+  startup.remaining();if(process.platform!=='win32'){chmodSync(path,mode);startup.remaining();return;}
+  const command=(file:string,args:string[])=>new Promise<string>((resolve,reject)=>{
+    startup.remaining();let returned=false,closed=false,error:unknown,output='';
+    const settle=()=>{if(!returned||!closed)return;try{startup.remaining();if(error)throw error;resolve(output);}catch{reject(new Error('Network key protection unavailable'));}};
+    const child=execFile(file,args,{encoding:'utf8',windowsHide:true,timeout:Math.max(1,Math.floor(startup.remaining())),signal:startup.signal},(failure,stdout)=>{returned=true;error=failure;output=stdout;settle();});
+    const ownedPid=child.pid;child.once('close',()=>{closed=true;if(child.pid!==ownedPid)error=new Error('Owned ACL helper settlement unknown');settle();});
+  });
+  const [account,sid]=((await command(WHOAMI,['/user','/fo','csv','/nh'])).match(/"([^"]+)","(S-\d+(?:-\d+)+)"/)??[]).slice(1);
+  startup.remaining();if(!sid||!account)throw new Error('cannot identify the account for network key permissions');
+  const grant=mode===OWNER_DIR_MODE?`*${sid}:(OI)(CI)F`:`*${sid}:F`;
+  await command(ICACLS,[path,'/inheritance:r','/grant:r',grant,'/Q']);startup.remaining();
+  const others=(await command(ICACLS,[path])).split(/\r?\n/).map(line=>(line.startsWith(path)?line.slice(path.length):line).trim()).map(line=>ACL_PRINCIPAL.exec(line)?.[1]).filter((principal):principal is string=>Boolean(principal)&&principal!.toLowerCase()!==account.toLowerCase());
+  for(const principal of new Set(others))await command(ICACLS,[path,'/remove:g',principal,'/Q']);
+  const acl=await command(ICACLS,[path]);startup.remaining();
+  if((acl.match(/:\(/g)??[]).length!==1||acl.includes('(I)'))throw new Error('network key location has additional ACL grants; restrict it to the current account');
+}
+
 export function decodePairingCode(code: string): PairingCode {
   if (code.length > MAX_PAIRING_CODE_CHARS || !/^[A-Za-z0-9_-]+$/.test(code)) throw new Error("invalid pairing code");
   return codeSchema.parse(JSON.parse(Buffer.from(code, "base64url").toString("utf8")));
@@ -61,12 +82,15 @@ export function decodePairingCode(code: string): PairingCode {
 export class PairingStore {
   private readonly dir: string;
   private readonly file: string;
-  private readonly state: z.infer<typeof stateSchema>;
+  private state!: z.infer<typeof stateSchema>;
+  private prepared=false;
+  get isPrepared():boolean{return this.prepared;}
 
-  constructor(home: string, readonly name: string, private readonly now: () => number = Date.now) {
+  constructor(home: string, readonly name: string, private readonly now: () => number = Date.now, startup?:NetworkStartup) {
     if (!NETWORK_NAME_PATTERN.test(name)) throw new Error("invalid network instance name");
     this.dir = join(home, "network");
     this.file = join(this.dir, "keys.json");
+    if(startup){startup.remaining();return;}
     mkdirSync(this.dir, { recursive: true, mode: OWNER_DIR_MODE });
     protect(this.dir, OWNER_DIR_MODE);
     if (existsSync(this.file)) {
@@ -76,6 +100,20 @@ export class PairingStore {
       this.state = { identity: { id: randomUUID(), key: randomBytes(PAIRING_KEY_BYTES).toString("hex") }, invitations: [], pairs: [] };
       this.save();
     }
+    this.prepared=true;
+  }
+
+  async prepare(startup:NetworkStartup):Promise<void> {
+    startup.remaining();if(this.prepared)return;
+    mkdirSync(this.dir,{recursive:true,mode:OWNER_DIR_MODE});startup.remaining();await protectStartup(this.dir,OWNER_DIR_MODE,startup);startup.remaining();
+    if(existsSync(this.file)){
+      await protectStartup(this.file,OWNER_FILE_MODE,startup);startup.remaining();this.state=stateSchema.parse(JSON.parse(readFileSync(this.file,'utf8')));startup.remaining();
+    }else{
+      this.state={identity:{id:randomUUID(),key:randomBytes(PAIRING_KEY_BYTES).toString('hex')},invitations:[],pairs:[]};
+      const temp=join(this.dir,`${randomUUID()}.tmp`);startup.remaining();writeFileSync(temp,JSON.stringify(this.state,null,2)+'\n',{mode:OWNER_FILE_MODE,flag:'wx'});
+      startup.remaining();await protectStartup(temp,OWNER_FILE_MODE,startup);startup.remaining();renameSync(temp,this.file);startup.remaining();
+    }
+    this.prepared=true;
   }
 
   get identity(): NetworkIdentity {

@@ -2,6 +2,7 @@ import { createServer, type Server, type Socket } from "node:net";
 import { CONNECT_TIMEOUT_MS } from "./constants.js";
 import { ensurePrivateSocketDirectory } from "./paths.js";
 import { encodeFrame, FrameDecoder } from "./protocol.js";
+import type { StartupBudget } from "./startup-budget.js";
 
 export const TENTATIVE_CONNECTION_LIMIT = 32;
 export const TENTATIVE_FRAME_BYTES = 64 * 1024;
@@ -56,15 +57,22 @@ export class EndpointReservation {
       } catch { socket.destroy(); }
     });
   };
-  static async bind(endpoint: string): Promise<EndpointReservation> {
-    ensurePrivateSocketDirectory(endpoint);
+  static async bind(endpoint: string, startup?:StartupBudget): Promise<EndpointReservation> {
+    startup?.remaining();ensurePrivateSocketDirectory(endpoint,undefined,false,startup?()=>startup.remaining():undefined);startup?.remaining();
     const reservation = new EndpointReservation(endpoint);
     await new Promise<void>((resolve, reject) => {
-      reservation.server.once("error", reject);
-      reservation.server.listen(endpoint, () => {
-        reservation.server.removeListener("error", reject); reservation.owned = true;
-        activationWitnesses.get(reservation)!.bound = true; resolve();
+      const pending=startup?new AbortController():undefined;
+      const detach=()=>{startup?.signal.removeEventListener('abort',abort);reservation.server.removeListener('error',failed);};
+      const failed=(error:unknown)=>{detach();reject(error);};
+      const abort=()=>{pending?.abort(startup!.signal.reason);reservation.server.close(()=>failed(startup!.signal.reason));};
+      startup?.signal.addEventListener('abort',abort,{once:true});
+      reservation.server.once("error", failed);
+      reservation.server.listen(startup?{path:endpoint,signal:pending!.signal}:endpoint, () => {
+        reservation.owned = true;activationWitnesses.get(reservation)!.bound = true;
+        try{startup?.remaining();detach();resolve();}
+        catch(error){reservation.server.close(()=>failed(error));}
       });
+      if(startup?.signal.aborted)abort();
     });
     return reservation;
   }

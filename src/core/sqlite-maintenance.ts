@@ -136,6 +136,7 @@ const MESSAGE_IDENTITY_FIELDS = ["id", "recipient", "from_id", "from_name", "fro
  * Raw messages remain unchanged and readable to offline inspection tools.
  */
 export function ensureMessageQuarantine(db: DatabaseSync): void {
+  storageAdmissionRemaining();
   db.exec(`CREATE TABLE IF NOT EXISTS message_archive_conflicts (
     source_table TEXT NOT NULL, id TEXT NOT NULL, recipient TEXT NOT NULL,
     source_hash TEXT NOT NULL, archive_hash TEXT NOT NULL,
@@ -145,8 +146,9 @@ export function ensureMessageQuarantine(db: DatabaseSync): void {
     encounters INTEGER NOT NULL,
     PRIMARY KEY (source_table, id, recipient, source_hash)
   )`);
-  db.exec(`CREATE TEMP VIEW IF NOT EXISTS deliverable_messages AS
+  storageAdmissionRemaining();db.exec(`CREATE TEMP VIEW IF NOT EXISTS deliverable_messages AS
     SELECT * FROM messages WHERE ${unquarantined("messages")}`);
+  storageAdmissionRemaining();
 }
 
 /** Quarantine is permanent until an explicit reviewed recovery, never a TTL retry. */

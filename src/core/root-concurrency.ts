@@ -5,6 +5,7 @@ import { ResourceSlots, type SlotOwner } from "./resource-slots.js";
 import { configureSqlite } from "./sqlite-policy.js";
 import { isSqliteBusy } from "./sqlite-policy.js";
 import { setTimeout as delay } from "node:timers/promises";
+import { storageAdmissionRemaining, storageAdmissionTimeout, admissionSqliteBusy } from "./storage-admission.js";
 
 const ROOT_LIMIT_DB = "root-limits.sqlite";
 const LOCK_WAIT_MS = 3_000;
@@ -18,9 +19,12 @@ export class RootConcurrency {
   constructor(home: string, private readonly rootSession: string) {
     this.resource = `root-${createHash("sha256").update(rootSession).digest("hex").slice(0, 40)}`;
     this.slots = new ResourceSlots(home);
-    this.db = new DatabaseSync(join(home, ROOT_LIMIT_DB));
-    configureSqlite(this.db);
-    this.db.exec(`PRAGMA busy_timeout = ${LOCK_WAIT_MS}; CREATE TABLE IF NOT EXISTS root_limits (root TEXT PRIMARY KEY, capacity INTEGER NOT NULL);`);
+    let owned:DatabaseSync|undefined;
+    try {
+      const left=storageAdmissionRemaining();this.db=owned=new DatabaseSync(join(home,ROOT_LIMIT_DB),left===undefined?undefined:{timeout:storageAdmissionTimeout(LOCK_WAIT_MS)});
+      configureSqlite(this.db);admissionSqliteBusy(this.db,LOCK_WAIT_MS,true);
+      storageAdmissionRemaining();this.db.exec('CREATE TABLE IF NOT EXISTS root_limits (root TEXT PRIMARY KEY, capacity INTEGER NOT NULL);');storageAdmissionRemaining();
+    }catch(error){try{owned?.close();}finally{this.slots.close();}throw error;}
   }
 
   setLimit(capacity: number): void {

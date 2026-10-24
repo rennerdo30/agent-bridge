@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { closeSync, existsSync, openSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, openSync, readFileSync, rmSync, statSync, writeFileSync, fstatSync, lstatSync } from "node:fs";
+import { storageAdmissionRemaining } from "./storage-admission.js";
 import { processIdentity, recordedOwnerLiveness } from "./process-identity.js";
 import { ownerGone as bootOwnerGone } from "./boot-time.js";
 
@@ -29,23 +30,30 @@ function lockOwnerGone(path: string, verdicts: Map<string, boolean>): boolean | 
 
 /** Serialize snapshot creation as well as DDL. Never expire a living writer by age. */
 export function migrationLock(file: string): () => void {
+  const admitted = storageAdmissionRemaining() !== undefined;
   if (file === ":memory:") return () => {};
   const path = `${file}.migration-lock`, recovery = `${path}.recovery`;
   const identity = processIdentity(process.pid);
   const owner = JSON.stringify({ pid: process.pid, nonce: randomUUID(), ...(identity ? { identity } : {}) });
-  const until = Date.now() + 5_000;
+  const until = admitted ? Infinity : Date.now() + 5_000;
   const pause = new Int32Array(new SharedArrayBuffer(4));
   const verdicts = new Map<string, boolean>();
   for (;;) {
+    storageAdmissionRemaining();
     try {
       const fd = openSync(path, "wx", 0o600);
-      try { writeFileSync(fd, owner); }
-      catch (error) { closeSync(fd); rmSync(path); throw error; }
+      const held=fstatSync(fd);
+      try { storageAdmissionRemaining(); writeFileSync(fd, owner); storageAdmissionRemaining(); }
+      catch (error) { closeSync(fd);let current;try{current=lstatSync(path);}catch{}if(current&&current.dev===held.dev&&current.ino===held.ino)rmSync(path);throw error; }
       closeSync(fd);
       return () => { if (readFileSync(path, "utf8") === owner) rmSync(path); };
     } catch (error) {
       if (!["EEXIST", "EPERM", "EBUSY", "EACCES"].includes((error as NodeJS.ErrnoException).code ?? "")) throw error;
     }
+    // Admission never starts the legacy independent wait or owner probe. The
+    // original caller may refuse busy, retaining the existing writer's lock.
+    storageAdmissionRemaining();
+    if(admitted)throw Object.assign(new Error('History migration lock busy within original admission'),{code:'EBUSY'});
     // Only dead writers need recovery. A separate exclusive file serializes recoverers.
     let recoveryFd: number | undefined;
     try {

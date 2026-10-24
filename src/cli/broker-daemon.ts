@@ -51,7 +51,7 @@ export async function runBrokerDaemon(home: string, pipe: string, log: Logger): 
   // awaits it after activation. Only a store migration still needs it synchronously (its lock record).
   if (!await budget.wait(ownProcessIdentity(budget.signal,()=>budget.remaining()))) throw new Error('Own daemon identity unknown');
   let reservation: EndpointReservation;
-  try { reservation = await EndpointReservation.bind(pipe); }
+  try { budget.remaining();reservation = await EndpointReservation.bind(pipe,budget); }
   catch (error) {
     if ((error as NodeJS.ErrnoException).code === "EADDRINUSE") return 0;
     throw error;

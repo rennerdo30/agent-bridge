@@ -4,7 +4,7 @@ import { DatabaseSync } from "node:sqlite";
 import { CONVERSATION_RECORDS_VIEW, historyStoreV2Schema, HISTORY_V2_COPY_TABLES } from "./history-schema-v2.js";
 import { registerHistoryFunctions } from "./history-codec.js";
 import { configureSqlite, isSqliteBusy } from "./sqlite-policy.js";
-import { admissionSqliteBusy, storageAdmissionTimeout } from "./storage-admission.js";
+import { admissionSqliteBusy, storageAdmissionTimeout, storageAdmissionRemaining } from "./storage-admission.js";
 import { migrationLock } from "./migration-lock.js";
 import { liveStorePeers, refreshStorePeerIdentities } from "./store-compatibility.js";
 import { encodeHistoryRow, decodeHistoryRow, HISTORY_V1_PREFIX, resumableHistoryMigration, type HistoryMigrationOptions } from "./history-migration.js";
@@ -174,12 +174,14 @@ export function openHistoryStore(file: string): DatabaseSync {
   try {
     admissionSqliteBusy(db,3000,true);
     registerHistoryFunctions(db);
+    storageAdmissionRemaining();
     const version = Number(db.prepare("PRAGMA user_version").get()!.user_version);
     if (version > HISTORY_STORE_VERSION) throw new Error(`unsupported history store version: ${version}`);
     configureSqlite(db);
-    if (version === HISTORY_STORE_VERSION) { refreshHistoryViews(db); record.state = "returned"; return db; }
-    if (version === 1 && file !== ":memory:" && liveHistoryV1Writers(dirname(file)).length) { record.state = "returned"; return db; }
+    if (version === HISTORY_STORE_VERSION) { refreshHistoryViews(db); storageAdmissionRemaining(); record.state = "returned"; return db; }
+    if (version === 1 && file !== ":memory:" && liveHistoryV1Writers(dirname(file)).length) { storageAdmissionRemaining(); record.state = "returned"; return db; }
     upgradeHistoryStore(db, file);
+    storageAdmissionRemaining();
     record.state = "returned"; return db;
   } catch (err) {
     record.state = "failed"; retainedHistoryInitializations.add(record); record.close = "attempted";
@@ -189,50 +191,60 @@ export function openHistoryStore(file: string): DatabaseSync {
   }
 }
 
+function historyStartupSql(db:DatabaseSync,sql:string):void {
+  const admitted=storageAdmissionRemaining()!==undefined;
+  try { db.exec(sql); }
+  catch(error) { if(admitted&&sql==='COMMIT')throw Object.assign(new Error('History COMMIT outcome unknown; committed data and original evidence retained'),{code:'STORE_COMMIT_UNKNOWN',cause:error});throw error; }
+  storageAdmissionRemaining();
+}
+
 /** Views are derived; a store created by an earlier build gets the current definition. Best effort: a busy store
  * is retried on the next open. */
 function refreshHistoryViews(db: DatabaseSync): void {
+  const admitted=storageAdmissionRemaining()!==undefined;
   const current = db.prepare("SELECT sql FROM sqlite_master WHERE type='view' AND name='v_conversation_records'").get();
   if (!current || String(current.sql).includes("ab_body(")) return;
   try {
-    db.exec("BEGIN IMMEDIATE");
-    try { db.exec("DROP VIEW IF EXISTS v_conversation_records"); db.exec(CONVERSATION_RECORDS_VIEW); db.exec("COMMIT"); }
-    catch (err) { db.exec("ROLLBACK"); throw err; }
-  } catch (err) { if (!isSqliteBusy(err)) throw err; }
+    historyStartupSql(db,"BEGIN IMMEDIATE");
+    try { historyStartupSql(db,"DROP VIEW IF EXISTS v_conversation_records"); historyStartupSql(db,CONVERSATION_RECORDS_VIEW); historyStartupSql(db,"COMMIT"); }
+    catch (err) { if(!admitted||db.isTransaction)db.exec("ROLLBACK"); throw err; }
+  } catch (err) { storageAdmissionRemaining(); if (!isSqliteBusy(err)) throw err; }
 }
 
 /** v1 (or empty) → v2 schema, under the migration lock; refuses while a v1 writer is alive. */
 export function upgradeHistoryStore(db: DatabaseSync, file: string): void {
+  const admitted=storageAdmissionRemaining()!==undefined;
   if (Number(db.prepare("PRAGMA user_version").get()!.user_version) === HISTORY_STORE_VERSION) return;
   const release = migrationLock(file);
   try {
     const current = Number(db.prepare("PRAGMA user_version").get()!.user_version);
-    if (current === HISTORY_STORE_VERSION) return;
+    storageAdmissionRemaining(); if (current === HISTORY_STORE_VERSION) return;
     if (current === 1 && file !== ":memory:") { const writers = liveHistoryV1Writers(dirname(file)); if (writers.length) deferUpgrade(writers); }
-    db.exec("BEGIN IMMEDIATE");
+    storageAdmissionRemaining();
     try {
+      historyStartupSql(db,"BEGIN IMMEDIATE");
       if (current === 1) {
         // Keep every v1 object. FTS shadow tables follow their virtual table's rename.
-        for (const row of db.prepare("SELECT name FROM sqlite_master WHERE type='trigger'").all()) db.exec(`DROP TRIGGER ${quote(String(row.name))}`);
+        for (const row of db.prepare("SELECT name FROM sqlite_master WHERE type='trigger'").all()) historyStartupSql(db,`DROP TRIGGER ${quote(String(row.name))}`);
         const tables = db.prepare("SELECT name,sql FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").all();
         const virtual = tables.filter(row => /^CREATE VIRTUAL TABLE/i.test(String(row.sql))).map(row => String(row.name));
         for (const row of tables) {
           const name = String(row.name);
           if (virtual.some(v => name !== v && name.startsWith(`${v}_`))) continue;
-          db.exec(`ALTER TABLE ${quote(name)} RENAME TO ${quote(HISTORY_V1_PREFIX + name)}`);
+          historyStartupSql(db,`ALTER TABLE ${quote(name)} RENAME TO ${quote(HISTORY_V1_PREFIX + name)}`);
         }
         // Index names must not collide with v2's; v1 indexes keep working under v1_ names.
         for (const row of db.prepare("SELECT name,sql FROM sqlite_master WHERE type='index' AND sql IS NOT NULL").all()) {
           const name = String(row.name);
           if (name.startsWith(HISTORY_V1_PREFIX)) continue;
-          db.exec(`DROP INDEX ${quote(name)}`);
-          db.exec(String(row.sql).replace(/^CREATE (UNIQUE )?INDEX (IF NOT EXISTS )?"?([^"\s(]+)"?/i, (_m, unique = "", ifne = "") => `CREATE ${unique}INDEX ${ifne}${quote(HISTORY_V1_PREFIX + name)}`));
+          historyStartupSql(db,`DROP INDEX ${quote(name)}`);
+          historyStartupSql(db,String(row.sql).replace(/^CREATE (UNIQUE )?INDEX (IF NOT EXISTS )?"?([^"\s(]+)"?/i, (_m, unique = "", ifne = "") => `CREATE ${unique}INDEX ${ifne}${quote(HISTORY_V1_PREFIX + name)}`));
         }
       }
-      db.exec(historyStoreV2Schema());
-      db.exec(`PRAGMA user_version=${HISTORY_STORE_VERSION}`);
-      db.exec("COMMIT");
-    } catch (err) { db.exec("ROLLBACK"); throw err; }
+      historyStartupSql(db,historyStoreV2Schema());
+      historyStartupSql(db,`PRAGMA user_version=${HISTORY_STORE_VERSION}`);
+      historyStartupSql(db,"COMMIT");
+    } catch (err) { if(!admitted||db.isTransaction)db.exec("ROLLBACK"); throw err; }
   } finally { release(); }
 }
 

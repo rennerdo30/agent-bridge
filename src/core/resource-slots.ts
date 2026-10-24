@@ -6,6 +6,7 @@ import { RESOURCE_NAME_PATTERN } from "./config.js";
 import { configureSqlite, isSqliteBusy } from "./sqlite-policy.js";
 import { slotLiveness } from "./slot-liveness.js";
 import { identityStartedAfter } from "./process-identity.js";
+import { storageAdmissionRemaining, storageAdmissionTimeout, admissionSqliteBusy } from "./storage-admission.js";
 
 export const SLOT_OWNER_ENV = "AGENT_BRIDGE_SLOT_OWNER";
 export const SLOT_PID_ENV = "AGENT_BRIDGE_SLOT_PID";
@@ -27,29 +28,39 @@ export class ResourceSlots {
   private readonly captureId = ++nextStoreId;
   private closed = false;
   constructor(home: string, private readonly isAlive: (pid: number, identity?: string | null, recordedAt?: number) => boolean = slotLiveness.alive, private readonly now = Date.now) {
+    storageAdmissionRemaining();
     mkdirSync(home, { recursive: true });
-    this.db = new DatabaseSync(join(home, SLOT_DB_NAME));
+    let owned:DatabaseSync|undefined;
+    try {
+    const left=storageAdmissionRemaining();this.db=owned=new DatabaseSync(join(home,SLOT_DB_NAME),left===undefined?undefined:{timeout:storageAdmissionTimeout(LOCK_WAIT_MS)});
     configureSqlite(this.db);
-    this.db.exec(`PRAGMA busy_timeout = ${LOCK_WAIT_MS};
+    admissionSqliteBusy(this.db,LOCK_WAIT_MS,true);storageAdmissionRemaining();
+    this.db.exec(`
       CREATE TABLE IF NOT EXISTS slots (
         ticket INTEGER PRIMARY KEY AUTOINCREMENT, resource TEXT NOT NULL, id TEXT NOT NULL,
         pid INTEGER NOT NULL, held INTEGER NOT NULL, expiresAt INTEGER NOT NULL, UNIQUE(resource, id)
       );`);
+    storageAdmissionRemaining();
     // Additive: the owner's process identity, so a reused PID does not keep a dead owner's slot (AB-218).
     if (!this.db.prepare("SELECT 1 FROM pragma_table_info('slots') WHERE name = 'identity'").get()) {
-      try { this.db.exec("ALTER TABLE slots ADD COLUMN identity TEXT"); }
-      catch (err) { if (!/duplicate column/i.test(String(err))) throw err; }
+      try { storageAdmissionRemaining();this.db.exec("ALTER TABLE slots ADD COLUMN identity TEXT");storageAdmissionRemaining(); }
+      catch (err) { storageAdmissionRemaining();if (!/duplicate column/i.test(String(err))) throw err; }
     }
+    storageAdmissionRemaining();
+    }catch(error){owned?.close();throw error;}
   }
 
   private transaction<T>(fn: () => T): T {
+    const admitted=storageAdmissionRemaining()!==undefined;let committing=false;
     this.db.exec("BEGIN IMMEDIATE");
     try {
+      storageAdmissionRemaining();
       const result = fn();
-      this.db.exec("COMMIT");
+      storageAdmissionRemaining();committing=true;this.db.exec("COMMIT");committing=false;storageAdmissionRemaining();
       return result;
     } catch (err) {
-      this.db.exec("ROLLBACK");
+      if(admitted&&committing)throw Object.assign(new Error('Slot COMMIT outcome unknown; retained, not replayed'),{code:'STORE_COMMIT_UNKNOWN',cause:err});
+      if(!admitted||this.db.isTransaction)this.db.exec("ROLLBACK");
       throw err;
     }
   }
@@ -160,10 +171,11 @@ export class ResourceSlots {
 
   /** Move live root leases without enforcing capacity: inherited work must keep running. */
   moveJobs(resource: string, names: string[]): void {
+    storageAdmissionRemaining();
     this.transaction(() => {
       for (const row of this.db.prepare("SELECT ticket, id, resource FROM slots WHERE resource LIKE 'root-%'").all()) {
         if (row.resource !== resource && names.some((name) => String(row.id).startsWith(`${name}-`))) {
-          this.db.prepare("UPDATE slots SET resource=? WHERE ticket=?").run(resource, row.ticket!);
+          const update=this.db.prepare("UPDATE slots SET resource=? WHERE ticket=?");storageAdmissionRemaining();update.run(resource,row.ticket!);storageAdmissionRemaining();
         }
       }
     });
