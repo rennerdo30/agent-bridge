@@ -730,7 +730,7 @@ it.each(unsafeAuxiliaryCases)('round5: exact %s %s refuses before unsafe native 
  else if(kind!=='hard-main'&&kind!=='simulated-main-link')writeFileSync(f.file+'-wal','synthetic retained WAL bytes; never passed to native SQLite');
  if(kind==='hard-wal')linkSync(f.file+'-wal',f.file+'.fixture-wal-linked');
  if(kind==='simulated-main-link')simulated=f.file;if(kind==='simulated-sidecar-link')simulated=f.file+'-wal';
- const retained=tree(f.path).filter(path=>path.startsWith(f.file)).map(path=>[path,sha(path)]),opened=transport.nativeOpens.length;
+ const retained=tree(f.path).filter(path=>path.startsWith(f.file)).map(path=>[path,sha(path)] as const),opened=transport.nativeOpens.length;
  if(simulated){const fs=await import('node:fs'),original=fs.lstatSync;vi.spyOn(fs,'lstatSync').mockImplementation(((...args:any[])=>{const value=(original as any)(...args);if(String(args[0])===simulated)Object.defineProperty(value,'isSymbolicLink',{value:()=>true});return value;}) as never);}
  transport.hooks.sqliteOpen=(path:string)=>{if(path===f.file)throw Error('guarded unsafe native constructor attempted; simulated only');};
  let returned:MessageStore|undefined;
