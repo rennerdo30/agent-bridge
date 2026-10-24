@@ -213,8 +213,23 @@ it('retains hardlinked exact-family inputs before native inspection',()=> {
 });
 it('does not reject a rollback journal solely because it exists',()=> {
  const path=home(),file=join(path,'bridge.db');copyFileSync('test/fixtures/sqlite-upgrade/v0.29.14/bridge.db',file);
- writeFileSync(file+'-journal','synthetic nonhot original');const before=fileState(path);
+ // A zeroed journal header represents a committed/nonhot PERSIST journal.
+ // Arbitrary nonzero bytes do not prove that condition (retained separately).
+ const journal=Buffer.alloc(1024);writeFileSync(file+'-journal',journal);
+ expect(readFileSync(file+'-journal').subarray(0,28)).toEqual(Buffer.alloc(28));
+ const before=fileState(path);
  expect(inspectMailbox(file,db=>db.prepare('PRAGMA user_version').get()!.user_version)).toBe(7);
+ expectInspectionPreserved(path,file,before);
+});
+it('retains arbitrary nonzero journal as ambiguous readonly refusal',()=> {
+ const path=home(),file=join(path,'bridge.db');copyFileSync('test/fixtures/sqlite-upgrade/v0.29.14/bridge.db',file);
+ const journal=Buffer.from('synthetic nonhot original');expect(journal.length).toBe(25);
+ expect(createHash('sha256').update(journal).digest('hex')).toBe('c1f7df91d40a823d391c20bdcfa2f3378dbe74a5b20f59d4aa5a72131cfcff66');
+ writeFileSync(file+'-journal',journal);const before=fileState(path),opens=transport.nativeOpens.length;
+ // Preserve the observed ambiguous refusal, without claiming a hot-journal
+ // proof or a particular extended SQLite error code from arbitrary bytes.
+ expect(()=>inspectMailbox(file,db=>db.prepare('PRAGMA user_version').get())).toThrow(/readonly database/);
+ expect(transport.nativeOpens.slice(opens)).toEqual([{file,readOnly:true}]);
  expectInspectionPreserved(path,file,before);
 });
 it('propagates mocked READONLY_ROLLBACK without repair, checkpoint or writable retry',()=> {
