@@ -10,7 +10,7 @@ import { afterEach, beforeAll, expect, it, vi } from 'vitest';
 const transport = vi.hoisted(()=>({active:'',protocol:0,writes:[] as string[],nativeOpens:[] as {file:string;readOnly:boolean}[],hooks:{} as Record<string,any>}));
 vi.mock('node:fs',async original=>{
  const fs=await original<Record<string,any>>(),wrapped={...fs};
- for(const name of ['openSync','readFileSync','writeFileSync','renameSync','mkdirSync','statSync'])wrapped[name]=(...args:any[])=>{const value=fs[name](...args);transport.hooks.fs?.(name,args[0]);return value;};
+ for(const name of ['openSync','readFileSync','writeFileSync','appendFileSync','copyFileSync','renameSync','mkdirSync','statSync'])wrapped[name]=(...args:any[])=>{const value=fs[name](...args);transport.hooks.fs?.(name,args[0]);return value;};
  return wrapped;
 });
 vi.mock('node:tls',async original=>({...await original<object>(),createServer:(...args:any[])=>{if(!transport.hooks.tls)throw Error('native TLS forbidden');return transport.hooks.tls(...args);},connect:()=>{throw Error('native TLS connection forbidden');}}));
@@ -59,7 +59,7 @@ vi.mock('node:net',async original=> {
 });
 
 import { MessageStore, openMessageStore } from '../src/core/store.js';
-import { metadataDb, closeMetadataDbs, migrateMessagingHome } from '../src/core/metadata-db.js';
+import { metadataDb, closeMetadataDbs, migrateMessagingHome, retainMetadataReader } from '../src/core/metadata-db.js';
 import { assertCurrentMailboxEnvelope, preflightMessagingHome, inspectMailbox } from '../src/core/mailbox-layout.js';
 import { configureSqlite, assertSqliteAuthority } from '../src/core/sqlite-policy.js';
 import { admissionSqliteBusy, storageAdmissionTimeout, withStorageAdmission } from '../src/core/storage-admission.js';
@@ -78,7 +78,7 @@ import { JobRunners } from '../src/mcp/job-host.js';
 import { RootConcurrency } from '../src/core/root-concurrency.js';
 import { openHistoryStore } from '../src/core/history-store.js';
 import { nullLogger } from '../src/core/logger.js';
-import { PROTOCOL_VERSION } from '../src/core/constants.js';
+import { PROTOCOL_VERSION, APP_VERSION } from '../src/core/constants.js';
 import { SQLITE_STORE_VERSION, METADATA_COMPONENT_VERSION } from '../src/core/store-version.js';
 import { CONVERSATION_MIGRATION } from '../src/core/conversation-schema.js';
 
@@ -466,7 +466,12 @@ it.each([false,true])('review7: resumes two alternates only with same-attempt co
  const options={source:f.source,destination:f.destination,mailboxes:names,apply:true,offlineIsolated:true};await expect(migrateMessagingHome(options)).rejects.toThrow();expect(interrupted).toBe(true);
  const coordinator=database(join(f.destination,'bridge.db')),attempt=JSON.parse(String(coordinator.prepare("SELECT value FROM bridge_metadata WHERE domain='messaging-migration'").get()!.value));coordinator.close();
  if(tamper){const changed=database(join(f.destination,'alpha.db'));changed.exec("UPDATE bridge_metadata SET value='tampered' WHERE domain='synthetic-retained'");changed.close();await expect(migrateMessagingHome(options)).rejects.toThrow();}
- else {await migrateMessagingHome(options);for(const name of names){const db=database(join(f.destination,name));expect(db.prepare('SELECT state,attempt FROM messaging_candidate').get()).toMatchObject({state:'ready',attempt:attempt.id});assertCurrentMailboxEnvelope(db);}expect(alphaCommits).toBe(1);}
+ else {await migrateMessagingHome(options);for(const name of names){const file=join(f.destination,name),db=database(file);expect(db.prepare('SELECT state,attempt FROM messaging_candidate').get()).toMatchObject({state:'ready',attempt:attempt.id});assertCurrentMailboxEnvelope(db);db.close();
+  const opened=new MessageStore(file,nullLogger);opened.close();const reopened=new MessageStore(file,nullLogger);expect((reopened as any).db.prepare("SELECT version FROM bridge_components WHERE name='metadata'").get()!.version).toBe(7);expect((reopened as any).db.prepare("SELECT 1 FROM sqlite_master WHERE name='bridge_imports'").get()).toBeTruthy();reopened.close();}
+  await migrateMessagingHome(options);expect(alphaCommits).toBe(1);
+  const accepted=new MessageStore(join(f.destination,'alpha.db'),nullLogger);accepted.markPeerSeen('synthetic-newer-destination-work',123);accepted.close();const changed=sha(join(f.destination,'alpha.db'));
+  await expect(migrateMessagingHome(options)).rejects.toThrow('completion proof');expect(sha(join(f.destination,'alpha.db'))).toBe(changed);const retained=database(join(f.destination,'alpha.db'));expect(retained.prepare("SELECT seen_at FROM peer_last_seen WHERE name='synthetic-newer-destination-work'").get()!.seen_at).toBe(123);expect(alphaCommits).toBe(1);
+ }
  expect(names.map(name=>sha(join(f.source,name)))).toEqual(originals);expect(sha(join(f.source,'bridge.db'))).toBe(f.original);
 });
 it('review7: Windows mailbox aliases resolve one physical role and missing names refuse',async()=> {
@@ -667,4 +672,27 @@ it('round3: unchanged alternate main cannot bypass committed WAL completion proo
  expect(sha(target)).toBe(attempt.snapshots[name]);expect(lstatSync(target+'-wal').size).toBeGreaterThan(0);const before=fileState(f.source),mainHash=sha(target),walHash=sha(target+'-wal'),snapshots=tree(join(f.destination,'.migration-snapshots')).map(file=>[file,sha(file)]);
  await expect(migrateMessagingHome(options)).rejects.toThrow('completion proof');expect(commits).toBe(1);expect(sha(target)).toBe(mainHash);expect(sha(target+'-wal')).toBe(walHash);expect(fileState(f.source)).toEqual(before);for(const [file,hash]of originals)expect(sha(file)).toBe(hash);expect(tree(join(f.destination,'.migration-snapshots')).map(file=>[file,sha(file)])).toEqual(snapshots);
  held!.exec('ROLLBACK');held!.close();
+});
+
+it.each(['peers','presence','own-presence','read-state','import','legacy-backup','success'] as const)('round4: actual adoption bounds every next effect after late %s',async phase=>{
+ vi.useFakeTimers();const f=candidate(),meta=metadataDb(f.path),release=retainMetadataReader(f.path);closes.push(release);const normal=meta.prepare('PRAGMA busy_timeout').get()!.timeout;
+ if(phase!=='legacy-backup')meta.exec("INSERT INTO bridge_components VALUES ('import:storage-capabilities',1),('repair:import-times:storage-capabilities',1)");
+ if(phase!=='import')meta.exec("INSERT INTO bridge_components VALUES ('import:read-state',1)");
+ const journal=join(f.path,'read-state',createHash('sha256').update('name:synthetic').digest('hex')+'.jsonl');if(phase==='import'){mkdirSync(join(f.path,'read-state'));writeFileSync(journal,JSON.stringify({ids:['synthetic-read'],at:1})+'\n');}
+ const legacy=join(f.path,'storage-capabilities',process.pid+'.json');if(phase==='legacy-backup'){mkdirSync(join(f.path,'storage-capabilities'));writeFileSync(legacy,JSON.stringify({schemaVersion:1,pid:process.pid,name:'old-synthetic',version:'0.29.13',explicit:false,json:4,sqlite:7}));}
+ const originalJournal=phase==='import'?sha(journal):undefined,originalLegacy=phase==='legacy-backup'?sha(legacy):undefined,prepare=DatabaseSync.prototype.prepare,after:string[]=[],requests:string[]=[];let late=false,reads=0;
+ const expire=()=>{late=true;vi.setSystemTime(Date.now()+10_001);};
+ vi.spyOn(DatabaseSync.prototype,'prepare').mockImplementation(function(this:DatabaseSync,sql:string){const statement=prepare.call(this,sql);return new Proxy(statement,{get(target,key){const value=Reflect.get(target,key,target);if(typeof value!=='function')return value;return(...args:unknown[])=>{if(late&&(key==='run'||/INSERT|UPDATE|DELETE|CREATE/i.test(sql)))after.push(sql);const result=value.apply(target,args);
+  if(!late&&key==='run'&&sql.startsWith('INSERT INTO bridge_metadata VALUES')&&args[0]==='storage-capabilities'&&((phase==='presence')||(phase==='own-presence'&&requests.includes('hello'))))expire();
+  if(!late&&phase==='read-state'&&key==='all'&&sql.startsWith('SELECT message_id FROM bridge_read_receipts')&&++reads===2)expire();return result;};}}) as never;});
+ transport.hooks.fs=(operation:string,path:unknown)=>{if(!late&&phase==='import'&&operation==='appendFileSync'&&String(path).includes('bundles'))expire();if(!late&&phase==='legacy-backup'&&operation==='copyFileSync'&&path===legacy)expire();};
+ const client=Object.assign(new EventEmitter(),{isClosed:false,close:vi.fn(function(this:{isClosed:boolean}){this.isClosed=true;}),request:vi.fn(async(op:string)=>{requests.push(op);if(op==='peers'){if(phase==='peers')expire();return phase==='own-presence'||phase==='read-state'||phase==='import'||phase==='success'?[]:[{pid:process.pid,name:'synthetic-first',version:phase==='legacy-backup'?'0.29.13':APP_VERSION},{pid:process.pid+1,name:'synthetic-next',version:APP_VERSION}];}if(op==='ping')return{brokerVersion:APP_VERSION};if(op==='hello')return{name:'synthetic-adopted',brokerPid:process.pid,sessionId:'synthetic-session'};return{};})});
+ const node=new BridgeNode({pipePath:'synthetic-round4',token:'synthetic-only',dbPath:join(f.path,'bridge.db'),agent:'other',name:'synthetic',cwd:f.path,autoWake:false,log:nullLogger}),budget=new StartupBudget();(node as any).startupBudget=budget;closes.push(()=>budget.close());const connected=vi.fn();node.on('connected',connected);
+ try{const result=(node as any).adopt(client) as Promise<void>;
+  if(phase==='success'){await result;expect(connected).toHaveBeenCalledOnce();budget.abort();client.emit('event','peer_joined',{pid:process.pid,name:'synthetic-serving',version:APP_VERSION});expect(node.isConnected).toBe(true);expect(meta.prepare('PRAGMA busy_timeout').get()!.timeout).toBe(normal);}
+  else{await expect(result).rejects.toThrow();expect(late).toBe(true);expect(client.isClosed).toBe(true);expect(node.isConnected).toBe(false);expect(connected).not.toHaveBeenCalled();expect(after).toEqual([]);expect(meta.isTransaction).toBe(false);expect(meta.prepare('PRAGMA busy_timeout').get()!.timeout).toBe(normal);
+   if(phase==='import'){expect(sha(journal)).toBe(originalJournal);expect(meta.prepare('SELECT * FROM bridge_imports').all()).toEqual([]);}
+   if(phase==='legacy-backup'){expect(sha(legacy)).toBe(originalLegacy);expect(tree(f.path).some(path=>path.startsWith(legacy+'.backup-'))).toBe(true);expect(tree(f.path).some(path=>path.startsWith(legacy+'.')&&path.endsWith('.tmp'))).toBe(false);}
+   await vi.advanceTimersByTimeAsync(0);expect(connected).not.toHaveBeenCalled();expect((node as any).pendingRefreshTimer).toBeNull();}
+ }finally{await node.stop();}
 });
