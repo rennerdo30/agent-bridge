@@ -350,6 +350,8 @@ class Link {
       const sender = this.peers.find((p) => p.id === from.id && p.name === from.name);
       if (!sender || (sender.jobAgent ?? sender.agent) !== from.agent) throw new Error("sender not advertised by paired instance");
       if (frame.type === "send" && frame.message.senderOwner !== recipientKey(sender.frontend, sender.nativeOwner)) throw new Error("Sender ownership changed or is unproven.");
+      if (frame.type === "send" && (sender.frontend || frame.destination?.frontend) && (!this.t3ThreadRouting || !frame.destination))
+        throw new Error("Paired host lacks T3 thread routing or exact hosted destination; no payload or native fallback was dispatched.");
       if (!sender.mailboxNamespace) throw new Error("Sender store namespace is unproven");
       const remote = this.remote!;
       if (frame.type === "files") {
@@ -728,11 +730,14 @@ export class NetworkService {
     }
     if (!this.broker.pinDestination && (sender?.frontend || destination?.frontend)) throw new BridgeError("protocol_mismatch", "Durable remote destination storage is unavailable; no hosted send was dispatched.");
     const senderOwner = sender ? recipientKey(sender.frontend, sender.nativeOwner) : null;
-    if (!senderOwner) throw new BridgeError("unauthorized", "Native sender identity is unproven.");
+    if (!senderOwner || message.senderOwner !== senderOwner || !sender?.mailboxNamespace ||
+        !sameMailbox(message.senderMailbox, { kind: "local", namespace: sender.mailboxNamespace }) ||
+        sender.name !== message.from.name || (sender.jobAgent ?? sender.agent) !== message.from.agent)
+      throw new BridgeError("unauthorized", "Original sender ownership, principal or namespace disagrees with the current advertisement; retained payload was withheld.");
     if (!destination?.mailboxNamespace) throw new BridgeError("unknown_target","Exact destination store namespace is unproven");
     const proposed: RemoteDestination = { hostId: link.remote!.id, hostFingerprint: link.remote!.fingerprint, mailboxNamespace:destination.mailboxNamespace,
       name: target, ...(destination?.frontend ? { frontend: destination.frontend } : { native: destination?.nativeOwner }) };
-    message = { ...message, senderOwner, recipientMailbox: { kind: "remote", hostId: proposed.hostId, hostFingerprint: proposed.hostFingerprint, namespace:proposed.mailboxNamespace },
+    message = { ...message, recipientMailbox: { kind: "remote", hostId: proposed.hostId, hostFingerprint: proposed.hostFingerprint, namespace:proposed.mailboxNamespace },
       recipientFrontend: undefined, recipientNative: undefined, recipientAmbiguous: undefined,
       ...(destination?.frontend ? { recipientFrontend: destination.frontend } : destination ?
         { recipientNative: destination.nativeOwner, ...(!destination.nativeOwner ? { recipientAmbiguous: true as const } : {}) } :
@@ -759,10 +764,13 @@ export class NetworkService {
     // tracked sends have already atomically committed this pin with their intent.
     const pinned = this.broker.pinDestination?.(prepared.message, prepared.destination) ?? prepared;
     this.prepareSend(prepared.message, pinned.destination);
-    if (pinned.message.senderOwner !== prepared.message.senderOwner) throw new BridgeError("unauthorized", "Original sender ownership changed; retained payload was withheld.");
+    if (pinned.message.senderOwner !== prepared.message.senderOwner || !sameMailbox(pinned.message.senderMailbox, prepared.message.senderMailbox))
+      throw new BridgeError("unauthorized", "Original sender ownership or namespace changed; retained payload was withheld.");
     const { link, target } = this.target(message.recipient);
     const destination = link.peers.find(peer => peer.name === target);
-    message = { ...pinned.message, from: message.from, senderOwner: prepared.message.senderOwner };
+    // A reconnect can advertise a new transport ID only for the same retained
+    // typed owner/namespace; it cannot relabel the original owner between copies.
+    message = { ...pinned.message, from: message.from };
     // Advertise a just-reconnected sender before the receiver authenticates its frame.
     link.refresh();
     const result = await link.send({ ...message, recipient: target }, destination ?
