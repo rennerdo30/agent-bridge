@@ -315,23 +315,30 @@ it('preserves INTEGER PRIMARY KEY aliases, shadowed rowids and WITHOUT ROWID val
   [{a:'synthetic key',b:9007199254740997n,payload:blob,nullable:null}],
  ]);
  source.close();const original=sha(join(f.source,'bridge.db'));
- const diagnostic=process.env.AB458_SLICE1_INVENTORY_DIAGNOSTIC==='1';
- const inventoryState=()=>readdirSync(f.source).sort().map(path=>{
-  const file=join(f.source,path),stat=lstatSync(file,{bigint:true});
-  const role=path==='bridge.db'?'sqlite':path==='bridge.db-wal'?'wal':path==='bridge.db-shm'?'excluded-coordination':'retainedUnknown';
-  return {path,role,bytes:Number(stat.size),identity:`${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`,
-   sha256:['bridge.db','bridge.db-wal','bridge.db-shm'].includes(path)&&stat.isFile()?sha(file):undefined};
- });
- const before=diagnostic?inventoryState():undefined;
- try {await migrateMessagingHome({source:f.source,destination:f.destination,apply:true,offlineIsolated:true});}
- catch(error) {
-  if(before)console.log('SLICE1_INVENTORY_DIAGNOSTIC '+JSON.stringify({before,after:inventoryState()}));
-  throw error; // Diagnostic preserves the original failure; no retry/repair.
- }
+ await migrateMessagingHome({source:f.source,destination:f.destination,apply:true,offlineIsolated:true});
  const migrated=database(join(f.destination,'bridge.db'));
  expect(read(migrated)).toEqual(expected);
  expect(migrated.prepare("SELECT name,sql FROM sqlite_master WHERE name LIKE 'binding_%' ORDER BY name").all()).toEqual(schema);
  expect(sha(join(f.source,'bridge.db'))).toBe(original);assertCurrentMailboxEnvelope(migrated);
+});
+it('refuses a real committed WAL change after planning and retains its durable input identity',async()=> {
+ const f=shipping(),file=join(f.source,'bridge.db'),writer=database(file);
+ writer.exec("PRAGMA wal_autocheckpoint=0; INSERT INTO bridge_metadata VALUES ('synthetic-wal-change','before','retained',1)");
+ const holder=new DatabaseSync(file,{readOnly:true,timeout:0});closes.push(()=>{if(holder.isOpen)holder.close();});
+ holder.exec('BEGIN');holder.prepare('SELECT * FROM bridge_metadata').all();writer.close();
+ const plan=await migrateMessagingHome({source:f.source,destination:f.destination}),wal=file+'-wal',originalWal=readFileSync(wal);
+ const stat=lstatSync(wal,{bigint:true});expect(stat.size).toBeGreaterThan(0n);
+ expect(plan.inputs.find(input=>input.path==='bridge.db-wal')).toEqual({path:'bridge.db-wal',role:'wal',bytes:Number(stat.size),
+  identity:`${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`,sha256:sha(wal)});
+ const originalMain=sha(file),identity=await import('../src/core/process-identity.js');let changed=false;
+ vi.spyOn(identity,'ownProcessIdentity').mockImplementation(async()=>{
+  const external=database(file);external.exec("PRAGMA wal_autocheckpoint=0; INSERT INTO bridge_metadata VALUES ('synthetic-wal-change','after','not admitted',2)");external.close();
+  changed=true;return '638968000000000000';
+ });
+ await expect(migrateMessagingHome({source:f.source,destination:f.destination,apply:true,offlineIsolated:true})).rejects.toThrow('Source changed after planning');
+ expect(changed).toBe(true);expect(existsSync(f.destination)).toBe(false);expect(sha(file)).toBe(originalMain);
+ expect(sha(wal)).not.toBe(plan.inputs.find(input=>input.path==='bridge.db-wal')!.sha256);
+ expect(readFileSync(wal).subarray(0,originalWal.length)).toEqual(originalWal);
 });
 it.each(['snapshot','committed-ddl'])('resumes one immutable interrupted attempt after %s, retaining all originals',async boundary=> {
  const f=shipping(),exec=DatabaseSync.prototype.exec,prepare=DatabaseSync.prototype.prepare;let injected=false;

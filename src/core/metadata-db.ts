@@ -588,7 +588,12 @@ function messagingMigrationInventory(home: string, mailboxes: string[]) {
   }
  };
  walk('',0,false);
- const inputs = paths.sort((a,b)=>a.path.localeCompare(b.path)).map(({path,role})=>migrationInput(home,path,role));
+ // Normal read-only SQLite may create an empty exact WAL for coordination.
+ // Validate it through the same stable descriptor/hash read, then exclude only
+ // that zero-byte coordination file from durable identity. Never remove it.
+ // Nonempty WAL and every other input keep their exact identity/size/hash.
+ const inputs = paths.sort((a,b)=>a.path.localeCompare(b.path)).map(({path,role})=>migrationInput(home,path,role))
+  .filter(input=>input.role!=='wal' || input.bytes!==0);
  return {inputs,retainedUnknown};
 }
 
