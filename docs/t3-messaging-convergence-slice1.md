@@ -1,4 +1,4 @@
-> Latest: the parent's full review of17045adf required seven corrections. One coherent batch is frozen at `80fcb10732cd1f11b9e35500c3003f654f148dd3`; noEmit and the whole guarded slice1 file passed (64/64, including15 review cases). An intentional red run on unchanged17045 production reproduced all seven findings. New exact protected artifacts include the startServices delta; baselines remain unamended. The candidate awaits the parent's new full source/protected review and hosted Node24/platform gates. Earlier red/green freezes below remain separate evidence.
+> Latest: round2 deadline batch is frozen at `515bce87cee55fa7c9402ad9f11ff09078a1c872`. NoEmit passed; the whole guarded file stopped at77 passed/1 failed, with4 cases unaccepted. The failure is a production no-admission constructor call passing explicit undefined as SQLite options; moveJobs was not reached. Both corrected allowances are spent and source/test edits stopped. The complete pre-test operation audit, approved seams and exact regenerated protected packet are retained. Prior seven stated cases remain closed by the parent and all earlier red/green freezes remain separate evidence; this round2 WIP is not review-ready/accepted.
 
 # AB-458 convergence slice1 WIP receipt
 
@@ -812,3 +812,70 @@ Retention audit qualification after the first artifact push: the intentionally b
 Parent reviewed bb1f59ee, closed the prior seven stated cases and required history, network and Muse deadline closure. Before regression/source edits, the complete operation audit was written to `.agent-bridge-test/slice1-startup-round2/operation-audit.md`. Its compact table covers entry/await/native phase, next effect/check, exact cancellation owner and cleanup across MessageStore/history, native recovery, optional maintenance, mandatory handoff/slot replay, endpoint binds, pairing ACL, transfer recovery, remote-runner retention, TLS/discovery and TCP/Muse publication. Extra constructor/archive/slot seams received explicit parent approval before source edits. No remaining policy fork is presumed approved beyond those exact paths.
 
 The audit distinguishes mandatory synchronous ownership replay BEFORE activation from optional long-lived maintenance AFTER activation. Existing routePendingJobMail is a void/catch-deferred startup call with hello/register retries and durable pending mail, so its retrying work remains maintenance; it does not replace required root-slot ownership replay. Optional producers retain broker lifetime/stop ownership after activation and do not retain an expiring startup closure. The original budget is propagated; no renewed deadline, new authority, worker architecture, quota/retention/security redesign or baseline amendment is authorized.
+
+## Round2 deadline closure batch: stopped verification and preserved WIP
+
+Parent approved the named history/lock, TLS/discovery and Muse publication closure, then explicitly approved endpoint-reservation, pairing/transfer constructors, remote-runner constructor/archive and RootConcurrency/ResourceSlots constructor/moveJobs check-only seams. Optional long-lived maintenance may start after serving activation; mandatory ownership replay must finish synchronously before activation. No runner/slot/ACL/retention design, authority, version, policy default or baseline change was authorized.
+
+### Audit and source freezes
+
+Complete pre-test audit: `.agent-bridge-test/slice1-startup-round2/operation-audit.md`, SHA256 `a50547f9a25674aba60f74228da94a3ca344bf253a04fe3af0c85db2ac796d8a`. It was created/last written at2026-10-24 10:59:01.605 JST, before test/source edits. The tracked audit receipt commit is `a3b6ea32bfded58b421a86ae23e2f282880011dc`, tree `8f73400b6d0f35edeb53b362acfd7ea3b9d42e89`. Its compact entry/await/native-phase, next effect/check, cancellation-owner and cleanup table includes every named constructor and mandatory moveJobs edge. `audit-manifest.json` binds that unchanged table to this source packet. Parent scope decisions precede implementation; no further unapproved callee is treated as authorized.
+
+Reviewed continuation: `bb1f59ee103f6c41a0e7435a2c01608723c50a1f`, tree `9a286ef7d91b9cefcabddbb2653c9288a28e3643`. Original main/design and the same worktree/branch remain unchanged. Intentional red freeze: `caac15e0df85a60091b34c0ed009b33cad30989d`, tree `dce43ea008460b349932c9e22a397cece653e795`; production `src` is identical to bb1f. That freeze contains the audit receipt and test edits only. Red test SHA256 `b0292d20550828dcf14c91a10810879fb3f44b3ced9eaaa9be1e46b9750c2db2`.
+
+One red selection `^round2:.*$` ran once: **14 failed/64 skipped (78 registered)**. All14 original deadline counterexamples reached their intended failure, without a fixture-error classification: independent history lock wait; subsequent version/COMMIT after late schema; late-commit handle escape; pending endpoint/TLS/discovery nonsettlement; late protection write/missing signal; ACL/transfer next effects; runner archive catch; late slot schema; and maintenance before activation. Additional source-batch regressions cover an interface bind, actual moveJobs, delayed TCP and mandatory replay refusal; these four were not separately claimed as red-proven.
+
+Corrected source freeze: `515bce87cee55fa7c9402ad9f11ff09078a1c872`, tree `f70591f0485f6beacd79241a3f69b2f75a94a289`, source directory tree `8c3a935eacc57353d2bd85c743d68487082cbb71`. Test SHA256 `c1f67500559dd919db558876d809c01421b2f349beefa6fadf2eac2ccad7a9c8`. The batch changes21 production files and the focused file, all within original/explicitly extended scope; the final manifest lists every path against main and bb1f. No source/test change occurred after the failed corrected gate. Later receipt commits are artifacts only.
+
+### Implemented callgraph closure and three-finding status
+
+| Finding | Implemented in frozen source | Accepted focused evidence | Remaining/blocking evidence |
+| --- | --- | --- | --- |
+| F1 P1 actual history initializer/lock | Original admission checks before next configuration/view/schema/version/COMMIT and return; admitted lock refuses busy without legacy wait/foreign probe; exact owned rollback/close; successful late COMMIT data retained. Root/slot constructor and moveJobs checks/temporary busy policy are plumbed through the mandatory ownership scope | Busy lock, late history schema, late history COMMIT and admitted slot-constructor cases PASS | Actual moveJobs case fails before its body: no-admission ResourceSlots passes explicit undefined to SQLite constructor. Same call pattern exists in RootConcurrency. Ordinary caller compatibility is broken; this is not a fixture defect |
+| F2 P1 network/listen/discovery | Original signal/remaining through endpoint, TLS/listener/interface binds and owned late cleanup. Pairing ACL helpers join callback/close; transfer recovery checks each next effect and defers maintenance. Required ownership replay is before activation; optional starts have broker-lifetime ownership | Endpoint, TLS, discovery listener/interface, ACL, transfer and runner-constructor deadline cases PASS | Valid/expired broker maintenance cases, delayed TCP and mandatory-replay refusal NOT RUN after bail; whole activation path remains unaccepted |
+| F3 P2 Muse protection/publication | Original signal/remaining before helper, stdin, new staging write and rename; exact helper PID/reference retained through actual close. Identity/previous-record preparation joins settlement; failed-start descriptor cleanup uses guarded async inspection | Late-protection no-write and helper-close-join cases PASS with fake helper | Delayed TCP/full descriptor-publication case NOT RUN; native DPAPI/helper/TLS behavior is not locally accepted |
+
+Optional startup work is scheduled by one owned `setImmediate` check-phase handle after activation. It introduces no time delay, deadline or new interval; the existing worker/timer starts and constants remain. The handle is cancelled on abort/close, runs once under broker lifetime flags and captures no expiring startup budget. This lets the required startup result settle before optional constructors can run. Required synchronous applyHandoffs runs under the original admission scope immediately before activation; root-slot ownership is never classified as optional. Deferred retrying routePendingJobMail remains distinct because it was already void/catch-deferred and retriggered by hello/register with durable pending mail.
+
+Pairing startup uses the same ACL commands/security checks, through owned asynchronous children bounded by original remaining time and cancellation; ordinary no-budget initialization retains its synchronous path. Transfer startup retains partial data and starts no timer/resume before successful serving. Endpoint/TLS listen cancellation uses an owned controller forwarding original cancellation only while bind is pending, so an old startup signal cannot later disable serving. Discovery cancellation joins actual bind/refresh/close outcomes; a thrown close on a pending bind is not fabricated as completed cleanup. No new helper/process is launched by the tests.
+
+The alternate-resume spy now remains active through resume. Both prior alternate cases passed among the64 prior cases on this freeze, including the no-repeat COMMIT counter; the old counter qualification remains historical evidence rather than being erased. This does not change candidate data, proofs or pin baselines.
+
+### Exact gate results, failure and allowances
+
+| Check | Own wrapper/shell/check PID | JST start–end | External deadline/result |
+| --- | --- | --- | --- |
+| Intentional unchanged-production red |9960/74864/80684 |2026-10-24 11:06:27.022–11:06:29.301 |60000ms;2279ms;exit1;no timeout |
+| noEmit |47980/67996/31268 |2026-10-24 11:30:20.070–11:30:21.336 |60000ms;1266ms;exit0;no timeout |
+| Whole guarded slice1 file |20400/24120/56788 |2026-10-24 11:30:34.323–11:30:43.671 |60000ms;9348ms;exit1;no timeout |
+
+Raw first headers include exact source/tree/test hashes, PIDs, UTC starts/deadlines and argv. All before/after commit/tree/test hashes matched each freeze. Corrected whole-file result: **77 passed/1 failed (82 registered),4 unaccepted**. Source noEmit passed; it did not detect the native constructor call-shape error.
+
+```text
+FAIL round2: mandatory moveJobs rolls back when its actual SQL preparation finishes late
+TypeError: The "options" argument must be an object.
+  at Object.construct test/messaging-convergence-slice1.test.ts:23:18
+  at new ResourceSlots src/core/resource-slots.ts:35:58
+  at new RootConcurrency src/core/root-concurrency.ts:21:18
+  at test/messaging-convergence-slice1.test.ts:586:32
+```
+
+The test's SQLite proxy simply forwards constructor arguments; the production expression supplies `undefined` explicitly as argument2 when no admission exists. Node26 rejects that call. The old ordinary call omitted argument2. RootConcurrency contains the same new expression, although ResourceSlots fails first. The test is valid ordinary construction for a later guarded moveJobs call; the failure must not be hidden by changing the proxy or labeling it a fixture problem. The late SQL phase was not reached.
+
+Four NOT RUN/unaccepted cases: `actual broker starts optional services only after valid activation expire=false`, the corresponding `expire=true`, `delayed TCP startup cancels without creating maintenance or publishing a descriptor`, and `mandatory ownership failure cannot be downgraded to optional maintenance` (all have the `round2:` prefix). All64 prior cases passed on this corrected source, but there is no82-case final-head pass claim. Both renewed corrected allowances are spent; no automatic retry, source correction or other verification launch followed failure. All owned check processes exited.
+
+Actual version query inside allowed process56788: Node `v26.4.0`, SQLite `3.53.2`, source ID `2026-06-03 19:12:13 d6e03d8c777cfa2d35e3b60d8ec3e0187f3e9f99d8e2ee9cac695fd6fcdf1a24`. Hosted Node24/exact-platform behavior remains mandatory/NOT RUN. No installation, PATH change or separate native/helper/version probe occurred.
+
+### Exact protected/artifact packet
+
+New packet root: `E:/AgentData/claude-codex-comm/t3-6416720d/.agent-bridge-test/slice1-startup-round2`. All prior source/artifact freezes and raw receipts remain retained with their qualifications. The unchanged actual normalizer regenerated all13 bodies against main and bb1f. Relative to bb1f, five protected bodies changed: broker.listen/startServices/abortStartup/close and node.tryBecomeBroker. Cumulative main comparison is now **7 changed/6 unchanged**, not the prior5/8. Baselines remain unamended; these artifacts propose exact deltas and do not imply protected-gate approval.
+
+- Protected manifest SHA256 `a2783b5e691a0fc27ef3ac5e111e91384437a7bd7ffe4a4c775ff8ba6c4e44e8`.
+- Main-to-source readable patch SHA256 `5243140a3a78fb0b00aa3206650071bcf7573b238ebb6cc1bed399cc13e6646e`.
+- bb1f-to-source readable patch SHA256 `6c779c0b787709143a5423dbbd58a6f1841c40cdf6fd1a56589d7e9bbed5113e`.
+- Normalized JSON patch SHA256 `bdba2fa28cb78f944c549ed9a385b3ed839c0558ddaeec9e1c9539a09550f132`.
+- Full source/test patch SHA256 `b1ecf418ac93cd913cac797ca3283ea407c0d2ee57ec07e10779d0c8100a2f73`; three-finding closure matrix SHA256 `f9de521dc27248430d423b620828b1ee787dd42fb0424b873e14de53442f1949`.
+
+Baseline, actual UI src/cli/ui.ts, normalizer, retention guard and flaky files are unchanged. Protected tests were NOT RUN/amended. Static packet writer PID70040/shell25264,11:33:16.987–11:33:18.089 JST,external10s,exit0. Final receipt-only public-identity commit/push and full source/artifact retained inventory follow and are reported in the parent handoff. No new PR, agent/Bridge call, live-home migration, native provider/Worker/helper/TLS, full suite/build/install/cache wipe/release or PR141/c94/writer modification occurred.
+
+**Parent decision needed:** correct only the two no-admission constructor expressions to omit the options argument, preserve this red freeze, then authorize a fresh failed-plus-unaccepted selection and noEmit. Until then the source is WIP, not ready for the new independent full review/protected gate or later slices. No additional policy/architecture fork is proposed.
