@@ -8,7 +8,7 @@ configuration. Values from 1 through the hard ceiling 3 are accepted. The top
 session is depth 0. At the default, its children may start children; depth 2
 sessions cannot spawn another generation.
 
-Delegated supervisors expose local `spawn_*`, `ask_*`, `message_subagent` and
+Delegated supervisors expose local `spawn`, `ask`, `message_subagent` and
 `cancel_subagent` tools through a private coordinator. They retain their existing
 parent/sibling messaging restrictions. They cannot change the root concurrency
 limit or gain independent-session bridge privileges. Nested remote delegation is
@@ -28,7 +28,7 @@ hook waits for children or asks it to cancel them before ending.
 Approvals first go to the direct parent. If the decision requires the owner, that
 parent calls `decide(approval_id=<request>, decision="escalate")`. This forwards the
 same AB-81 pending request up the parent links; it does not allow or deny it.
-Blocking nested `ask_*` calls escalate automatically because the direct parent
+Blocking nested `ask` calls escalate automatically because the direct parent
 cannot answer while blocked. The top supervisor can answer with `decide(approval_id=<request>, decision="allow" or "deny")`; the dashboard answers
 the same callback. First answer wins. Timeouts, cancellation and completion deny
 and remove unresolved waits. Plain messages remain instructions, even during an approval wait.

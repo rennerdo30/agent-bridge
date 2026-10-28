@@ -211,14 +211,14 @@ createInterface({input:process.stdin}).on('line',line=>{
     const old = await codexSession("codex-yield");
     const watcher = env.node("watcher", "other");
     await watcher.start();
-    const runner = await old.call("spawn_codex", { prompt: `release=${join(env.home, "runner-release")} runner work`, title: "Runner work", sandbox: "danger-full-access" });
+    const runner = await old.call("spawn", { agent: "codex", prompt: `release=${join(env.home, "runner-release")} runner work`, title: "Runner work", sandbox: "danger-full-access" });
     expect(runner.error, runner.text).toBe(false);
     const runnerName = /codex-job-[a-f0-9]+/.exec(runner.text)![0], runnerId = runnerName.split("-").at(-1)!;
     runnerIds.push(runnerId);
     await until(() => Boolean(readRunnerState(env.home, runnerId)?.pid && readRunnerState(env.home, runnerId)?.live), 60_000, 50);
     const runnerPid = readRunnerState(env.home, runnerId)!.pid!;
     // The blocking ask runs inline, inside the old server.
-    const ask = old.call("ask_codex", { prompt: `release=${join(env.home, "inline-release")} inline work`, title: "Inline work", sandbox: "danger-full-access" }).catch((err) => ({ text: String(err), error: true }));
+    const ask = old.call("ask", { agent: "codex", prompt: `release=${join(env.home, "inline-release")} inline work`, title: "Inline work", sandbox: "danger-full-access" }).catch((err) => ({ text: String(err), error: true }));
     await until(() => stored("codex-ask-")?.status === "running", 30_000, 50);
 
     const registered = (await watcher.peers()).find((p) => p.name === "codex-yield");

@@ -150,9 +150,9 @@ describe.skipIf(!existsSync(SERVER)).each(["claude", "codex"] as const)("dashboa
 
   it("includes a cached model list and the configured default on both delegation tools", async () => {
     const tools = (await client.listTools()).tools;
-    for (const name of ["ask_codex", "spawn_codex"]) {
+    for (const name of ["ask", "spawn"]) {
       const tool = tools.find((t) => t.name === name)!;
-      const description = (tool.inputSchema.properties!.model as { description: string }).description;
+      const description = (tool.inputSchema.properties!.agent as { description: string }).description;
       expect(description).toContain("Default: configured-codex.");
       expect(description).toContain("Available: first-codex, second-codex.");
       expect(tool.inputSchema.properties).toHaveProperty("effort");
@@ -164,7 +164,7 @@ describe.skipIf(!existsSync(SERVER)).each(["claude", "codex"] as const)("dashboa
   });
 
   it("delivers a spawned Codex result to its parent and keeps the requested settings", async () => {
-    const spawned = await call("spawn_codex", { prompt: "wait for parent", title: "Owned Codex package", cwd: home, model: "first-codex", effort: "medium", sandbox: "danger-full-access" });
+    const spawned = await call("spawn", { agent: "codex", prompt: "wait for parent", title: "Owned Codex package", cwd: home, model: "first-codex", effort: "medium", sandbox: "danger-full-access" });
     const job = /Subagent (codex-job-[\da-f]+) started/.exec(spawned)![1]!;
     await waitFor(() => requests().some((r) => r.method === "turn/start"));
     const stored = JSON.parse(readFileSync(join(home, "jobs.json"), "utf8")).jobs.find((j: any) => j.name === job);
@@ -180,10 +180,10 @@ describe.skipIf(!existsSync(SERVER)).each(["claude", "codex"] as const)("dashboa
   }, TEST_TIMEOUT_MS);
 
   it("derives an omitted spawn title, persists it and notes the fallback (AB-111)", async () => {
-    const tool = (await client.listTools()).tools.find((t) => t.name === "spawn_codex")!;
+    const tool = (await client.listTools()).tools.find((t) => t.name === "spawn")!;
     expect(tool.inputSchema.required).not.toContain("title");
     writeFileSync(join(home, "finish-turn"), "finish");
-    const spawned = await call("spawn_codex", { prompt: "\n# Repair the castle gate\nKeep the arch intact.", cwd: home });
+    const spawned = await call("spawn", { agent: "codex", prompt: "\n# Repair the castle gate\nKeep the arch intact.", cwd: home });
     const job = /Subagent (codex-job-[\da-f]+) started/.exec(spawned)![1]!;
     expect(spawned).toContain('Title derived from prompt: "Repair the castle gate".');
     await waitFor(async () => (await call("peers")).includes(`${job} "Repair the castle gate": done`));
@@ -199,7 +199,7 @@ describe.skipIf(!existsSync(SERVER)).each(["claude", "codex"] as const)("dashboa
 
   it("keeps one ask call blocked until its Codex run finishes and returns its identity (AB-74)", async () => {
     let settled = false;
-    const answer = client.callTool({ name: "ask_codex", arguments: { prompt: "wait for completion", title: "Blocking relay", cwd: home } }).then((r) => {
+    const answer = client.callTool({ name: "ask", arguments: { agent: "codex", prompt: "wait for completion", title: "Blocking relay", cwd: home } }).then((r) => {
       settled = true;
       return r;
     });
@@ -221,7 +221,7 @@ describe.skipIf(!existsSync(SERVER)).each(["claude", "codex"] as const)("dashboa
   }, TEST_TIMEOUT_MS);
 
   it("returns the same job and session on a cancelled ask without starting a replacement (AB-74)", async () => {
-    const answer = client.callTool({ name: "ask_codex", arguments: { prompt: "wait for cancellation", title: "Cancelled relay", cwd: home } });
+    const answer = client.callTool({ name: "ask", arguments: { agent: "codex", prompt: "wait for cancellation", title: "Cancelled relay", cwd: home } });
     await waitFor(() => requests().some((r) => r.method === "turn/start"));
     const job = /codex-ask-[\da-f]+/.exec(await call("peers"))![0];
     await call("cancel_subagent", { job });
@@ -234,7 +234,7 @@ describe.skipIf(!existsSync(SERVER)).each(["claude", "codex"] as const)("dashboa
   }, TEST_TIMEOUT_MS);
 
   it("renames a running and a finished Codex job when message_subagent changes its title", async () => {
-    const spawned = await call("spawn_codex", { prompt: "wait for a message", title: "First job title", cwd: home });
+    const spawned = await call("spawn", { agent: "codex", prompt: "wait for a message", title: "First job title", cwd: home });
     const job = /Subagent (codex-job-[\da-f]+) started/.exec(spawned)![1]!;
     await waitFor(() => requests().some((r) => r.method === "turn/start"), TEST_TIMEOUT_MS, "rename first turn started");
     expect(requests().find((r) => r.method === "thread/name/set").params).toEqual({ threadId: "thread-test", name: "First job title" });
@@ -250,7 +250,7 @@ describe.skipIf(!existsSync(SERVER)).each(["claude", "codex"] as const)("dashboa
   }, TEST_TIMEOUT_MS);
 
   it("routes dashboard messages through the owner to a live job and then continues its finished thread", async () => {
-    const spawned = await call("spawn_codex", { prompt: "wait for dashboard input", title: "Dashboard job", cwd: home });
+    const spawned = await call("spawn", { agent: "codex", prompt: "wait for dashboard input", title: "Dashboard job", cwd: home });
     const job = /Subagent (codex-job-[\da-f]+) started/.exec(spawned)![1]!;
     await waitFor(() => requests().some((r) => r.method === "turn/start"));
     ui = await startUi({ home, pipe: resolvePipePath(home, {}), port: 0, log: nullLogger });

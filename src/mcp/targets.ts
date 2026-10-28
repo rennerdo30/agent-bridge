@@ -39,7 +39,7 @@ export interface RelayWiring {
   codexHookTrusted: boolean;
 }
 
-/** Target-specific options accepted by ask_<agent> / spawn_<agent> on top of the common ones. */
+/** Target-specific options accepted by ask / spawn (with agent) on top of the common ones. */
 export interface TargetArgs {
   access?: Access;
   relay?: RelayWiring;

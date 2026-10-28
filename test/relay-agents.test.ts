@@ -3,10 +3,10 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const RELAY_DEFINITIONS = [
-  ["claude", "codex.md", "ask_codex"],
-  ["claude", "opencode.md", "ask_opencode"],
-  ["opencode", "codex.agent.md", "bridge_ask_codex"],
-  ["opencode", "claude.agent.md", "bridge_ask_claude"],
+  ["claude", "codex.md", "ask"],
+  ["claude", "opencode.md", "ask"],
+  ["opencode", "codex.agent.md", "bridge_ask"],
+  ["opencode", "claude.agent.md", "bridge_ask"],
 ] as const;
 
 describe("native relay agent contracts (AB-74)", () => {

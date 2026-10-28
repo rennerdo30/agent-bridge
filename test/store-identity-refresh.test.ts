@@ -33,7 +33,7 @@ vi.mock("node:child_process", async original => {
 const realChildProcess = await vi.importActual<typeof import("node:child_process")>("node:child_process");
 
 // 2026-10-10: ~20 jobs starting at once made the batch PowerShell identity query time out. Its empty result
-// marked every live 0.30.6 reader "unknown, reads 0" and blocked spawn_codex behind a json 0→4 upgrade.
+// marked every live 0.30.6 reader "unknown, reads 0" and blocked spawn behind a json 0→4 upgrade.
 let env: TestEnv;
 const pid = 2_000_011;
 beforeEach(() => {

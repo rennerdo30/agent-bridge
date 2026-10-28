@@ -14,7 +14,6 @@ function walk(node, visit) {
   }
 }
 const rows = [];
-const agents = ['claude', 'codex', 'opencode', 'antigravity'];
 const namedShapes = new Map();
 for (const path of ['../src/core/conversations.ts', '../src/core/owner-questions.ts']) {
   let imported;
@@ -56,9 +55,7 @@ function visit(node) {
     const [name, config] = node.arguments;
     if (!config || config.type !== 'ObjectExpression') return;
     const properties = Object.fromEntries(config.properties.filter(p => p.type === 'ObjectProperty').map(p => [text(p.key), p.value]));
-    const names = name.type === 'StringLiteral' ? [[name.value, '']]
-      : text(name) === 'askName' ? agents.map(a => [`ask_${a}`, a])
-      : text(name) === 'spawnName' ? agents.map(a => [`spawn_${a}`, a]) : [];
+    const names = name.type === 'StringLiteral' ? [[name.value, '']] : [];
     for (const [tool, agent] of names) {
       const schema = properties.inputSchema;
       const fields = schema && schema.type === 'ObjectExpression'
@@ -75,11 +72,11 @@ function visit(node) {
 }
 walk(file, visit);
 const escape = s => s.replaceAll('|', '\\|').replaceAll('\n', ' ').replaceAll('BROADCAST', '*').replaceAll('cfg.maxJobs', 'the shared job limit').replaceAll('cfg.maxHops', 'the configured hop limit');
-let page = `---\ntitle: MCP tools reference\n---\n\nGenerated from [src/mcp/server.ts](https://github.com/rennerdo30/agent-bridge/blob/main/src/mcp/server.ts). Each registered tool has one row below. Availability depends on the calling agent, enabled targets and whether the caller is a delegated job. opencode prefixes tool names with \`bridge_\`.\n\nThe \`ask_*\` and \`spawn_*\` tools are expanded for each supported CLI; a session may offer only the other enabled targets. Delegated jobs receive a restricted tool set and explicit messaging grants. \`report_progress\` is for delegated jobs; \`hook_event\` is internal and must never be called by an agent.\n\n| Tool | Parameters | Behavior |\n| --- | --- | --- |\n`;
-for (const r of rows) page += `| \`${r.tool}\` | ${/^(ask|spawn)_(claude|codex|opencode|antigravity)$/.test(r.tool) ? '[Delegation options](#delegation-options)' : r.fields.map(f => '\`' + f.name + (f.optional ? '?' : '') + '\`').join(', ') || (r.sharedSchema ? '\`' + r.sharedSchema + '\` (source schema)' : 'None')} | ${escape(r.description)} |\n`;
-page += '\n## Delegation options\n\n';
+let page = `---\ntitle: MCP tools reference\n---\n\nGenerated from [src/mcp/server.ts](https://github.com/rennerdo30/agent-bridge/blob/main/src/mcp/server.ts). Each registered tool has one row below. Availability depends on the calling agent, enabled targets and whether the caller is a delegated job. opencode prefixes tool names with \`bridge_\`.\n\nThe \`ask\` and \`spawn\` tools require \`agent\` to select a supported coding CLI. Delegated jobs receive a restricted tool set and explicit messaging grants. \`report_progress\` is for delegated jobs; \`hook_event\` is internal and must never be called by an agent.\n\n| Tool | Parameters | Behavior |\n| --- | --- | --- |\n`;
+for (const r of rows) page += `| \`${r.tool}\` | ${/^(ask|spawn)$/.test(r.tool) ? '[Delegation options](#delegation-options)' : r.fields.map(f => '\`' + f.name + (f.optional ? '?' : '') + '\`').join(', ') || (r.sharedSchema ? '\`' + r.sharedSchema + '\` (source schema)' : 'None')} | ${escape(r.description)} |\n`;
+page += '\n## Delegation options\n\n- `agent` is required: `claude`, `codex`, `opencode`, `antigravity` or `muse`.\n\n';
 page += 'Peer names default to `<agent>-<project folder>` (for example `codex-showcase`), or `<agent>-session` until the folder is known. An agent-kind address such as `codex` selects that local peer when unambiguous. Set `AGENT_BRIDGE_NAME` or `name` in the configuration to choose a peer name.\n\n';
-page += '- `session_id` continues an earlier run; `cwd` selects its working folder.\n- `host` runs on a paired PC with separate remote-job permission.\n- `native_subagents` sets the Codex child-thread budget (default 6, range 0–32; 0 disables). This differs from bridge delegation depth and concurrency.\n- `send_to` grants messaging to exact local sessions or jobs outside the default sibling scope.\n- `timeout_sec` defaults to 60 minutes for `ask_*`; background jobs default to the 24-hour ceiling. A timeout reports the session ID so a caller can continue retained context.\n- Target options include Codex `sandbox` and `approvals_reviewer`, Claude `permission_mode`, opencode `auto_approve`, and Antigravity `terminal_sandbox` and `bypass_permissions`. Codex defaults to `auto_review`; `user` forwards eligible requests.\n\n';
+page += '- `session_id` continues an earlier run; `cwd` selects its working folder.\n- `host` runs on a paired PC with separate remote-job permission.\n- `native_subagents` sets the Codex child-thread budget (default 6, range 0–32; 0 disables). This differs from bridge delegation depth and concurrency.\n- `send_to` grants messaging to exact local sessions or jobs outside the default sibling scope.\n- `timeout_sec` defaults to 60 minutes for `ask`; background jobs default to the 24-hour ceiling. A timeout reports the session ID so a caller can continue retained context.\n- Target options include Codex `sandbox` and `approvals_reviewer`, Claude `permission_mode`, opencode `auto_approve`, and Antigravity `terminal_sandbox` and `bypass_permissions`. Codex defaults to `auto_review`; `user` forwards eligible requests.\n\n';
 
 // The source uses target-specific schemas. Preserve the exact current schema text
 // so optional/default/enum bounds remain reviewable without guessing parameters.

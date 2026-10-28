@@ -20,7 +20,10 @@ function retainedBackup(): string | undefined {
   return undefined;
 }
 const job = { id: "askfixture", name: "codex-ask-askfixture", owner: "owner", startedAt: 10, status: "running", prompt: "retained context" };
-it("recovers a legacy ask from paired completed native tool records and refuses unpaired results", () => {
+it.each([
+  { name: "mcp__agent_bridge__ask_codex", input: { prompt: "task" } }, // Retained pre-AB-462 history.
+  { name: "mcp__agent_bridge__ask", input: { agent: "codex", prompt: "task" } },
+])("recovers $name from paired completed native tool records and refuses unpaired results", ({ name, input }) => {
   const path = join(env.home, "jobs.json"), db = new DatabaseSync(":memory:");
   db.exec("CREATE TABLE history_cursors(source TEXT PRIMARY KEY,cursor TEXT)");
   writeFileSync(path, JSON.stringify({ version: 4, jobs: [job] }));
@@ -28,7 +31,7 @@ it("recovers a legacy ask from paired completed native tool records and refuses 
   try {
     const result = { type: "tool_result", tool_use_id: "call-1", content: `Job: ${job.name}\ncodex session_id: fixture\n\ncomplete answer` };
     observe([result], 20); expect(reconcileAskCompletions(path)).toBe(0);
-    observe([{ type: "tool_use", id: "call-1", name: "mcp__agent_bridge__ask_codex", input: { prompt: "task" } }], 9);
+    observe([{ type: "tool_use", id: "call-1", name, input }], 9);
     observe([result], 20); expect(reconcileAskCompletions(path)).toBe(1);
     expect(JSON.parse(readFileSync(path, "utf8")).jobs[0]).toMatchObject({ status: "done", finishedAt: 20 });
   } finally { db.close(); }
@@ -70,7 +73,7 @@ it("retains native JSONL pairing across bounded import chunks and restart", () =
   let db = new DatabaseSync(file);
   db.exec("CREATE TABLE history_cursors(source TEXT PRIMARY KEY,cursor TEXT)");
   writeFileSync(path, JSON.stringify({ version: 4, jobs: [job] }));
-  const call = JSON.stringify({ timestamp: 9, message: { content: [{ type: "tool_use", id: "split-call", name: "mcp__agent_bridge__ask_codex" }] } });
+  const call = JSON.stringify({ timestamp: 9, message: { content: [{ type: "tool_use", id: "split-call", name: "mcp__agent_bridge__ask", input: { agent: "codex" } }] } });
   const result = JSON.stringify({ timestamp: 20, message: { content: [{ type: "tool_result", tool_use_id: "split-call", content: `Job: ${job.name}\ncodex session_id: fixture\ncompleted` }] } });
   const bytes = Buffer.from(call + "\n" + result + "\n"), split = call.length + 80;
   observeAskToolRecord(db, env.home, "native-jsonl", 0, bytes.subarray(0, split), 100, 0);

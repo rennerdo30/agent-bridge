@@ -16,8 +16,8 @@ the mobile or dependency commits.
   distributions. It is the common ancestor of this branch and main `40fbf0a4`.
   Both bundled opencode workers return all coding agents in `delegationTargets`.
 - `src/mcp/targets.ts` and `src/opencode/plugin.ts` are identical between the two
-  heads. Tool registration in `src/mcp/server.ts` loops over the selected targets
-  for `ask_*` and `spawn_*`. The plugin consumes `mcp.listTools()`, hides
+  heads. Those compared versions register per-agent delegation tools in
+  `src/mcp/server.ts`. The plugin consumes `mcp.listTools()`, hides
   `hook_event`, and exposes the remaining names with the `bridge_` prefix.
 - Main passes because `962236f8f26a9bda13bcce941b84531a46a530d1`, “test: expect
   universal delegation in opencode native tools”, corrects the outdated test.
@@ -25,8 +25,8 @@ the mobile or dependency commits.
   name containing `opencode`, contradicting the intentional AB-270 contract.
 
 The supervisor approved applying exactly main's assertion after receiving these
-findings. The test now checks the exact eight `bridge_ask_*` / `bridge_spawn_*`
-names for Claude, Codex, opencode and Antigravity. It retains the hidden-hook check.
+findings. That test checked the then-eight per-agent delegation names
+for Claude, Codex, opencode and Antigravity; AB-462 now consolidates them. It retains the hidden-hook check.
 No source, delegation guard, plugin distribution, dependency or permission change
 is part of this follow-up. `git diff 962236f8 -- test/opencode.test.ts` is empty.
 

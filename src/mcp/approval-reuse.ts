@@ -20,7 +20,7 @@ import type { ApprovalOrigin, Job } from "./jobs.js";
  *   only through files; a read-only job changes files only through an approval it asks for, so any allowed file
  *   change, other command, request without an exact identity or MCP call to a server other than the Pair Desk
  *   (allowed in any way) ends the job's command grants. A call to the job's own agent-bridge server other than a
- *   read or status tool (spawn_*, ask_*, message_subagent, decide, ...) ends them and blocks new ones for the rest
+ *   read or status tool (spawn, ask, message_subagent, decide, ...) ends them and blocks new ones for the rest
  *   of the turn: a child job may change the job's files. Nothing on this path
  *   runs Git or reads the job's files: job-controlled repositories can run code through Git (core.fsmonitor,
  *   filters) and hide files from it;
@@ -92,7 +92,7 @@ const OWN_READ_TOOLS: ReadonlySet<string> = new Set(["report_progress", "peers",
 
 /**
  * What an allowed MCP call means for the job's command grants (AB-402): "keep" for a Pair Desk call or a read or
- * status tool of the job's own agent-bridge server (or an exact send to its supervisor), "block" for any other own-server call (spawn_*, ask_*,
+ * status tool of the job's own agent-bridge server (or an exact send to its supervisor), "block" for any other own-server call (spawn, ask,
  * message_subagent, decide: a child job may change files; the grants end and none are kept for the rest of the
  * turn), "drop" for any other MCP call (its server may write files). Null for a request that is no MCP call.
  */
@@ -116,7 +116,7 @@ export function mcpCallEffect(r: Pick<PermissionRequest, "tool" | "detail" | "id
 
 /**
  * Whether a job started from this process can start or continue subagents of its own: its bridge server registers
- * spawn_*, ask_*, message_subagent and decide while the job's depth (this process's + 1) is below the limit
+ * spawn, ask, message_subagent and decide while the job's depth (this process's + 1) is below the limit
  * (server.ts). Such a job may change files through a child job that it approves itself.
  */
 export function jobCanSpawn(maxDelegateDepth: number, env: NodeJS.ProcessEnv = process.env): boolean {
@@ -134,7 +134,7 @@ function deskOnlyPattern(pattern: string): boolean {
  * effective permission (DelegationTarget.permission), the patterns of MCP tools it may call without asking, the MCP
  * servers already allowed for the rest of the job, and whether it can start subagents. Read-only:
  * - The job cannot start or continue subagents (canSpawn false: its delegate depth reached the limit). A job with
- *   spawn_* or message_subagent may start a child job with edit access in the same folder and answer that child's
+ *   spawn or message_subagent may start a child job with edit access in the same folder and answer that child's
  *   approvals itself.
  * - No MCP server other than the Pair Desk is in allowedServers (one "allow" of a server covers the rest of the job).
  * - Codex and opencode: unavailable. Their CLI-run MCP calls do not necessarily reach this approval path,

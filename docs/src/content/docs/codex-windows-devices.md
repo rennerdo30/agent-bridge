@@ -100,7 +100,7 @@ the historical model-driven adb failure used a standalone server command.
 `codexSandbox` / `codexWorktreeSandbox` in bridge config select job policies;
 an explicit MCP `sandbox` overrides the inferred `access` policy. No new Windows
 backend setting is needed. The shared permission description used by both
-`spawn_codex` and `ask_codex` now distinguishes full access from elevated sandboxed
+`spawn` with `agent="codex"` and `ask` with `agent="codex"` now distinguishes full access from elevated sandboxed
 execution and warns about USB/adb and profile access in sandboxed jobs.
 
 Every Windows exec/app-server job, including continuations, receives a prompt

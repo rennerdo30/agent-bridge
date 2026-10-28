@@ -13,7 +13,7 @@ export const CLAUDE_SCOPED_TOOLS = [
   "max_subagents", "auto_wake", "usage_limits", "list_models", "dashboard", "set_job_outcome",
   "handoff_subagents", "message_subagent", "cancel_subagent", "pause_subagent", "resume_subagent", "report_progress",
   "checklist", "job_checklist", "project_checklist",
-  ...["claude", "codex", "opencode", "antigravity", "muse"].flatMap(agent => [`ask_${agent}`, `spawn_${agent}`]),
+  "ask", "spawn",
 ] as const;
 export const isClaudeScopedTool = (name: string): boolean => (CLAUDE_SCOPED_TOOLS as readonly string[]).includes(name);
 export const CLAUDE_CHILD_STATUS_TOOLS = ["health", "decisions", "network_status", "resource_slots", "usage_limits", "list_models"] as const;

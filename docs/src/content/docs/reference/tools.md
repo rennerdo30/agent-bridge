@@ -4,7 +4,7 @@ title: MCP tools reference
 
 Generated from [src/mcp/server.ts](https://github.com/rennerdo30/agent-bridge/blob/main/src/mcp/server.ts). Each registered tool has one row below. Availability depends on the calling agent, enabled targets and whether the caller is a delegated job. opencode prefixes tool names with `bridge_`.
 
-The `ask_*` and `spawn_*` tools are expanded for each supported CLI; a session may offer only the other enabled targets. Delegated jobs receive a restricted tool set and explicit messaging grants. `report_progress` and `checklist` are for delegated jobs; `hook_event` is internal and must never be called by an agent.
+The `ask` and `spawn` tools require `agent` to select a supported coding CLI. Delegated jobs receive a restricted tool set and explicit messaging grants. `report_progress` and `checklist` are for delegated jobs; `hook_event` is internal and must never be called by an agent.
 
 | Tool | Parameters | Behavior |
 | --- | --- | --- |
@@ -30,28 +30,23 @@ The `ask_*` and `spawn_*` tools are expanded for each supported CLI; a session m
 | `wait_for_message` | `mode?`, `timeout_sec?`, `from?`, `reply_to?`, `conversation_id?`, `read_receipt_of?`, `resume_id?` | Default mode="notify": register a durable one-shot wait and return immediately. Call once after sending a question, then keep working or end the turn; do not poll or repeat waits. A matching unread message can be returned now; an active channel owns its delivery. Otherwise it arrives through existing direct/auto-wake paths when supported, or on the next hook/inbox call. Global auto-wake settings stay unchanged. Notification waits survive /reload-plugins and session exit, have no timeout, and complete only when matching mail is consumed. Mail stays queued if wake delivery fails or the session is offline. mode="block" waits and returns a message marked read. For compatibility, timeout_sec without mode selects block; read_receipt_of also defaults to block. Single blocking waits are capped at SINGLE_WAIT_SEC seconds; a message timeout arms notify automatically instead of requiring another turn. Claude Code may background calls after 120 seconds; background calls do not survive session exit. A stdio call cannot survive /reload-plugins: peers and SessionStart show a saved resume_id and filters after reconnect. resume_id preserves saved filters and mode; use mode="notify" to convert an interrupted blocking wait. mode="cancel" with resume_id archives a wait without consuming mail. read_receipt_of supports block only and confirms bridge consumption, not a reply or completed work. Nested child waits support block only. |
 | `max_subagents` | `count`, `save?` | Change how many background subagents may run at once in this session, effective immediately (a higher limit starts queued continuations; a lower one stops none). save=true also writes it to ~/.agent-bridge/config.json as the default for new sessions. Only change this when your user asks. |
 | `auto_wake` | `enabled` | Turn auto-wake on or off for this session. When on, a peer message that arrives while you finish a turn makes you continue and handle it (up to the configured hop limit agent-to-agent hops per conversation). Only change this when your user asks. |
-| `ask_claude` | [Delegation options](#delegation-options) | Run Claude Code headlessly in this project with the given prompt and wait for its final answer. This is one blocking call, not a background job or a polling loop. Return its job id and result as received, including errors; do not automatically start another ask call after a timeout. Good for quick second opinions or reviews. For longer or parallel work use spawn_claude. Pass the returned session_id back to continue the same conversation.  Access defaults to read. Without `allow_tools` the job gets `jobs.defaultAllowTools` (default `"pair-desk:worker"`: Pair Desk reads, comments, progress, plans, steps, issue edits and review locations, no issue creation) in every access mode, read and ask included; `allow_tools: []` turns it off. Supported access, sandbox and model options depend on the target CLI; see the delegated access guide. |
-| `ask_codex` | [Delegation options](#delegation-options) | Run Codex headlessly in this project with the given prompt and wait for its final answer. This is one blocking call, not a background job or a polling loop. Return its job id and result as received, including errors; do not automatically start another ask call after a timeout. Good for quick second opinions or reviews. For longer or parallel work use spawn_codex. Pass the returned session_id back to continue the same conversation.  Access defaults to read. Without `allow_tools` the job gets `jobs.defaultAllowTools` (default `"pair-desk:worker"`: Pair Desk reads, comments, progress, plans, steps, issue edits and review locations, no issue creation) in every access mode, read and ask included; `allow_tools: []` turns it off. Supported access, sandbox and model options depend on the target CLI; see the delegated access guide. |
-| `ask_opencode` | [Delegation options](#delegation-options) | Run opencode headlessly in this project with the given prompt and wait for its final answer. This is one blocking call, not a background job or a polling loop. Return its job id and result as received, including errors; do not automatically start another ask call after a timeout. Good for quick second opinions or reviews. For longer or parallel work use spawn_opencode. Pass the returned session_id back to continue the same conversation.  Access defaults to read. Without `allow_tools` the job gets `jobs.defaultAllowTools` (default `"pair-desk:worker"`: Pair Desk reads, comments, progress, plans, steps, issue edits and review locations, no issue creation) in every access mode, read and ask included; `allow_tools: []` turns it off. Supported access, sandbox and model options depend on the target CLI; see the delegated access guide. |
-| `ask_antigravity` | [Delegation options](#delegation-options) | Run Google Antigravity CLI headlessly in this project with the given prompt and wait for its final answer. This is one blocking call, not a background job or a polling loop. Return its job id and result as received, including errors; do not automatically start another ask call after a timeout. Good for quick second opinions or reviews. For longer or parallel work use spawn_antigravity. Pass the returned session_id back to continue the same conversation.  Access defaults to read. Without `allow_tools` the job gets `jobs.defaultAllowTools` (default `"pair-desk:worker"`: Pair Desk reads, comments, progress, plans, steps, issue edits and review locations, no issue creation) in every access mode, read and ask included; `allow_tools: []` turns it off. Supported access, sandbox and model options depend on the target CLI; see the delegated access guide. |
-| `spawn_claude` | [Delegation options](#delegation-options) | Start Claude Code as a background subagent and return immediately with a job id. Keep working meanwhile; the result arrives as a message from "claude-job-<id>" (injected automatically, or use wait_for_message with from=<job name>). Several subagents can run in parallel (max the shared job limit).  Access defaults to read. Without `allow_tools` the job gets `jobs.defaultAllowTools` (default `"pair-desk:worker"`: Pair Desk reads, comments, progress, plans, steps, issue edits and review locations, no issue creation) in every access mode, read and ask included; `allow_tools: []` turns it off. Supported access, sandbox and model options depend on the target CLI; see the delegated access guide. |
-| `spawn_codex` | [Delegation options](#delegation-options) | Start Codex as a background subagent and return immediately with a job id. Keep working meanwhile; the result arrives as a message from "codex-job-<id>" (injected automatically, or use wait_for_message with from=<job name>). Several subagents can run in parallel (max the shared job limit).  Access defaults to read. Without `allow_tools` the job gets `jobs.defaultAllowTools` (default `"pair-desk:worker"`: Pair Desk reads, comments, progress, plans, steps, issue edits and review locations, no issue creation) in every access mode, read and ask included; `allow_tools: []` turns it off. Supported access, sandbox and model options depend on the target CLI; see the delegated access guide. |
-| `spawn_opencode` | [Delegation options](#delegation-options) | Start opencode as a background subagent and return immediately with a job id. Keep working meanwhile; the result arrives as a message from "opencode-job-<id>" (injected automatically, or use wait_for_message with from=<job name>). Several subagents can run in parallel (max the shared job limit).  Access defaults to read. Without `allow_tools` the job gets `jobs.defaultAllowTools` (default `"pair-desk:worker"`: Pair Desk reads, comments, progress, plans, steps, issue edits and review locations, no issue creation) in every access mode, read and ask included; `allow_tools: []` turns it off. Supported access, sandbox and model options depend on the target CLI; see the delegated access guide. |
-| `spawn_antigravity` | [Delegation options](#delegation-options) | Start Google Antigravity CLI as a background subagent and return immediately with a job id. Keep working meanwhile; the result arrives as a message from "antigravity-job-<id>" (injected automatically, or use wait_for_message with from=<job name>). Several subagents can run in parallel (max the shared job limit).  Access defaults to read. Without `allow_tools` the job gets `jobs.defaultAllowTools` (default `"pair-desk:worker"`: Pair Desk reads, comments, progress, plans, steps, issue edits and review locations, no issue creation) in every access mode, read and ask included; `allow_tools: []` turns it off. Supported access, sandbox and model options depend on the target CLI; see the delegated access guide. |
-| `usage_limits` | `agent?` | How much of each installed agent's account limits is used: Codex and Claude Code (5-hour and weekly windows, with reset times), and for opencode today's spend plus which models are free. Use it before handing out large or parallel work, to pick the agent with the most room left, or to decide to stop and save state. Costs no model calls; takes a few seconds. |
-| `list_models` | `agent`, `query?` | Which models and reasoning efforts a subagent agent accepts, to pick model= and effort= for ask_*/spawn_*. Codex and opencode list their models; for Claude it gives the aliases and effort levels. query filters by name (opencode can list hundreds). Costs no model calls. |
+| `ask` | [Delegation options](#delegation-options) | Run the selected coding agent headlessly and wait for its final answer. |
+| `spawn` | [Delegation options](#delegation-options) | Start the selected coding agent as a background job and return its job id. |
+| `list_models` | `agent`, `query?` | Which models and reasoning efforts a subagent agent accepts, to pick model= and effort= for ask/spawn. Codex and opencode list their models; for Claude it gives the aliases and effort levels. query filters by name (opencode can list hundreds). Costs no model calls. |
 | `dashboard` | None | Open the agent-bridge web dashboard in the user's browser (sessions, delegated runs with live steps, messages) and return its link. Only call this when the user asks to see the dashboard. |
 | `set_job_outcome` | `job`, `state`, `reason?` | Record that your finished job is held with a reason or discarded. With jobCloseCleanup enabled, discarded local worktree jobs push their commits and reap only a proven clean checkout. Held jobs and local branches are retained. Only its owning supervisor can set it. |
 | `handoff_subagents` | `to`, `jobs?`, `note?`, `switch_project_main?` | Transfer your running and finished local jobs, including nested jobs, to an exact live local Claude Code, Codex, opencode, Antigravity or Muse session. The target becomes their supervisor and receives a waking inheritance message. Remote jobs and paired-PC targets are rejected without moving anything. |
-| `message_subagent` | `job`, `message?`, `title?`, `effort?`, `model?`, `access?`, `sandbox?`, `terminal_sandbox?`, `bypass_permissions?`, `native_subagents?`, `approvals_reviewer?`, `permission_mode?`, `auto_approve?`, `permission_profile?` | Send a follow-up to a subagent started with ask_* or spawn_* (running or finished), like messaging a native subagent. Use it to answer a subagent's question promptly. It continues in its own session with its full context, in the same folder or worktree. While it is still running it gets the message live, at its next step (after its current tool call), and answers right away, like a native subagent: use that to ask how far it is or to redirect it. The answer arrives as a message from the job. Plain messages never answer pending approvals; use decide or the dashboard. Without a message it is told to continue where it stopped: use that to recover a failed or interrupted subagent. If all subagent slots are taken, a finished subagent's continuation is queued and starts by itself when one frees up (cancel_subagent drops it). |
-| `job_checklist` | `job`, `get?`, `add?`, `edit?`, `require?`, `unrequire?`, `close?`, `approve?`, `reject?`, `note?` | Read or change the checklist of one of your subagent jobs (see the checklist argument of spawn_*/ask_*). Without changes it returns the list. Use it to answer a job's checklist proposals (approve or reject; until then they stay proposed), to react to a blocked item, or to change the plan mid-run: add items, edit text, require or unrequire, close items that no longer apply. A running Claude or Codex job is told at its next step (hook); other agents see the change when they next call checklist(). The job itself only ticks items (a required one is skipped only with a note) and proposes new ones; blocked items and proposals reach you like a job question. Required items still open when it finishes mark its result incomplete. Changes in one call apply together or not at all; nothing is deleted (closed and rejected items stay in the record). Only the job's supervisor can call it. |
+| `message_subagent` | `job`, `message?`, `title?`, `effort?`, `model?`, `access?`, `sandbox?`, `terminal_sandbox?`, `bypass_permissions?`, `native_subagents?`, `approvals_reviewer?`, `permission_mode?`, `auto_approve?`, `permission_profile?` | Send a follow-up to a subagent started with ask or spawn (running or finished), like messaging a native subagent. Use it to answer a subagent's question promptly. It continues in its own session with its full context, in the same folder or worktree. While it is still running it gets the message live, at its next step (after its current tool call), and answers right away, like a native subagent: use that to ask how far it is or to redirect it. The answer arrives as a message from the job. Plain messages never answer pending approvals; use decide or the dashboard. Without a message it is told to continue where it stopped: use that to recover a failed or interrupted subagent. If all subagent slots are taken, a finished subagent's continuation is queued and starts by itself when one frees up (cancel_subagent drops it). |
+| `job_checklist` | `job`, `get?`, `add?`, `edit?`, `require?`, `unrequire?`, `close?`, `approve?`, `reject?`, `note?` | Read or change the checklist of one of your subagent jobs (see the checklist argument of spawn/ask). Without changes it returns the list. Use it to answer a job's checklist proposals (approve or reject; until then they stay proposed), to react to a blocked item, or to change the plan mid-run: add items, edit text, require or unrequire, close items that no longer apply. A running Claude or Codex job is told at its next step (hook); other agents see the change when they next call checklist(). The job itself only ticks items (a required one is skipped only with a note) and proposes new ones; blocked items and proposals reach you like a job question. Required items still open when it finishes mark its result incomplete. Changes in one call apply together or not at all; nothing is deleted (closed and rejected items stay in the record). Only the job's supervisor can call it. |
 | `project_checklist` | `get?`, `set?`, `add?`, `remove?` | Read or change this project's checklist: the definition of done added to every job started in this project (unless the spawn passes checklist "none"). Use it for steps every job must do, such as running the focused tests or updating the changelog. set replaces the list, add appends, remove takes items out (kept in the record). Its required items count like the supervisor's: still open when a job finishes, they mark the result incomplete. The project is the one this session is registered with on the bridge. Only the project main changes it (or the owner through the main); with project groups off for the project, the session registered in that project folder changes it. Any session can read it. Jobs that already started keep their own copy. |
-| `cancel_subagent` | `job` | Stop a background subagent started with spawn_*, or drop a queued continuation (message_subagent while all slots were taken). Pass its job name (e.g. codex-job-1a2b3c4d). |
+| `cancel_subagent` | `job` | Stop a background subagent started with spawn, or drop a queued continuation (message_subagent while all slots were taken). Pass its job name (e.g. codex-job-1a2b3c4d). |
 | `report_progress` | `percent`, `eta_minutes?`, `note?` | Tell your supervisor, which gave you your current task, how far you are: the percent of the whole task done and a few words on the current step. Call it when you start, after each milestone, and at least every few minutes. Give eta_minutes when you can estimate minutes until completion and update it as you go. It does not interrupt your work. |
 | `checklist` | `update?`, `propose?` | Delegated jobs only. Your to-do list for the task your supervisor gave you, kept by the bridge. Without arguments it shows the list. Tick items as you work: update=[{ id, status, note }] with status in_progress, done, blocked or skipped; a required item can be skipped only with a note saying why. Marking an item blocked notifies your supervisor; other ticks are quiet. When something is missing, propose it: propose=[{ text, why }]. It joins only when your supervisor approves; you cannot add, delete or un-require items yourself. Required items still open when you finish mark your result incomplete. The result always ends with: call checklist() to see changes by your supervisor. |
 | `hook_event` | `event`, `session_id`, `stop_hook_active`, `cwd`, `agent_id`, `prompt`, `prompt_id`, `transcript_path` | Internal endpoint for agent-bridge's own hooks. Do not call this tool. |
 
 ## Delegation options
+
+- `agent` is required: `claude`, `codex`, `opencode`, `antigravity` or `muse`.
 
 Peer names default to `<agent>-<project folder>` (for example `codex-showcase`), or `<agent>-session` until the folder is known. An agent-kind address such as `codex` selects that local peer when unambiguous. Set `AGENT_BRIDGE_NAME` or `name` in the configuration to choose a peer name.
 
@@ -63,25 +58,31 @@ Peer names default to `<agent>-<project folder>` (for example `codex-showcase`),
 - `checklist` gives the job a to-do list kept by the bridge: `[{ text, required? }]` (required unless `required: false`, at most 50 items of 300 characters). The project checklist (`project_checklist`) is added first; `[]` keeps only it and `"none"` leaves both out. The job sees the list with ids in its brief, ticks items with its `checklist` tool, skips a required item only with a note, and proposes new items, which join only when you approve them with `job_checklist`. Blocked items and proposals reach you like a job question; other ticks are quiet. `peers` shows "checklist N/M done", `peers(job=...)` and the dashboard show the list, and the final report ends with the checklist and "incomplete: N required items open" when required items are still open (reported, not blocked). Checklists are local-only for now: a `host=...` job refuses a non-empty checklist and gets no project checklist.
 - `allow_tools` replaces that default with your own list (include `"pair-desk:worker"` to keep it; add `"pair-desk.create_issue"` to let the job create issues). The default and its scope come from the home config of the session that spawns the job; on a paired PC, from the receiving PC's config section for the target agent. See [delegation](../../concepts/delegation/).
 - Tool descriptions (including the defaults they name) reflect the configuration when the session started; a later config change applies to new jobs but the descriptions update only after the session restarts.
-- `timeout_sec` defaults to 60 minutes for `ask_*`; background jobs default to the 24-hour ceiling. A timeout reports the session ID so a caller can continue retained context.
+- `timeout_sec` defaults to 60 minutes for `ask`; background jobs default to the 24-hour ceiling. A timeout reports the session ID so a caller can continue retained context.
 - Target options include Codex `sandbox` and `approvals_reviewer`, Claude `permission_mode`, opencode `auto_approve`, and Antigravity `terminal_sandbox` and `bypass_permissions`. Codex defaults to `auto_review`; `user` forwards eligible requests.
 
 Pass a prompt and a short title for a new job. Set `access` deliberately and use `worktree: true` for edits. `host` requires an absolute remote `cwd`; `send_to` grants are local-only. A continuation preserves saved settings unless explicitly overridden. See [delegation](../../concepts/delegation/), [access and approval forwarding](../../delegated-access/) and [remote jobs](../../remote-jobs/).
 
 ```ts
 schema = {
-      host: z.string().regex(NETWORK_NAME_PATTERN).optional().describe("Paired instance name to run on. Requires an absolute cwd on that PC and its explicit remoteJobs allowlist."),
+      agent: z.enum(CODING_AGENTS).describe("Coding agent to run. " + CODING_AGENTS.map(target => {
+        const profile = DELEGATION_TARGETS[target];
+        return `${target} (${profile.title}): ${profile.permissionNote(cfg)} ` +
+          (remoteOnly ? "Model ID supported by the paired machine's provider. " : modelParameterDescription(target, cfg, ctx.home, profile.modelExample) + " ") +
+          `Thinking level: ${profile.effortExample}; default ${cfg.effort[target] ?? `${target}'s own default`}.`;
+      }).join("\n")),
+      host: (remoteOnly ? remoteHost : remoteHost.optional()).describe("Paired instance name to run on. Requires an absolute cwd on that PC and its explicit remoteJobs allowlist."),
       prompt: z.string().min(1).describe("Complete, self-contained instructions"),
       model: z
         .string()
         .regex(MODEL_NAME_PATTERN)
         .optional()
-        .describe(modelParameterDescription(target, cfg, ctx.home, profile.modelExample)),
+        .describe("Model ID for the selected agent; see agent for supported models and defaults."),
       effort: z
         .string()
         .regex(/^[A-Za-z0-9_-]{1,20}$/)
         .optional()
-        .describe(`Thinking level (reasoning effort), e.g. ${profile.effortExample}; list_models shows what each model supports. Default: ${cfg.effort[target] ?? `${target}'s own default`} (config "effort"; shown in the dashboard).`),
+        .describe(`Thinking level (reasoning effort) for the selected agent; see agent for levels and defaults (config "effort"; shown in the dashboard). ${remoteOnly ? "Use a level supported by the remote provider" : "list_models shows what each model supports"}.`),
       session_id: z.string().optional().describe("Continue a previous delegated session"),
       cwd: z
         .string()
@@ -93,7 +94,7 @@ schema = {
         .min(10)
         .max(MAX_JOB_TIMEOUT_SEC)
         .optional()
-        .describe(`Default ${DEFAULT_DELEGATE_TIMEOUT_SEC} for ask_*, none (${MAX_JOB_TIMEOUT_SEC}) for spawn_*`),
+        .describe(`Default ${DEFAULT_DELEGATE_TIMEOUT_SEC} for ask, none (${MAX_JOB_TIMEOUT_SEC}) for spawn`),
       access: z
         .enum(ACCESS_LEVELS as [Access, ...Access[]])
         .optional()
@@ -109,6 +110,7 @@ schema = {
         .describe(
           "Run in a separate git worktree on its own branch (implies access=edit). Your working copy stays untouched; the result explains how to review, merge or discard the changes.",
         ),
+      base: z.string().min(1).max(4096).optional().describe("Explicit worktree base ref or commit. Otherwise compare HEAD to its fetched upstream, or the remote default without an upstream: advance only when purely behind; keep HEAD when equal, ahead or diverged. Offline uses the cached reference, or HEAD with a warning; local-only repos use HEAD. Exact selection is reported at job start."),
       title: z
         .string()
         .min(1)
@@ -126,8 +128,11 @@ schema = {
         .max(MAX_JOB_SEND_TARGETS).optional()
         .describe("Explicitly allow this job to send to these exact local session or job names, including replies to messages received by its supervisor. Default is closed. Cross-session jobs require a separate reciprocal grant to answer; they retain hop limits and quiet copies for both owners. No other external recipients are allowed. Kept across continuations."),
       notes: z.enum(["none", "milestones", "blockers"]).optional().describe("Reporting cadence, default none/final report only. Routine notes always remain dashboard/history-only. Explicit questions, final results and approvals can still request attention."),
-      ...profile.schema,
-    }
+      checklist: z.union([z.literal("none"), z.array(checklistItemSchema).max(CHECKLIST_LIMITS.items)]).optional().describe(remoteOnly ? CHECKLIST_REMOTE : CHECKLIST_ARG_DESCRIPTION),
+      // Validate these at dispatch so options for another target remain ignored, as before.
+      ...Object.fromEntries(CODING_AGENTS.flatMap(target => Object.entries(DELEGATION_TARGETS[target].schema)
+        .map(([key, field]) => [key, z.unknown().optional().describe(`${target} only: ${field.description ?? key}`)]))),
+    };
 ```
 
 ```ts
@@ -299,25 +304,25 @@ save: z.boolean().optional()
 enabled: z.boolean()
 ```
 
-### spawn_claude
+### spawn
 
 ```ts
 title: schema.title.optional().describe("A short title, 3-7 words. Optional: if omitted, derived from the prompt's first nonempty line and noted in the result.")
 ```
 
-### spawn_codex
+### spawn
 
 ```ts
 title: schema.title.optional().describe("A short title, 3-7 words. Optional: if omitted, derived from the prompt's first nonempty line and noted in the result.")
 ```
 
-### spawn_opencode
+### spawn
 
 ```ts
 title: schema.title.optional().describe("A short title, 3-7 words. Optional: if omitted, derived from the prompt's first nonempty line and noted in the result.")
 ```
 
-### spawn_antigravity
+### spawn
 
 ```ts
 title: schema.title.optional().describe("A short title, 3-7 words. Optional: if omitted, derived from the prompt's first nonempty line and noted in the result.")
@@ -413,7 +418,7 @@ update: z.array(z.object({ id: z.string().regex(/^c\d{1,4}$/), status: z.enum(["
 propose: z.array(z.object({ text: z.string().min(1).max(300), why: z.string().max(500).optional() })).max(10).optional()
 ```
 
-`checklistItemSchema` is `{ text: z.string().min(1).max(300), required: z.boolean().optional() }`; the same shape is the `checklist` argument of `ask_*` / `spawn_*` (or the literal `"none"`).
+`checklistItemSchema` is `{ text: z.string().min(1).max(300), required: z.boolean().optional() }`; the same shape is the `checklist` argument of `ask` / `spawn` (or the literal `"none"`).
 
 ### hook_event
 

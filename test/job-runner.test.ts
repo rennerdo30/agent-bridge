@@ -113,7 +113,7 @@ async function spawnHeld(s: { client: Client; transport: StdioClientTransport },
   const release = join(home, `release-${releases.length}`);
   const link = `${release}.link.json`;
   releases.push(release);
-  const out = await call(s, "spawn_claude", { prompt: `release=${release} link=${link} build the castle`, title: "Runner test", send_to: sendTo });
+  const out = await call(s, "spawn", { agent: "claude", prompt: `release=${release} link=${link} build the castle`, title: "Runner test", send_to: sendTo });
   const job = /Subagent (claude-job-([0-9a-f]+)) started/.exec(out);
   expect(job, out).not.toBeNull();
   const id = job![2]!;
@@ -162,7 +162,7 @@ describe.skipIf(!existsSync(SERVER))("background subagents in job runners", () =
     writeFileSync(join(home, "bin", "fake-claude.mjs"), "#!/usr/bin/env node\nimport { spawn } from 'node:child_process';\n" + FAKE_CLAUDE.replace('  const args = process.argv.slice(2);', setup + '  const args = process.argv.slice(2);'));
     const session = await startSession();
     const sibling = await spawnHeld(session);
-    const output = await call(session, "spawn_claude", { prompt: "background=" + marker, title: "Orphan cleanup test" });
+    const output = await call(session, "spawn", { agent: "claude", prompt: "background=" + marker, title: "Orphan cleanup test" });
     const id = /claude-job-([0-9a-f]+)/.exec(output)![1]!;
     await waitFor(() => readRunnerState(home, id)?.status === "done");
     const state = readRunnerState(home, id)!;
@@ -410,7 +410,7 @@ describe.skipIf(!existsSync(SERVER))("background subagents in job runners", () =
     const session = await startSession();
     const release = join(home, "release-worktree"), link = release + ".link.json";
     releases.push(release);
-    const output = await call(session, "spawn_claude", { prompt: `release=${release} link=${link}`, title: "Cancel worktree regression", worktree: true, cwd: home });
+    const output = await call(session, "spawn", { agent: "claude", prompt: `release=${release} link=${link}`, title: "Cancel worktree regression", worktree: true, cwd: home });
     const job = /claude-job-([0-9a-f]+)/.exec(output)!;
     await waitFor(() => existsSync(link) && Boolean(readRunnerState(home, job[1]!)?.sessionId));
     const first = readRunnerState(home, job[1]!)!;
@@ -476,7 +476,7 @@ describe.skipIf(!existsSync(SERVER))("background subagents in job runners", () =
       const args = process.argv.slice(2);`);
     writeFileSync(join(home, "bin", "fake-claude.mjs"), "#!/usr/bin/env node\n" + fake);
     const session = await startSession();
-    const output = await call(session, "spawn_claude", { prompt: "ask-approval", title: "Approval test", access: "edit" });
+    const output = await call(session, "spawn", { agent: "claude", prompt: "ask-approval", title: "Approval test", access: "edit" });
     const job = /claude-job-[a-f0-9]+/.exec(output)![0];
     await waitFor(() => listPendingApprovals(home).length === 1);
     const approval = listPendingApprovals(home)[0]!;

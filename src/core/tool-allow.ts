@@ -1,7 +1,7 @@
 /**
  * Which MCP tool calls of subagents are approved without asking the parent, by name patterns such as
  * "pair-desk.get_*", "pair-desk.list_*" or "pair-desk" (the whole server). Patterns come from the config
- * (autoApproveTools) and from ask_* / spawn_* (allow_tools).
+ * (autoApproveTools) and from ask / spawn (allow_tools).
  *
  * Each CLI describes an MCP permission differently; all arrive as tool "mcp:<server>" plus a detail:
  *  - Codex:    detail 'Allow the pair-desk MCP server to run tool "list_projects"?'
@@ -49,7 +49,7 @@ export const DESK_READ_PATTERNS = ["pair-desk.get_*", "pair-desk.list_*"];
 const DESK_WORKER_PATTERNS = ["pair-desk.get_*", "pair-desk.list_*", "pair-desk.comment", "pair-desk.progress", "pair-desk.set_plan", "pair-desk.update_step", "pair-desk.update_issue", "pair-desk.set_location"];
 
 /**
- * A job's allow_tools (AB-403): an explicit list from spawn_* / ask_* replaces the configured default
+ * A job's allow_tools (AB-403): an explicit list from spawn / ask replaces the configured default
  * (jobs.defaultAllowTools, "pair-desk:worker" unless changed); an explicit [] turns it off for that job.
  * Only bridge jobs use this; native children and the session itself never see the default.
  */

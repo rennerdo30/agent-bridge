@@ -250,7 +250,7 @@ it("fails closed: every unknown tool identity needs gate approval in every mode"
   const bridgeRoutes = Object.entries(OPENCODE_READ_ONLY_TOOLS).filter(([, on]) => on).map(([id]) => id);
   expect(bridgeRoutes.length).toBeGreaterThan(0);
   for (const tool of bridgeRoutes) expect(classifyOpencodeNativeTool(tool)).toBe("other");
-  expect(classifyOpencodeNativeTool("bridge_spawn_opencode")).toBe("unknown");
+  expect(classifyOpencodeNativeTool("bridge_unregistered")).toBe("unknown");
   for (const access of ["read", "ask", "edit"] as const) {
     const g = await gate(access);
     // Known safe natives and ordinary tools pass without a gate decision.

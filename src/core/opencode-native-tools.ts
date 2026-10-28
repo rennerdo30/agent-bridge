@@ -47,9 +47,7 @@ export function classifyOpencodeNativeTool(id: unknown): OpencodeNativeToolKind 
     shell: "other", skill: "other", subagent: "other", webfetch: "other", websearch: "other", write: "other",
     // Bridge routes allowed in read-only runs (OPENCODE_READ_ONLY_TOOLS); a test keeps the two lists equal.
     bridge_send: "other", bridge_report_progress: "other", bridge_checklist: "other", bridge_peers: "other", bridge_health: "other",
-    bridge_search_history: "other", bridge_get_conversation: "other", bridge_spawn_codex: "other", bridge_spawn_claude: "other",
-    bridge_ask_codex: "other", bridge_ask_claude: "other", bridge_spawn_antigravity: "other", bridge_ask_antigravity: "other",
-    bridge_spawn_muse: "other", bridge_ask_muse: "other", bridge_message_subagent: "other", bridge_cancel_subagent: "other",
+    bridge_search_history: "other", bridge_get_conversation: "other", bridge_spawn: "other", bridge_ask: "other", bridge_message_subagent: "other", bridge_cancel_subagent: "other",
     bridge_pause_subagent: "other", bridge_resume_subagent: "other", bridge_inbox: "other", bridge_wait_for_message: "other",
   };
   return Object.prototype.hasOwnProperty.call(known, id) ? known[id]! : "unknown";

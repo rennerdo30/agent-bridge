@@ -5,7 +5,7 @@ argument-hint: <claude|codex|opencode|antigravity> [model=<id>] [edit] [worktree
 
 Start a background subagent with agent-bridge. Arguments: `$ARGUMENTS`
 
-1. The first word picks the agent: `claude`, `codex`, `opencode` or `antigravity`, mapped to the matching `spawn_<agent>` tool. If it is missing, ask the user.
+1. The first word picks `agent`: `claude`, `codex`, `opencode` or `antigravity`. Call `spawn` with that `agent`. If it is missing, ask the user.
 2. Optional flags before the task:
    - `model=<id>` — pass it as `model` unchanged.
    - `edit` — `access: "edit"`.

@@ -63,7 +63,7 @@ export interface BridgeConfig {
   /** MCP tools subagents may call without asking the parent (server.tool patterns or presets; see tool-allow.ts). */
   autoApproveTools: string[];
   /**
-   * Spawned and asked jobs (AB-403). defaultAllowTools is the allow_tools of a job whose spawn_* / ask_* call
+   * Spawned and asked jobs (AB-403). defaultAllowTools is the allow_tools of a job whose spawn / ask call
    * passes none; an explicit list replaces it and an explicit [] turns it off. reuseIdenticalApprovals: an approval
    * identical to one explicitly allowed earlier in the same job is reused (AB-402). Both home config only.
    */

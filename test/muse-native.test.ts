@@ -162,7 +162,7 @@ describe("Muse native bootstrap and hook delivery", () => {
     expect(result.sessionId).toBe("native-root");
     expect(text(output.peers)).toContain("native-parent"); expect(output.send.isError).not.toBe(true); expect(reports).toEqual(["sanitized child report"]);
     expect(progress).toEqual([50]); expect(JSON.stringify(output.hook)).toContain("private parent instructions");
-    expect(output.names.includes("ask_muse")).toBe(cap > 1); expect(output.names).toContain("report_progress");
+    expect(output.names.includes("ask")).toBe(cap > 1); expect(output.names).toContain("report_progress");
     expect((await observer.peers()).map(peer => peer.name)).toEqual(["observer"]);
   });
   it("authenticates an MCP child launched before the handoff is published", async () => {
@@ -217,7 +217,7 @@ describe("Muse hook permission enforcement", () => {
       expect(await call(tool)).toEqual(access === "edit" ? {} : { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: access === "read" ? "deny" : "ask", ...(access === "read" ? { permissionDecisionReason: "agent-bridge read access forbids this tool" } : {}) } });
     }
     for (const tool of ["read_file", "grep"]) expect(await call(tool)).toEqual({});
-    for (const tool of ["mcp__plugin_agent_bridge_bridge__inbox", "mcp__plugin_agent_bridge_bridge__send", "mcp__agent_bridge__ask_muse"]) expect(await call(tool)).toMatchObject({ hookSpecificOutput: { permissionDecision: "deny", permissionDecisionReason: expect.stringContaining("share the root MCP") } });
+    for (const tool of ["mcp__plugin_agent_bridge_bridge__inbox", "mcp__plugin_agent_bridge_bridge__send", "mcp__agent_bridge__ask"]) expect(await call(tool)).toMatchObject({ hookSpecificOutput: { permissionDecision: "deny", permissionDecisionReason: expect.stringContaining("share the root MCP") } });
     node.emit("replaced");
     expect((await fetch(`http://127.0.0.1:${reg.port}/hook`, { method: "POST", headers: { authorization: `Bearer ${reg.secret}` }, body: "{}" })).status).toBe(403);
     node.emit("reclaimed"); expect(await call("read_file")).toEqual({});

@@ -55,7 +55,7 @@ npx -y github:rennerdo30/agent-bridge install-opencode
 
 This copies the plugin into opencode's global config (`~/.config/opencode/plugins/`), plus a skill and the `codex` / `claude` subagents. Existing files you created yourself are never overwritten. Restart opencode afterwards. It needs Node.js 24+ on `PATH`. Remove it with `npx -y github:rennerdo30/agent-bridge uninstall-opencode`.
 
-In opencode the tools are called `bridge_peers`, `bridge_send`, `bridge_ask_claude`, `bridge_spawn_codex`, and so on. Because opencode plugins can start turns themselves, opencode receives peer messages live, even while idle, whenever its listen window or auto-wake applies.
+In opencode the tools are called `bridge_peers`, `bridge_send`, `bridge_ask` with `agent="claude"`, `bridge_spawn` with `agent="codex"`, and so on. Because opencode plugins can start turns themselves, opencode receives peer messages live, even while idle, whenever its listen window or auto-wake applies.
 
 ### Google Antigravity CLI (`agy`)
 
@@ -69,8 +69,8 @@ Requires installed, authenticated `agy` (verified with 1.2.0, 1.3.1 and 1.3.5). 
 native session after initial installation. Updates keep running sessions on retained
 code and select new code for the next MCP server start. The plugin includes MCP configuration, lifecycle/permission hooks
 and a coordination skill. It exposes the same peer, delegation, history and job
-tools as the existing plugins. Other peers get `ask_antigravity` and
-`spawn_antigravity`, with `model`, `effort` (low/medium/high/xhigh/max), `session_id`,
+tools as the existing plugins. Other peers get `ask` with `agent="antigravity"` and
+`spawn` with `agent="antigravity"`, with `model`, `effort` (low/medium/high/xhigh/max), `session_id`,
 `access`, `terminal_sandbox`, `bypass_permissions` and `worktree`. Continue with `message_subagent` or
 cancel with `cancel_subagent`; these use the existing durable job lifecycle.
 

@@ -263,8 +263,8 @@ it("defaults validated T3 to reduced registration with remote-only spawn/ask; fu
   const reduced = await registry();
   const hidden = ["t3_capabilities", "t3_delegate", "t3_task_status", "t3_task_cancel", "t3_send", "list_models", "usage_limits"];
   for (const name of hidden) expect(reduced.entries.has(name), name).toBe(false);
-  for (const name of ["send", "inbox", "wait_for_message", "peers", "health", "decide", "decisions", "ask_owner", "auto_wake", "hook_event", "project_main", "project_checklist", "search_history", "get_conversation", "send_files", "fetch_files", "spawn_codex", "ask_codex", "message_subagent", "pause_subagent", "resume_subagent", "cancel_subagent", "job_checklist", "set_job_outcome", "max_subagents", "resource_slots", "handoff_subagents"]) expect(reduced.entries.has(name), name).toBe(true);
-  for (const name of ["spawn_codex", "ask_codex"]) {
+  for (const name of ["send", "inbox", "wait_for_message", "peers", "health", "decide", "decisions", "ask_owner", "auto_wake", "hook_event", "project_main", "project_checklist", "search_history", "get_conversation", "send_files", "fetch_files", "spawn", "ask", "message_subagent", "pause_subagent", "resume_subagent", "cancel_subagent", "job_checklist", "set_job_outcome", "max_subagents", "resource_slots", "handoff_subagents"]) expect(reduced.entries.has(name), name).toBe(true);
+  for (const name of ["spawn", "ask"]) {
     const tool = reduced.entries.get(name)!;
     expect(tool.spec.description).toMatch(/remote|paired/i);
     for (const host of [undefined, "", " ", "invalid/name"]) expect(tool.spec.inputSchema.host!.safeParse(host).success).toBe(false);
@@ -273,7 +273,7 @@ it("defaults validated T3 to reduced registration with remote-only spawn/ask; fu
   for (const [profile, hosted] of [["full", true], [undefined, false]] as const) {
     const full = await registry(profile, hosted);
     expect(full.entries.has("list_models")).toBe(true);
-    expect(full.entries.get("spawn_codex")!.spec.inputSchema.host!.safeParse(undefined).success).toBe(true);
+    expect(full.entries.get("spawn")!.spec.inputSchema.host!.safeParse(undefined).success).toBe(true);
     expect(full.entries.has("t3_delegate")).toBe(hosted);
   }
 });
@@ -285,15 +285,15 @@ it("refuses reduced without validated host and does not trust profile environmen
 
 it("remote locality refusal precedes usage, checklist and job side effects, even if SDK validation is bypassed", async () => {
   const r = await registry();
-  for (const name of ["spawn_codex", "ask_codex"]) for (const host of [undefined, "", " ", "invalid/name"]) {
-    const result = await r.entries.get(name)!.call({ prompt: "work", title: "Remote work", host, checklist: [{ text: "must not read a project" }] }, extra());
+  for (const name of ["spawn", "ask"]) for (const host of [undefined, "", " ", "invalid/name"]) {
+    const result = await r.entries.get(name)!.call({ agent: "codex", prompt: "work", title: "Remote work", host, checklist: [{ text: "must not read a project" }] }, extra());
     expect(result.isError).toBe(true);
     expect(JSON.stringify(result)).toMatch(/remote|paired/i);
   }
   expect(boundary.usage).not.toHaveBeenCalled(); expect(boundary.run).not.toHaveBeenCalled(); expect(boundary.remote).not.toHaveBeenCalled();
   expect(r.jobs.start).not.toHaveBeenCalled(); expect(r.jobs.track).not.toHaveBeenCalled();
   // A valid remote request reaches existing remote validation, never local fallback.
-  const result = await r.entries.get("spawn_codex")!.call({ prompt: "work", title: "Remote work", host: "paired-pc", cwd: "/remote", send_to: ["local"] }, extra());
+  const result = await r.entries.get("spawn")!.call({ agent: "codex", prompt: "work", title: "Remote work", host: "paired-pc", cwd: "/remote", send_to: ["local"] }, extra());
   expect(result.isError).toBe(true); expect(JSON.stringify(result)).toMatch(/send_to is local-only/);
 });
 
@@ -301,7 +301,7 @@ it("retains native Codex/Claude child refusal before ordinary tool side effects"
   for (const agent of ["codex", "claude"] as const) {
     const r = await registry(undefined, true, agent);
     r.ctx.admitCodex = agent === "codex" ? () => false : undefined;
-    const result = await r.entries.get("spawn_codex")!.call({ host: "paired-pc", prompt: "work", title: "Work" }, { ...extra(), _meta: { agentId: "child" } });
+    const result = await r.entries.get("spawn")!.call({ agent: "codex", host: "paired-pc", prompt: "work", title: "Work" }, { ...extra(), _meta: { agentId: "child" } });
     expect(result.isError).toBe(true); expect(JSON.stringify(result)).toMatch(/child|parent authority/i);
     expect(r.jobs.start).not.toHaveBeenCalled();
     for (const name of ["job_checklist", "set_job_outcome", "max_subagents", "handoff_subagents"]) {
@@ -317,7 +317,7 @@ it("retains the existing remote ask route with supervisor ownership and without 
   const end = vi.fn();
   r.jobs.track.mockReturnValue({ job, end });
   boundary.remote.mockResolvedValue({ text: "remote result", sessionId: "remote-session" });
-  const result = await r.entries.get("ask_codex")!.call({ prompt: "work", title: "Remote work", host: "paired-pc", cwd: "/remote" }, extra());
+  const result = await r.entries.get("ask")!.call({ agent: "codex", prompt: "work", title: "Remote work", host: "paired-pc", cwd: "/remote" }, extra());
   expect(result.isError, JSON.stringify(result)).not.toBe(true); expect(boundary.remote).toHaveBeenCalledOnce();
   expect(boundary.remote.mock.calls[0]![2]).toMatchObject({ host: "paired-pc", cwd: "/remote" });
   expect(job).toMatchObject({ remote: { host: "paired-pc", name: "codex-job-12345678" } });
@@ -331,7 +331,7 @@ it("does not broaden delegated depth registration or full-profile T3 delegate de
   expect(result.isError).toBe(true); expect(JSON.stringify(result)).toMatch(/depth/i);
   const names: string[] = [];
   registerTools({ registerTool: (name: string) => names.push(name) } as unknown as McpServer, { ...r.ctx, node: null, t3Host: undefined, parent: { name: "parent" } as ServerContext["parent"] }, ["codex"]);
-  expect(names).not.toContain("spawn_codex"); expect(names).not.toContain("ask_codex"); expect(names).toContain("report_progress");
+  expect(names).not.toContain("spawn"); expect(names).not.toContain("ask"); expect(names).toContain("report_progress");
 });
 
 it("uses profile-specific server instructions without advertising hidden tools", () => {

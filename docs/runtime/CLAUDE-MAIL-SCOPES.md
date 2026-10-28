@@ -53,16 +53,8 @@ query are refused, as already established for wait/conversation in AB-405.
 | `wait_for_message` | c | Refuse; hooks and child inbox deliver mail |
 | `max_subagents` | a | Refuse |
 | `auto_wake` | a | Refuse |
-| `ask_claude` | b | Refuse; child has no independent supervisor identity |
-| `spawn_claude` | b | Refuse; same reason |
-| `ask_codex` | b | Refuse; same reason |
-| `spawn_codex` | b | Refuse; same reason |
-| `ask_opencode` | b | Refuse; same reason |
-| `spawn_opencode` | b | Refuse; same reason |
-| `ask_antigravity` | b | Refuse; same reason |
-| `spawn_antigravity` | b | Refuse; same reason |
-| `ask_muse` | b | Refuse; same reason |
-| `spawn_muse` | b | Refuse; same reason |
+| `ask` | b | Refuse; child has no independent supervisor identity |
+| `spawn` | b | Refuse; same reason |
 | `usage_limits` | c | Shared account quota summaries; no parent metadata observation |
 | `list_models` | c | Shared model catalogue; no parent metadata observation |
 | `dashboard` | a | Refuse browser/UI side effect |
@@ -151,7 +143,7 @@ children cannot exhaust parent capacity.
 
 ## Not covered
 
-Native children inside delegated `spawn_claude` jobs share the job's MCP
+Native children inside delegated `spawn` with `agent="claude"` jobs share the job's MCP
 connection, which has no bridge node and no scope gate. Such a child acts with
 the job's authority (follow-up AB-413).
 

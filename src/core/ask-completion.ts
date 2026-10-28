@@ -5,6 +5,7 @@ import { archiveJobs } from "./job-archive.js";
 import { assertWritableStore, backupPath, isRecord, readJsonStore, writeJsonStore } from "./json-store.js";
 import { readHistoryJson } from "./run-history.js";
 import { readRunnerStateRecord } from "./runner-store.js";
+import { CODING_AGENTS } from "./protocol.js";
 import type { DatabaseSync } from "node:sqlite";
 import { readFile } from "node:fs/promises";
 
@@ -40,7 +41,10 @@ function observeAskRow(db: DatabaseSync, home: string, source: string, generatio
   for (const block of row.message.content) {
     if (!isRecord(block)) continue;
     if (block.type === "tool_use" && typeof block.id === "string" && typeof block.name === "string") {
-      const target = /(?:^|__)ask_(codex|claude|opencode|antigravity)$/.exec(block.name)?.[1];
+      // Historical transcript names remain readable; they are never registered as tool aliases.
+      const legacy = /(?:^|__)ask_(codex|claude|opencode|antigravity)$/.exec(block.name)?.[1];
+      const agent = /(?:^|__)ask$/.test(block.name) && isRecord(block.input) ? block.input.agent : undefined;
+      const target = legacy ?? (typeof agent === "string" && (CODING_AGENTS as readonly string[]).includes(agent) ? agent : undefined);
       if (target) db.prepare("INSERT INTO history_cursors VALUES(?,?) ON CONFLICT(source) DO UPDATE SET cursor=excluded.cursor")
         .run(`ask-tool:${source}:${generation}:${block.id}`, JSON.stringify({ target, at }));
     }

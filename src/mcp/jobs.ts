@@ -112,7 +112,7 @@ export interface Job {
   controller: AbortController;
   /** Latest status line reported by the subagent, e.g. "running: npm test". */
   progress: string | null;
-  /** ask_* runs: the caller waits for the result itself; shown in peers, no result message. */
+  /** ask runs: the caller waits for the result itself; shown in peers, no result message. */
   foreground?: boolean;
   /** "interrupted": it was running when its session ended (agent-bridge restarted); it can be recovered. */
   status: "running" | "paused" | "done" | "failed" | "interrupted" | "cancelled";
@@ -1096,7 +1096,7 @@ export class JobManager {
     return [...this.running.values()].filter((j) => this.isMine(j.owner)).length;
   }
 
-  /** Background jobs plus blocking ask_* runs, so the session (and its coordinator) can see all of them. */
+  /** Background jobs plus blocking ask runs, so the session (and its coordinator) can see all of them. */
   list(): Job[] {
     this.refreshOwnership();
     // Runner-hosted jobs report their progress through their runner.
@@ -1419,7 +1419,7 @@ export class JobManager {
   }
 
   /**
-   * Register a blocking ask_* run for visibility in peers. Returns a progress sink and `end`, which records
+   * Register a blocking ask run for visibility in peers. Returns a progress sink and `end`, which records
    * the outcome so the run can be continued later with message_subagent.
    */
   track(
@@ -2167,7 +2167,7 @@ export class JobManager {
     }
   }
 
-  /** A running turn another session executes inline (a handed-off ask_* run, or one started without a runner). */
+  /** A running turn another session executes inline (a handed-off ask run, or one started without a runner). */
   private foreignInline(job: Job): boolean {
     return (job.status === "running" || job.status === "paused" && job.pausePending === true) && !job.host && Boolean(job.executionOwner) && job.executionOwner !== this.node.name;
   }

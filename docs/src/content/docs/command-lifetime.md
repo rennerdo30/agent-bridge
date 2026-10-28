@@ -40,7 +40,7 @@ project path, drive letter, or sibling job. Do not add name-based sweeps. Alread
 signaled `ChildProcess` roots are skipped. The wait added in `9edb0dc` waits for that child
 to close; it does not broaden the target or introduce a command timeout.
 
-Background `spawn_*` jobs have an independent runner and survive the session MCP server's
+Background `spawn` jobs have an independent runner and survive the session MCP server's
 `/reload-plugins`. That protects the **agent job**. It does not promise that every native
 tool outlives command cleanup, job cancellation, or the agent's app-server process.
 
@@ -66,7 +66,7 @@ On POSIX, delegates own separate process groups. A delegate root's natural exit 
 stops its surviving group, as well as the existing timeout/cancellation group cleanup. A process
 that deliberately creates another session can escape a POSIX process group; this is not a
 kernel descendant-containment guarantee. Windows containment applies to dedicated background
-runners, not legacy in-process mode (`AGENT_BRIDGE_JOB_RUNNER=0`) or blocking `ask_*` calls.
+runners, not legacy in-process mode (`AGENT_BRIDGE_JOB_RUNNER=0`) or blocking `ask` calls.
 Those modes retain delegate tree/group cleanup. Do not use either boundary as a durable-tool
 contract; use the independently owned service/scheduler route below. Existing already-running
 jobs are not retroactively assigned to new ownership scopes when plugins reload.

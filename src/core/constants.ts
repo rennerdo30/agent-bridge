@@ -106,7 +106,7 @@ export const QUEUED_MAIL_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 export const DEFAULT_MAX_HOPS = 6;
 
 /** Delegation (headless calls to the other CLI). */
-/** ask_* default. Real implementation tasks take longer than 15 minutes; hosts background long calls anyway. */
+/** ask default. Real implementation tasks take longer than 15 minutes; hosts background long calls anyway. */
 export const DEFAULT_DELEGATE_TIMEOUT_SEC = 3_600;
 export const MAX_DELEGATE_TIMEOUT_SEC = 3_600;
 /** Background subagents have no practical limit; this cap only stops runaway processes. */
