@@ -47,11 +47,11 @@ export function modelParameterDescription(agent: CodingAgent, cfg: BridgeConfig,
   const cached = cachedModels(home, agent, cfg);
   const models = cached?.models ?? (agent === "claude" ? ["opus", "sonnet"] : []);
   return (
-    `Any model id or alias ${agent} accepts, passed through verbatim (e.g. ${example}). ` +
+    `Model id/alias ${agent} accepts, passed through (e.g. ${example}). ` +
     `Default: ${modelDefault(agent, cfg) ?? cached?.defaultModel ?? `${agent}'s own default`}. ` +
     (models.length ? `Available${models.length > SHORT_MODEL_LIST ? " (short list)" : ""}: ${models.slice(0, SHORT_MODEL_LIST).join(", ")}. ` : "") +
-    (agent === "opencode" ? `Use list_models(agent="opencode") for catalog hints; explicit provider/model IDs are resolved by opencode, even when the catalog is empty.` :
-      `Use list_models(agent="${agent}") for the full list and effort levels.`)
+    (agent === "opencode" ? `list_models gives hints; explicit provider/model ids resolve even with an empty catalog.` :
+      `list_models(agent="${agent}") for models/efforts.`)
   );
 }
 

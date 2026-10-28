@@ -12,8 +12,8 @@ export const QUESTIONS_FILE = "owner-questions.db";
 export const MAX_OPEN_QUESTIONS = 5;
 const short = z.string().trim().min(1).max(500);
 export const askOwnerSchema = z.object({
-  project: z.string().min(1).max(4096).optional().describe("Own project directory; defaults to the asking session's canonical project"),
-  deskProject: z.string().trim().min(1).max(100).optional().describe("Pair Desk project slug for linked issue navigation; otherwise read from .pair-desk.json"),
+  project: z.string().min(1).max(4096).optional().describe("Own project directory; default: your session's canonical project"),
+  deskProject: z.string().trim().min(1).max(100).optional().describe("Pair Desk project slug for issue links; default: from .pair-desk.json"),
   title: short.refine(s => !/[\r\n]/.test(s), "Use a one-line title"),
   context: z.string().max(4000).refine(s => s.split(/\r?\n/).length <= 10),
   topic: z.string().trim().min(1).max(160),

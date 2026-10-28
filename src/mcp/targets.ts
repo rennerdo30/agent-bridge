@@ -16,7 +16,7 @@ export function usageProbeFor(target: CodingAgent, cfg: BridgeConfig, context: P
   return { ...context, agent: target, bin: bins[target], model: model ?? DELEGATION_TARGETS[target].defaultModel(cfg) };
 }
 
-export const nativeSubagentsSchema = z.number().int().min(0).max(MAX_CODEX_SUBAGENTS).optional().describe(`Maximum concurrent native Codex child threads per job (0 disables). Default: config codexSubagents (${DEFAULT_CODEX_SUBAGENTS}). Separate from bridge maxJobs/depth. Changes apply from the next turn.`);
+export const nativeSubagentsSchema = z.number().int().min(0).max(MAX_CODEX_SUBAGENTS).optional().describe(`Max concurrent native Codex child threads per job (0 disables). Default: config codexSubagents (${DEFAULT_CODEX_SUBAGENTS}). Separate from maxJobs/depth; applies next turn.`);
 
 /** Set to 1 to run Codex subagents with `codex exec` (no live messages) instead of `codex app-server`. */
 export const CODEX_EXEC_ENV = "AGENT_BRIDGE_CODEX_EXEC";
@@ -111,10 +111,10 @@ export const DELEGATION_TARGETS: Record<CodingAgent, DelegationTarget> = {
     effortExample: '"low", "medium", "high", "xhigh" or "max" (model-dependent)',
     defaultModel: (cfg) => cfg.antigravityModel,
     schema: {
-      terminal_sandbox: z.boolean().optional().describe("Enable agy's terminal sandbox (separate from read/ask tool permissions)"),
-      bypass_permissions: z.boolean().optional().describe("Exact Antigravity permission override: true bypasses native approvals, false retains native policy. Overrides read/ask access; handoff restrictions remain."),
+      terminal_sandbox: z.boolean().optional().describe("Enable agy's terminal sandbox (separate from tool permissions)"),
+      bypass_permissions: z.boolean().optional().describe("Antigravity override: true bypasses native approvals, false keeps native policy. Overrides read/ask access; handoff restrictions remain."),
     },
-    permissionNote: () => "Requires the installed agent-bridge Antigravity plugin. Read denies non-reading tools; ask relays them; edit delegates workspace reads/writes to native policy (subject to native Ask/deny rules) and relays outside-workspace file actions, commands and external tools while preserving native deny rules. Idle TUI mail waits for the next turn.",
+    permissionNote: () => "Needs the agent-bridge Antigravity plugin. read denies non-reading tools; ask relays them; edit follows native policy for workspace reads/writes (native Ask/deny rules apply) and relays outside-workspace files, commands and external tools. Native deny rules always apply. Idle TUI mail waits for the next turn.",
     permission: (_cfg, a) => a.bypass_permissions === undefined ? a.access ?? "read" : a.bypass_permissions ? "bypass" : "native",
     run: async (cfg, base, a) => {
       return delegateToAntigravity({ ...base, bin: cfg.antigravityBin, access: a.bypass_permissions === undefined ? a.access ?? "read" : "edit", autoApprove: a.bypass_permissions, sandbox: a.terminal_sandbox, extraEnv: { ...base.extraEnv, ...(a.relay?.env ?? {}) } });
@@ -128,9 +128,9 @@ export const DELEGATION_TARGETS: Record<CodingAgent, DelegationTarget> = {
     schema: {
       native_subagents: nativeSubagentsSchema,
       sandbox: z.enum(CODEX_SANDBOXES as [string, ...string[]]).optional().describe("Overrides access with an exact Codex sandbox mode"),
-      approvals_reviewer: z.enum(CODEX_APPROVALS_REVIEWERS).optional().describe("Codex reviewer: auto_review (approve for me, default) or user (forward approvals). Does not change the sandbox."),
+      approvals_reviewer: z.enum(CODEX_APPROVALS_REVIEWERS).optional().describe("Reviewer: auto_review (approve for me; default) or user (forward approvals). Sandbox unchanged."),
     },
-    permissionNote: (cfg) => `Codex runs in the "${cfg.codexSandbox}" sandbox unless you pass access or sandbox. Worktree edit runs use "${cfg.codexWorktreeSandbox ?? (cfg.codexSandbox === "read-only" ? "workspace-write" : cfg.codexSandbox)}" (config codexWorktreeSandbox); workspace-write can restrict builds and network access.${codexEnvironmentNote()}`,
+    permissionNote: (cfg) => `Codex sandbox: "${cfg.codexSandbox}" unless access/sandbox is passed; worktree edit runs use "${cfg.codexWorktreeSandbox ?? (cfg.codexSandbox === "read-only" ? "workspace-write" : cfg.codexSandbox)}" (config codexWorktreeSandbox). workspace-write can limit builds/network.${codexEnvironmentNote()}`,
     permission: (cfg, a) => (a.sandbox as CodexSandbox | undefined) ?? (a.access ? CODEX_SANDBOX_FOR[a.access] : cfg.codexSandbox),
     run: async (cfg, base, a) => {
       base = { ...base, nativeSubagents: a.native_subagents ?? cfg.codexSubagents };
@@ -174,7 +174,7 @@ export const DELEGATION_TARGETS: Record<CodingAgent, DelegationTarget> = {
     effortExample: '"low", "medium", "high", "xhigh" or "max"',
     defaultModel: (cfg) => cfg.claudeModel,
     schema: { permission_mode: z.enum(CLAUDE_PERMISSION_MODES as [string, ...string[]]).optional().describe("Overrides access with an exact Claude permission mode") },
-    permissionNote: (cfg) => `Claude runs with permission mode "${cfg.claudePermissionMode}" unless you pass access or permission_mode.`,
+    permissionNote: (cfg) => `Claude permission mode "${cfg.claudePermissionMode}" unless access/permission_mode is passed.`,
     permission: (cfg, a) => claudeModeFor(cfg, a),
     run: (cfg, base, a) =>
       delegateToClaude({
@@ -189,9 +189,9 @@ export const DELEGATION_TARGETS: Record<CodingAgent, DelegationTarget> = {
     effortExample: '"none", "minimal", "low", "medium", "high", "xhigh", "max" or "ultra"',
     defaultModel: (cfg) => cfg.museModel,
     schema: {
-      permission_profile: z.string().min(1).max(80).optional().describe("Named Muse permission profile from its settings (--permission-profile)"),
+      permission_profile: z.string().min(1).max(80).optional().describe("Muse permission profile name (--permission-profile)"),
     },
-    permissionNote: () => "Muse uses its stable session protocol for steering and approval relay. Read denies mutation tools through the approved Bridge native hook; ask forwards mutation approvals; edit retains native policy. Named profiles are verified before a turn starts. Legacy exec is an explicit compatibility mode; ask then behaves as read.",
+    permissionNote: () => "Muse: stable session protocol (steering + approval relay). read denies mutation tools via the Bridge native hook; ask forwards mutation approvals; edit keeps native policy. Named profiles are verified before the turn. Legacy exec is explicit opt-in; there ask acts as read.",
     permission: (_cfg, a) => a.permission_profile ?? a.access ?? "read",
     run: (cfg, base, a) =>
       runMuse({
@@ -208,7 +208,7 @@ export const DELEGATION_TARGETS: Record<CodingAgent, DelegationTarget> = {
     effortExample: 'the model\'s variant, such as "low", "high" or "max" (provider-specific)',
     modelExample: '"provider/model", e.g. "anthropic/claude-sonnet-5" or "opencode/muse-spark-1.3-contributor-free"',
     defaultModel: (cfg) => cfg.opencodeModel,
-    schema: { auto_approve: z.boolean().optional().describe("Overrides access: auto-approve every opencode permission request (opencode run --auto)") },
+    schema: { auto_approve: z.boolean().optional().describe("Overrides access: auto-approve all opencode permissions (opencode run --auto)") },
     permissionNote: (cfg) =>
       cfg.opencodeAutoApprove
         ? "opencode auto-approves permission requests unless you pass access=read or auto_approve=false."
