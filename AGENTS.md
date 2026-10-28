@@ -16,6 +16,15 @@ Push WIP with explicit refs: `git push origin HEAD:refs/heads/<branch>`. Do not 
 
 **Tests** (owner, 2026-10-17): only write a test if it would actually fail when the code is broken in a way that matters. Everything else is bloat.
 
+**Scope and size stops** (owner, 2026-10-29; incident PR #141: a 300-line fix grew to 106 commits and +128k lines, red on every hosted run but one):
+
+- **One issue, one PR, one stated change.** Anything new found during the work (edge cases, stronger guarantees, refactors) becomes a new Pair Desk issue, never more commits on the same branch.
+- **Size stop:** at 25 commits or 1,000 changed non-test source lines, the job stops pushing and asks the parent to split, cut back or close. The parent never just waves it on.
+- **Red existing test means stop:** a previously passing test that now fails is a defect in the change. Fix the code or drop the change. Never change expected values, baselines or pins to make it pass without a documented behaviour comparison approved by the parent. Storage, migration, retention and data-preservation tests are never re-baselined without the owner.
+- **Red CI stop:** after two consecutive red hosted runs on the same branch, stop pushing and report to the parent with the failure list. No third push without the parent's decision.
+- **No evidence in the repository:** CI logs, receipts, review records and pin requests go to `E:/AgentData/reports/` or Pair Desk, never into `docs/` or anywhere else in the tree.
+- **Every brief has a done point:** an explicit, finite list of acceptance items. "Close the remaining gaps" is not a brief.
+
 **Merge queues** (owner, 2026-10-16): while a merge queue or combined integration branch is open, follow-up fixes go into that branch. Do not open new PRs for them.
 
 **Canonical drive paths:** `E:\` and `D:\` are the same drive: the whole drive is a subst, `E:\ = D:\`, so `E:\Development = D:\Development` and `E:\AgentData = D:\AgentData`. Always use `E:` paths in commands, configs, docs, messages, Pair Desk issues and job prompts; do not write new `D:\...` paths. When a tool reports a `D:` path, refer to it by its `E:` spelling. Comparisons and identity checks must treat both as the same location.
