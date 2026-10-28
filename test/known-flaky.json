@@ -45,6 +45,15 @@
       "added": "2026-10-16",
       "recheckBy": "2026-11-04",
       "seen": "Windows Node 22 and 24 shard 4/6 (main run 38849169431, runs 38833198807, 38849984408). Rechecked 2026-10-22: Windows Node 24 known-flaky main run 39681057277 and PR140 run 39697775445 time out at 15000ms; see docs/ab410-known-flaky-recheck-2026-10-22.md Rechecked 2026-10-29: passed all six known-flaky lanes (Windows/macOS/Ubuntu Node 24, runs 40765722057 and 40766666879); kept because the 2026-10-22 re-check still failed."
+    },
+    {
+      "file": "test/job-runner.test.ts",
+      "test": "background subagents in job runners > cancel_subagent then message_subagent continues the same worktree and archives its lease",
+      "issue": "AB-410",
+      "owner": "muse-claude-codex-comm",
+      "added": "2026-10-16",
+      "recheckBy": "2026-11-04",
+      "seen": "Windows Node 24 shard 3/6 (main run 38873872600): expected message to contain 'fake answer: finished' at job-runner.test.ts:437 Rechecked 2026-10-29: passed six known-flaky lanes but failed again in blocking Windows Node 24 shard 3/6 (run 40767740734), so it stays listed."
     }
   ]
 }
