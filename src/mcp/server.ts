@@ -363,8 +363,13 @@ export function delegationTargets(_agent: AgentKind): CodingAgent[] {
   return [...CODING_AGENTS];
 }
 
-export function instructionsFor(agent: AgentKind, targets: CodingAgent[], profile: McpProfile = "full"): string {
+/** Inside a T3 Code session, T3's own tools come first; agent-bridge fills only the gaps. */
+const T3_NATIVE_FIRST = "In this T3 Code session, use T3 Code's tools and your native tooling whenever they cover the need; " +
+  "use agent-bridge tools only for what T3 Code does not offer (paired-machine work, Bridge peers and Bridge jobs). ";
+
+export function instructionsFor(agent: AgentKind, targets: CodingAgent[], profile: McpProfile = "full", t3Session = profile === "reduced"): string {
   if (profile === "reduced") return (
+    T3_NATIVE_FIRST +
     "agent-bridge supplies peer and paired-machine coordination in this validated T3 session. Use T3's native tools for local delegation, models and app-owned tasks. " +
     'Use "health"/"peers" for broker status and job results; "send" for peer messages with reply_to; "inbox" to read mail, including retained quiet messages with include_quiet=true. ' +
     '"wait_for_message" defaults to notify mode: register once, then keep working or end the turn. A dispatch receipt does not prove inbox consumption. ' +
@@ -383,6 +388,7 @@ export function instructionsFor(agent: AgentKind, targets: CodingAgent[], profil
       : "";
   const names = targets.join(", ");
   return (
+    (t3Session ? T3_NATIVE_FIRST : "") +
     `agent-bridge connects AI coding sessions (${names}) running on this machine. Any CLI can delegate to any CLI, including its own kind. ` +
     "Peer messages arrive as <agent-bridge-message id=... from=...> blocks injected into your context." +
     channelNote +
@@ -540,7 +546,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
         agent === "claude"
           ? { experimental: { "claude/channel": {} }, tools: {} }
           : { experimental: { [CODEX_SANDBOX_META]: {} }, tools: {} },
-      instructions: instructionsFor(agent, targets, mcpProfile),
+      instructions: instructionsFor(agent, targets, mcpProfile, Boolean(t3Host?.binding)),
     },
   );
   if (!delegated) {

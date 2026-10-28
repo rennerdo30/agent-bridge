@@ -344,6 +344,14 @@ it("uses profile-specific server instructions without advertising hidden tools",
   expect(instructionsFor("codex", ["codex"])).toContain('"list_models"');
 });
 
+it("tells T3 sessions to prefer T3 Code tools, and only T3 sessions", () => {
+  const nativeFirst = /use agent-bridge tools only for what T3 Code does not offer/;
+  expect(instructionsFor("codex", ["codex"], "reduced")).toMatch(nativeFirst);
+  // AGENT_BRIDGE_MCP_PROFILE=full inside T3 keeps every tool but still prefers T3's own.
+  expect(instructionsFor("codex", ["codex"], "full", true)).toMatch(nativeFirst);
+  expect(instructionsFor("codex", ["codex"])).not.toMatch(nativeFirst);
+});
+
 it("strips profile and host selectors case-insensitively at shared child boundary without changing grants", () => {
   const clean = withoutT3Context({ ...injected, agent_bridge_host: "t3", agent_bridge_mcp_profile: "reduced", T3_ACP_MCP_NODE: "node", AGENT_BRIDGE_PARENT_TOKEN: "fixture-parent", KEEP: "yes" });
   expect(Object.keys(clean).filter(k => /^(AGENT_BRIDGE_HOST|AGENT_BRIDGE_MCP_PROFILE|T3_ACP_MCP_.*)$/i.test(k))).toEqual([]);
