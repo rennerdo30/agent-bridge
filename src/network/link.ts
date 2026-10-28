@@ -636,12 +636,14 @@ export class NetworkService {
     const { link, target } = this.target(message.recipient);
     const destination = link.peers.find(peer => peer.name === target);
     const sender = this.localPeers().find(peer => peer.id === message.from.id);
-    if ((sender?.frontend || destination?.frontend) && (!link.t3ThreadRouting || !destination)) {
+    const hosted = Boolean(sender?.frontend || destination?.frontend);
+    if (hosted && (!link.t3ThreadRouting || !destination)) {
       throw new BridgeError("unknown_target", "Paired host lacks T3 thread routing or destination is not advertised; no native fallback was attempted.");
     }
     // Advertise a just-reconnected sender before the receiver authenticates its frame.
     link.refresh();
-    const result = await link.send({ ...message, recipient: target }, link.t3ThreadRouting && destination ?
+    // Native-to-native mail keeps name-only routing, so it still queues across a recipient restart.
+    const result = await link.send({ ...message, recipient: target }, hosted && destination ?
       { peerId: destination.id, ...(destination.frontend ? { frontend: destination.frontend } : {}) } : undefined);
     const actual = result.recipient ?? target;
     const recipient = `${link.remote!.name}/${actual}`;

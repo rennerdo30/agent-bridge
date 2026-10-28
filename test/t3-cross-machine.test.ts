@@ -131,6 +131,18 @@ it("preserves legacy native-to-native delivery without a T3 capability", async (
   expect(received).toHaveBeenCalledTimes(1);
 });
 
+it("keeps native-to-native mail name-routed when the recipient re-registers before the send", async () => {
+  const sender = peer("native-sender"), destination = peer("destination");
+  const received = vi.fn((_m: BridgeMessage, _destination?: NetworkDestination | null) => ({ delivered: true }));
+  const a = service("pc-a", [sender], () => ({ delivered: true })), b = service("pc-b", [destination], received);
+  await connect(a, b);
+  // No refresh: pc-a still holds the old registration ID.
+  destination.id = randomUUID();
+  expect(await a.send(message(sender))).toMatchObject({ deliveredTo: ["pc-b/destination"] });
+  expect(received).toHaveBeenCalledTimes(1);
+  expect(received.mock.calls[0]![1]).toBeNull();
+});
+
 it("refuses an unfenced legacy send to a T3 session and does not downgrade T3 sends to an old host", async () => {
   const sender = peer("sender", binding("a", "sender-thread")), destination = peer("destination", binding("b", "target-thread"));
   const received = vi.fn(() => ({ delivered: true }));
