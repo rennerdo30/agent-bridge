@@ -69,7 +69,7 @@ import { readJsonSnapshot, type JsonSnapshot } from "./file-cache.js";
 import { completionMessageId, COMPLETION_DEDUPE_PREFIX } from "./completion.js";
 import { projectAskCompletions } from "./ask-completion.js";
 import { isJobSendTarget, MAX_JOB_SEND_TARGETS } from "./job-messaging.js";
-import { NetworkService, type NetworkStatus } from "../network/link.js";
+import { NetworkService, type NetworkDestination, type NetworkStatus } from "../network/link.js";
 import { readNetworkConfig, writeNetworkConfig, type NetworkConfig } from "../network/config.js";
 import { z } from "zod";
 import { basename, dirname, isAbsolute, join } from "node:path";
@@ -915,7 +915,7 @@ export class Broker {
           try {
             this.network = new NetworkService(this.networking.home, this.networking.config, {
               peers: () => this.dashboardPeers(),
-              receive: (message) => this.receiveRemote(message),
+              receive: (message, destination) => this.receiveRemote(message, destination),
         receipt: (id, sender, recipient) => this.remoteReceipt(id, sender, recipient),
         recipientReceipts: true,
             }, this.log);
@@ -1055,7 +1055,7 @@ export class Broker {
     if (config.enabled) {
       const service = new NetworkService(this.networking.home, config, {
         peers: () => this.dashboardPeers(),
-        receive: (message) => this.receiveRemote(message),
+        receive: (message, destination) => this.receiveRemote(message, destination),
         receipt: (id, sender, recipient) => this.remoteReceipt(id, sender, recipient),
         recipientReceipts: true,
       }, this.log);
@@ -2962,10 +2962,16 @@ export class Broker {
     return result;
   }
 
-  private receiveRemote(message: BridgeMessage): { delivered: boolean; recipient: string; stored: boolean; recovered?: boolean; readAt: number | null } {
+  private receiveRemote(message: BridgeMessage, destination?: NetworkDestination | null): { delivered: boolean; recipient: string; stored: boolean; recovered?: boolean; readAt: number | null } {
     if (isNativeChildAddress(message.recipient) || isNativeChildAddress(message.to) || isNativeChildAddress(message.from.name)) throw new BridgeError("unauthorized", "Native child addresses are local scoped queues; paired-PC delivery is not authorized.");
     message = { ...message, jobControlAuthorized: undefined };
     const target = this.recipientConn(message.recipient);
+    // Retained aliases are resolved only here. Legacy name-only ingress must not
+    // use an alias to bypass the network's exact T3 destination fence.
+    if (destination !== undefined && (destination ? !target?.peer || target.peer.id !== destination.peerId ||
+        !sameFrontend(target.peer, destination) : target?.peer?.frontend)) {
+      throw new BridgeError("unknown_target", "T3 destination binding changed or is missing; refresh peers and select the exact thread.");
+    }
     if (target?.peer) message = { ...message, recipient: target.peer.name };
     const existing = this.store.byId(message.id);
     if (existing) {

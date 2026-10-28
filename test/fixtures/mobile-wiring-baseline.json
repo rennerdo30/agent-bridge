@@ -3,7 +3,7 @@
   "methods": {
     "src/core/broker.ts:constructor": "e7c1745f8b8e42bc9859fb663bfe091b629905bc20a30471711f266df7fbef7b",
     "src/core/broker.ts:listen": "bd39e0afecb5a74d76161f26d5923f2c1e41da8cc490ed1448a9260b850ce4b0",
-    "src/core/broker.ts:startServices": "07bc9bdb56bea9ae2c5c3f0c89639469f7fa5ccfb0d8e5bc97fc1efbfd93fe2f",
+    "src/core/broker.ts:startServices": "3531478fb43a9409bf0e90c0cfdecb0b4892045fa2554ca502deeae705e59acf",
     "src/core/broker.ts:abortStartup": "6132967fa78fd39cff064a581f4f49bb9c1c75b644fba78b291708c58733118c",
     "src/core/broker.ts:close": "fb5a92326cac082ae181f38208c0af708a2b342297038d021f67a13bcd8b9b27",
     "src/core/node.ts:constructor": "0094b2611e538459faa5577274f1a9b2437e7a3c1f6e9361cbe2c02428f0dd07",
@@ -283,7 +283,7 @@
         {
           "method": "src/core/broker.ts:startServices",
           "previous": "c99740e533c7b6fd293656682c88daa5cbbc491459f21304268f284219cd3777",
-          "current": "07bc9bdb56bea9ae2c5c3f0c89639469f7fa5ccfb0d8e5bc97fc1efbfd93fe2f"
+          "current": "3531478fb43a9409bf0e90c0cfdecb0b4892045fa2554ca502deeae705e59acf"
         },
         {
           "method": "src/core/broker.ts:close",
