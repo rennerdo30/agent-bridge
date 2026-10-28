@@ -23,7 +23,7 @@ title: "Configuration"
 }
 ```
 
-`jobs.defaultAllowTools` is the `allow_tools` of every `spawn_*` / `ask_*` job whose call
+`jobs.defaultAllowTools` is the `allow_tools` of every `spawn` / `ask` job whose call
 passes none (default `["pair-desk:worker"]`: Pair Desk reads, comments, progress, plans,
 steps, issue edits and review locations; it does not create issues and never writes status,
 builds or the handoff). It applies in every access mode, so `read` and `ask` jobs may write
@@ -38,7 +38,7 @@ Tool descriptions show the value from when the session started. See
 
 `codexSubagents` sets the default native Codex child-thread budget per delegated job
 (6 by default, integers 0–32; 0 disables). Override it with `native_subagents` on
-`spawn_codex`, `ask_codex` or `message_subagent`. This is separate from bridge job
+`spawn` with `agent="codex"`, `ask` with `agent="codex"` or `message_subagent`. This is separate from bridge job
 concurrency and delegation depth. See [native subagent settings and dashboard APIs](../codex-subagents/).
 
 `jobs.reuseIdenticalApprovals` (default `true`, home config only; a project config can change
@@ -70,7 +70,7 @@ Limits that keep it safe:
   checked when the grant is made (both when the question is asked and when it is answered)
   and again at each reuse; if either is not read-only, the command is asked. Read-only means:
   - The job cannot start or continue subagents of its own: its delegation depth reached
-    the effective `maxDelegateDepth` captured at launch (later config edits cannot change this), so its bridge server has no `spawn_*`, `ask_*`, `message_subagent`
+    the effective `maxDelegateDepth` captured at launch (later config edits cannot change this), so its bridge server has no `spawn`, `ask`, `message_subagent`
     or `decide`. A job that has them could start a child job with edit access in the same
     folder and answer that child's approvals itself.
   - No MCP server other than the Pair Desk was allowed for the rest of the job (one "allow"
@@ -97,8 +97,8 @@ Limits that keep it safe:
   question or a reused grant) ends the job's command grants. A call to the job's own
   agent-bridge server other than an exact send to the parent/supervisor or a read or status tool (`report_progress`, `peers`,
   `health`, `search_history`, `get_conversation`, `inbox`, `wait_for_message`, `decisions`,
-  `list_models`, `usage_limits`, `network_status`, `resource_slots`), such as `spawn_*`,
-  `ask_*`, `message_subagent` or `decide`, ends them and keeps none for the rest of the turn.
+  `list_models`, `usage_limits`, `network_status`, `resource_slots`), such as `spawn`,
+  `ask`, `message_subagent` or `decide`, ends them and keeps none for the rest of the turn.
   A `send` to a sibling or peer does the same; an inexact send or unknown recipient is
   treated conservatively because a recipient could change the job's files.
 - **No Git, no file reads**: the approval path runs no Git command and reads none of the

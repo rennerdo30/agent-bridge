@@ -1,12 +1,12 @@
 ---
 description: Hand a task to Codex, opencode or Antigravity CLI as a background subagent via agent-bridge
 argument-hint: <codex|opencode|antigravity> [model=<id>] [edit] [worktree] <task>
-allowed-tools: mcp__plugin_agent-bridge_bridge__spawn_codex, mcp__plugin_agent-bridge_bridge__spawn_opencode, mcp__plugin_agent-bridge_bridge__spawn_antigravity
+allowed-tools: mcp__plugin_agent-bridge_bridge__spawn
 ---
 
 Start a background subagent with agent-bridge. Arguments: `$ARGUMENTS`
 
-1. The first word picks the agent: `codex` → `spawn_codex`, `opencode` → `spawn_opencode`, `antigravity` → `spawn_antigravity`. If it is missing, ask the user.
+1. The first word picks `agent`: `codex`, `opencode` or `antigravity`. Call `spawn` with that `agent`. If it is missing, ask the user.
 2. Optional flags before the task:
    - `model=<id>` → pass it as `model` unchanged.
    - `edit` → `access: "edit"`.

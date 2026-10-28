@@ -88,7 +88,7 @@ describe("Muse legacy exec profile persistence", () => {
     const { client, jobs } = await session(node);
     let release!: (cleanup: () => void) => void;
     const entered = vi.mocked(museContext.registerMuseContextAsync).mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
-    const spawned = await call(client, "spawn_muse", { prompt: "initial", title: "Slow context", permission_profile: "initial-profile" });
+    const spawned = await call(client, "spawn", { agent: "muse", prompt: "initial", title: "Slow context", permission_profile: "initial-profile" });
     expect(spawned.error).toBeFalsy();
     const name = /muse-job-[0-9a-f]{8}/.exec(spawned.text)![0];
     await until(() => entered.mock.calls.length === 1);
@@ -105,7 +105,7 @@ describe("Muse legacy exec profile persistence", () => {
   it("keeps the initial profile through continuation and reload, and replaces exact profiles with access", async () => {
     const node = env.node("claude-muse-jobs"); await node.start();
     let { client, jobs } = await session(node);
-    const spawned = await call(client, "spawn_muse", { prompt: "initial", title: "Profile persistence", permission_profile: "initial-profile" });
+    const spawned = await call(client, "spawn", { agent: "muse", prompt: "initial", title: "Profile persistence", permission_profile: "initial-profile" });
     expect(spawned.error).toBeFalsy();
     const name = /muse-job-[0-9a-f]{8}/.exec(spawned.text)![0];
     await until(() => jobs.find(name)?.status === "done");

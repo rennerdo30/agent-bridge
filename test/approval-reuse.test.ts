@@ -598,8 +598,8 @@ describe("identical approval reuse within a job (AB-402)", () => {
         await ask(ownCall("report_progress"));
         await ask(command("npm test"));
         expect(rc.jobs!.askParent).toHaveBeenCalledTimes(1);
-        // spawn_* is allowed without a question, but a child job may change files.
-        await ask(ownCall("spawn_codex"));
+        // spawn is allowed without a question, but a child job may change files.
+        await ask(ownCall("spawn"));
         expect(commandGrants(j)).toBe(0);
         await ask(command("npm test"));
         await ask(command("npm test"));
@@ -1063,7 +1063,7 @@ describe("readOnlyJob", () => {
 });
 
 describe("jobCanSpawn", () => {
-  it("follows the depth at which the job's bridge server registers spawn_*", () => {
+  it("follows the depth at which the job's bridge server registers spawn", () => {
     expect(jobCanSpawn(1, { [DELEGATE_DEPTH_ENV]: "0" })).toBe(false);
     expect(jobCanSpawn(2, { [DELEGATE_DEPTH_ENV]: "0" })).toBe(true);
     expect(jobCanSpawn(2, { [DELEGATE_DEPTH_ENV]: "1" })).toBe(false);
@@ -1081,9 +1081,9 @@ describe("mcpCallEffect", () => {
     expect(mcpCallEffect({ tool: "mcp:other", detail: "lookup: {}" })).toBe("drop");
     for (const tool of ["report_progress", "peers", "inbox", "wait_for_message", "usage_limits"])
       expect(mcpCallEffect({ tool: "mcp:plugin_agent-bridge_bridge", detail: `${tool}: {}` })).toBe("keep");
-    for (const tool of ["send", "spawn_codex", "ask_claude", "message_subagent", "decide", "cancel_subagent"])
+    for (const tool of ["send", "spawn", "ask", "message_subagent", "decide", "cancel_subagent"])
       expect(mcpCallEffect({ tool: "mcp:plugin_agent-bridge_bridge", detail: `${tool}: {}` })).toBe("block");
-    expect(mcpCallEffect({ tool: "mcp:agent-bridge", detail: 'Allow the agent-bridge MCP server to run tool "spawn_codex"?' })).toBe("block");
+    expect(mcpCallEffect({ tool: "mcp:agent-bridge", detail: 'Allow the agent-bridge MCP server to run tool "spawn"?' })).toBe("block");
     expect(mcpCallEffect({ tool: "mcp:bridge", detail: "bridge_message_subagent: {}" })).toBe("block");
   });
 });

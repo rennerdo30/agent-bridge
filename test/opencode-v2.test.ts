@@ -91,8 +91,8 @@ it.each([1, 2])("uses process cwd and resumes with the supported V%i transport",
     expect(serves[0].config).toBeUndefined();
     const readOnly = JSON.parse(serves[1].config);
     expect(readOnly.permission).toEqual({ edit: "deny", bash: "deny" });
-    expect(readOnly.tools).toMatchObject({ "*_*": false, bridge_ask_muse: true, bridge_spawn_muse: true,
-      bridge_ask_codex: true, bridge_spawn_claude: true, bridge_send: true });
+    expect(readOnly.tools).toMatchObject({ "*_*": false, bridge_ask: true, bridge_spawn: true,
+      bridge_send: true });
     expect(readOnly.tools.unrelated_write).toBeUndefined();
     expect(calls.find(c => c.path?.endsWith("/model")).path).toBe("/api/session/ses_test/model");
     expect(calls.find(c => c.path?.endsWith("/model")).body.model).toEqual({ providerID: "provider", id: "model", variant: "low" });
@@ -106,8 +106,7 @@ it.each([1, 2])("uses process cwd and resumes with the supported V%i transport",
   expect(JSON.parse(runs[1].config).permission.bash).toBe("deny");
   const readOnly = JSON.parse(runs[1].config);
   expect(readOnly.permission).toEqual({ edit: "deny", bash: "deny" });
-  expect(readOnly.tools).toMatchObject({ "*_*": false, bridge_ask_muse: true, bridge_spawn_muse: true,
-    bridge_ask_codex: true, bridge_spawn_claude: true, bridge_send: true });
+  expect(readOnly.tools).toMatchObject({ "*_*": false, bridge_ask: true, bridge_spawn: true, bridge_send: true });
   expect(readOnly.tools.unrelated_write).toBeUndefined();
   expect(runs[0].args.includes("--standalone")).toBe(major === 2);
   expect(runs[0].args.includes("--variant")).toBe(major === 1);

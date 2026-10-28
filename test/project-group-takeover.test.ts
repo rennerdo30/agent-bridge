@@ -424,7 +424,7 @@ it("routes a blocking ask to an available group master without returning its res
   await env.node("broker", "other").start();
   const source = await session("claude-master", "claude"), target = await session("codex-master", "codex");
   const release = join(env.home, "blocking-release"), link = release + ".link"; releases.push(release);
-  const pending = call(source, "ask_codex", { prompt: `release=${release} link=${link} blocking work`, title: "Limited caller work" });
+  const pending = call(source, "ask", { agent: "codex", prompt: `release=${release} link=${link} blocking work`, title: "Limited caller work" });
   await until(() => linkReady(link), 10_000);
   expect((await call(source, "coordinator_availability", { unavailable: true })).error).toBeFalsy();
   const child = parentFromEnv(JSON.parse(readFileSync(link, "utf8")))!;
@@ -457,7 +457,7 @@ it.each(["closed", "unavailable", "opencode"])("ten jobs survive a %s primary an
   const jobs: { name: string; id: string; release: string; link: string }[] = [];
   for (let index = 0; index < 10; index++) {
     const release = join(env.home, `release-${index}`), link = `${release}.link`; releases.push(release);
-    const started = await call(source, "spawn_codex", { prompt: `release=${release} link=${link} ${index === 2 ? "approve=yes" : ""} ${index === 1 ? "instruction=yes" : ""} complete item ${index}`, title: `Takeover item ${index}` });
+    const started = await call(source, "spawn", { agent: "codex", prompt: `release=${release} link=${link} ${index === 2 ? "approve=yes" : ""} ${index === 1 ? "instruction=yes" : ""} complete item ${index}`, title: `Takeover item ${index}` });
     expect(started.error, started.text).toBeFalsy();
     const name = /(?:codex|claude)-job-[a-f0-9]+/.exec(started.text)![0], id = name.split("-").at(-1)!; ids.push(id);
     jobs.push({ name, id, release, link });

@@ -450,10 +450,7 @@ export const OPENCODE_READ_ONLY_PERMISSIONS = { edit: "deny", bash: "deny" } as 
 /** MCP tools (named <server>_<tool>) can change things too: read-only runs allow only the permitted bridge routes. */
 export const OPENCODE_READ_ONLY_TOOLS = {
   "*_*": false, bridge_send: true, bridge_report_progress: true, bridge_checklist: true, bridge_peers: true, bridge_health: true, bridge_search_history: true, bridge_get_conversation: true,
-  bridge_spawn_codex: true, bridge_spawn_claude: true, bridge_ask_codex: true, bridge_ask_claude: true,
-  bridge_spawn_antigravity: true, bridge_ask_antigravity: true,
-  bridge_spawn_muse: true, bridge_ask_muse: true,
-  bridge_message_subagent: true, bridge_cancel_subagent: true, bridge_pause_subagent: true, bridge_resume_subagent: true, bridge_inbox: true, bridge_wait_for_message: true,
+  bridge_spawn: true, bridge_ask: true, bridge_message_subagent: true, bridge_cancel_subagent: true, bridge_pause_subagent: true, bridge_resume_subagent: true, bridge_inbox: true, bridge_wait_for_message: true,
 } as const;
 
 export function childEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
@@ -930,7 +927,7 @@ export async function withResumeHint<T>(agent: string, sessionOf: (stdout: strin
       const id = err.sessionId;
       if (id) {
         throw new DelegateError(
-          `${err.message}. The ${agent} session ${id} keeps its progress: call again with session_id="${id}" (and a longer timeout_sec, or use spawn_${agent}) to continue instead of starting over.`,
+          `${err.message}. The ${agent} session ${id} keeps its progress: call again with session_id="${id}" (and a longer timeout_sec, or use spawn (agent=${agent})) to continue instead of starting over.`,
           "timeout",
           err.stderrTail,
           err.partialStdout,

@@ -14,8 +14,10 @@ Experimental host integration: [T3 Code session messaging and MCP profiles](docs
 
 ## What it does
 
+Delegation uses `ask` (wait for a result) or `spawn` (background job), with required `agent`: `claude`, `codex`, `opencode`, `antigravity` or `muse`.
+
 - **Messaging between agents.** Sessions send each other questions, reviews and results. Messages to an offline or idle agent wait and wake it when possible.
-- **Any CLI can delegate to any CLI, including itself.** Claude, Codex, opencode, Antigravity and Muse each expose every coding agent's `ask_*` and `spawn_*` tools. Depth, slot, ownership and hop guards still apply. You can talk to a running subagent, continue a finished one with its full context, cancel it, or hand all of them to another session. Edits can run in their own git worktree.
+- **Any CLI can delegate to any CLI, including itself.** Claude, Codex, opencode, Antigravity and Muse each expose every coding agent's `ask` and `spawn` tools. Depth, slot, ownership and hop guards still apply. You can talk to a running subagent, continue a finished one with its full context, cancel it, or hand all of them to another session. Edits can run in their own git worktree.
 - **Projects with a main and a secondary.** A Claude and a Codex session in the same folder share their project's jobs. The main session is the first contact. If it closes or runs out of usage, the secondary takes over and nothing is lost.
 - **Checklists for subagents.** Give a job a to-do list at spawn; the project's definition of done is added automatically. The job ticks items and proposes new ones for your approval, and the result says when required items are still open.
 - **Questions to you.** Agents ask you decisions in one place. You hear a chime in the dashboard, or get a Windows notification that opens the question. Your answer goes straight back to the agent that asked.
@@ -32,7 +34,7 @@ This table describes **agent-bridge 0.30.17**, plus the unreleased Muse column. 
 | Session connection, peers, send/receive | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Messages while busy (hooks / next tool or model step) | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Idle message delivery / auto-wake | ⚠️[^claude-wake] | ⚠️[^codex-wake] | ✅ | ⚠️[^antigravity-wake] | ⚠️[^muse-wake] |
-| Delegate **to** (`ask_*` / `spawn_*` target) | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Delegate **to** (`ask` / `spawn` target) | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Delegate **from** (all five targets, including itself) | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Follow-ups / resume (`message_subagent`) | ✅ | ✅ | ✅ | ✅ | ✅[^muse-msp] |
 | Jobs in isolated git worktrees | ✅ | ✅ | ✅ | ✅ | ✅ |

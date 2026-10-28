@@ -7,7 +7,7 @@ const READ_TOOLS = new Set(["read", "read_file", "view_file", "glob", "grep", "g
 export function museBridgeTool(input: Record<string, any>): boolean {
   return /^mcp__(?:plugin_agent_bridge_bridge|agent_bridge)__[a-zA-Z0-9_]+$/.test(String(input.tool_name ?? ""));
 }
-// Bridge tools that only observe state; mutating Bridge tools (send, spawn_*, decide, ...) keep the authenticated path.
+// Bridge tools that only observe state; mutating Bridge tools (send, spawn, decide, ...) keep the authenticated path.
 const READ_ONLY_BRIDGE_TOOLS = new Set(["health", "peers", "list_models", "usage_limits", "network_status", "search_history", "get_conversation"]);
 /**
  * A known read-only tool needs no Bridge context: every access mode (read, ask,

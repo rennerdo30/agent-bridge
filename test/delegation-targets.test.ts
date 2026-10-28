@@ -8,8 +8,7 @@ import { type CodingAgent } from "../src/core/protocol.js";
 import { delegationTargets, registerTools, type ServerContext } from "../src/mcp/server.js";
 
 const kinds: CodingAgent[] = ["claude", "codex", "opencode", "antigravity", "muse"];
-const inventory = ["ask_antigravity", "ask_claude", "ask_codex", "ask_muse", "ask_opencode",
-  "spawn_antigravity", "spawn_claude", "spawn_codex", "spawn_muse", "spawn_opencode"];
+const inventory = ["ask", "spawn"];
 afterEach(() => vi.unstubAllEnvs());
 
 async function registeredInventory(agent: CodingAgent) {
@@ -24,14 +23,43 @@ async function registeredInventory(agent: CodingAgent) {
   const [a, b] = InMemoryTransport.createLinkedPair();
   try {
     await Promise.all([server.connect(a), client.connect(b)]);
-    const names = (await client.listTools()).tools.map((tool) => tool.name);
-    return names.filter((name) => /^(ask|spawn)_(claude|codex|opencode|antigravity|muse)$/.test(name)).sort();
+    const tools = (await client.listTools()).tools;
+    const names = tools.map((tool) => tool.name);
+    expect(names.filter(name => /^(ask|spawn)_/.test(name) && name !== "ask_owner")).toEqual([]);
+    for (const name of inventory.filter(name => names.includes(name))) {
+      expect(tools.find(tool => tool.name === name)!.inputSchema.properties!.agent).toMatchObject({ enum: kinds });
+    }
+    return names.filter((name) => /^(ask|spawn)$/.test(name)).sort();
   } finally { await client.close(); await server.close(); }
 }
 
 it.each(kinds)("%s can delegate to every CLI, including itself (AB-270)", async (agent) => {
   expect(delegationTargets(agent)).toEqual(kinds);
   expect(await registeredInventory(agent)).toEqual(inventory);
+});
+
+it("ask and spawn reject unknown or missing agents before job admission", async () => {
+  const server = new McpServer({ name: "agent-validation", version: "0" });
+  const start = vi.fn(), track = vi.fn();
+  registerTools(server, {
+    agent: "codex", cfg: DEFAULT_CONFIG, log: nullLogger, node: null,
+    home: process.env.AGENT_BRIDGE_HOME!, cwd: () => process.cwd(), channelActive: () => false,
+    jobs: { restore() {}, start, track } as unknown as NonNullable<ServerContext["jobs"]>,
+  }, kinds);
+  const client = new Client({ name: "agent-validation-client", version: "0" });
+  const [a, b] = InMemoryTransport.createLinkedPair();
+  try {
+    await Promise.all([server.connect(a), client.connect(b)]);
+    const names = (await client.listTools()).tools.map(tool => tool.name);
+    expect(names).toEqual(expect.arrayContaining(inventory));
+    expect(names.filter(name => /^(ask|spawn)_/.test(name))).toEqual([]);
+    for (const name of inventory) for (const agent of ["unknown", undefined]) {
+      const result = await client.callTool({ name, arguments: { agent, title: "Refused", prompt: "do not run" } });
+      expect(result.isError).toBe(true);
+      expect(JSON.stringify(result)).toContain("agent");
+    }
+    expect(start).not.toHaveBeenCalled(); expect(track).not.toHaveBeenCalled();
+  } finally { await client.close(); await server.close(); }
 });
 
 it.each(kinds)("%s still cannot delegate beyond the configured depth", async (agent) => {

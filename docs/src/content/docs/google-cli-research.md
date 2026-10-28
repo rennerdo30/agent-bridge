@@ -12,8 +12,8 @@ research and authenticated integration probes used 1.2.0; a subsequent
 read-only version probe on the same day found 1.3.1. `where gemini` and
 `where antigravity` returned no matches; `where agy` found the executable.
 `npm list -g --depth=0` contained Codex and opencode only. `agy models` worked.
-The bridge agent name is `antigravity`; tools are `ask_antigravity` and
-`spawn_antigravity`. These run `agy`, not an assumed `antigravity` binary.
+The bridge agent name is `antigravity`; tools are `ask` with `agent="antigravity"` and
+`spawn` with `agent="antigravity"`. These run `agy`, not an assumed `antigravity` binary.
 
 **Gemini CLI is a different product**, distributed as `@google/gemini-cli`,
 command `gemini`. The npm stable registry returned 0.63.0. It is absent here,

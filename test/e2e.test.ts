@@ -119,9 +119,9 @@ describe.skipIf(!existsSync(SERVER))("bundled MCP server end-to-end", () => {
     expect((await muse.listTools()).tools.map(t => t.name).sort()).toEqual(x);
     for (const client of [claude, codex, opencode, antigravity, muse]) {
       expect(client.getInstructions()).toContain("Any CLI can delegate to any CLI, including its own kind.");
-      for (const agent of ["claude", "codex", "opencode", "antigravity", "muse"]) expect(client.getInstructions()).toContain(`ask_${agent}`);
+      expect(client.getInstructions()).toContain('"ask" (required agent: claude, codex, opencode, antigravity, muse)');
     }
-    expect(x).toEqual(["ask_antigravity", "ask_claude", "ask_codex", "ask_muse", "ask_opencode", "ask_owner", "auto_wake", "cancel_subagent", "cancel_transfer", "coordinator_availability", "dashboard", "decide", "decisions", "fetch_files", "get_conversation", "handoff_subagents", "health", "hook_event", "inbox", "job_checklist", "list_models", "max_subagents", "message_subagent", "network_status", "pause_subagent", "peers", "project_checklist", "project_main", "resource_slots", "resume_subagent", "search_history", "send", "send_files", "send_status", "set_job_outcome", "spawn_antigravity", "spawn_claude", "spawn_codex", "spawn_muse", "spawn_opencode", "usage_limits", "wait_for_message", "withdraw_owner_question"]);
+    expect(x).toEqual(["ask", "ask_owner", "auto_wake", "cancel_subagent", "cancel_transfer", "coordinator_availability", "dashboard", "decide", "decisions", "fetch_files", "get_conversation", "handoff_subagents", "health", "hook_event", "inbox", "job_checklist", "list_models", "max_subagents", "message_subagent", "network_status", "pause_subagent", "peers", "project_checklist", "project_main", "resource_slots", "resume_subagent", "search_history", "send", "send_files", "send_status", "set_job_outcome", "spawn", "usage_limits", "wait_for_message", "withdraw_owner_question"]);
   });
 
   it("declares the Claude channel capability only for Claude", () => {
@@ -133,7 +133,7 @@ describe.skipIf(!existsSync(SERVER))("bundled MCP server end-to-end", () => {
     const unknown = await spawnAgent("muse", "muse-unknown-host", false);
     try {
       const tools = (await unknown.listTools()).tools.map(tool => tool.name);
-      for (const tool of ["ask_muse", "spawn_muse", "decide", "report_progress"]) expect(tools).not.toContain(tool);
+      for (const tool of ["ask", "spawn", "decide", "report_progress"]) expect(tools).not.toContain(tool);
       expect((await unknown.callTool({ name: "peers", arguments: {} })).isError).toBe(true);
       expect((await unknown.callTool({ name: "send", arguments: { to: "claude-e2e", message: "unauthenticated fixture message" } })).isError).toBe(true);
       expect(textOf(await claude.callTool({ name: "peers", arguments: {} }))).not.toContain("muse-unknown-host");

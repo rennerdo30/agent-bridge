@@ -471,7 +471,7 @@ it("registers ordinary provider tools without the T3 surface when host mode is a
   try {
     await mcp.connect(serverTransport); await client.connect(clientTransport);
     const names = (await client.listTools()).tools.map(t => t.name);
-    expect(names).toEqual(expect.arrayContaining(["send", "inbox", "spawn_codex", "hook_event"]));
+    expect(names).toEqual(expect.arrayContaining(["send", "inbox", "spawn", "hook_event"]));
     expect(names.some(name => name.startsWith("t3_"))).toBe(false);
   } finally { await client.close(); await mcp.close(); await env.cleanup(); }
 });

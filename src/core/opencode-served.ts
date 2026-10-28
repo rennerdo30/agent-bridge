@@ -441,7 +441,7 @@ export async function delegateToOpencodeServed(
     if (ac.signal.aborted && !(err instanceof DelegateError)) {
       if (req.signal?.aborted) throw new DelegateError("delegate aborted", "aborted", "", "", knownSession);
       const hint = knownSession
-        ? `. The opencode session ${knownSession} keeps its progress: call again with session_id="${knownSession}" (and a longer timeout_sec, or use spawn_opencode) to continue instead of starting over.`
+        ? `. The opencode session ${knownSession} keeps its progress: call again with session_id="${knownSession}" (and a longer timeout_sec, or use spawn) to continue instead of starting over.`
         : "";
       throw new DelegateError(`delegate timed out after ${req.timeoutSec}s (its time limit, timeout_sec)${hint}`, "timeout", "", "", knownSession);
     }

@@ -63,7 +63,7 @@ describe("Muse read-mode PreToolUse with a slow or absent Bridge (AB-384)", () =
   });
 
   it("fails closed for unknown and mutating Bridge tools", async () => {
-    for (const input of [{}, { tool_name: "" }, { tool_name: "mcp__other_server__delete_everything" }, { tool_name: "durable_muse_tool" }, { tool_name: "mcp__plugin_agent_bridge_bridge__send" }, { tool_name: "mcp__plugin_agent_bridge_bridge__spawn_codex" }]) {
+    for (const input of [{}, { tool_name: "" }, { tool_name: "mcp__other_server__delete_everything" }, { tool_name: "durable_muse_tool" }, { tool_name: "mcp__plugin_agent_bridge_bridge__send" }, { tool_name: "mcp__plugin_agent_bridge_bridge__spawn" }]) {
       expect((await preToolUse(input)).output).toMatchObject(denied());
     }
   });

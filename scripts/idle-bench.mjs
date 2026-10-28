@@ -155,7 +155,7 @@ try {
   }
   const finished = [];
   for (let i = 0; i < FINISHED; i++) {
-    const result = await call(spawner, "spawn_claude", { prompt: `FINISH_NOW generated finished job ${i}`, title: `Finished ${i}`, access: "edit" });
+    const result = await call(spawner, "spawn", { agent: "claude", prompt: `FINISH_NOW generated finished job ${i}`, title: `Finished ${i}`, access: "edit" });
     if (result.isError) throw new Error(content(result));
     finished.push(/claude-job-[a-f0-9]+/.exec(content(result))?.[0]);
   }
@@ -169,7 +169,7 @@ try {
     await pause(500);
   }
   for (let i = 0; i < RUNNERS; i++) {
-    const result = await call(spawner, "spawn_claude", { prompt: "Generated idle fixture; wait for fixture release", title: `Idle runner ${i}`, access: "edit" });
+    const result = await call(spawner, "spawn", { agent: "claude", prompt: "Generated idle fixture; wait for fixture release", title: `Idle runner ${i}`, access: "edit" });
     if (result.isError) throw new Error(content(result));
     const name = /claude-job-[a-f0-9]+/.exec(content(result))?.[0]; if (!name) throw new Error("missing job name: " + content(result)); jobs.push(name);
     const state = join(home, "jobs", name.split("-").at(-1) + ".json");

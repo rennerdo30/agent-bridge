@@ -2,7 +2,7 @@
   "name": "agent-bridge",
   "displayName": "agent-bridge",
   "version": "0.30.32",
-  "description": "Talk to OpenAI Codex from Claude Code: live peer messaging over a local pipe, plus headless delegation (ask_codex).",
+  "description": "Talk to OpenAI Codex from Claude Code: live peer messaging over a local pipe, plus headless delegation (ask).",
   "author": {
     "name": "rennerdo30",
     "url": "https://github.com/rennerdo30"

@@ -59,7 +59,7 @@ try {
     peers.push({ role: pid === health.brokerPid ? 'broker' : 'session', pid });
   }
   for (let i = 0; i < 7; i++) {
-    const result = await call(clients[0], 'spawn_claude', { prompt: 'Generated idle fixture; wait for fixture release', title: `Generated idle runner ${i}`, access: 'edit' });
+    const result = await call(clients[0], 'spawn', { agent: "claude", prompt: 'Generated idle fixture; wait for fixture release', title: `Generated idle runner ${i}`, access: 'edit' });
     if (result.isError) throw new Error(content(result));
     const name = /claude-job-[a-f0-9]+/.exec(content(result))?.[0]; if (!name) throw new Error('Missing generated job name'); jobs.push(name);
     const state = join(home, 'jobs', name.split('-').at(-1) + '.json');

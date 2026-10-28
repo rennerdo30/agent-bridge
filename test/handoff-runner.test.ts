@@ -227,7 +227,7 @@ it("hands off a blocking ask without returning results or notes to the old calle
   const source = await session("codex-source", "codex", true), target = await session("claude-target", "claude");
   const release = join(env.home, "release"), linkFile = join(env.home, "link.json"); releases.push(release);
   const ready = created(linkFile);
-  const pending = call(source, "ask_claude", { prompt: `release=${release} link=${linkFile} blocking work`, title: "Blocking inherited job" });
+  const pending = call(source, "ask", { agent: "claude", prompt: `release=${release} link=${linkFile} blocking work`, title: "Blocking inherited job" });
   // A later assertion can fail while the ask still owns its native delegate.
   // Cleanup closes that transport; keep its rejection observed until we await it.
   void pending.catch(() => {});
@@ -262,7 +262,7 @@ it.each([
   const observer = env.node("observer", "opencode"); fixtureNodes.push(observer); await observer.start();
   const release = join(env.home, "release"), linkFile = join(env.home, "link.json"); releases.push(release);
   const ready = created(linkFile);
-  const started = await call(source, "spawn_claude", { prompt: `release=${release} link=${linkFile} work on task`, title: "Inherited live runner" });
+  const started = await call(source, "spawn", { agent: "claude", prompt: `release=${release} link=${linkFile} work on task`, title: "Inherited live runner" });
   expect(started.error).toBeFalsy(); const name = /claude-job-[a-f0-9]+/.exec(started.text)![0], id = name.split("-").at(-1)!;
   // Even an inline first turn continues in a detached runner of the new (runner-hosting) supervisor.
   runnerIds.push(id);

@@ -28,7 +28,7 @@ PC's config. The requester cannot supply an executable, environment, script or
 runner specification. Access levels retain each agent's existing semantics.
 Provider approval support is the same as for local delegation.
 
-`spawn_codex`, `spawn_opencode`, `spawn_claude` and their `ask_*` equivalents
+`spawn` with `agent="codex"`, `spawn` with `agent="opencode"`, `spawn` with `agent="claude"` and their `ask` equivalents
 accept `host: "mac"` and an absolute `cwd` on that PC. The other public spawn
 arguments work as usual. `send_to` grants are local-only and rejected remotely.
 Use `message_subagent` with the returned job name (or `mac/<remote job name>`)

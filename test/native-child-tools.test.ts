@@ -80,11 +80,11 @@ it.each([undefined, "auto"])("an unlabelled child send (mode: %s) is stored with
   expect(send).not.toHaveBeenCalled(); expect(ctx.observeMeta).not.toHaveBeenCalled();
 });
 
-it.each(CODING_AGENTS.flatMap(a => [`spawn_${a}`, `ask_${a}`]))("a child %s is refused before job admission", async tool => {
+it.each(CODING_AGENTS.flatMap(agent => ["spawn", "ask"].map(tool => ({ tool, agent }))))("a child $tool ($agent) is refused before job admission", async ({ tool, agent }) => {
   const host = await hostMod(); await childStart();
   const start = vi.fn(() => { throw new Error("fixture admission"); }), track = vi.fn(() => { throw new Error("fixture admission"); });
   ctx.jobs = { start, track, canStart: vi.fn(() => true) } as any;
-  expect((await host(tool, { prompt: "do work", title: "Test work" }, agentId)).isError).toBe(true);
+  expect((await host(tool, { agent, prompt: "do work", title: "Test work" }, agentId)).isError).toBe(true);
   expect(start).not.toHaveBeenCalled(); expect(track).not.toHaveBeenCalled();
 });
 
@@ -99,13 +99,13 @@ it.each([false, true])("parent decide, send and spawn keep their handlers (live 
   expect((await host("send", { to: "target", message: "parent result" })).isError).not.toBe(true);
   ctx.jobs = { start, persist: vi.fn(), limit: 3 } as any;
   // A worktree skips usage probes; the fake manager never executes the captured run.
-  expect((await host("spawn_codex", { prompt: "work", title: "Test work", worktree: true })).isError).not.toBe(true);
+  expect((await host("spawn", { agent: "codex", prompt: "work", title: "Test work", worktree: true })).isError).not.toBe(true);
   expect(decide).toHaveBeenCalledOnce(); expect(send).toHaveBeenCalledOnce(); expect(start).toHaveBeenCalledOnce();
 });
 
 it("unscoped non-mail calls with a live child fail closed before parent effects", async () => {
   await childStart(); const decide = vi.spyOn(ctx.node!, "decide"), send = vi.spyOn(ctx.node!, "send");
-  for (const [tool, args] of [["decide", { topic: "x", text: "x" }], ["send", { to: "target", message: "x" }], ["spawn_codex", { prompt: "x" }], ["peers", {}]] as const) {
+  for (const [tool, args] of [["decide", { topic: "x", text: "x" }], ["send", { to: "target", message: "x" }], ["spawn", { agent: "codex", prompt: "x" }], ["peers", {}]] as const) {
     const result = await call(tool, args);
     expect(result.isError).toBe(true); expect(JSON.stringify(result)).toContain("Ambiguous caller");
   }
@@ -218,7 +218,7 @@ it("non-mail tokens expire and are stripped from logs and forwarded parent argum
 
 it("a failed endpoint denies child non-mail calls even before SubagentStart; parent fallback stays compatible", async () => {
   const host = await hostMod(true);
-  for (const tool of ["send", "decide", "spawn_codex", "peers"]) {
+  for (const tool of ["send", "decide", "spawn", "peers"]) {
     expect(await host(tool, {}, agentId)).toEqual({ deny: expect.any(String) });
   }
   expect(host.forwarded).toEqual([]);

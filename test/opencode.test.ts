@@ -183,13 +183,11 @@ describe("opencode plugin", () => {
   it("exposes the bridge tools with a prefix and hides the hook endpoint", () => {
     const names = Object.keys(hooks.tool).sort();
     expect(names).toContain("bridge_send");
-    expect(names).toContain("bridge_ask_claude");
-    expect(names).toContain("bridge_spawn_codex");
+    expect(names).toContain("bridge_ask");
+    expect(names).toContain("bridge_spawn");
     expect(names).not.toContain("bridge_hook_event");
-    expect(names.filter((name) => /^bridge_(ask|spawn)_(claude|codex|opencode|antigravity|muse)$/.test(name))).toEqual([
-      "bridge_ask_antigravity", "bridge_ask_claude", "bridge_ask_codex", "bridge_ask_muse", "bridge_ask_opencode",
-      "bridge_spawn_antigravity", "bridge_spawn_claude", "bridge_spawn_codex", "bridge_spawn_muse", "bridge_spawn_opencode",
-    ]);
+    expect(names.filter((name) => /^bridge_(ask|spawn)$/.test(name))).toEqual(["bridge_ask", "bridge_spawn"]);
+    expect(names.filter((name) => /^bridge_(ask|spawn)_/.test(name) && name !== "bridge_ask_owner")).toEqual([]);
   });
 
   it("sends through a native tool and delivers the reply by starting a turn when idle", async () => {

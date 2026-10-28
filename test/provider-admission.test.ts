@@ -188,20 +188,20 @@ it.each(CODING_AGENTS)("%s ask/spawn block before tracking/start; low warns once
   const read = vi.spyOn(usage, "checkUsagePreflight").mockResolvedValue(block);
   const run = vi.spyOn(delegation, "runDelegate").mockResolvedValue(answer);
   const h = handlers();
-  expect((await h.call(`ask_${agent}`)).isError).toBe(true);
-  expect((await h.call(`spawn_${agent}`)).isError).toBe(true);
+  expect((await h.call("ask", { agent })).isError).toBe(true);
+  expect((await h.call("spawn", { agent })).isError).toBe(true);
   expect(h.jobs.track).not.toHaveBeenCalled(); expect(h.jobs.start).not.toHaveBeenCalled(); expect(run).not.toHaveBeenCalled();
   read.mockResolvedValue(warn);
-  const ask = await h.call(`ask_${agent}`, { model: "selected-model" });
+  const ask = await h.call("ask", { agent, model: "selected-model" });
   expect(ask.content[0].text.match(/allowance is low/g)).toHaveLength(1);
   expect(run.mock.calls[0]![2].model).toBe("selected-model");
-  const spawn = await h.call(`spawn_${agent}`, { model: "selected-model" });
+  const spawn = await h.call("spawn", { agent, model: "selected-model" });
   expect(spawn.content[0].text.match(/allowance is low/g)).toHaveLength(1);
   expect(h.jobs.start.mock.calls[0]![1]).toBe("selected-model");
   expect(read.mock.calls.every(([p]) => p.agent === agent)).toBe(true);
   read.mockResolvedValue({ type: "allow", reason: "read_failed" });
-  expect((await h.call(`ask_${agent}`, { model: "selected-model" })).isError).not.toBe(true);
-  expect((await h.call(`spawn_${agent}`, { model: "selected-model" })).isError).not.toBe(true);
+  expect((await h.call("ask", { agent, model: "selected-model" })).isError).not.toBe(true);
+  expect((await h.call("spawn", { agent, model: "selected-model" })).isError).not.toBe(true);
 });
 
 it("checks again after startup admission before invoking a native adapter", async () => {

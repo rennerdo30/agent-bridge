@@ -74,7 +74,7 @@ export function serverBundle(host: CodingAgent, fromFile?: string): string | nul
   return dir ? join(dir, SERVER_BUNDLE) : null;
 }
 
-/** Job name from a spawn_* result ("Subagent codex-job-1a2b3c4d started. ...") or an ask_* result's follow-up hint. */
+/** Job name from a spawn result ("Subagent codex-job-1a2b3c4d started. ...") or an ask result's follow-up hint. */
 export function jobNameIn(text: string): string | null {
   return /Subagent (\S+-job-[0-9a-f]+) started/.exec(text)?.[1] ?? /message_subagent\(job="([^"]+)"/.exec(text)?.[1] ?? null;
 }
@@ -306,9 +306,9 @@ export async function runLiveChecks(o: LiveOptions): Promise<void> {
   };
   const model = (agent: CodingAgent) => (o.models[agent] ? { model: o.models[agent] } : {});
   const spawnLong = async (host: LiveHost, agent: CodingAgent): Promise<string> => {
-    const r = await host.call(`spawn_${agent}`, { title: "Reliability: read notes", prompt: LONG_TASK, timeout_sec: JOB_TIMEOUT_SEC, ...model(agent) });
+    const r = await host.call("spawn", { agent, title: "Reliability: read notes", prompt: LONG_TASK, timeout_sec: JOB_TIMEOUT_SEC, ...model(agent) });
     const job = jobNameIn(r.text);
-    if (r.isError || !job) throw new Error(`spawn_${agent} failed: ${short(r.text)}`);
+    if (r.isError || !job) throw new Error(`spawn (agent=${agent}) failed: ${short(r.text)}`);
     return job;
   };
 
@@ -322,7 +322,7 @@ export async function runLiveChecks(o: LiveOptions): Promise<void> {
         continue;
       }
 
-      // 1 + 2: one server; a long background job gets a live question, then a quick ask_* gets a follow-up.
+      // 1 + 2: one server; a long background job gets a live question, then a quick ask gets a follow-up.
       {
         const home = newHome();
         const cwd = o.repo();
@@ -354,9 +354,9 @@ export async function runLiveChecks(o: LiveOptions): Promise<void> {
           });
 
           await o.check(`${agent} follow-up keeps context`, async () => {
-            const asked = await server.call(`ask_${agent}`, { title: "Reliability: remember a fact", prompt: FACT_PROMPT, ...model(agent) }, RESULT_TIMEOUT_MS);
+            const asked = await server.call("ask", { agent, title: "Reliability: remember a fact", prompt: FACT_PROMPT, ...model(agent) }, RESULT_TIMEOUT_MS);
             const job = jobNameIn(asked.text);
-            if (asked.isError || !job) return { pass: false, detail: `ask_${agent}: ${short(asked.text)}` };
+            if (asked.isError || !job) return { pass: false, detail: `ask (agent=${agent}): ${short(asked.text)}` };
             const sent = await server.call("message_subagent", { job, message: FACT_QUESTION });
             if (!/^Sent to/.test(sent.text)) return { pass: false, detail: `message_subagent: ${short(sent.text)}` };
             const final = await server.result(job, RESULT_TIMEOUT_MS);

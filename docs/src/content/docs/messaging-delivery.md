@@ -13,7 +13,7 @@ neither wake an idle host nor enter ordinary prompt/tool context. Ownership
 fallback preserves that classification. Acknowledgements and sibling observer
 copies remain quiet too.
 
-`spawn_*` accepts `notes: "none" | "milestones" | "blockers"`, retained across
+`spawn` accepts `notes: "none" | "milestones" | "blockers"`, retained across
 continuations. The default is `none`, asking the job for a final report only.
 Milestones use `send(message_kind="note")`. Blockers needing a decision use
 `send(message_kind="question")`. Dashboard `report_progress` is independent.

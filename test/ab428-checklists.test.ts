@@ -975,7 +975,7 @@ describe("AB-428 job checklists", () => {
   it("rejects a combined project and parent checklist overflow before a job or rows exist", async () => {
     changeProjectChecklist(home, projectChecklistKey(project)!, { set: Array.from({ length: 30 }, (_, i) => ({ text: `Project ${i}` })) }, "claude-parent");
     const s = await supervisor();
-    const result = await s.call("spawn_codex", { prompt: "Task", worktree: true,
+    const result = await s.call("spawn", { agent: "codex", prompt: "Task", worktree: true,
       checklist: Array.from({ length: 21 }, (_, i) => ({ text: `Parent ${i}` })) });
     expect(result.isError).toBe(true);
     expect(textOf(result)).toMatch(/at most 50/);
@@ -986,7 +986,7 @@ describe("AB-428 job checklists", () => {
   it("a spawn with a checklist plus the project checklist puts both in the job's brief and state", async () => {
     changeProjectChecklist(home, projectChecklistKey(project)!, { set: [{ text: "Run npx tsc --noEmit", required: true }] }, "claude-parent");
     const s = await supervisor();
-    const spawned = await s.call("spawn_codex", { prompt: "Do the task", title: "Checklist fixture", worktree: true, cwd: project,
+    const spawned = await s.call("spawn", { agent: "codex", prompt: "Do the task", title: "Checklist fixture", worktree: true, cwd: project,
       checklist: [{ text: "Write the acceptance tests" }, { text: "Update the docs", required: false }] });
     expect(spawned.isError).not.toBe(true);
     // The checklist is bridge state, not a saved job argument.
@@ -1136,7 +1136,7 @@ describe("AB-428 job checklists", () => {
     changeProjectChecklist(home, projectChecklistKey(alias)!, { add: [{ text: "Alias item" }] }, "claude-parent");
     expect(readProjectChecklist(home, projectChecklistKey(project)!).map(i => i.text)).toEqual(["Alias item"]);
     const s = await supervisor();
-    await s.call("spawn_codex", { prompt: "Do the task", title: "Checklist fixture", worktree: true, cwd: alias });
+    await s.call("spawn", { agent: "codex", prompt: "Do the task", title: "Checklist fixture", worktree: true, cwd: alias });
     expect(readJobChecklist(home, JOB).map(i => `${i.source}:${i.text}`)).toEqual(["project:Alias item"]);
     // project_checklist manages the session's own project; removal is a flag, never a deleted row.
     const listed = await s.call("project_checklist", { add: [{ text: "Second", required: false }] });
@@ -1178,14 +1178,14 @@ describe("AB-428 job checklists", () => {
     const project = describe(s.specs.get("project_checklist"));
     expect(project).toMatch(/definition of done added to every job/i);
     expect(project).toMatch(/only the project main changes it \(or the owner through the main\)/i);
-    const arg = String(schema(s.specs.get("spawn_codex")).shape.checklist.description);
+    const arg = String(schema(s.specs.get("spawn")).shape.checklist.description);
     expect(arg).toMatch(/only with a note/i);
     expect(arg).toMatch(/cannot add items but proposes them/i);
     expect(arg).toMatch(/blocked item notifies you/i);
     expect(arg).toMatch(/still open at the end mark its result incomplete/i);
-    expect(String(schema(s.specs.get("ask_claude")).shape.checklist.description)).toBe(arg);
+    expect(String(schema(s.specs.get("ask")).shape.checklist.description)).toBe(arg);
     const instructions = instructionsFor("claude", [...CODING_AGENTS]);
-    expect(instructions).toContain('give a subagent a checklist when you spawn it ("checklist" on spawn_*/ask_*)');
+    expect(instructions).toContain('give a subagent a checklist when you spawn it ("checklist" on spawn/ask)');
     expect(instructions).toContain('answer its proposals and blocked items with "job_checklist"');
     expect(instructions).toContain('tick items with "checklist" as you go, propose missing items instead of adding them, and report blocked items');
   });
@@ -1260,7 +1260,7 @@ describe("AB-428 job checklists", () => {
 
   it("remote jobs refuse an explicit checklist: checklists are local-only", async () => {
     const s = await supervisor();
-    const refused = await s.call("spawn_codex", { prompt: "Do the task", title: "Remote fixture", host: "other-pc", cwd: "C:\\remote\\repo", checklist: [{ text: "x" }] });
+    const refused = await s.call("spawn", { agent: "codex", prompt: "Do the task", title: "Remote fixture", host: "other-pc", cwd: "C:\\remote\\repo", checklist: [{ text: "x" }] });
     expect(refused.isError).toBe(true);
     expect(textOf(refused)).toMatch(/local-only/);
     expect(s.start).not.toHaveBeenCalled();

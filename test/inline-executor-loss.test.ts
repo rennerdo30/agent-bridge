@@ -10,7 +10,7 @@ import { BridgeError } from "../src/core/protocol.js";
 import { JobManager, readStore, type Resume, type RunResult } from "../src/mcp/jobs.js";
 import { LocalCoordinator } from "../src/mcp/local-coordinator.js";
 
-// A handed-off inline turn (an ask_* run, or one started without a job runner) runs inside its executing
+// A handed-off inline turn (an ask run, or one started without a job runner) runs inside its executing
 // session's process. When that process is gone, the new owner must not keep the turn "running" forever.
 const EXITED_PID = 2_000_000_007;
 let home: string;
