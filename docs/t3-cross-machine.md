@@ -38,28 +38,9 @@ Use an outer 60-second deadline and record the exact runner PID and commit befor
 - Remote sender to the exact destination T3 thread, isolation from another thread on that host, accepted/refused/wrong-receipt wakes, unchanged unread mail, and no native subprocess fallback.
 - Reconnect replay, sender reload after hello, message dedupe, and persisted wake dedupe.
 
-Base failure evidence (2026-10-22 JST): runner PID `67904`, 60-second outer deadline, exit `1`, at base plus the new fixture. Seven routing cases failed on the observed defects; two wake cases exposed a reconnect-fixture invitation mismatch that was corrected by reusing the original pairing invitation. The initial process-identity fixture issue was also corrected without launching that probe. Network-only fix with the added alias regression: PID `70692`, 11 passed / 1 failed, exit `1`. Network and broker fix: PID `47764`, 12/12 passed, exit `0`. Final expanded checks and exact committed head are recorded in AB-458 and the implementation handoff.
-
-No full local suite was run. Hosted CI and independent parent review remain integration gates. No PR is opened by this package.
-
 ## Live acceptance prerequisites (not performed)
 
 - Owner-authorized operation on two reachable PCs with paired/authenticated Bridge hosts containing this change. Record each machine's Bridge and T3 versions and the negotiated feature; an old broker cannot certify exact T3 routing.
 - Each destination T3 thread must have its own deliberately injected, locally authorized MCP host transport and matching attested frontend. No token copying, config scraping, or cross-host transport credentials.
 - Record sender/destination machine identity, destination frontend/thread, Bridge message ID, stored receipt, local T3 request ID and returned thread/run receipt. Verify that only the named destination thread wakes; then separately read its inbox to prove consumption.
 - Exercise stale binding rejection and reconnect on those authorized hosts. Verify idle/busy delivery, refusal behavior, actual MCP waker selection, and restart/backlog behavior separately. The loopback fixture does not prove other-PC reachability, OS permissions, installed transport injection or real provider execution.
-
-## Proposed T3-owned remote delegation (design only, parent approval required)
-
-Current `src/network/remote-jobs.ts` constructs `JobRunners`. Its handles, logs, controls and ownership refer to Bridge jobs. They are not remote T3 children and must never be labelled `ownership: "t3"` or substituted for a failed native T3 delegation request.
-
-An explicit remote T3 adapter would require a separate, versioned capability and operation surface, distinct from `remote-job`:
-
-1. The destination T3 app registers a locally scoped adapter and advertises a bounded, expiring capability descriptor through its paired host. Identify the remote host, exact owning T3 parent thread, adapter incarnation, supported operations and protocol version. Negotiate provider/model/option descriptors through that adapter's local `orchestrator_capabilities`; a remote Bridge process cannot impersonate a T3 parent merely from advertised metadata.
-2. Establish explicit authorization for a remote principal to request work under that destination parent. Pairing alone grants no T3 task-control authority. Bind the grant to sender host/session, destination host/parent, allowed operations, project/workspace roots, provider/model/options, permission and interaction modes, depth/hop/slot constraints, expiry and revocation. Do not export local bearer credentials. Reject unsupported options or broader permissions; do not translate to a nearby model/effort silently.
-3. Persist an operation before its local effect, keyed by authenticated sender and stable `clientRequestId` plus full request digest. Reconnect/retry returns the same result. A lost effect receipt is unknown and reconciled with T3 using the same operation identity; it must not cause a second child or a Bridge-job fallback.
-4. The destination adapter calls local T3 `delegate_task`, retaining its real `taskId`, `childThreadId`, provider instance, model and applied options. Return a host-qualified opaque task handle and `ownership: "t3"`. Describe the ownership honestly: a child of the explicitly authorized destination parent; do not claim a native source-parent lineage across PCs unless T3 itself negotiates/supports it. Worktree isolation is performed by T3 on that host, with an explicit base commit and allowed workspace.
-5. `status`, result acknowledgement, follow-up, cancellation and questions must use the same authorized task mapping and generation. Prevent cross-parent handle reuse. Return applied-target receipts, durable terminal result context and unknown/refused distinctions; cancellation cannot claim termination without T3 evidence. Preserve ownership/depth/hop guards on every control operation and resume.
-6. Before implementation, parent must approve the destination-parent authorization mechanism, adapter lifetime/attachment, cross-host lineage semantics, capability schema, durable reconciliation store, result/context privacy, cancellation behavior and admission limits. Acceptance needs missing/expired capability, revoked grant, mismatched parent, option mismatch, duplicate/unknown spawn, reconnect, depth/hop rejection and wrong-task result fixtures. Live acceptance requires separate owner-authorized hosts and locally scoped adapters.
-
-No remote T3 task protocol or adapter is implemented here.
