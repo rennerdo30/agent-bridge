@@ -26,8 +26,8 @@ Incoming messages appear as `<agent-bridge-message id=... from=...>` blocks. Aft
 
 Select `agent`: `claude`, `codex`, `opencode`, `antigravity` or `muse`.
 
-- `bridge_ask` with required `agent` runs the selected coding agent headlessly and waits for its answer.
-- `bridge_spawn` with required `agent` starts it as a background subagent. The result arrives later as a message from `<agent>-job-<id>`. Give every ask/spawn call a short `title` (3-7 words, like a chat title); it names the job in peers and the dashboard.
+- `bridge_spawn` with required `agent` and `wait: true` runs the selected coding agent headlessly and waits for its answer.
+- `bridge_spawn` with required `agent` starts it as a background subagent. The result arrives later as a message from `<agent>-job-<id>`. A short `title` (3-7 words) is required with `wait: true` and optional for background jobs; it names the job in peers and the dashboard.
 
 All of them accept `model` (any model id the target accepts) and `session_id` to continue a previous run. Write complete, self-contained prompts: the other agent cannot see your conversation.
 
@@ -44,7 +44,7 @@ All of them accept `model` (any model id the target accepts) and `session_id` to
 ## Google Antigravity CLI
 
 The `antigravity` target runs installed `agy`, a separate CLI from `gemini`.
-Use `ask` with `agent="antigravity"` / `spawn` with `agent="antigravity"` (prefix `bridge_` in opencode),
+Use `spawn` with `wait: true`, `agent="antigravity"` / `spawn` with `agent="antigravity"` (prefix `bridge_` in opencode),
 `model` from `list_models`, native `effort`, and `access` read/ask/edit.
 `terminal_sandbox` enables its separate terminal sandbox. The Antigravity bridge
 plugin must be installed first. Model-boundary hooks deliver active mail; an

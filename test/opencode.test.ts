@@ -183,10 +183,10 @@ describe("opencode plugin", () => {
   it("exposes the bridge tools with a prefix and hides the hook endpoint", () => {
     const names = Object.keys(hooks.tool).sort();
     expect(names).toContain("bridge_send");
-    expect(names).toContain("bridge_ask");
+    expect(names).not.toContain("bridge_ask");
     expect(names).toContain("bridge_spawn");
     expect(names).not.toContain("bridge_hook_event");
-    expect(names.filter((name) => /^bridge_(ask|spawn)$/.test(name))).toEqual(["bridge_ask", "bridge_spawn"]);
+    expect(names.filter((name) => /^bridge_(ask|spawn)$/.test(name))).toEqual(["bridge_spawn"]);
     expect(names.filter((name) => /^bridge_(ask|spawn)_/.test(name) && name !== "bridge_ask_owner")).toEqual([]);
   });
 

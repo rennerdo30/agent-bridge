@@ -227,7 +227,7 @@ it("hands off a blocking ask without returning results or notes to the old calle
   const source = await session("codex-source", "codex", true), target = await session("claude-target", "claude");
   const release = join(env.home, "release"), linkFile = join(env.home, "link.json"); releases.push(release);
   const ready = created(linkFile);
-  const pending = call(source, "ask", { agent: "claude", prompt: `release=${release} link=${linkFile} blocking work`, title: "Blocking inherited job" });
+  const pending = call(source, "spawn", { wait: true, agent: "claude", prompt: `release=${release} link=${linkFile} blocking work`, title: "Blocking inherited job" });
   // A later assertion can fail while the ask still owns its native delegate.
   // Cleanup closes that transport; keep its rejection observed until we await it.
   void pending.catch(() => {});

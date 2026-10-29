@@ -66,7 +66,7 @@ On POSIX, delegates own separate process groups. A delegate root's natural exit 
 stops its surviving group, as well as the existing timeout/cancellation group cleanup. A process
 that deliberately creates another session can escape a POSIX process group; this is not a
 kernel descendant-containment guarantee. Windows containment applies to dedicated background
-runners, not legacy in-process mode (`AGENT_BRIDGE_JOB_RUNNER=0`) or blocking `ask` calls.
+runners, not legacy in-process mode (`AGENT_BRIDGE_JOB_RUNNER=0`) or blocking `spawn(wait: true)` calls.
 Those modes retain delegate tree/group cleanup. Do not use either boundary as a durable-tool
 contract; use the independently owned service/scheduler route below. Existing already-running
 jobs are not retroactively assigned to new ownership scopes when plugins reload.

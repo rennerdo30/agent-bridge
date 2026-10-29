@@ -1183,9 +1183,8 @@ describe("AB-428 job checklists", () => {
     expect(arg).toMatch(/cannot add items but proposes them/i);
     expect(arg).toMatch(/blocked item notifies you/i);
     expect(arg).toMatch(/still open at the end mark its result incomplete/i);
-    expect(String(schema(s.specs.get("ask")).shape.checklist.description)).toBe(arg);
     const instructions = instructionsFor("claude", [...CODING_AGENTS]);
-    expect(instructions).toContain('give a subagent a checklist when you spawn it ("checklist" on spawn/ask)');
+    expect(instructions).toContain('give a subagent a checklist when you spawn it ("checklist" on spawn)');
     expect(instructions).toContain('answer its proposals and blocked items with "job_checklist"');
     expect(instructions).toContain('tick items with "checklist" as you go, propose missing items instead of adding them, and report blocked items');
   });

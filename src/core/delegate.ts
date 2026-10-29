@@ -450,7 +450,7 @@ export const OPENCODE_READ_ONLY_PERMISSIONS = { edit: "deny", bash: "deny" } as 
 /** MCP tools (named <server>_<tool>) can change things too: read-only runs allow only the permitted bridge routes. */
 export const OPENCODE_READ_ONLY_TOOLS = {
   "*_*": false, bridge_send: true, bridge_report_progress: true, bridge_checklist: true, bridge_peers: true, bridge_health: true, bridge_search_history: true, bridge_get_conversation: true,
-  bridge_spawn: true, bridge_ask: true, bridge_message_subagent: true, bridge_cancel_subagent: true, bridge_pause_subagent: true, bridge_resume_subagent: true, bridge_inbox: true, bridge_wait_for_message: true,
+  bridge_spawn: true, bridge_message_subagent: true, bridge_cancel_subagent: true, bridge_pause_subagent: true, bridge_resume_subagent: true, bridge_inbox: true, bridge_wait_for_message: true,
 } as const;
 
 export function childEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {

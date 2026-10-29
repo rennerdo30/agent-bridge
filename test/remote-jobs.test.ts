@@ -500,7 +500,7 @@ rl.on("line", (line) => {
     await waitFor(() => calls().length === 2 && readRunnerState(remoteHome, id)?.status === "done");
     expect(calls()[0].params.config).toMatchObject({ "agents.max_threads": 2, "agents.enabled": true });
     expect(calls()[1]).toMatchObject({ method: "thread/resume", params: { threadId: "native-thread", config: { "agents.max_threads": 1, "agents.enabled": false, "features.multi_agent_v2": false } } });
-    const ask = await call(local, "ask", { agent: "codex", host: "mac", cwd: repo, title: "Native ask", prompt: "finish", native_subagents: 32 });
+    const ask = await call(local, "spawn", { wait: true, agent: "codex", host: "mac", cwd: repo, title: "Native ask", prompt: "finish", native_subagents: 32 });
     expect(ask).toContain("native fake finished");
     expect(calls()[2].params.config["agents.max_threads"]).toBe(32);
     expect(readStore(join(localHome, "jobs.json")).find((j) => j.id === id)!.args).toMatchObject({ native_subagents: 0 });
@@ -624,7 +624,7 @@ rl.on("line", (line) => {
     execFileSync("git", ["-C", repo, "add", "."], { stdio: "ignore" });
     execFileSync("git", ["-C", repo, "-c", "user.name=rennerdo30", "-c", "user.email=9086097+rennerdo30@users.noreply.github.com", "commit", "-m", "Fixture"], { stdio: "ignore" });
     const { local } = await paired();
-    const result = await call(local, "ask", { agent: "claude", host: "mac", cwd: repo, prompt: "finish", title: "Remote worktree ask", worktree: true });
+    const result = await call(local, "spawn", { wait: true, agent: "claude", host: "mac", cwd: repo, prompt: "finish", title: "Remote worktree ask", worktree: true });
     expect(result).toContain("remote fake finished");
     const match = /claude-ask-([0-9a-f]{8})/.exec(result)!; expect(match).not.toBeNull();
     const state = readRunnerState(remoteHome, match[1]!)!;

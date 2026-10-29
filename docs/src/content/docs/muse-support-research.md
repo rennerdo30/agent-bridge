@@ -10,7 +10,7 @@ settings, see [Muse configuration](../configuration/muse/).
 ## Implemented integration
 
 Muse is the fifth coding agent. Every coding CLI can delegate to every coding
-CLI, including itself, through the shared `ask` and `spawn` tools. Muse
+CLI, including itself, through the shared `spawn` tools. Muse
 uses the existing depth, slot, ownership, hop and durable-job guards.
 
 Delegated jobs use stable MSP schema v1 over `muse serve` by default. Protocol

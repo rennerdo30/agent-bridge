@@ -25,7 +25,7 @@ coordination skill and peer commands. Uninstall runs
 ## Sessions and delegation
 
 Muse exposes the shared peer, delegation, history and job tools. Every coding
-agent, including Muse itself, can call `ask` with `agent="muse"` and `spawn` with `agent="muse"`. Jobs accept
+agent, including Muse itself, can call `spawn` with `wait: true`, `agent="muse"` and `spawn` with `agent="muse"`. Jobs accept
 `model`, `effort`, `session_id`, `access`, `permission_profile` and `worktree`.
 The accepted effort vocabulary is
 `none`/`minimal`/`low`/`medium`/`high`/`xhigh`/`max`/`ultra`; individual models

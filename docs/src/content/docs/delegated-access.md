@@ -39,7 +39,7 @@ schema. The [official configuration reference](https://learn.chatgpt.com/docs/co
 - App-server: `approvalsReviewer` on `thread/start`, `thread/resume`, and `turn/start`.
   The schema also accepts the legacy `guardian_subagent` alias; the bridge exposes the canonical values.
 - Bridge config: `codexApprovalsReviewer`, default `"auto_review"`, with normal per-agent overrides.
-- Job override: `approvals_reviewer` on ask/spawn and `message_subagent`. It persists independently of
+- Job override: `approvals_reviewer` on spawn and `message_subagent`. It persists independently of
   `access` and `sandbox`; a running turn keeps its current reviewer. Remote spawn accepts it too.
 - Non-full-access approval policy remains `on-request`. Automatic review applies only to eligible
   approval requests, including command, file, blocked network, MCP, and permission requests. Routine

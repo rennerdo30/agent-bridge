@@ -74,7 +74,7 @@ export function serverBundle(host: CodingAgent, fromFile?: string): string | nul
   return dir ? join(dir, SERVER_BUNDLE) : null;
 }
 
-/** Job name from a spawn result ("Subagent codex-job-1a2b3c4d started. ...") or an ask result's follow-up hint. */
+/** Job name from a spawn result ("Subagent codex-job-1a2b3c4d started. ...") or a wait=true result's follow-up hint. */
 export function jobNameIn(text: string): string | null {
   return /Subagent (\S+-job-[0-9a-f]+) started/.exec(text)?.[1] ?? /message_subagent\(job="([^"]+)"/.exec(text)?.[1] ?? null;
 }
@@ -354,7 +354,7 @@ export async function runLiveChecks(o: LiveOptions): Promise<void> {
           });
 
           await o.check(`${agent} follow-up keeps context`, async () => {
-            const asked = await server.call("ask", { agent, title: "Reliability: remember a fact", prompt: FACT_PROMPT, ...model(agent) }, RESULT_TIMEOUT_MS);
+            const asked = await server.call("spawn", { agent, wait: true, title: "Reliability: remember a fact", prompt: FACT_PROMPT, ...model(agent) }, RESULT_TIMEOUT_MS);
             const job = jobNameIn(asked.text);
             if (asked.isError || !job) return { pass: false, detail: `ask (agent=${agent}): ${short(asked.text)}` };
             const sent = await server.call("message_subagent", { job, message: FACT_QUESTION });

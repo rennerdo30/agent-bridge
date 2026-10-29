@@ -20,7 +20,7 @@ For unattended setup, use `agent-bridge connect --non-interactive --yes --create
 
 Manual fallback: enable top-level `network: { enabled: true, name: "unique-pc", bind: "0.0.0.0", port: 48148, discovery: true }` in config on each PC, restart all hosting sessions, allow TCP 48148 and UDP 48149 on the trusted LAN, then run `agent-bridge pair` on one PC and `agent-bridge link <host:port> <code>` on the other. `agent-bridge network` shows status; `agent-bridge unlink <instance-id>` on both PCs revokes a pairing.
 
-Remote sessions and job runners appear as `demo-desktop/claude-webshop`; `send` routes to those names and replies across the link. Broadcasts include connected paired PCs; agent-kind targets remain local. `ask` and `spawn` accept `host` to run on a paired PC, with the remote folder and worktree managed there. The requester retains its job controls and result history; see [remote jobs](../remote-jobs/).
+Remote sessions and job runners appear as `demo-desktop/claude-webshop`; `send` routes to those names and replies across the link. Broadcasts include connected paired PCs; agent-kind targets remain local. `spawn` accept `host` to run on a paired PC, with the remote folder and worktree managed there. The requester retains its job controls and result history; see [remote jobs](../remote-jobs/).
 
 Remote jobs are separately opt-in: the execution PC must enable `network.remoteJobs` and allow the requesting PC, target agents and repository roots. Pairing alone does not permit delegation.
 

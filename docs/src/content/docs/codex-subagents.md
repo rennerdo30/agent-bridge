@@ -3,7 +3,7 @@ title: "Native subagents in delegated Codex jobs (AB-105)"
 slug: codex-subagents
 ---
 
-`spawn` with `agent="codex"` and `ask` with `agent="codex"` enable Codex's native collaboration tools by default.
+`spawn` with `agent="codex"` enables Codex's native collaboration tools by default.
 The bridge default is **6 native child threads per Codex job**, excluding the delegated
 job's own coordinator. Accepted values are integers **0 through 32**; **0 disables**
 native collaboration. The ceiling of 32 is bridge validation policy, not an upstream
@@ -70,7 +70,7 @@ key retain the built-in default of 6.
 Optional MCP integer `native_subagents` (0..32) is supported on:
 
 - `spawn` with `agent="codex"`: budget for the new job.
-- `ask` with `agent="codex"`: budget for the blocking job.
+- `spawn` with `wait: true`, `agent="codex"`: budget for the blocking job.
 - `message_subagent`: saved budget for the continuation and later turns; rejected
   for Claude/opencode jobs. A running turn retains its current budget.
 
@@ -156,4 +156,4 @@ Validation on this branch (2026-10-06):
   74 files passed, 697 tests passed, 1 skipped; 209.96 seconds.
 - `test/data-retention.test.ts` stayed green in both focused and full-suite runs.
 - Paired TLS broker regression exercised receiving-PC default, zero on same-thread
-  continuation, explicit 32 on blocking ask, and local/remote saved settings.
+  continuation, explicit 32 on `spawn(wait: true)`, and local/remote saved settings.

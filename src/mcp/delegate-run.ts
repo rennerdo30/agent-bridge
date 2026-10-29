@@ -250,7 +250,7 @@ async function runDelegateInner(
   // cannot start subagents and has no MCP server but the Pair Desk allowed). Nothing here runs Git or reads the
   // job's files.
   const reuseFeed: { report?: (line: string) => void } = {};
-  // Set by an allowed own-server call that may start or steer a child job (spawn, ask, message_subagent,
+  // Set by an allowed own-server call that may start or steer a child job (spawn, message_subagent,
   // decide): no command grant is reused or kept for the rest of this turn.
   let commandGrantsBlocked = false;
   let launchPermission: string | undefined;

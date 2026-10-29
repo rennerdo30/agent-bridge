@@ -12,7 +12,7 @@ Requires installed, authenticated `agy` (verified with 1.2.0 and 1.3.1). Start a
 native session after initial installation. Updates keep running sessions on retained
 code and select new code for the next MCP server start. The plugin includes MCP configuration, lifecycle/permission hooks
 and a coordination skill. It exposes the same peer, delegation, history and job
-tools as the existing plugins. Other peers get `ask` with `agent="antigravity"` and
+tools as the existing plugins. Other peers get `spawn` with `wait: true`, `agent="antigravity"` and
 `spawn` with `agent="antigravity"`, with `model`, `effort` (low/medium/high/xhigh/max), `session_id`,
 `access`, `terminal_sandbox`, `bypass_permissions` and `worktree`. Continue with `message_subagent` or
 cancel with `cancel_subagent`; these use the existing durable job lifecycle.

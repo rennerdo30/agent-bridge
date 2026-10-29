@@ -218,7 +218,7 @@ createInterface({input:process.stdin}).on('line',line=>{
     await until(() => Boolean(readRunnerState(env.home, runnerId)?.pid && readRunnerState(env.home, runnerId)?.live), 60_000, 50);
     const runnerPid = readRunnerState(env.home, runnerId)!.pid!;
     // The blocking ask runs inline, inside the old server.
-    const ask = old.call("ask", { agent: "codex", prompt: `release=${join(env.home, "inline-release")} inline work`, title: "Inline work", sandbox: "danger-full-access" }).catch((err) => ({ text: String(err), error: true }));
+    const ask = old.call("spawn", { wait: true, agent: "codex", prompt: `release=${join(env.home, "inline-release")} inline work`, title: "Inline work", sandbox: "danger-full-access" }).catch((err) => ({ text: String(err), error: true }));
     await until(() => stored("codex-ask-")?.status === "running", 30_000, 50);
 
     const registered = (await watcher.peers()).find((p) => p.name === "codex-yield");

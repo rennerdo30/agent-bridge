@@ -3,10 +3,10 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const RELAY_DEFINITIONS = [
-  ["claude", "codex.md", "ask"],
-  ["claude", "opencode.md", "ask"],
-  ["opencode", "codex.agent.md", "bridge_ask"],
-  ["opencode", "claude.agent.md", "bridge_ask"],
+  ["claude", "codex.md", "spawn"],
+  ["claude", "opencode.md", "spawn"],
+  ["opencode", "codex.agent.md", "bridge_spawn"],
+  ["opencode", "claude.agent.md", "bridge_spawn"],
 ] as const;
 
 describe("native relay agent contracts (AB-74)", () => {
@@ -16,6 +16,7 @@ describe("native relay agent contracts (AB-74)", () => {
     expect(frontmatter).not.toMatch(/^maxTurns:/m); // Task duration must not exhaust a relay turn budget.
     if (provider === "claude") expect(frontmatter).toContain(`tools: mcp__plugin_agent-bridge_bridge__${tool}`);
     expect(definition).toContain(`Call \`${tool}\` exactly once`);
+    expect(definition).toContain('`wait`: `true`');
     expect(definition).toContain("one blocking tool call");
     expect(definition).toContain("Do not poll");
     expect(definition).toContain("Do not retry automatically");
