@@ -1,10 +1,12 @@
 # Changelog
 
-## Unreleased
+## 0.31.0
 
-- **Breaking (AB-462):** replace `ask_<agent>` / `spawn_<agent>` (`ask_claude`, `spawn_codex`, etc.) with `ask` / `spawn` and a required `agent` parameter (`claude`, `codex`, `opencode`, `antigravity`, `muse`). The old tool names are removed without aliases.
-
-- AB-457: automatically detect injected scoped T3 transport, validate the host before Bridge registration, and default validated sessions to a reduced MCP profile. Keep peer/cross-machine functions, remote-only spawn/ask and Bridge-owned retained-job checklist, outcome, queue-limit, admission-status and supervisor-handoff controls; `AGENT_BRIDGE_MCP_PROFILE=full` restores the legacy surface. Ordinary sessions remain full. Accept current and legacy catalog options, preserve inherited settings and discover omitted custom models with bounded search. Native Codex without deliberate transport injection remains unsupported; live-host acceptance is pending.
+- **Breaking: one delegation tool (AB-462).** The ten per-agent tools (`ask_claude`, `spawn_codex`, ...) and `ask` are gone, without aliases. Use `spawn` with a required `agent` (`claude`, `codex`, `opencode`, `antigravity`, `muse`). It starts a background job as before; `wait: true` runs it in this server and returns the answer (what `ask_<agent>` did). `access: "ask"` and `ask_owner` are unchanged.
+- **About two thirds less MCP context.** Besides the single tool, the tool texts are shorter, and the per-agent notes (access and sandbox notes, models, efforts, defaults) moved from the `agent` parameter into `list_models(agent)`; call it before first using an agent. The full profile's tool and instruction text went from about 74k to 24k characters.
+- **T3 Code sessions prefer T3's own tools.** Inside a validated T3 Code session the instructions say to use T3 Code and native tooling where they cover the need, and agent-bridge only for what T3 does not offer (paired machines, Bridge peers and jobs). Other sessions are unchanged.
+- **Cross-machine T3 sends reach the right session.** A send to a paired PC that involves a T3-hosted session now carries the destination session and frontend, and the receiving PC checks it before delivery and again after resolving aliases, so a recipient that re-registered under the same name is not mistaken for the target. Native-to-native mail keeps name-only routing and still queues across a recipient restart.
+- AB-457: automatically detect injected scoped T3 transport, validate the host before Bridge registration, and default validated sessions to a reduced MCP profile. Keep peer/cross-machine functions, remote-only `spawn` and Bridge-owned retained-job checklist, outcome, queue-limit, admission-status and supervisor-handoff controls; `AGENT_BRIDGE_MCP_PROFILE=full` restores the legacy surface. Ordinary sessions remain full. Accept current and legacy catalog options, preserve inherited settings and discover omitted custom models with bounded search. Native Codex without deliberate transport injection remains unsupported; live-host acceptance is pending.
 
 ## 0.30.32
 

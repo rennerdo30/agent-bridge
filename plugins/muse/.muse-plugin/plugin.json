@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "name": "agent-bridge",
   "displayName": "agent-bridge",
-  "version": "0.30.32",
+  "version": "0.31.0",
   "description": "Peer messaging, delegation and conversation history across coding agents.",
   "compat": {
     "source": "native",
