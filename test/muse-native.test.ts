@@ -162,7 +162,7 @@ describe("Muse native bootstrap and hook delivery", () => {
     expect(result.sessionId).toBe("native-root");
     expect(text(output.peers)).toContain("native-parent"); expect(output.send.isError).not.toBe(true); expect(reports).toEqual(["sanitized child report"]);
     expect(progress).toEqual([50]); expect(JSON.stringify(output.hook)).toContain("private parent instructions");
-    expect(output.names.includes("ask")).toBe(cap > 1); expect(output.names).toContain("report_progress");
+    expect(output.names.includes("spawn")).toBe(cap > 1); expect(output.names).toContain("report_progress");
     expect((await observer.peers()).map(peer => peer.name)).toEqual(["observer"]);
   });
   it("authenticates an MCP child launched before the handoff is published", async () => {
