@@ -148,18 +148,20 @@ describe.skipIf(!existsSync(SERVER)).each(["claude", "codex"] as const)("dashboa
     return textOf(result);
   };
 
-  it("includes a cached model list and the configured default on both delegation tools", async () => {
+  it("lists the cached models and the configured default in list_models, not in the delegation schema", async () => {
     const tools = (await client.listTools()).tools;
     for (const name of ["ask", "spawn"]) {
       const tool = tools.find((t) => t.name === name)!;
       const description = (tool.inputSchema.properties!.agent as { description: string }).description;
-      expect(description).toContain("Default: configured-codex.");
-      expect(description).toContain("Available: first-codex, second-codex.");
+      expect(description).toContain("list_models");
+      expect(description).not.toContain("first-codex");
       expect(tool.inputSchema.properties).toHaveProperty("effort");
       expect(tool.inputSchema.properties).toHaveProperty("sandbox");
       expect(tool.inputSchema.properties).toHaveProperty("worktree");
     }
-    expect(await call("list_models", { agent: "codex" })).toContain("first-codex");
+    const models = await call("list_models", { agent: "codex" });
+    expect(models).toContain("Default: configured-codex.");
+    expect(models).toContain("Available: first-codex, second-codex.");
     expect(requests()).toEqual([]);
   });
 
