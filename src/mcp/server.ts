@@ -1750,24 +1750,21 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
   const asks = new Map<CodingAgent, (a: DelegateArgs & { checklist?: ChecklistArg }, extra: ToolExtra) => Promise<ReturnType<typeof text>>>();
   const spawns = new Map<CodingAgent, (a: Omit<DelegateArgs, "title"> & { title?: string; checklist?: ChecklistArg }, extra: ToolExtra) => Promise<ReturnType<typeof text>>>();
   const schema = {
-      agent: z.enum(CODING_AGENTS).describe("Agent to run. " + CODING_AGENTS.map(target => {
-        const profile = DELEGATION_TARGETS[target];
-        return `${target} (${profile.title}): ${profile.permissionNote(cfg)} ` +
-          (remoteOnly ? "Model ID supported by the paired provider. " : modelParameterDescription(target, cfg, ctx.home, profile.modelExample) + " ") +
-          `Effort: ${profile.effortExample}; default ${cfg.effort[target] ?? `${target}'s own default`}.`;
-      }).join("\n")),
+      agent: z.enum(CODING_AGENTS).describe(remoteOnly
+        ? "Agent to run on the paired machine; model and effort as its provider supports."
+        : "Agent to run. Before first using an agent, call list_models(agent) for its access notes, models, efforts and defaults."),
       host: (remoteOnly ? remoteHost : remoteHost.optional()).describe("Paired instance to run on; requires absolute cwd there and its remoteJobs allowlist"),
       prompt: z.string().min(1).describe("Complete, self-contained instructions"),
       model: z
         .string()
         .regex(MODEL_NAME_PATTERN)
         .optional()
-        .describe("Model ID for the selected agent; see agent for models/defaults."),
+        .describe("Model ID for the selected agent; see list_models."),
       effort: z
         .string()
         .regex(/^[A-Za-z0-9_-]{1,20}$/)
         .optional()
-        .describe(`Thinking level for the selected agent; see agent for levels/defaults (config "effort"). ${remoteOnly ? "Use a level the remote provider supports" : "list_models shows per-model support"}.`),
+        .describe(`Thinking level for the selected agent${remoteOnly ? "" : "; see list_models"}.`),
       session_id: z.string().optional().describe("Continue a previous delegated session"),
       cwd: z
         .string()
@@ -2015,14 +2012,22 @@ ${res.text || t("delegate.empty")}`, res.isError);
     {
       title: "List subagent models",
       description:
-        "Models and effort levels an agent accepts, for model=/effort= on ask/spawn. Codex/opencode list theirs; Claude gives aliases/efforts. query filters by name. No model calls.",
+        "An agent's access notes, defaults, and the models and effort levels it accepts for ask/spawn. query filters models by name. No model calls.",
       inputSchema: {
         agent: z.enum(targets as [CodingAgent, ...CodingAgent[]]).describe("The subagent agent"),
         query: z.string().max(80).optional().describe('Filter, e.g. "sonnet" or "openai/"'),
       },
       annotations: { readOnlyHint: true },
     },
-    guarded("list_models", async (a: { agent: CodingAgent; query?: string }) => text((a.query ? await describeModels(a.agent, cfg, ctx.cwd(), log, a.query) : (await readModels(a.agent, cfg, ctx.cwd(), log, ctx.home)).lines).join("\n"))),
+    guarded("list_models", async (a: { agent: CodingAgent; query?: string }) => {
+      const profile = DELEGATION_TARGETS[a.agent];
+      // Per-agent notes live here instead of in the ask/spawn schema, which every session loads.
+      const notes = `${a.agent} (${profile.title}): ${profile.permissionNote(cfg)} ` +
+        `${modelParameterDescription(a.agent, cfg, ctx.home, profile.modelExample).trim()} ` +
+        `Effort: ${profile.effortExample}; default ${cfg.effort[a.agent] ?? `${a.agent}'s own default`}.`;
+      const lines = a.query ? await describeModels(a.agent, cfg, ctx.cwd(), log, a.query) : (await readModels(a.agent, cfg, ctx.cwd(), log, ctx.home)).lines;
+      return text([notes, "", ...lines].join("\n"));
+    }),
   );
   register(
     "dashboard",
