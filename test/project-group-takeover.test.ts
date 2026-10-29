@@ -424,7 +424,7 @@ it("routes a blocking ask to an available group master without returning its res
   await env.node("broker", "other").start();
   const source = await session("claude-master", "claude"), target = await session("codex-master", "codex");
   const release = join(env.home, "blocking-release"), link = release + ".link"; releases.push(release);
-  const pending = call(source, "ask", { agent: "codex", prompt: `release=${release} link=${link} blocking work`, title: "Limited caller work" });
+  const pending = call(source, "spawn", { wait: true, agent: "codex", prompt: `release=${release} link=${link} blocking work`, title: "Limited caller work" });
   await until(() => linkReady(link), 10_000);
   expect((await call(source, "coordinator_availability", { unavailable: true })).error).toBeFalsy();
   const child = parentFromEnv(JSON.parse(readFileSync(link, "utf8")))!;

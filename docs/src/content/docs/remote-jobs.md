@@ -28,7 +28,7 @@ PC's config. The requester cannot supply an executable, environment, script or
 runner specification. Access levels retain each agent's existing semantics.
 Provider approval support is the same as for local delegation.
 
-`spawn` with `agent="codex"`, `spawn` with `agent="opencode"`, `spawn` with `agent="claude"` and their `ask` equivalents
+`spawn` with `agent="codex"`, `spawn` with `agent="opencode"`, `spawn` with `agent="claude"` and their `wait: true` equivalents
 accept `host: "mac"` and an absolute `cwd` on that PC. The other public spawn
 arguments work as usual. `send_to` grants are local-only and rejected remotely.
 Use `message_subagent` with the returned job name (or `mac/<remote job name>`)
@@ -92,7 +92,7 @@ Existing authenticated `GET /api/state` includes mirrored remote jobs in
 }
 ```
 
-Blocking asks use their local `*-ask-*` job name in `job`; `remote.name` is the
+Blocking `spawn(wait: true)` runs use their local `*-ask-*` job name in `job`; `remote.name` is the
 runner's name. Existing status, title, model, effort and progress fields retain
 their meanings. `jobs[localJobName]` also adds `remote` alongside `next`.
 `GET /api/runs/<run>` reads the local mirror; `POST /api/subagents/message`

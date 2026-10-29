@@ -1081,7 +1081,7 @@ describe("mcpCallEffect", () => {
     expect(mcpCallEffect({ tool: "mcp:other", detail: "lookup: {}" })).toBe("drop");
     for (const tool of ["report_progress", "peers", "inbox", "wait_for_message", "usage_limits"])
       expect(mcpCallEffect({ tool: "mcp:plugin_agent-bridge_bridge", detail: `${tool}: {}` })).toBe("keep");
-    for (const tool of ["send", "spawn", "ask", "message_subagent", "decide", "cancel_subagent"])
+    for (const tool of ["send", "spawn", "message_subagent", "decide", "cancel_subagent"])
       expect(mcpCallEffect({ tool: "mcp:plugin_agent-bridge_bridge", detail: `${tool}: {}` })).toBe("block");
     expect(mcpCallEffect({ tool: "mcp:agent-bridge", detail: 'Allow the agent-bridge MCP server to run tool "spawn"?' })).toBe("block");
     expect(mcpCallEffect({ tool: "mcp:bridge", detail: "bridge_message_subagent: {}" })).toBe("block");

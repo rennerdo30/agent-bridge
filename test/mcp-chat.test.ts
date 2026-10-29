@@ -150,7 +150,7 @@ describe.skipIf(!existsSync(SERVER)).each(["claude", "codex"] as const)("dashboa
 
   it("lists the cached models and the configured default in list_models, not in the delegation schema", async () => {
     const tools = (await client.listTools()).tools;
-    for (const name of ["ask", "spawn"]) {
+    for (const name of ["spawn"]) {
       const tool = tools.find((t) => t.name === name)!;
       const description = (tool.inputSchema.properties!.agent as { description: string }).description;
       expect(description).toContain("list_models");
@@ -201,7 +201,7 @@ describe.skipIf(!existsSync(SERVER)).each(["claude", "codex"] as const)("dashboa
 
   it("keeps one ask call blocked until its Codex run finishes and returns its identity (AB-74)", async () => {
     let settled = false;
-    const answer = client.callTool({ name: "ask", arguments: { agent: "codex", prompt: "wait for completion", title: "Blocking relay", cwd: home } }).then((r) => {
+    const answer = client.callTool({ name: "spawn", arguments: { wait: true, agent: "codex", prompt: "wait for completion", title: "Blocking relay", cwd: home } }).then((r) => {
       settled = true;
       return r;
     });
@@ -223,7 +223,7 @@ describe.skipIf(!existsSync(SERVER)).each(["claude", "codex"] as const)("dashboa
   }, TEST_TIMEOUT_MS);
 
   it("returns the same job and session on a cancelled ask without starting a replacement (AB-74)", async () => {
-    const answer = client.callTool({ name: "ask", arguments: { agent: "codex", prompt: "wait for cancellation", title: "Cancelled relay", cwd: home } });
+    const answer = client.callTool({ name: "spawn", arguments: { wait: true, agent: "codex", prompt: "wait for cancellation", title: "Cancelled relay", cwd: home } });
     await waitFor(() => requests().some((r) => r.method === "turn/start"));
     const job = /codex-ask-[\da-f]+/.exec(await call("peers"))![0];
     await call("cancel_subagent", { job });

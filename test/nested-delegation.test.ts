@@ -126,12 +126,12 @@ describe("nested delegation", () => {
     vi.stubEnv("AGENT_BRIDGE_DELEGATE_DEPTH", "1");
     const client = await connect(nestedContext());
     const names = (await client.listTools()).tools.map((tool) => tool.name);
-    for (const name of ["spawn", "ask", "message_subagent", "cancel_subagent", "inbox", "wait_for_message"]) expect(names).toContain(name);
+    for (const name of ["spawn", "message_subagent", "cancel_subagent", "inbox", "wait_for_message"]) expect(names).toContain(name);
     for (const name of ["auto_wake", "max_subagents", "send_files"]) expect(names).not.toContain(name);
     vi.stubEnv("AGENT_BRIDGE_DELEGATE_DEPTH", "2");
     const leaf = await connect(nestedContext());
     const leafNames = (await leaf.listTools()).tools.map((tool) => tool.name);
-    for (const name of ["spawn", "ask", "spawn", "ask"]) expect(leafNames).not.toContain(name);
+    for (const name of ["spawn"]) expect(leafNames).not.toContain(name);
   });
 
   it("runs a nested ask and persists ancestry in jobs, run metadata and dashboard state", async () => {
@@ -144,7 +144,7 @@ describe("nested delegation", () => {
       return { sessionId: "child-session", text: "nested report", isError: false, details: {} };
     });
     const client = await connect(ctx);
-    expect(textOf(await client.callTool({ name: "ask", arguments: { agent: "claude", prompt: "Review", title: "Nested review" } }))).toContain("nested report");
+    expect(textOf(await client.callTool({ name: "spawn", arguments: { wait: true, agent: "claude", prompt: "Review", title: "Nested review" } }))).toContain("nested report");
     const stored = readStore(join(home, "jobs.json"));
     expect(stored).toHaveLength(1);
     expect(stored[0]).toMatchObject({ parentJob: PARENT_JOB, rootSession: ROOT, rootName: ROOT_NAME, metadataVersion: 2, status: "done" });
@@ -347,7 +347,7 @@ createInterface({input: process.stdin}).on("line", (line) => {
     try {
       await client.connect(transport);
       expect((await client.listTools()).tools.map((tool) => tool.name)).toContain("spawn");
-      const answer = await client.callTool({ name: "ask", arguments: { agent: "codex", title: "Nested bundle review", prompt: "Review" } });
+      const answer = await client.callTool({ name: "spawn", arguments: { wait: true, agent: "codex", title: "Nested bundle review", prompt: "Review" } });
       expect(textOf(answer)).toContain("bundled nested result");
       expect(JSON.parse(readFileSync(join(home, "child-env.json"), "utf8"))).toMatchObject({ depth: "2", rootSession: ROOT, parentJob: expect.stringMatching(/^codex-ask-/) });
       expect(readStore(join(home, "jobs.json"))[0]).toMatchObject({ parentJob: PARENT_JOB, rootSession: ROOT, status: "done" });

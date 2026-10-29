@@ -80,7 +80,7 @@ it.each([undefined, "auto"])("an unlabelled child send (mode: %s) is stored with
   expect(send).not.toHaveBeenCalled(); expect(ctx.observeMeta).not.toHaveBeenCalled();
 });
 
-it.each(CODING_AGENTS.flatMap(agent => ["spawn", "ask"].map(tool => ({ tool, agent }))))("a child $tool ($agent) is refused before job admission", async ({ tool, agent }) => {
+it.each(CODING_AGENTS.flatMap(agent => ["spawn"].map(tool => ({ tool, agent }))))("a child $tool ($agent) is refused before job admission", async ({ tool, agent }) => {
   const host = await hostMod(); await childStart();
   const start = vi.fn(() => { throw new Error("fixture admission"); }), track = vi.fn(() => { throw new Error("fixture admission"); });
   ctx.jobs = { start, track, canStart: vi.fn(() => true) } as any;

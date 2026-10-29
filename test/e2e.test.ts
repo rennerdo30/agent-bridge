@@ -119,9 +119,9 @@ describe.skipIf(!existsSync(SERVER))("bundled MCP server end-to-end", () => {
     expect((await muse.listTools()).tools.map(t => t.name).sort()).toEqual(x);
     for (const client of [claude, codex, opencode, antigravity, muse]) {
       expect(client.getInstructions()).toContain("Any CLI can delegate to any CLI, including its own kind.");
-      expect(client.getInstructions()).toContain('"ask" (required agent: claude, codex, opencode, antigravity, muse)');
+      expect(client.getInstructions()).toContain('"spawn" (required agent: claude, codex, opencode, antigravity, muse)');
     }
-    expect(x).toEqual(["ask", "ask_owner", "auto_wake", "cancel_subagent", "cancel_transfer", "coordinator_availability", "dashboard", "decide", "decisions", "fetch_files", "get_conversation", "handoff_subagents", "health", "hook_event", "inbox", "job_checklist", "list_models", "max_subagents", "message_subagent", "network_status", "pause_subagent", "peers", "project_checklist", "project_main", "resource_slots", "resume_subagent", "search_history", "send", "send_files", "send_status", "set_job_outcome", "spawn", "usage_limits", "wait_for_message", "withdraw_owner_question"]);
+    expect(x).toEqual(["ask_owner", "auto_wake", "cancel_subagent", "cancel_transfer", "coordinator_availability", "dashboard", "decide", "decisions", "fetch_files", "get_conversation", "handoff_subagents", "health", "hook_event", "inbox", "job_checklist", "list_models", "max_subagents", "message_subagent", "network_status", "pause_subagent", "peers", "project_checklist", "project_main", "resource_slots", "resume_subagent", "search_history", "send", "send_files", "send_status", "set_job_outcome", "spawn", "usage_limits", "wait_for_message", "withdraw_owner_question"]);
   });
 
   it("declares the Claude channel capability only for Claude", () => {

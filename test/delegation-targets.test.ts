@@ -8,7 +8,7 @@ import { type CodingAgent } from "../src/core/protocol.js";
 import { delegationTargets, registerTools, type ServerContext } from "../src/mcp/server.js";
 
 const kinds: CodingAgent[] = ["claude", "codex", "opencode", "antigravity", "muse"];
-const inventory = ["ask", "spawn"];
+const inventory = ["spawn"];
 afterEach(() => vi.unstubAllEnvs());
 
 async function registeredInventory(agent: CodingAgent) {
@@ -38,7 +38,7 @@ it.each(kinds)("%s can delegate to every CLI, including itself (AB-270)", async 
   expect(await registeredInventory(agent)).toEqual(inventory);
 });
 
-it("ask and spawn reject unknown or missing agents before job admission", async () => {
+it("spawn rejects unknown or missing agents before job admission", async () => {
   const server = new McpServer({ name: "agent-validation", version: "0" });
   const start = vi.fn(), track = vi.fn();
   registerTools(server, {
@@ -58,6 +58,9 @@ it("ask and spawn reject unknown or missing agents before job admission", async 
       expect(result.isError).toBe(true);
       expect(JSON.stringify(result)).toContain("agent");
     }
+    const missingBlockingTitle = await client.callTool({ name: "spawn", arguments: { agent: "codex", wait: true, prompt: "do not run" } });
+    expect(missingBlockingTitle.isError).toBe(true);
+    expect(JSON.stringify(missingBlockingTitle)).toContain("title");
     expect(start).not.toHaveBeenCalled(); expect(track).not.toHaveBeenCalled();
   } finally { await client.close(); await server.close(); }
 });

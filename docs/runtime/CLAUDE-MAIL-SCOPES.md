@@ -53,7 +53,6 @@ query are refused, as already established for wait/conversation in AB-405.
 | `wait_for_message` | c | Refuse; hooks and child inbox deliver mail |
 | `max_subagents` | a | Refuse |
 | `auto_wake` | a | Refuse |
-| `ask` | b | Refuse; child has no independent supervisor identity |
 | `spawn` | b | Refuse; same reason |
 | `usage_limits` | c | Shared account quota summaries; no parent metadata observation |
 | `list_models` | c | Shared model catalogue; no parent metadata observation |
