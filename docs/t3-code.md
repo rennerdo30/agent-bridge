@@ -55,12 +55,12 @@ run's status (`running`, `queued`, `done`, `failed`, `interrupted`, `cancelled`)
   chats and plenty of non-T3 sessions work, or a worktree with several candidates), the session's
   first prompts are read from its own CLI transcript (Bridge's transcript readers, first page)
   and compared with the T3 user messages of the candidate chats in that folder: whitespace-
-  normalized, first 300 characters, up to 8 prompts from the session's first hour, each within
-  10 minutes of a T3 message. T3 stores the same prompt text the provider transcript holds;
+  normalized, first 300 characters, up to 8 prompts from the session's first hour; each prompt
+  only matches a T3 message within 10 minutes of it. T3 stores the same prompt text the provider transcript holds;
   injected context (instructions, environment blocks, local commands) is skipped. Exactly one
   matching chat links. A match is kept for the session (and wins over a lone remaining
-  candidate); a session without a match is retried after about a minute, or ten once all its
-  compared prompts were seen. An unreadable message table costs only these matches. In a project
+  candidate); a session without a match is retried after about a minute, or ten once its
+  compared prompts can no longer change (eight seen, or its first hour and window are over). An unreadable message table costs only these matches. In a project
   root (or a worktree that is the root) a chat is never linked by being the only candidate.
   **Known limit:** a provider fork or resumed session that copies its parent's first prompts
   matches the parent chat; with both connected the claim guard leaves both unlinked.

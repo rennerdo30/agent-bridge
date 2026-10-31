@@ -46,7 +46,7 @@ const PROMPT_SPAN_MS = 60 * 60_000, MAX_PROMPT_LINKS = 2_000;
  * ten. Retries are spread by up to the jitter so many sessions never re-read their transcripts in the same poll. */
 export const T3_PROMPT_RETRY_MS = 60_000, T3_PROMPT_SETTLED_MS = 10 * 60_000, T3_PROMPT_JITTER_MS = 15_000;
 /** Context CLIs inject as user messages (instructions, environment, local commands): never a real prompt. */
-const INJECTED = /^(# AGENTS\.md|<(environment_context|user_instructions|permissions|command-name|command-message|command-args|local-command|system-reminder|turn_aborted|user_shell_command))/i;
+const INJECTED = /^(# AGENTS\.md|Caveat: The messages below|<(environment_context|user_instructions|permissions|command-name|command-message|command-args|local-command|system-reminder|turn_aborted|user_shell_command|bash-input|bash-stdout|bash-stderr|task-notification|user-prompt-submit-hook|agent-bridge-message|channel))/i;
 const MAX_PAYLOAD = 65_536;
 const AGENTS: Record<string, string> = { claudeAgent: "claude", claude: "claude", codex: "codex", opencode: "opencode", antigravity: "antigravity", muse: "muse" };
 const RUN_STATUS: Record<string, T3SessionInfo["status"]> = { running: "running", queued: "queued", completed: "done", failed: "failed", interrupted: "interrupted", cancelled: "cancelled" };
@@ -213,20 +213,22 @@ export function t3SessionInfo(root: string | undefined, sessions: { key: string;
       waiting.get(chat.id) ? "waiting" : RUN_STATUS[String((latest.get(chat.id) as { status?: unknown } | undefined)?.status ?? "")] ?? "idle";
     const fits = (chat: FolderChat, agent: string) => chat.agents.has(agent);
     // AB-470: which one of several candidate chats this session is, by its first prompts.
-    const userMessages = (pool: FolderChat[], from: string, to: string) => input.prepare(`SELECT thread_id,
+    const userMessages = (pool: FolderChat[], from: string, to: string) => input.prepare(`SELECT thread_id,created_at,
         CASE WHEN octet_length(payload_json)<=${MAX_PAYLOAD} AND json_valid(payload_json) THEN substr(json_extract(payload_json,'$.text'),1,${PROMPT_CHARS * 4}) END text
       FROM orchestration_v2_projection_messages WHERE role='user' AND created_at BETWEEN ? AND ?
-        AND thread_id IN (${pool.map(() => "?").join(",")})`).all(from, to, ...pool.map(c => c.id)) as { thread_id: unknown; text: unknown }[];
+        AND thread_id IN (${pool.map(() => "?").join(",")})`).all(from, to, ...pool.map(c => c.id)) as { thread_id: unknown; created_at: unknown; text: unknown }[];
     const linkKey = (s: { agent: string; sessionId?: string | null }) => `${root}|${s.agent}|${s.sessionId}`;
     /** A chat this session already matched by prompt, if it is still in the given pool. */
     const known = (pool: FolderChat[], s: { agent: string; sessionId?: string | null }) => {
-      const hit = s.sessionId ? promptLinks.get(linkKey(s)) : undefined;
-      return hit?.chat ? pool.find(c => c.id === hit.chat) : undefined;
+      const key = linkKey(s), hit = s.sessionId ? promptLinks.get(key) : undefined;
+      const chat = hit?.chat ? pool.find(c => c.id === hit.chat) : undefined;
+      if (chat) remember(key, hit!); // a live match is used: keep it, evict old misses first
+      return chat;
     };
     const byPrompt = (pool: FolderChat[], s: { agent: string; cwd: string; sessionId?: string | null }): FolderChat | undefined => {
       if (!prompts || !s.sessionId || !pool.length || pool.length > MAX_POOL) return undefined;
       const key = linkKey(s), hit = promptLinks.get(key);
-      if (hit?.chat) { const chat = pool.find(c => c.id === hit.chat); if (chat) return chat; } // a vanished chat re-matches
+      if (hit?.chat) { const chat = pool.find(c => c.id === hit.chat); if (chat) { remember(key, hit); return chat; } } // a vanished chat re-matches
       else if (hit && now < hit.retryAt) return undefined;
       let first: { text: string; at: number }[] = [];
       try { first = prompts({ agent: s.agent, cwd: s.cwd, sessionId: s.sessionId }); } catch { first = []; }
@@ -236,14 +238,19 @@ export function t3SessionInfo(root: string | undefined, sessions: { key: string;
       const wanted = real.filter(p => p.at <= begin + PROMPT_SPAN_MS).slice(0, MAX_PROMPTS);
       let chat: FolderChat | undefined, failed = false;
       if (wanted.length) {
-        const ats = wanted.map(p => p.at), texts = new Set(wanted.map(p => p.text));
+        const ats = wanted.map(p => p.at);
+        // Each prompt only matches a T3 message with the same text within the window of that prompt.
+        const near = (text: string, at: number) => wanted.some(p => p.text === text && Math.abs(p.at - at) <= PROMPT_WINDOW_MS);
         try {
           const rows = userMessages(pool, new Date(Math.min(...ats) - PROMPT_WINDOW_MS).toISOString(), new Date(Math.max(...ats) + PROMPT_WINDOW_MS).toISOString());
-          const matched = new Set(rows.filter(r => typeof r.text === "string" && texts.has(normalize(r.text))).map(r => String(r.thread_id)));
+          const matched = new Set(rows.filter(r => typeof r.text === "string" && typeof r.created_at === "string" && near(normalize(r.text), Date.parse(r.created_at)))
+            .map(r => String(r.thread_id)));
           if (matched.size === 1) chat = pool.find(c => matched.has(c.id));
         } catch { failed = true; } // an unreadable message table costs this match only, never the other links
       }
-      const settled = !failed && wanted.length >= MAX_PROMPTS;
+      // Once all compared prompts are known (eight of them, or the first hour and its window are over), more reads
+      // cannot change the result: retry rarely.
+      const settled = !failed && (wanted.length >= MAX_PROMPTS || (real.length > 0 && now > begin + PROMPT_SPAN_MS + PROMPT_WINDOW_MS));
       remember(key, { chat: chat?.id ?? null, retryAt: now + (settled ? T3_PROMPT_SETTLED_MS : T3_PROMPT_RETRY_MS) + spread(key) });
       return chat;
     };

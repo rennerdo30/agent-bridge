@@ -381,6 +381,35 @@ describe("T3 chats in a shared folder, linked by the session's first prompts (AB
     expect(got.find((p) => p.text === "do we detect t3 code main chats?")!.at).toBe(T + 2_000);
   });
 
+  it("compares only the session's first hour, and each prompt only with T3 messages near it in time", () => {
+    const { root, db } = store();
+    thread(db, "b"); message(db, "b", "first real prompt of the session", T + 45 * 60_000);
+    thread(db, "c"); message(db, "c", "a prompt sent much later on", T + 61 * 60_000);
+    const prompts = reader({
+      // P1 at minute 0 and P2 at minute 50: chat b has P1's text at minute 45, far from P1 itself.
+      window: [{ text: "first real prompt of the session", at: T }, { text: "unrelated second prompt here", at: T + 50 * 60_000 }],
+      // The matching prompt comes after the session's first hour.
+      late: [{ text: "an opening prompt nobody else has", at: T }, { text: "a prompt sent much later on", at: T + 61 * 60_000 }],
+    });
+    expect(t3SessionInfo(root, [session("window"), session("late")], 1_000, prompts).size).toBe(0);
+  });
+
+  it("matches again when the linked chat is gone, and retries a settled miss only after the long interval", () => {
+    const { root, db } = store();
+    thread(db, "main"); message(db, "main", "how does our t3 integration look now?", T);
+    const prompts = reader({ hit: [{ text: "how does our t3 integration look now?", at: T }], miss: [{ text: "not a t3 prompt at all", at: T }] });
+    const t0 = T + 2 * 60 * 60_000; // the misses' first hour and window are over: settled
+    expect(t3SessionInfo(root, [session("hit"), session("miss")], t0, prompts).get("hit")).toMatchObject({ id: "main" });
+    db.prepare("UPDATE orchestration_v2_projection_threads SET deleted_at=? WHERE thread_id='main'").run(new Date(T).toISOString());
+    thread(db, "main2"); message(db, "main2", "how does our t3 integration look now?", T);
+    const later = t0 + T3_INDEX_MS; // the index rebuild drops the deleted chat
+    expect(t3SessionInfo(root, [session("hit"), session("miss")], later, prompts).get("hit")).toMatchObject({ id: "main2" });
+    expect(prompts.mock.calls.filter(([x]) => x.sessionId === "hit")).toHaveLength(2);
+    // Past any unsettled retry (a minute plus jitter) but well before the settled one: not re-read.
+    t3SessionInfo(root, [session("miss")], t0 + T3_PROMPT_RETRY_MS + T3_PROMPT_JITTER_MS + 1, prompts);
+    expect(prompts.mock.calls.filter(([x]) => x.sessionId === "miss")).toHaveLength(1);
+  });
+
   it("reads the first prompts from the CLI's own transcript (Claude)", () => {
     const home = mkdtempSync(join(tmpdir(), "ab-t3-claude-")); roots.push({ root: home, db: new DatabaseSync(":memory:") });
     const id = "0f9d5c0e-1111-4222-8333-444455556666", dir = join(home, "projects", ROOT.replace(/[^A-Za-z0-9]/g, "-"));
