@@ -15,8 +15,24 @@
     "src/cli/dashboard.ts:ensure": "d19ca8a9485ccc07d588997e3497bc11545e730a264e9a6f59bf1ceb0dfcda49",
     "src/cli/dashboard.ts:close": "534d315c24ff13f59aa4082abf2fb66906e6bee9b979a6348979cbaef89ec7b4"
   },
-  "uiSha256": "20d3b1c75a417ecbd5186cceb6a78aa67324a5adc5aac0ee52e1826197672db0",
+  "uiSha256": "3493cb09446e0a7844f7e946529f36dd591c0fb6cc890c5ba30ac2739ac08c0f",
   "updates": {
+    "AB-468-local-sessions": {
+      "base": "18bd3371",
+      "changes": [],
+      "previousUiSha256": "c1f1b1ff51208c31ed2eb8a8eee63e83d4b9891f60c1b7776cd9d389f760ba1b",
+      "uiSha256": "3493cb09446e0a7844f7e946529f36dd591c0fb6cc890c5ba30ac2739ac08c0f",
+      "reason": "AB-468 third review (M1): withT3 selects the sessions through t3LocalSessions, which also leaves out Bridge job and subagent peers (a job running in a T3 chat's folder is not that chat), and the cwd non-null assertion goes. One import name is added. No mobile route, mobile state, startup, listen or close control flow changes; broker/node/dashboard method pins are unchanged.",
+      "commit": "same commit as this pin (first commit after 18bd3371)"
+    },
+    "AB-468-t3-sessions": {
+      "base": "b9a7349f",
+      "changes": [],
+      "previousUiSha256": "20d3b1c75a417ecbd5186cceb6a78aa67324a5adc5aac0ee52e1826197672db0",
+      "uiSha256": "c1f1b1ff51208c31ed2eb8a8eee63e83d4b9891f60c1b7776cd9d389f760ba1b",
+      "reason": "AB-468 (PR #153): startUi's /api/state maps the classified peers through withT3, which adds an optional `t3` object to local peers (no '/' in the name) running in a T3 Code chat's own folder, read by t3SessionInfo from T3's local store read-only (one short connection per call, no writes; a missing, busy or unknown store yields nothing). Two imports and the t3Root/withT3 definitions are added. No mobile route, mobile state, startup, listen or close control flow changes; broker/node/dashboard method pins are unchanged.",
+      "commit": "4e68d213"
+    },
     "AB-428": {
       "base": "42ac9a2b8018fe9abe5adac196b4a770e54290a0",
       "sourceCommit": "82b5730c76edc587e69b693b9325d2ac94a85fc6",

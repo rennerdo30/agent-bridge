@@ -798,6 +798,16 @@ main.wrap { padding-top: 32px; max-width: 1240px; }
 .chip { border-radius: 5px; border-color: transparent; background: var(--panel-2); }
 .av { border-radius: 8px; font-weight: 700; letter-spacing: -.02em; }
 .av.sm { width: 24px; height: 24px; border-radius: 6px; font-size: 11.5px; }
+/* AB-468: a session that is a T3 Code chat. */
+.chip.t3 { color: var(--accent); background: var(--accent-soft); border-color: transparent; font-weight: 600; font-size: 10.5px; padding: 0 6px; margin-left: 6px; vertical-align: 1px; }
+.t3-ask { color: var(--warn); font-weight: 600; }
+.ttl { display: flex; align-items: center; min-width: 0; }
+.ttl > .ell { min-width: 0; }
+.ttl > .chip { flex: none; }
+/* The harness a session runs on, next to its title, in the agent's colour. */
+.chip.harness { font-weight: 600; font-size: 10.5px; padding: 0 6px; margin-left: 6px; vertical-align: 1px; border-color: transparent; }
+.chip.harness.claude { color: var(--claude); } .chip.harness.codex { color: var(--codex); } .chip.harness.opencode { color: var(--opencode); }
+.chip.harness.antigravity { color: var(--antigravity); } .chip.harness.muse { color: var(--muse); }
 
 /* Overview: one figures strip instead of a card per number. */
 #ovStats { display: flex; flex-wrap: wrap; gap: 0; background: var(--panel); border-radius: 10px; box-shadow: var(--shadow); overflow: hidden; }
@@ -1482,6 +1492,22 @@ function buildModel(s) {
     (parent ? parent.children : orphans).push(c);
   }
   for (const x of sessions) x.running = x.groups.filter((g) => g.status === "running").length;
+  // AB-468: one T3 chat, one entry. After provider switches in T3, every connected session of the same chat
+  // folds into one: the current provider's, else the newest. Its subagent runs and child sessions move along;
+  // the folded session stays reachable by its own page (linked from the chat's session page).
+  const byChat = new Map();
+  for (const x of sessions) if (x.live && x.peer && x.peer.t3) (byChat.get(x.peer.t3.id) || byChat.set(x.peer.t3.id, []).get(x.peer.t3.id)).push(x);
+  for (const list of byChat.values()) {
+    if (list.length < 2) continue;
+    const rep = list.find((y) => y.peer.t3.harness === "current") || [...list].sort((a, b) => (b.peer.startedAt || 0) - (a.peer.startedAt || 0))[0];
+    for (const x of list) {
+      if (x === rep) continue;
+      x.foldedInto = rep.name; (rep.folded = rep.folded || []).push(x.name);
+      rep.groups.push(...x.groups); rep.children.push(...x.children); rep.running += x.running;
+    }
+    const order = new Map(sorted.map((g, i) => [g.key, i]));
+    rep.groups.sort((a, b) => order.get(a.key) - order.get(b.key));
+  }
   return { sessions, byName, groups, sorted, orphans };
 }
 
@@ -1519,13 +1545,26 @@ const SIDE_COLLAPSED_KEY = "ab-side-collapsed";
 let lastTree = "";
 
 const groupMatches = (g, q) => [g.title, g.task, g.agent, g.model, g.job].some((s) => String(s || "").toLowerCase().includes(q));
-const sessionMatches = (x, q) => x.name.toLowerCase().includes(q) || String((x.peer && x.peer.cwd) || "").toLowerCase().includes(q);
-const sessionTitle = (x) => (x.peer ? folder(x.peer.cwd) : "") || shortName(x.name);
+const sessionMatches = (x, q) => [x.name, x.peer && x.peer.cwd, x.peer && x.peer.t3 && x.peer.t3.title].some((s) => String(s || "").toLowerCase().includes(q));
+/** AB-468: the main line is the project folder. A session in a T3 Code chat's worktree (peer.t3) shows its T3
+ * project's folder instead of the worktree's generated name; the chat title goes on the second line. */
+const peerTitle = (p) => p ? folder((p.t3 && p.t3.projectRoot) || p.cwd) : "";
+const sessionTitle = (x) => (x.peer ? peerTitle(x.peer) : "") || shortName(x.name);
+const T3_STATUS = { running: "working", queued: "queued", waiting: "waiting for an answer", done: "done", failed: "failed", interrupted: "interrupted", cancelled: "cancelled", idle: "idle" };
+const t3Status = (p) => T3_STATUS[p.t3.status] || "unknown";
+const t3Chip = (p) => p && p.t3 ? '<span class="chip t3" title="' + esc("T3 Code chat · " + t3Status(p) + (p.t3.parentTitle ? " · subagent of " + p.t3.parentTitle : "")) + '">T3</span>' : "";
+/** A title that may end in the T3 badge: the title truncates, the badge stays visible. */
+const HARNESS = { claude: "Claude", codex: "Codex", opencode: "opencode", antigravity: "Antigravity", muse: "Muse" };
+/** The harness badge (Claude, Codex, ...) every session shows; only known agents get one. */
+const harnessChip = (p) => p && Object.hasOwn(HARNESS, p.agent) ? '<span class="chip harness ' + p.agent + '" title="Runs on ' + HARNESS[p.agent] + '">' + HARNESS[p.agent] + "</span>" : "";
+/** A title with its badges (harness, then T3 when T3 hosts the chat): the title truncates, the badges stay visible. */
+const titled = (text, p) => p ? '<span class="ttl"><span class="ell">' + esc(text) + "</span>" + harnessChip(p) + t3Chip(p) + "</span>" : esc(text);
+const t3Asks = (p) => p && p.t3 && p.t3.status === "waiting" ? ' · <span class="t3-ask">waiting for an answer</span>' : "";
 
 /** Live sessions grouped by PC (this PC first, busiest first), then ended sessions that have subagents. */
 function sideGroups(q) {
   const keep = (x) => !q || sessionMatches(x, q) || x.groups.some((g) => groupMatches(g, q));
-  const live = model.sessions.filter((x) => x.live && keep(x));
+  const live = model.sessions.filter((x) => x.live && !x.foldedInto && keep(x));
   const pcs = [...new Set(live.map((x) => pcOf(x.name)))].sort((a, b) => (a === "") !== (b === "") ? (a === "" ? -1 : 1) : a.localeCompare(b));
   const out = pcs.map((pc) => ({ title: pc || LOCAL_PC, items: live.filter((x) => pcOf(x.name) === pc).sort((a, b) => b.running - a.running || sessionTitle(a).localeCompare(sessionTitle(b))) }));
   const ended = model.sessions.filter((x) => !x.live && x.groups.length && keep(x));
@@ -1755,10 +1794,10 @@ async function showNative(x, key) {
 /** One session in the sidebar: folder, name and state, with how many subagents work. Subagents are listed on its page. */
 function sideSession(x) {
   const p = x.peer, cur = x.name === route.session;
-  const sub = shortName(x.name) + (p ? " · " + (p.projectGroup ? (p.projectMain ? "main · " : "secondary · ") : "") + (p.unavailable ? "unavailable" : p.activity || "connected") : " · ended");
+  const sub = (p && p.t3 ? p.t3.title : shortName(x.name)) + (p ? " · " + (p.projectGroup ? (p.projectMain ? "main · " : "secondary · ") : "") + (p.unavailable ? "unavailable" : p.activity || "connected") : " · ended");
   return '<div class="tree-sess' + (cur ? " cur" : "") + (x.live ? "" : " ended") + '">' +
     '<a href="' + href(x.name) + '" title="' + esc(x.name + (p ? " · " + p.cwd : "")) + '"' + (cur ? ' aria-current="page"' : "") + ">" + (p ? dot(p.activity) : '<span class="dot off"></span>') +
-    '<span class="lbl ell">' + esc(sessionTitle(x)) + '<small class="ell">' + esc(sub) + "</small></span>" +
+    '<span class="lbl ell">' + titled(sessionTitle(x), p) + '<small class="ell">' + esc(sub) + t3Asks(p) + "</small></span>" +
     (x.running ? '<span class="count" title="subagents working">' + x.running + "</span>" : "") + "</a></div>";
 }
 
@@ -1810,7 +1849,7 @@ function sideMember(x) {
   const state = p.unavailable ? "unavailable" : p.activity || "connected";
   return '<div class="tree-sess member' + (main ? " main" : " secondary") + (cur ? " cur" : "") + (x.live ? "" : " ended") + '">' +
     '<a href="' + href(x.name) + '" title="' + esc(x.name + (p.cwd ? " · " + p.cwd : "")) + '"' + (cur ? ' aria-current="page"' : "") + ">" + dot(p.activity) +
-    '<span class="lbl ell">' + esc(agent) + (main ? '<span class="main-tag">main</span>' : "") + '<small class="ell">' + esc(state) + "</small></span>" +
+    '<span class="lbl ell">' + (p.t3 ? '<span class="ttl"><span class="ell">' + esc(agent) + "</span>" + t3Chip(p) + "</span>" : esc(agent)) + (main ? '<span class="main-tag">main</span>' : "") + '<small class="ell">' + esc(p.t3 ? p.t3.title + " · " + state : state) + t3Asks(p) + "</small></span>" +
     (x.running ? '<span class="count" title="subagents working">' + x.running + "</span>" : "") + "</a></div>";
 }
 
@@ -1897,7 +1936,7 @@ function renderOverview() {
   if (cmpVersion(state.version, newestVersion()) < 0) retained.push({ name: "dashboard host", version: state.version });
   $("ovVersions").innerHTML = retained.length ? '<div class="attn-banner"><span><b>Version skew: sessions still run retained code.</b> ' + retained.map((p) => esc(p.name) + " (v" + esc(p.version || "unknown") + ")").join(", ") + ". Sessions keep working; shared format upgrades wait for compatible readers.</span></div>" : "";
   renderApprovalBanner();
-  const live = model.sessions.filter((x) => x.live), ended = model.sessions.filter((x) => !x.live && x.groups.length);
+  const live = model.sessions.filter((x) => x.live && !x.foldedInto), ended = model.sessions.filter((x) => !x.live && x.groups.length);
   $("ovCount").textContent = live.length || "";
   const pcCount = new Set(live.map((x) => pcOf(x.name))).size, working = live.reduce((n, x) => n + (x.running || 0), 0);
   $("ovLead").textContent = live.length
@@ -1916,7 +1955,7 @@ function renderOverview() {
   const card = (x) => {
     const p = x.peer;
     const head = p
-      ? '<div class="head">' + av(p.agent) + '<div style="min-width:0;flex:1"><div class="title ell">' + esc(folder(p.cwd)) + '</div><div class="small muted ell">' + esc(x.name) + "</div></div>" + dot(p.activity) + "</div>"
+      ? '<div class="head">' + av(p.agent) + '<div style="min-width:0;flex:1"><div class="title ell">' + titled(peerTitle(p), p) + '</div><div class="small muted ell">' + esc(p.t3 ? p.t3.title : x.name) + t3Asks(p) + "</div></div>" + dot(p.activity) + "</div>"
       : '<div class="head">' + av("other") + '<div style="min-width:0;flex:1"><div class="title ell">' + esc(x.name) + '</div><div class="small muted">not connected</div></div></div>';
     const stats = '<div class="stats"><span><b>' + x.groups.length + "</b>subagents</span>" + (x.running ? '<span style="color:var(--busy)"><b style="color:inherit">' + x.running + "</b>working</span>" : "") +
       (p ? "<span><b>" + up(p.startedAt) + "</b>connected</span>" : x.groups[0] ? "<span>last " + ago(x.groups[0].updatedAt) + "</span>" : "") + "</div>";
@@ -1942,8 +1981,12 @@ function renderSession() {
   const x = model.byName.get(route.session) || { name: route.session, peer: null, live: false, groups: [], children: [] };
   const p = x.peer;
   $("sHead").innerHTML = p
-    ? '<div class="head" style="display:flex;gap:12px;align-items:center">' + av(p.agent) + '<div style="min-width:0;flex:1"><div class="title ell" style="font-weight:650;font-size:15px">' + esc(folder(p.cwd)) + '</div><div class="small muted ell">' + esc(p.name) + "</div></div>" + dot(p.activity) + "</div>" +
-      '<div class="kv"><span>status</span><span>' + esc(p.activity || "unknown") + "</span><span>folder</span><span>" + esc(p.cwd) + "</span><span>connected</span><span>" + up(p.startedAt) + " ago</span>" +
+    ? '<div class="head" style="display:flex;gap:12px;align-items:center">' + av(p.agent) + '<div style="min-width:0;flex:1"><div class="title ell" style="font-weight:650;font-size:15px">' + titled(peerTitle(p), p) + '</div><div class="small muted ell">' + esc(p.name) + "</div></div>" + dot(p.activity) + "</div>" +
+      '<div class="kv"><span>status</span><span>' + esc(p.activity || "unknown") + "</span>" +
+      (p.t3 ? "<span>T3 chat</span><span>" + esc(p.t3.title + " · " + t3Status(p) + (p.t3.model ? " · " + p.t3.model : "") + (p.t3.parentTitle ? " · subagent of " + p.t3.parentTitle : "") +
+        (p.t3.harness === "earlier" ? " · ran this chat before T3 switched it to " + p.t3.provider : "")) + "</span>" : "") +
+      (x.folded && x.folded.length ? "<span>also this chat</span><span>" + x.folded.map((n) => '<a href="' + href(n) + '">' + esc(n) + "</a>").join(", ") + "</span>" : "") +
+      "<span>folder</span><span>" + esc(p.cwd) + "</span><span>connected</span><span>" + up(p.startedAt) + " ago</span>" +
       (p.sessionId ? "<span>session</span><span>" + esc(p.sessionId) + "</span>" : "") + "<span>version</span><span>" + esc(p.version || "?") + " " + versionChip(p) + "</span></div>" +
       // Quiet secondary actions; being the project main is a state (a chip), not a disabled button.
       kidsBlock(x, true) + (!pcOf(x.name) ? '<div class="sess-actions">' +

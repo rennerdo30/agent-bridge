@@ -1,8 +1,26 @@
 {
   "base": "0fed680017e823197b1fb3344598632f5cd219ed",
   "uiSha256": "876fbc073c419e55a05c806b75c4993d254510c444cbd81d70098efbd22fb98c",
-  "pageSha256": "0b787ddb1b4511a7ef032d866baa49cfb04a8f42174078f052626bf31e6961dd",
+  "pageSha256": "f7d8e3d7cb1cc6dc33628277d12b0b5967a8a1fbf0f4517f0c735c8ce5f0de41",
   "updates": {
+    "AB-468-harness-badge": {
+      "base": "ccdc7283",
+      "previousPageSha256": "c4d691958b150e0bad232086b042ac4e14ba1908c1c7eec76b4d34ff4ac2969e",
+      "reason": "AB-468 (PR #153) owner feedback: every session title shows a constant-text harness badge (Claude, Codex, opencode, Antigravity, Muse; only known agent kinds, coloured with the existing agent tokens) next to the project folder, before the T3 badge where T3 hosts the chat. The badge container class is renamed from t3-ttl to ttl; grouped project rows keep their agent label and show only the T3 badge. Page re-pinned. The mobileDashboardPage addition, the optional mobile page and default mobile activation behavior are unchanged.",
+      "commit": "same commit as this pin (first commit after ccdc7283)"
+    },
+    "AB-468-review": {
+      "base": "d3637fba",
+      "previousPageSha256": "e1f480c59a81b66027a44e4c226498e391b5c80fcd10cf620d2bd68f77b6c447",
+      "reason": "AB-468 (PR #153) review and owner fixes: the session title stays the project folder (for a T3 worktree chat its T3 project's folder, peer.t3.projectRoot) and the T3 chat title moves to the second line of sidebar rows, session cards and grouped project rows (sideMember); the session page T3 row starts with the chat title and links the sessions folded into it. Folding now groups all connected sessions of one T3 chat under the current provider's session, else the newest, and moves their subagent runs (re-sorted) and child sessions with them. Sessions without peers[].t3 render exactly as before. Page re-pinned. The mobileDashboardPage addition, the optional mobile page and default mobile activation behavior are unchanged.",
+      "commit": "same commit as this pin (first commit after d3637fba)"
+    },
+    "AB-468": {
+      "base": "b9a7349f",
+      "previousPageSha256": "0b787ddb1b4511a7ef032d866baa49cfb04a8f42174078f052626bf31e6961dd",
+      "reason": "AB-468 (PR #153): the desktop dashboard script shows a session that is a T3 Code chat with the chat's title instead of its folder name, a constant-text T3 badge and \"waiting for an answer\", taken from the new optional peers[].t3 in /api/state (every T3 value escaped; the badge stays outside the truncated title). Adds peerTitle, t3Status, t3Chip, titled and t3Asks helpers, a T3 chat row on the session page, folding of a still-connected earlier-provider session into the chat's current session in buildModel (sideGroups and the overview skip folded sessions), and four CSS rules using existing tokens. Sessions without peers[].t3 render exactly as before. Page re-pinned. The mobileDashboardPage addition, the optional mobile page and default mobile activation behavior are unchanged.",
+      "commit": "4e68d213"
+    },
     "PR-20": {
       "base": "0761d56fe4c36e505550f9b889841fdf8e82c80a",
       "reason": "Add Muse colors, filters, names, handoff, read/ask/edit job controls and owner chat composer. The optional mobile page and default mobile activation behavior are unchanged."

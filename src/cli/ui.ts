@@ -49,6 +49,8 @@ import { doctor } from "../core/doctor.js";
 import { MAX_HISTORY_LIMIT, searchMessages } from "../core/message-history.js";
 import { DEFAULT_RUN_PAGE_SIZE, pageRuns } from "../core/run-history.js";
 import { type TranscriptPaths } from "../core/transcripts/index.js";
+import { localT3HistoryRoot } from "../core/transcripts/common.js";
+import { t3LocalSessions, t3SessionInfo, type T3SessionInfo } from "../core/t3-sessions.js";
 import { HISTORY_MAX_QUERY_CHARS, historySearchSchema, readHistory, readHistorySource } from "../core/history.js";
 import { answerHistory, type HistoryAnswerDependencies } from "../core/history-answer.js";
 import { readDecisions, decisionScopeSchema, MAX_DECISION_TEXT_CHARS, MAX_DECISION_TOPIC_CHARS, type DecisionsArgs } from "../core/decisions.js";
@@ -317,6 +319,13 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
     return usage.reports;
   };
 
+  // AB-468: a local session running in a T3 Code chat's own folder carries that chat's title and status.
+  const t3Root = opts.transcripts && Object.hasOwn(opts.transcripts, "t3") ? opts.transcripts.t3 : localT3HistoryRoot();
+  const withT3 = <P extends PeerInfo>(list: P[]): (P & { t3?: T3SessionInfo })[] => {
+    const local = t3LocalSessions(list);
+    const info = t3SessionInfo(t3Root, local.map((p) => ({ key: p.name, cwd: p.cwd, agent: p.agent })));
+    return list.map((p) => (info.has(p.name) ? { ...p, t3: info.get(p.name)! } : p));
+  };
   // Pushes "this conversation moved" to open dashboards as soon as the history worker retains new lines (AB-383).
   const historyFeed = new HistoryChangeFeed(opts.home);
   const handle = async (req: IncomingMessage, res: ServerResponse, signal: AbortSignal) => {
@@ -540,7 +549,7 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
         brokerPid,
         brokerState,
         health,
-        peers: classifyPeers(peers, runs, opts.home),
+        peers: withT3(classifyPeers(peers, runs, opts.home)),
         runs: [...page.runs, ...remoteStates.flatMap((r) => r.runs)],
         runsNext: page.next,
         runsTotal: page.total,

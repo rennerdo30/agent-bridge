@@ -1,5 +1,73 @@
 # T3 Code host adapter (experimental, automatically detected)
 
+## Integration plan: local files first, no changes to T3 (AB-467)
+
+Bridge integrates with T3 Code as far as possible without changing or updating T3. T3 keeps
+its state in `<T3CODE_HOME>/userdata/statev2.sqlite` on the same machine, so everything Bridge
+reads comes from that store, opened read-only with short connections. Bridge never writes to
+it, never runs migrations or checkpoints, and never opens T3's auth tables, `secrets/` or
+token files. Every query names its tables and columns.
+
+T3 is a wrapper, not a harness: every T3 chat runs on an ordinary Claude, Codex, opencode,
+Antigravity or Muse session that Bridge already sees as a session and indexes from its
+transcripts. T3 can also switch a chat to another provider, which starts a new underlying
+session. Integration therefore **links** T3 chats to those sessions and transcripts; it never
+adds a second entry for the same chat.
+
+| # | Package | Source in the T3 store |
+| --- | --- | --- |
+| 1 | T3 chat title, status and badge on the existing session entries, across provider switches (done, below) | `orchestration_v2_projection_threads`, `_provider_threads`, `_subagents`, `_runs`, `_runtime_requests` |
+| 2 | History: one conversation per T3 chat, linked to the provider transcripts it ran on, without duplicate messages; then tool calls, commands, file changes and attachments | `_turn_items`, `_provider_threads` (run ranges per provider), `_subagents`, `userdata/attachments` |
+| 3 | Link chats that share a folder with other chats of the same agent (usually main chats in the project root): T3 does not store usable native session IDs, so another reliable key is needed | to be determined |
+| 4 | T3 details for sessions on paired PCs, each PC reading only its own store | the paired dashboard read |
+| 5 | Optional: wake an idle T3 chat for new Bridge mail | the running T3 app over loopback; a database write would start no run and could corrupt T3's state |
+
+Messages and thread metadata already reach history search (next section); until package 2
+links them, the same messages can also appear through the provider transcripts. The host
+adapter further below stays for hosts that inject T3's scoped transport. T3 itself discards
+intermediate message edits when it compacts; those cannot be recovered from any source.
+
+## T3 chats on session entries
+
+T3 gives most chats a folder of their own (`worktreePath`). In `GET /api/state`, a local
+session gets a `t3` object (`id`, `title`, `provider`, `model`, `projectRoot`, `status`,
+`parentTitle`, `harness`) when it runs in a T3 chat's folder and exactly one candidate chat
+there fits its agent. The dashboard keeps the project folder as the session's title: for a T3
+worktree chat that is its T3 project's folder (`projectRoot`) instead of the worktree's
+generated name. The chat title goes on the second line, with a T3 badge and "waiting for an
+answer" while T3 has a pending request for the chat. Every session, T3 or not, also shows a
+harness badge for the agent it runs on (Claude, Codex, opencode, Antigravity, Muse). Status is `waiting`, else the latest
+run's status (`running`, `queued`, `done`, `failed`, `interrupted`, `cancelled`), or `idle`.
+
+- **Agents:** a chat's agent comes from T3's driver kind (`default_provider`, and `driver` in
+  `_provider_threads`), not the provider instance name. An unknown driver never links.
+- **Candidates in a folder:** the chat that owns it: a top-level chat, or a child whose known
+  parent works in another folder or the project root. A T3 delegated task that ran in its
+  parent's folder (`app_owned`) is a separate session, so it counts only while it has an
+  active run. Provider-native subagents run inside the parent's process and never count. A
+  child whose parent is unknown (deleted or unreadable) never owns a folder.
+- **Provider switches:** a chat matches every agent it has run on. `harness` is `current` for
+  its present provider and `earlier` otherwise. All connected sessions of one chat fold into
+  one entry in the dashboard lists (the current provider's, else the newest), taking their
+  subagent runs and child sessions along; folded sessions stay reachable by their own pages,
+  linked from the chat's session page.
+- **Never guessed:** sessions in a folder with several candidates for their agent, two
+  same-agent sessions claiming one chat, deleted chats and chats without their own folder get
+  nothing and keep their usual entry.
+
+Folders compare by physical location: separators, a trailing separator and (on Windows)
+case do not matter, and drive aliases (SUBST, mapped drives, junctions, symlinks) resolve
+through Bridge's `physicalPath`; no drive layout is assumed. Only this PC's CLI sessions are
+matched: Bridge jobs and subagent sessions running in a chat's folder are not that chat. A
+session whose agent no chat in its folder has run on yet (right after a provider switch) also
+triggers one early rebuild.
+
+The folder index is rebuilt at most once a minute, or once early (after 10 seconds) when a
+session appears in a folder the index did not know; a store that cannot be indexed is retried
+after 10 seconds, not on every poll. Per poll only indexed lookups for matched chats run. A
+missing, busy, locked or unknown-schema store means no T3 details. Tests:
+`test/t3-sessions.test.ts` (synthetic store; no T3 install needed).
+
 ## Local history (independent of host transport)
 
 Bridge's existing background history worker can retain local T3 history without OAuth,
