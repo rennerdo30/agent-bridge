@@ -8,7 +8,9 @@ import { conversationProject } from "./project-store.js";
 import { parse, time } from "./transcripts/common.js";
 
 const digest = (value: string) => createHash("sha256").update(value).digest("hex");
-const id = (value: unknown): value is string => typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(value);
+// App-owned IDs include namespaced mcp:/thread:delegated-task: values, not just native transcript UUIDs.
+const id = (value: unknown): value is string => typeof value === "string" && value.length > 0 && value.length <= 512 &&
+  value.trim() === value && !/[\x00-\x1f\x7f]/.test(value);
 const REFRESH_MS = 60_000, WINDOW = 32, STEPS = 8;
 const columns = {
   projection_projects: { project_id: "TEXT", title: "TEXT", workspace_root: "TEXT" },
@@ -80,7 +82,7 @@ export class T3History {
   private metadata(input: DatabaseSync, state: State): number {
     // One keyset row per tick. Large/unrecognized metadata is explicitly unavailable;
     // never return an arbitrary projection JSON or any provider-session/auth columns.
-    const row = query(input, `SELECT substr(t.thread_id,1,129) thread_id,substr(t.project_id,1,129) project_id,
+    const row = query(input, `SELECT substr(t.thread_id,1,513) thread_id,substr(t.project_id,1,513) project_id,
       substr(t.title,1,8193) title,substr(p.title,1,8193) project_title,substr(p.workspace_root,1,8193) workspace_root,
       substr(t.created_at,1,65) created_at,substr(t.updated_at,1,65) updated_at,
       substr(t.archived_at,1,65) archived_at,substr(t.deleted_at,1,65) deleted_at,
@@ -133,7 +135,7 @@ export class T3History {
       state.sequence = event.sequence; delete state.pending; this.save(state); return;
     }
     // Sequence + event id identifies an immutable full message revision, not updated_at.
-    const row = query(input, `SELECT substr(event_id,1,129) event_id,substr(stream_id,1,129) stream_id,
+    const row = query(input, `SELECT substr(event_id,1,513) event_id,substr(stream_id,1,513) stream_id,
       substr(event_type,1,129) event_type,application_event_version,substr(aggregate_kind,1,32) aggregate_kind,
       octet_length(payload_json) bytes,substr(CAST(payload_json AS BLOB),?,?) raw,
       CASE WHEN ?=0 AND json_valid(payload_json) THEN
@@ -189,18 +191,18 @@ export class T3History {
         input = new DatabaseSync(file, { readOnly: true, timeout: 25 });
       } catch (error) { throw error instanceof SourceFault ? error : new SourceFault("source missing, busy or unreadable"); }
       this.schema(input);
-      const tail = query(input, "SELECT sequence,substr(event_id,1,129) event_id FROM orchestration_events ORDER BY sequence DESC LIMIT 1")[0];
+      const tail = query(input, "SELECT sequence,substr(event_id,1,513) event_id FROM orchestration_events ORDER BY sequence DESC LIMIT 1")[0];
       const high = Number(tail?.sequence ?? 0), highId = String(tail?.event_id ?? "");
       const saved = this.sink.cursor(this.key);
       let state: State;
       try { state = saved === "0" ? { identity, environment, high, highId, sequence: 0, after: "", refreshAt: 0 } : JSON.parse(saved); }
       catch { throw new SourceFault("invalid retained T3 checkpoint"); }
       if (!state || !Number.isSafeInteger(state.sequence) || !Number.isSafeInteger(state.high) || state.sequence < 0 || state.sequence > state.high ||
-          typeof state.after !== "string" || !Number.isFinite(state.refreshAt) || highId.length > 128)
+          typeof state.after !== "string" || !Number.isFinite(state.refreshAt) || highId.length > 512)
         throw new SourceFault("invalid retained T3 checkpoint or source highwater");
       if (!Number.isSafeInteger(high) || state.identity !== identity || state.environment !== environment || high < state.high)
         throw new SourceFault("source replaced or highwater rolled back; prior checkpoint preserved");
-      const anchor = query(input, "SELECT substr(event_id,1,129) event_id FROM orchestration_events WHERE sequence=?", state.high)[0];
+      const anchor = query(input, "SELECT substr(event_id,1,513) event_id FROM orchestration_events WHERE sequence=?", state.high)[0];
       if (anchor && anchor.event_id !== state.highId) throw new SourceFault("source event identity replaced; prior checkpoint preserved");
       state.high = high; state.highId = highId; this.save(state);
       this.discovering = !!state.pending || state.sequence < high || Date.now() >= state.refreshAt;
@@ -209,7 +211,7 @@ export class T3History {
         if (state.pending) { this.copy(input, state); work++; continue; }
         // Primary-key sequence windows include version metadata so future message versions
         // receive an unavailable receipt. Never fetch payloads for unrelated activity.
-        const rows = query(input, `SELECT sequence,substr(event_id,1,129) event_id,substr(stream_id,1,129) stream_id,
+        const rows = query(input, `SELECT sequence,substr(event_id,1,513) event_id,substr(stream_id,1,513) stream_id,
           substr(event_type,1,129) event_type,application_event_version,substr(aggregate_kind,1,32) aggregate_kind,substr(occurred_at,1,65) occurred_at
           FROM orchestration_events WHERE sequence>? AND sequence<=? ORDER BY sequence LIMIT ${WINDOW}`, state.sequence, high);
         if (!rows.length) { state.sequence = high; this.save(state); break; }

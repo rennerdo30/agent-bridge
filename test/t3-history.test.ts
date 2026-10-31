@@ -117,6 +117,22 @@ it.each([false, true])("imports archived metadata, exact lineage and message tex
   expect(f.db.prepare("SELECT 1 FROM history_fts LIMIT 1").get()).toBeDefined();
 });
 
+it("retains namespaced T3 parent and delegated thread identifiers without native transcript restrictions", () => {
+  const f = fixture();
+  const parent = "mcp:150dda30-b6d6-4b15-a149-6f22e1ac5852";
+  const child = "thread:delegated-task:command%3Amcp%3Af716f8c7-3010-4609-bb82-91a8ee20960e%3Adelegate-task%3Aab466-local-history-implementation-20261031-1";
+  expect(child.length).toBeGreaterThan(128);
+  thread(f.input, parent); thread(f.input, child, parent);
+  event(f.input, 9, "namespaced_t3_history", child);
+  f.drain();
+  const conversation = `t3:environment-one:${child}`;
+  expect(f.db.prepare("SELECT parent FROM conversations WHERE id=?").get(conversation))
+    .toEqual({ parent: `t3:environment-one:${parent}` });
+  expect(f.index.search({ query: "namespaced_t3_history", filters: { session: conversation } }).hits)
+    .toMatchObject([{ conversation }]);
+  expect(receipts(f)).toMatchObject([{ sequence: 9, outcome: "complete" }]);
+});
+
 it("scans historical events from zero while metadata bootstrap and later appends remain discoverable", () => {
   const f = fixture();
   for (let n = 0; n < 8; n++) thread(f.input, `thread-${n}`);
