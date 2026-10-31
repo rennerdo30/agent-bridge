@@ -15,11 +15,15 @@ function rollout(file: string, id: string, known?: JsonObject): Rollout {
   return { file, id, meta: Object.fromEntries(["id", "source", "thread_source", "parent_thread_id", "timestamp", "agent_nickname", "agent_path", "subagent_history_start_ordinal"].filter((key) => data[key] !== undefined).map((key) => [key, data[key]])) };
 }
 
+/** The newest Codex state database (state_<n>.sqlite), or null when Codex has none. */
+export function codexStateFile(paths: TranscriptPaths): string | null {
+  const name = directory(paths.codex).filter((s) => /^state_\d+\.sqlite$/.test(s)).sort((a, b) => Number(b.match(/\d+/)?.[0]) - Number(a.match(/\d+/)?.[0]))[0];
+  return name ? safeFile(paths.codex, join(paths.codex, name)) : null;
+}
+
 /** The observed CLI index avoids opening every rollout on a dashboard request. Headers remain authoritative. */
 function indexedRollouts(paths: TranscriptPaths, id?: string, parentId?: string): Rollout[] | null {
-  const name = directory(paths.codex).filter((s) => /^state_\d+\.sqlite$/.test(s)).sort((a, b) => Number(b.match(/\d+/)?.[0]) - Number(a.match(/\d+/)?.[0]))[0];
-  if (!name) return null;
-  const file = safeFile(paths.codex, join(paths.codex, name));
+  const file = codexStateFile(paths);
   if (!file) return null;
   let db: DatabaseSync | undefined;
   try {

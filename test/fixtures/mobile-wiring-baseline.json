@@ -15,8 +15,16 @@
     "src/cli/dashboard.ts:ensure": "d19ca8a9485ccc07d588997e3497bc11545e730a264e9a6f59bf1ceb0dfcda49",
     "src/cli/dashboard.ts:close": "534d315c24ff13f59aa4082abf2fb66906e6bee9b979a6348979cbaef89ec7b4"
   },
-  "uiSha256": "948e96eaac15fa83e951da45a558ed76f8b349cf2731ff825e172b0aeb729d8c",
+  "uiSha256": "608d58f79b18c25cbd643d84db2101840455c32fda9679b283e6e16f6713029b",
   "updates": {
+    "AB-474-codex-chat-titles": {
+      "base": "b545cc5e",
+      "changes": [],
+      "previousUiSha256": "948e96eaac15fa83e951da45a558ed76f8b349cf2731ff825e172b0aeb729d8c",
+      "uiSha256": "608d58f79b18c25cbd643d84db2101840455c32fda9679b283e6e16f6713029b",
+      "reason": "AB-474 part 2: withChatTitle calls sessionChatTitle instead of claudeChatTitle (one import name and one call), so local Codex sessions also get a chatTitle (threads.name, else the first line of threads.title, one read-only primary-key lookup per session per 30 s). No mobile route, mobile state, startup, listen or close control flow changes; broker/node/dashboard method pins are unchanged.",
+      "commit": "same commit as this pin (first commit after b545cc5e)"
+    },
     "AB-474-claude-chat-titles": {
       "base": "26f0f404",
       "changes": [],

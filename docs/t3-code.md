@@ -40,8 +40,10 @@ harness badge for the agent it runs on (Claude, Codex, opencode, Antigravity, Mu
 Claude session without a T3 chat shows its own chat title on the second line: the newest
 `ai-title` record in its transcript (`src/core/session-titles.ts`): read from the end, at
 most every 30 seconds and only when the file changed; a session without a known title is searched
-up to 4 MB back once, since long tool output can push the newest title megabytes back. Other
-providers follow (AB-474). Status is `waiting`, else the latest
+up to 4 MB back once, since long tool output can push the newest title megabytes back. A plain
+Codex session shows the chat's name from Codex's own state database (`threads.name` in the
+newest `state_<n>.sqlite`), else the first line of its first prompt (`threads.title`): one
+read-only primary-key lookup at most every 30 seconds. Other providers follow (AB-474). Status is `waiting`, else the latest
 run's status (`running`, `queued`, `done`, `failed`, `interrupted`, `cancelled`), or `idle`.
 
 - **Agents:** a chat's agent comes from T3's driver kind (`default_provider`, and `driver` in

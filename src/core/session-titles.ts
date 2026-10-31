@@ -1,6 +1,8 @@
 import { closeSync, openSync, readSync, statSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
 import { claudeSessionFile } from "./transcripts/claude.js";
-import type { TranscriptPaths, TranscriptSession } from "./transcripts/common.js";
+import { codexStateFile } from "./transcripts/codex.js";
+import { SQLITE_READ_TIMEOUT_MS, type TranscriptPaths, type TranscriptSession } from "./transcripts/common.js";
 
 /**
  * AB-474: the chat title a plain CLI session shows on the dashboard's second line, like T3 chats do.
@@ -61,4 +63,41 @@ export function claudeChatTitle(session: TranscriptSession, paths: TranscriptPat
     remember(key, { file: null, size: 0, mtime: 0, at: now, retryAt: now + REFRESH_MS, title: hit?.title ?? null });
     return hit?.title ?? null;
   }
+}
+
+/**
+ * The chat title of a local Codex session: the name the user gave the chat (`threads.name` in Codex's own state
+ * database), else the first line of its first prompt (`threads.title`, which Codex fills with the whole prompt). One
+ * primary-key lookup, read-only, at most every 30 seconds per session; only the first characters of the prompt are read.
+ */
+export function codexChatTitle(session: TranscriptSession, paths: TranscriptPaths, now = Date.now()): string | null {
+  if (session.agent !== "codex" || !session.sessionId) return null;
+  const key = `codex|${paths.codex}|${session.sessionId}`, hit = cache.get(key);
+  if (hit && now < hit.retryAt) return hit.title;
+  let title = hit?.title ?? null, db: DatabaseSync | undefined;
+  try {
+    const file = codexStateFile(paths);
+    if (file) {
+      db = new DatabaseSync(file, { readOnly: true, timeout: SQLITE_READ_TIMEOUT_MS });
+      const row = db.prepare("SELECT substr(name, 1, ?) AS name, substr(title, 1, ?) AS title FROM threads WHERE id = ?")
+        .get(MAX_TITLE_CHARS * 4, MAX_TITLE_CHARS * 4, session.sessionId);
+      if (row) title = firstLine(row.name) ?? firstLine(row.title, true);
+    }
+  } catch { /* locked, older schema or gone: keep the last title */ }
+  finally { db?.close(); }
+  remember(key, { file: null, size: 0, mtime: 0, at: now, retryAt: now + REFRESH_MS, title });
+  return title;
+}
+
+/** The first non-empty line, whitespace collapsed, shortened; injected context (a tag or AGENTS.md) is no title. */
+function firstLine(value: unknown, prompt = false): string | null {
+  if (typeof value !== "string") return null;
+  const line = value.split("\n").map((l) => l.replace(/\s+/g, " ").trim()).find(Boolean);
+  if (!line || (prompt && /^(<|# AGENTS\.md)/.test(line))) return null;
+  return line.length > MAX_TITLE_CHARS ? `${line.slice(0, MAX_TITLE_CHARS - 1)}…` : line;
+}
+
+/** A plain local CLI session's chat title (Claude or Codex), or null. */
+export function sessionChatTitle(session: TranscriptSession, paths: TranscriptPaths, now = Date.now()): string | null {
+  return session.agent === "codex" ? codexChatTitle(session, paths, now) : claudeChatTitle(session, paths, now);
 }
