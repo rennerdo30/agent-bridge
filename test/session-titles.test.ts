@@ -1,4 +1,4 @@
-import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
@@ -33,4 +33,21 @@ it("re-reads a changed transcript only after the refresh interval", () => {
   appendFileSync(t.file, JSON.stringify({ type: "ai-title", aiTitle: "New title", sessionId: "x" }) + "\n");
   expect(claudeChatTitle(t.session, t.paths, 11_000)).toBe("Old title"); // within 30 s: cached
   expect(claudeChatTitle(t.session, t.paths, 41_000)).toBe("New title");
+});
+
+it("finds a title that long tool output pushed far back, and keeps it when a later tail has none", () => {
+  const filler = { type: "user", message: { role: "user", content: [{ type: "tool_result", content: "x".repeat(600 * 1024) }] } };
+  const t = transcript([{ type: "ai-title", aiTitle: "Title before a long tool run", sessionId: "x" }, filler]);
+  expect(claudeChatTitle(t.session, t.paths, 1_000)).toBe("Title before a long tool run");
+  appendFileSync(t.file, JSON.stringify(filler) + "\n"); // the tail window now holds no title at all
+  expect(claudeChatTitle(t.session, t.paths, 40_000)).toBe("Title before a long tool run");
+});
+
+it("finds a transcript that appears later, without looking for it on every poll", () => {
+  const t = transcript([{ type: "ai-title", aiTitle: "Late transcript", sessionId: "x" }]);
+  const hidden = t.file + ".hidden"; renameSync(t.file, hidden);
+  expect(claudeChatTitle(t.session, t.paths, 1_000)).toBeNull();
+  renameSync(hidden, t.file);
+  expect(claudeChatTitle(t.session, t.paths, 40_000)).toBeNull(); // a missing transcript is looked up again only after 5 min
+  expect(claudeChatTitle(t.session, t.paths, 1_000 + 5 * 60_000)).toBe("Late transcript");
 });

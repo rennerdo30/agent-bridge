@@ -496,6 +496,7 @@ describe("T3 chats on the normal session entries (AB-468)", () => {
     const both = session({ ...peer({ id: "c", title: "T3 chat title", provider: "codex", model: null, projectRoot: null, status: "idle", parentTitle: null, harness: "current" }), chatTitle: "CLI title" });
     expect(ui.sideSession(both)).toContain('<small class="ell">T3 chat title · busy');
     expect(ui.sideSession(both)).not.toContain("CLI title");
+    expect(ui.sideMember(session({ ...plain.peer, projectGroup: "g" }))).toContain("Fix &lt;the&gt; dashboard · busy");
   });
 
   it("gives every session its harness badge; sessions that are not T3 chats keep their folder title and no T3 badge", () => {
