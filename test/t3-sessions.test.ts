@@ -1,9 +1,9 @@
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { T3_INDEX_MISS_MS, T3_INDEX_MS, t3FolderKey, t3SessionInfo } from "../src/core/t3-sessions.js";
+import { T3_INDEX_MISS_MS, T3_INDEX_MS, t3FolderKey, t3LocalSessions, t3SessionInfo } from "../src/core/t3-sessions.js";
 import { UI_PAGE } from "../src/cli/ui-page.js";
 
 // AB-468: the installed T3 store's tables this feature reads (unused columns kept so the reader
@@ -64,8 +64,8 @@ describe("T3 chats behind Bridge sessions (AB-468)", () => {
     thread(db, "asks", { title: "Needs an answer", folder: "E:/AgentData/game/t3-bbbb2222", provider: "claudeAgent" });
     db.prepare(`INSERT INTO orchestration_v2_projection_runtime_requests VALUES('q','asks',NULL,NULL,'user-input','pending',?,NULL,'{}')`).run(at);
     const info = t3SessionInfo(root, [
-      // Separators, a trailing separator and the D: alias of the same drive do not matter.
-      { key: "codex-t3-aaaa1111", cwd: "D:\\AgentData\\game\\t3-aaaa1111\\", agent: "codex" },
+      // Separators and a trailing separator do not matter.
+      { key: "codex-t3-aaaa1111", cwd: "E:\\AgentData\\game\\t3-aaaa1111\\", agent: "codex" },
       { key: "claude-asks", cwd: "E:/AgentData/game/t3-bbbb2222", agent: "claude" },
     ], 1_000);
     expect(info.get("codex-t3-aaaa1111")).toEqual({ id: "chat", title: "Dungeon epic round 2", provider: "codex", model: "gpt-6.1-sol", projectRoot: "E:/Development/game", status: "done", parentTitle: "Game main thread", harness: "current" });
@@ -138,6 +138,20 @@ describe("T3 chats behind Bridge sessions (AB-468)", () => {
     db.close();
   });
 
+  it("matches only this PC's CLI sessions: a Bridge job in the chat's folder neither links nor unlinks the chat", () => {
+    const { root, db } = store();
+    thread(db, "chat", { folder: WT, title: "Chat with a job" });
+    const peers = [
+      { name: "codex-t3-aaaa1111", agent: "codex", cwd: WT },
+      { name: "codex-job-1234", agent: "codex", cwd: WT, jobAgent: "codex" },
+      { name: "kid", agent: "codex", cwd: WT, subagent: true },
+      { name: "pc2/codex-x", agent: "codex", cwd: WT },
+    ];
+    const local = t3LocalSessions(peers);
+    expect(local.map((p) => p.name)).toEqual(["codex-t3-aaaa1111"]);
+    expect(t3SessionInfo(root, local.map((p) => ({ key: p.name, cwd: p.cwd, agent: p.agent })), 1_000).get("codex-t3-aaaa1111")).toMatchObject({ title: "Chat with a job" });
+  });
+
   it("links neither of two same-agent sessions that claim the same chat", () => {
     const { root, db } = store();
     thread(db, "chat", { folder: WT });
@@ -159,10 +173,32 @@ describe("T3 chats behind Bridge sessions (AB-468)", () => {
     db.close();
   });
 
-  it("normalizes folder keys", () => {
-    expect(t3FolderKey("D:\\AgentData\\x\\")).toBe(t3FolderKey("E:/AgentData/x"));
+  it("normalizes folder keys and resolves aliases of the same physical folder, without assuming any drive layout", () => {
+    expect(t3FolderKey("E:\\AgentData\\x\\")).toBe(t3FolderKey("E:/AgentData/x"));
     // Folder names are case-insensitive only on Windows.
     expect(t3FolderKey("E:/agentdata/X") === t3FolderKey("E:/AgentData/x")).toBe(process.platform === "win32");
+    // A link (junction on Windows) to a folder is that folder.
+    const base = mkdtempSync(join(tmpdir(), "ab-t3-alias-")); roots.push({ root: base, db: new DatabaseSync(":memory:") });
+    const real = join(base, "real"), link = join(base, "link"); mkdirSync(real);
+    symlinkSync(real, link, process.platform === "win32" ? "junction" : "dir");
+    expect(t3FolderKey(link)).toBe(t3FolderKey(real));
+    // Different physical folders stay different.
+    const other = join(base, "other"); mkdirSync(other);
+    expect(t3FolderKey(other)).not.toBe(t3FolderKey(real));
+  });
+
+  it("links a provider-switched chat's new session within the short window, not after the full rebuild", () => {
+    const { root, db } = store();
+    thread(db, "chat", { title: "Switching chat", folder: WT, provider: "claudeAgent" });
+    const t0 = 70_000_000;
+    expect(t3SessionInfo(root, [{ key: "claude", cwd: WT, agent: "claude" }], t0).get("claude")).toMatchObject({ harness: "current" });
+    // T3 switches the chat to Codex: the provider changes and a Codex provider thread appears.
+    db.prepare("UPDATE orchestration_v2_projection_threads SET default_provider='codex', provider_instance_id='codex' WHERE thread_id='chat'").run();
+    harness(db, "chat", "claudeAgent"); harness(db, "chat", "codex");
+    const both = [{ key: "claude", cwd: WT, agent: "claude" }, { key: "codex", cwd: WT, agent: "codex" }];
+    const info = t3SessionInfo(root, both, t0 + T3_INDEX_MISS_MS);
+    expect(info.get("codex")).toMatchObject({ title: "Switching chat", harness: "current" });
+    expect(info.get("claude")).toMatchObject({ harness: "earlier" });
   });
 
   it("links by T3's driver kind: a custom instance name still links, an unknown driver never matches any agent", () => {
@@ -231,7 +267,8 @@ describe("T3 chats on the normal session entries (AB-468)", () => {
   it("shows one entry per T3 chat: an earlier provider's session folds into the current one with its subagents", () => {
     const ui = page();
     const m = ui.load({ peers: [
-      { name: "claude-old", agent: "claude", cwd: "E:/wt", activity: "idle", startedAt: 1, t3: { ...t3, harness: "earlier" } },
+      // The earlier provider's session is the newer one here: the current provider's still wins.
+      { name: "claude-old", agent: "claude", cwd: "E:/wt", activity: "idle", startedAt: 9, t3: { ...t3, harness: "earlier" } },
       { name: "codex-new", agent: "codex", cwd: "E:/wt", activity: "busy", startedAt: 2, t3: { ...t3, harness: "current" } },
       { name: "claude-other", agent: "claude", cwd: "E:/Development/repo", activity: "idle", startedAt: 3 },
       { name: "kid", agent: "codex", cwd: "E:/AgentData/worktrees/x", activity: "busy", startedAt: 4, subagent: true, parent: "claude-old" },

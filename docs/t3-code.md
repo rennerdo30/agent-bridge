@@ -55,6 +55,13 @@ run's status (`running`, `queued`, `done`, `failed`, `interrupted`, `cancelled`)
   same-agent sessions claiming one chat, deleted chats and chats without their own folder get
   nothing and keep their usual entry.
 
+Folders compare by physical location: separators, a trailing separator and (on Windows)
+case do not matter, and drive aliases (SUBST, mapped drives, junctions, symlinks) resolve
+through Bridge's `physicalPath`; no drive layout is assumed. Only this PC's CLI sessions are
+matched: Bridge jobs and subagent sessions running in a chat's folder are not that chat. A
+session whose agent no chat in its folder has run on yet (right after a provider switch) also
+triggers one early rebuild.
+
 The folder index is rebuilt at most once a minute, or once early (after 10 seconds) when a
 session appears in a folder the index did not know; a store that cannot be indexed is retried
 after 10 seconds, not on every poll. Per poll only indexed lookups for matched chats run. A

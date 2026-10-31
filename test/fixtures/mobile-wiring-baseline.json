@@ -15,8 +15,16 @@
     "src/cli/dashboard.ts:ensure": "d19ca8a9485ccc07d588997e3497bc11545e730a264e9a6f59bf1ceb0dfcda49",
     "src/cli/dashboard.ts:close": "534d315c24ff13f59aa4082abf2fb66906e6bee9b979a6348979cbaef89ec7b4"
   },
-  "uiSha256": "c1f1b1ff51208c31ed2eb8a8eee63e83d4b9891f60c1b7776cd9d389f760ba1b",
+  "uiSha256": "3493cb09446e0a7844f7e946529f36dd591c0fb6cc890c5ba30ac2739ac08c0f",
   "updates": {
+    "AB-468-local-sessions": {
+      "base": "18bd3371",
+      "changes": [],
+      "previousUiSha256": "c1f1b1ff51208c31ed2eb8a8eee63e83d4b9891f60c1b7776cd9d389f760ba1b",
+      "uiSha256": "3493cb09446e0a7844f7e946529f36dd591c0fb6cc890c5ba30ac2739ac08c0f",
+      "reason": "AB-468 third review (M1): withT3 selects the sessions through t3LocalSessions, which also leaves out Bridge job and subagent peers (a job running in a T3 chat's folder is not that chat), and the cwd non-null assertion goes. One import name is added. No mobile route, mobile state, startup, listen or close control flow changes; broker/node/dashboard method pins are unchanged.",
+      "commit": "same commit as this pin (first commit after 18bd3371)"
+    },
     "AB-468-t3-sessions": {
       "base": "b9a7349f",
       "changes": [],
