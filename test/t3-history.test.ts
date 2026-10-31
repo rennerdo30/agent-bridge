@@ -184,7 +184,7 @@ it("does not advance over a failed derived index insert and repairs retained fra
   f.db.exec(`CREATE TRIGGER reject_t3_index BEFORE INSERT ON history_documents
     WHEN EXISTS(SELECT 1 FROM conversation_records WHERE 'durable:'||id=new.id AND part='t3:fragment')
     BEGIN SELECT RAISE(ABORT,'synthetic derived failure'); END`);
-  expect(() => f.ingest.tick()).toThrow("synthetic derived failure");
+  expect(() => f.drain()).toThrow("synthetic derived failure");
   expect(f.state()).toMatchObject({ sequence: 0, pending: { offset: 0 } });
   expect(f.rows("t3:fragment")).toHaveLength(1); expect(receipts(f)).toHaveLength(0);
   f.db.exec("DROP TRIGGER reject_t3_index"); f.restart(); f.drain();
@@ -198,9 +198,9 @@ it("repairs an unconfirmed derived fragment before advancing a compacted pending
   f.db.exec(`CREATE TRIGGER reject_t3_index BEFORE INSERT ON history_documents
     WHEN EXISTS(SELECT 1 FROM conversation_records WHERE 'durable:'||id=new.id AND part='t3:fragment')
     BEGIN SELECT RAISE(ABORT,'synthetic derived failure'); END`);
-  expect(() => f.ingest.tick()).toThrow("synthetic derived failure");
+  expect(() => f.drain()).toThrow("synthetic derived failure");
   event(f.input, 7, "later_retained_revision"); f.input.exec("DELETE FROM orchestration_events WHERE sequence=1");
-  f.restart(); expect(() => f.ingest.tick()).toThrow("synthetic derived failure");
+  f.restart(); expect(() => f.drain()).toThrow("synthetic derived failure");
   expect(f.state()).toMatchObject({ sequence: 0, pending: { offset: 0 } }); expect(receipts(f)).toHaveLength(0);
   f.db.exec("DROP TRIGGER reject_t3_index"); f.drain();
   expect(receipts(f)).toMatchObject([{ sequence: 1, outcome: "incomplete-compacted-source" }, { sequence: 7, outcome: "complete" }]);
@@ -212,7 +212,7 @@ it("replays a retained completion receipt whose derived indexing failed before s
   f.db.exec(`CREATE TRIGGER reject_receipt_index BEFORE INSERT ON history_documents
     WHEN EXISTS(SELECT 1 FROM conversation_records WHERE 'durable:'||id=new.id AND part='t3:complete')
     BEGIN SELECT RAISE(ABORT,'synthetic receipt failure'); END`);
-  expect(() => f.ingest.tick()).toThrow("synthetic receipt failure");
+  expect(() => f.drain()).toThrow("synthetic receipt failure");
   expect(f.state()).toMatchObject({ sequence: 0, pending: { offset: 0 } });
   expect(fragments(f, 1)).toEqual(expected);
   event(f.input, 7, "later_receipt_revision"); f.input.exec("DELETE FROM orchestration_events WHERE sequence=1");

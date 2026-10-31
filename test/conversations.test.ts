@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync 
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { DatabaseSync } from "node:sqlite";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { readConversation } from "../src/core/conversations.js";
 import { conversationProject, ensureProjectFolder, projectDatabasePath } from "../src/core/project-store.js";
 import { loadConfig } from "../src/core/config.js";
@@ -13,7 +13,15 @@ import { env, fixture } from "./conversation-test-fixture.js";
 it("does not re-resolve and rewrite a conversation whose folder is no project on every tick", () => {
   const f = fixture(true);
   const changes = () => Number(f.db.prepare("SELECT total_changes() AS n").get()!.n);
-  const idleWrites = () => { const start = changes(); for (let i = 0; i < 5; i++) f.ingest.tick(); return changes() - start; };
+  const idleWrites = () => {
+    // Compare equal source sweeps, independent of a host pause crossing the worker deadline.
+    const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now());
+    try {
+      const start = changes();
+      for (let i = 0; i < 5; i++) f.ingest.tick();
+      return changes() - start;
+    } finally { clock.mockRestore(); }
+  };
   f.tick();
   const baseline = idleWrites();
   // A leftover worktree folder whose git metadata was removed: it exists but resolves to no project.
