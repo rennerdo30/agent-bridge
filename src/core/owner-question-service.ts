@@ -8,6 +8,8 @@ import { loadDashboardKey } from "../cli/dashboard-key.js";
 import { readDashboardInfo } from "../cli/dashboard.js";
 import type { MessageStore } from "./store.js";
 import { normalizeProject, type OwnerDecision } from "./decisions.js";
+import { openJobQuestions } from "./job-questions.js";
+import { QuestionDelegator, type QuestionJobRoute, type QuestionKind, type DelegatedOwnerQuestion, type DelegatedJobQuestion } from "./question-delegation.js";
 
 export const OWNER_ADDRESS = { id: "owner:dashboard", name: "you", agent: "other" as const };
 export class OwnerQuestionService {
@@ -17,10 +19,13 @@ export class OwnerQuestionService {
   private readonly mirrors = new Set<string>();
   private timer: NodeJS.Timeout;
   private closed = false;
+  private readonly delegator: QuestionDelegator;
   constructor(private readonly home: string, private readonly messages: MessageStore, private readonly log: Logger,
     private readonly peers: () => PeerInfo[], private readonly emit: (peer: PeerInfo, message: BridgeMessage) => void,
-    private readonly publishDecision?: (decision: OwnerDecision) => void) {
+    private readonly publishDecision?: (decision: OwnerDecision) => void,
+    routeJob: (name: string) => QuestionJobRoute | undefined = () => undefined) {
     this.store = new OwnerQuestionStore(home, log);
+    this.delegator = new QuestionDelegator(messages, peers, routeJob, emit);
     this.timer = setInterval(() => this.tick(), 2000); this.timer.unref();
   }
   close(): void { this.closed=true; clearInterval(this.timer); this.store.close(); }
@@ -33,6 +38,17 @@ export class OwnerQuestionService {
   list(): OwnerQuestion[] {
     return this.store.list().map(q => ({ ...q, deliveries: q.deliveries.map(d => ({ ...d,
       readAt: d.messageId ? this.messages.receipts(d.messageId).find(r => r.recipient === d.recipient)?.readAt ?? d.readAt : d.readAt })) }));
+  }
+  dashboardQuestions(): DelegatedOwnerQuestion[] {
+    return this.list().map(q => ({ ...q, delegation: this.delegator.describe("question", q) }));
+  }
+  jobQuestions(): DelegatedJobQuestion[] {
+    return openJobQuestions(this.messages.file).map(q => ({ ...q, kind: "job-question", delegation: this.delegator.describe("job-question", q) }));
+  }
+  delegate(id: string, kind: QuestionKind) {
+    const q = kind === "question" ? this.store.get(id) : openJobQuestions(this.messages.file).find(q => q.id === id);
+    if (!q) throw new Error("Question is no longer open or available");
+    return this.delegator.delegate(kind, q, "manual");
   }
   complete(q: OwnerQuestion): OwnerQuestion {
     if (!q.answer) return q;
@@ -121,6 +137,7 @@ export class OwnerQuestionService {
   private tick(): void {
     try {
       const at = Date.now(), settings = this.settings();
+      for (const q of this.jobQuestions()) if (at >= q.delegation.deadline) this.delegator.delegate("job-question", q, "timeout", at);
       for (const [id,t] of this.tabs) if (at-t.at > 10_000) { this.tabs.delete(id); this.alerts.delete(id); }
       for (const q of this.store.work()) {
         if (q.status === "answered") { this.complete(q); continue; }
@@ -128,6 +145,7 @@ export class OwnerQuestionService {
         if (q.default && at >= q.default.deadline) {
           this.complete(this.store.answer(q.id, { option: q.default.option }, { id: "declared-default", name: "Declared default (not the owner)", agent: "other" }, at, "declared-default")); continue;
         }
+        if (at >= this.delegator.describe("question", q, at).deadline) this.delegator.delegate("question", q, "timeout", at);
         const choice = questionAlertChannel([...this.tabs.values()], at);
         if (choice.channel === "desktop" && !settings.toast) continue;
         if (!this.store.claimAlert(q.id, choice.channel, at, q.blocking ? settings.reminderMinutes*60000 : 0)) continue;

@@ -13,7 +13,7 @@ function page() {
   const starts=vi.fn(),gain={gain:{setValueAtTime:vi.fn(),linearRampToValueAtTime:vi.fn(),exponentialRampToValueAtTime:vi.fn()},connect:vi.fn()};
   const audio={state:"running",currentTime:1,resume:vi.fn(async () => {}),createOscillator:() => ({type:"",frequency:{value:0},connect:vi.fn(),start:starts,stop:vi.fn()}),createGain:() => gain};
   const notification=Object.assign(vi.fn(function(this:any) { this.close=vi.fn(); }),{permission:"granted"});
-  const api=new Function("document","window","location","localStorage","setInterval","fetch","Notification",script+"\nreturn { questionCard,answerQuestion,questionChime,questionHeartbeat,resetHeartbeat:() => qHeartbeatBusy=false,setQuestions:qs => { approvals=qs; },setDraft:(k,v) => apDrafts.set(k,v),setAudio:(a) => qAudio=a,setSettings:s => qSettings=s,setModel:() => model={groups:new Map(),sessions:[],byName:new Map()} };")
+  const api=new Function("document","window","location","localStorage","setInterval","fetch","Notification",script+"\nreturn { questionCard,answerQuestion,delegateQuestion,questionChime,questionHeartbeat,resetHeartbeat:() => qHeartbeatBusy=false,setQuestions:qs => { approvals=qs; },setDraft:(k,v) => apDrafts.set(k,v),setAudio:(a) => qAudio=a,setSettings:s => qSettings=s,setModel:() => model={groups:new Map(),sessions:[],byName:new Map()} };")
     (document,{addEventListener:vi.fn()},{hash:""},{getItem:() => null,setItem:vi.fn(),removeItem:vi.fn()},() => 0,fetch,notification);
   return {...api,fetch,el,document,audio,starts,notification};
 }
@@ -24,12 +24,33 @@ describe("owner question presentation",() => {
     expect(html).toContain("OWNER QUESTION"); expect(html).toContain("&lt;Choose scope&gt;"); expect(html).toContain('data-q-option="small"'); expect(html).toContain("Recommended");
     expect(html).not.toContain("data-ap-act"); expect(html).toContain("This is a lasting rule");
   });
+  it("labels the absolute local asked time and elapsed timeout without hiding an unanswered question", () => {
+    const p=page(), askedAt=Date.now()-16*60_000;
+    const html=p.questionCard({...q,askedAt,delegation:{deadline:askedAt+15*60_000,eligible:true,state:"queued",recipients:["parent<script>"],detail:"Awaiting answer"}});
+    expect(html).toContain("<b>Asked:</b> " + new Date(askedAt).toLocaleString());
+    expect(html).toContain("Parent timeout:</b> 15 min · elapsed");
+    expect(html).toContain("queued"); expect(html).toContain("parent&lt;script&gt;");
+    expect(html).toContain("Delegate to parent"); expect(html).toContain('data-q-send="'+q.id+'"');
+    expect(p.questionCard({...q,askedAt})).not.toContain("Delegate to parent");
+    expect(p.questionCard({...q,askedAt,status:"cancelled",dismissal:{reason:"Done"}})).not.toContain("Parent timeout");
+  });
   it("sends a recommended option in one call, with pinning only when selected",async () => {
     const p=page(); p.setQuestions([q]);
     p.fetch.mockResolvedValueOnce({ok:true,json:async () => ({answer:{text:"Small"}})}).mockResolvedValueOnce({ok:true,json:async () => ({approvals:[],questions:[{...q,status:"answered"}]})});
     await p.answerQuestion(q.id,"small",false);
     const call=p.fetch.mock.calls.find((c:any) => c[0] === "/api/questions/"+q.id) as any;
     expect(JSON.parse(call[1].body)).toEqual({option:"small"});
+  });
+  it("delegates through the bounded parent endpoint without posting an answer or losing the draft", async () => {
+    const p=page(), pending={...q,askedAt:Date.now()}; p.setQuestions([pending]); p.setModel(); p.setDraft("q:"+q.id,"Keep this draft");
+    p.fetch.mockResolvedValueOnce({ok:true,json:async () => ({state:"queued",detail:"Parent inbox retained",recipients:["parent"],eligible:true,deadline:Date.now()+900_000})})
+      .mockResolvedValueOnce({ok:true,json:async () => ({approvals:[pending],questions:[pending]})});
+    await p.delegateQuestion(q.id,"question");
+    const call=p.fetch.mock.calls.find((c:any) => c[0] === "/api/questions/"+q.id+"/delegate") as any;
+    expect(JSON.parse(call[1].body)).toEqual({kind:"question"});
+    expect(call[1].signal).toBeInstanceOf(AbortSignal);
+    expect(p.fetch.mock.calls.some((c:any) => c[0] === "/api/questions/"+q.id)).toBe(false);
+    expect(p.el("apList").innerHTML).toContain("OWNER QUESTION · open");
   });
   it("plays a short generated chime only when sound is enabled and audio unlocked",() => {
     const p=page(); p.setAudio(p.audio); p.questionChime(); expect(p.starts).toHaveBeenCalledTimes(2);

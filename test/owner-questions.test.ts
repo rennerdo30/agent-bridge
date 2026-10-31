@@ -214,6 +214,13 @@ describe("owner dashboard API",() => {
     const client=await BridgeClient.connect(env.pipe,nullLogger); closers.push(() => client.close());
     await client.request("hello",{protocol:PROTOCOL_VERSION,token:loadOrCreateToken(env.home),peer:{id:"model",name:"model",agent:"codex",cwd:env.home,pid:process.pid,agentPid:null,sessionId:null,startedAt:Date.now(),autoWake:false}});
     await expect(client.request("answerOwner",{id:q.id,answer:{text:"spoof"}})).rejects.toThrow("Only the local owner");
+    await expect(client.request("delegateQuestion",{id:q.id,kind:"question"})).rejects.toThrow("Only the local owner");
+    const delegateUrl=base+"/api/questions/"+q.id+"/delegate";
+    expect((await fetch(delegateUrl,{method:"POST",headers:{cookie,"content-type":"application/json"},body:JSON.stringify({kind:"question"})})).status).toBe(403);
+    expect((await fetch(delegateUrl,{method:"POST",headers,body:JSON.stringify({kind:"permission"})})).status).toBe(400);
+    const delegation=await fetch(delegateUrl,{method:"POST",headers,body:JSON.stringify({kind:"question"})});
+    expect(delegation.status).toBe(200); expect((await delegation.json() as any).eligible).toBe(false);
+    expect(readOwnerQuestions(env.home)[0]?.status).toBe("open");
     const response=await fetch(base+"/api/questions/"+q.id,{method:"POST",headers,body:JSON.stringify({option:"small"})}); expect(response.status).toBe(200);
     await until(() => node.unread().some(m => m.replyTo === q.id));
     expect((await response.json() as any).answer.text).toBe("Small scope");

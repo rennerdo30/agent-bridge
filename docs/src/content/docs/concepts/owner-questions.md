@@ -21,6 +21,10 @@ The **This is a lasting rule** checkbox uses the existing decision store, with e
 
 ## Alerts
 
+Question cards label **Asked** with local date/time and age. A separate **Parent timeout** is fifteen minutes from that time. It never expires a question or invents an answer. For a question linked to a delegated job, the bridge sends a durable escalation to its responsible parent, using the existing parent/project-main fallback route. **Delegate to parent** sends the same escalation early. Both actions share one inbox copy per question and recipient, including across restarts.
+
+The card shows queued, notified or read state. Notification does not prove consumption, and reading does not answer the question. Without a known parent, the elapsed timeout stays visible and the question stays open for the owner. Owner-only authorization remains with the owner. Agent-to-agent job questions retain their existing owner-list visibility policy. The parent timeout is separate from the optional, explicitly declared safe default and from owner alert reminder settings.
+
 Dashboard tabs heartbeat every three seconds, including Page Visibility state. A heartbeat remains live for ten seconds. One visible tab is preferred; otherwise one hidden-but-open tab gets the alert. The tab plays a brief generated Web Audio chime, highlights the question and sets a title count. A hidden tab also uses browser notifications if permission was granted through the quiet **Notify me in this browser** button. Browser sound needs one interaction to unlock audio; the page shows its readiness.
 
 Without an open dashboard, the existing native notification helpers display a question toast with the stable dashboard key and question deep link. Windows uses a protocol-activation toast; macOS uses `terminal-notifier -open` with the existing AppleScript fallback; Linux uses the notification action and `xdg-open`. Desktop environments lacking actionable notification helpers may show only the notification. Helpers never install modules or modify the registry.
