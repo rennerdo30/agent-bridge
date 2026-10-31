@@ -36,7 +36,12 @@ there fits its agent. The dashboard keeps the project folder as the session's ti
 worktree chat that is its T3 project's folder (`projectRoot`) instead of the worktree's
 generated name. The chat title goes on the second line, with a T3 badge and "waiting for an
 answer" while T3 has a pending request for the chat. Every session, T3 or not, also shows a
-harness badge for the agent it runs on (Claude, Codex, opencode, Antigravity, Muse). Status is `waiting`, else the latest
+harness badge for the agent it runs on (Claude, Codex, opencode, Antigravity, Muse). A plain
+Claude session without a T3 chat shows its own chat title on the second line: the newest
+`ai-title` record in its transcript (`src/core/session-titles.ts`): read from the end, at
+most every 30 seconds and only when the file changed; a session without a known title is searched
+up to 4 MB back once, since long tool output can push the newest title megabytes back. Other
+providers follow (AB-474). Status is `waiting`, else the latest
 run's status (`running`, `queued`, `done`, `failed`, `interrupted`, `cancelled`), or `idle`.
 
 - **Agents:** a chat's agent comes from T3's driver kind (`default_provider`, and `driver` in

@@ -15,8 +15,16 @@
     "src/cli/dashboard.ts:ensure": "d19ca8a9485ccc07d588997e3497bc11545e730a264e9a6f59bf1ceb0dfcda49",
     "src/cli/dashboard.ts:close": "534d315c24ff13f59aa4082abf2fb66906e6bee9b979a6348979cbaef89ec7b4"
   },
-  "uiSha256": "6d0ecbde7f3a4016aef241af6e6bb34c959e06590bf2075d1aed670c2a44b83c",
+  "uiSha256": "948e96eaac15fa83e951da45a558ed76f8b349cf2731ff825e172b0aeb729d8c",
   "updates": {
+    "AB-474-claude-chat-titles": {
+      "base": "26f0f404",
+      "changes": [],
+      "previousUiSha256": "6d0ecbde7f3a4016aef241af6e6bb34c959e06590bf2075d1aed670c2a44b83c",
+      "uiSha256": "948e96eaac15fa83e951da45a558ed76f8b349cf2731ff825e172b0aeb729d8c",
+      "reason": "AB-474: startUi's /api/state also adds an optional chatTitle to local CLI sessions without a T3 chat (withChatTitle, via claudeChatTitle reading the newest ai-title record from the session's Claude transcript tail, throttled to one read per 30 s). One import and the titlePaths/withChatTitle definitions are added. No mobile route, mobile state, startup, listen or close control flow changes; broker/node/dashboard method pins are unchanged.",
+      "commit": "same commit as this pin (first commit after 26f0f404)"
+    },
     "AB-470-root-chat-prompts": {
       "base": "47023b32",
       "changes": [],

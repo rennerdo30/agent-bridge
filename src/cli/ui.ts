@@ -51,6 +51,7 @@ import { DEFAULT_RUN_PAGE_SIZE, pageRuns } from "../core/run-history.js";
 import { type TranscriptPaths } from "../core/transcripts/index.js";
 import { localT3HistoryRoot, transcriptPaths } from "../core/transcripts/common.js";
 import { t3LocalSessions, t3SessionInfo, transcriptPrompts, type T3SessionInfo } from "../core/t3-sessions.js";
+import { claudeChatTitle } from "../core/session-titles.js";
 import { HISTORY_MAX_QUERY_CHARS, historySearchSchema, readHistory, readHistorySource } from "../core/history.js";
 import { answerHistory, type HistoryAnswerDependencies } from "../core/history-answer.js";
 import { readDecisions, decisionScopeSchema, MAX_DECISION_TEXT_CHARS, MAX_DECISION_TOPIC_CHARS, type DecisionsArgs } from "../core/decisions.js";
@@ -322,10 +323,17 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
   // AB-468: a local session running in a T3 Code chat's own folder carries that chat's title and status.
   const t3Root = opts.transcripts && Object.hasOwn(opts.transcripts, "t3") ? opts.transcripts.t3 : localT3HistoryRoot();
   const t3Prompts = transcriptPrompts(opts.transcripts ?? transcriptPaths());
+  const titlePaths = opts.transcripts ?? transcriptPaths();
+  // AB-474: a plain local session (no T3 chat) shows its own chat title, from its CLI transcript.
+  const withChatTitle = <P extends PeerInfo & { t3?: T3SessionInfo }>(p: P): P & { chatTitle?: string } => {
+    if (p.t3 || p.name.includes("/") || p.subagent || p.jobAgent) return p;
+    const chatTitle = claudeChatTitle(p, titlePaths);
+    return chatTitle ? { ...p, chatTitle } : p;
+  };
   const withT3 = <P extends PeerInfo>(list: P[]): (P & { t3?: T3SessionInfo })[] => {
     const local = t3LocalSessions(list);
     const info = t3SessionInfo(t3Root, local.map((p) => ({ key: p.name, cwd: p.cwd, agent: p.agent, sessionId: p.sessionId })), Date.now(), t3Prompts);
-    return list.map((p) => (info.has(p.name) ? { ...p, t3: info.get(p.name)! } : p));
+    return list.map((p) => withChatTitle(info.has(p.name) ? { ...p, t3: info.get(p.name)! } : p));
   };
   // Pushes "this conversation moved" to open dashboards as soon as the history worker retains new lines (AB-383).
   const historyFeed = new HistoryChangeFeed(opts.home);
