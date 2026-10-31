@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { T3_INDEX_MISS_MS, T3_INDEX_MS, T3_PROMPT_RETRY_MS, t3FolderKey, t3SessionInfo, transcriptPrompts, type PromptReader } from "../src/core/t3-sessions.js";
+import { T3_INDEX_MISS_MS, T3_INDEX_MS, T3_PROMPT_JITTER_MS, T3_PROMPT_RETRY_MS, t3FolderKey, t3SessionInfo, transcriptPrompts, type PromptReader } from "../src/core/t3-sessions.js";
 import { UI_PAGE } from "../src/cli/ui-page.js";
 
 // AB-468: the installed T3 store's tables this feature reads (unused columns kept so the reader
@@ -230,10 +230,12 @@ describe("T3 chats in a shared folder, linked by the session's first prompts (AB
     thread(db, "a"); message(db, "a", "please continue with the plan", T);
     thread(db, "b"); message(db, "b", "please continue with the plan", T + 30_000);
     thread(db, "c"); message(db, "c", "only chat c asked this question", T);
-    const prompts = reader({ shared: [{ text: "please continue with the plan", at: T + 1_000 }], late: [{ text: "only chat c asked this question", at: T + 3_600_000 }] });
+    const good = [{ text: "only chat c asked this question", at: T + 1_000 }];
+    const prompts = reader({ shared: [{ text: "please continue with the plan", at: T + 1_000 }], late: [{ text: "only chat c asked this question", at: T + 3_600_000 }], good, undefined: good });
     expect(t3SessionInfo(root, [session("shared"), session("late")], 1_000, prompts).size).toBe(0);
-    expect(t3SessionInfo(root, [{ key: "x", cwd: ROOT, agent: "codex" }], 2_000, prompts).size).toBe(0);
-    expect(t3SessionInfo(root, [session("late")], 3_000).size).toBe(0);
+    expect(t3SessionInfo(root, [{ key: "x", cwd: ROOT, agent: "codex" }], 2_000, prompts).size).toBe(0); // no session ID
+    expect(t3SessionInfo(root, [session("good")], 3_000).size).toBe(0); // no reader
+    expect(t3SessionInfo(root, [session("good")], 4_000, prompts).get("good")).toMatchObject({ id: "c" }); // the same prompt does match
   });
 
   it("only links a chat that ran on the session's agent", () => {
@@ -263,9 +265,84 @@ describe("T3 chats in a shared folder, linked by the session's first prompts (AB
     expect(first.has("miss")).toBe(false); // the only chat in this root is still not a guess
     expect(prompts.mock.calls.filter(([x]) => x.sessionId === "hit")).toHaveLength(1);
     expect(prompts.mock.calls.filter(([x]) => x.sessionId === "miss")).toHaveLength(1);
-    t3SessionInfo(root, both, t0 + T3_PROMPT_RETRY_MS, prompts);
+    t3SessionInfo(root, both, t0 + T3_PROMPT_RETRY_MS + T3_PROMPT_JITTER_MS, prompts);
     expect(prompts.mock.calls.filter(([x]) => x.sessionId === "hit")).toHaveLength(1);
     expect(prompts.mock.calls.filter(([x]) => x.sessionId === "miss")).toHaveLength(2);
+  });
+
+  it("ignores short prompts and injected context, even beyond the first eight user messages", () => {
+    const { root, db } = store();
+    thread(db, "a"); message(db, "a", "continue", T);
+    thread(db, "b"); message(db, "b", "rework the save system end to end", T);
+    const injected = Array.from({ length: 9 }, (_, i) => ({ text: i % 2 ? "<environment_context> cwd and shell" : "# AGENTS.md instructions for the repo", at: T + i }));
+    const prompts = reader({ short: [{ text: "continue", at: T + 1_000 }], late: [...injected, { text: "rework the save system end to end", at: T + 2_000 }] });
+    const info = t3SessionInfo(root, [session("short"), session("late")], 1_000, prompts);
+    expect(info.has("short")).toBe(false);
+    expect(info.get("late")).toMatchObject({ id: "b" });
+  });
+
+  it("links neither of two same-agent sessions whose prompts match the same chat", () => {
+    const { root, db } = store();
+    thread(db, "main"); message(db, "main", "how does our t3 integration look now?", T);
+    const p = [{ text: "how does our t3 integration look now?", at: T + 1_000 }];
+    expect(t3SessionInfo(root, [session("one"), session("two")], 1_000, reader({ one: p, two: p })).size).toBe(0);
+  });
+
+  it("ignores T3 messages whose payload is too large to read", () => {
+    const { root, db } = store();
+    thread(db, "main");
+    db.prepare(`INSERT INTO orchestration_v2_projection_messages VALUES('big','main',NULL,NULL,'user',0,?,?,?)`)
+      .run(new Date(T).toISOString(), new Date(T).toISOString(), JSON.stringify({ text: "how does our t3 integration look now?", pad: "x".repeat(70_000) }));
+    expect(t3SessionInfo(root, [session("s")], 1_000, reader({ s: [{ text: "how does our t3 integration look now?", at: T }] })).size).toBe(0);
+  });
+
+  it("keeps folder links and does not re-read transcripts on every poll when the message table cannot be read", () => {
+    const { root, db } = store();
+    thread(db, "wt-chat", { folder: WT, title: "Worktree chat" });
+    thread(db, "main"); message(db, "main", "how does our t3 integration look now?", T);
+    db.exec("DROP TABLE orchestration_v2_projection_messages");
+    const prompts = reader({ s: [{ text: "how does our t3 integration look now?", at: T }] });
+    const both = [{ key: "wt", cwd: WT, agent: "codex", sessionId: "wt" }, session("s")];
+    for (const at of [1_000, 2_000, 3_000]) expect(t3SessionInfo(root, both, at, prompts).get("wt")).toMatchObject({ title: "Worktree chat" });
+    expect(prompts.mock.calls.filter(([x]) => x.sessionId === "s")).toHaveLength(1);
+  });
+
+  it("treats a chat whose worktree is the project root as a root chat that needs a prompt match", () => {
+    const { root, db } = store();
+    thread(db, "rooted", { folder: ROOT, title: "Rooted chat" }); message(db, "rooted", "set up the release pipeline now", T);
+    const prompts = reader({ plain: [{ text: "an unrelated plain session prompt", at: T }], t3: [{ text: "set up the release pipeline now", at: T }] });
+    const info = t3SessionInfo(root, [session("plain", "codex"), { ...session("t3"), agent: "codex" }], 1_000, prompts);
+    expect(info.has("plain")).toBe(false);
+    expect(info.get("t3")).toMatchObject({ title: "Rooted chat" });
+  });
+
+  it("keeps a session's prompt match when its delegated task stops being the only other candidate", () => {
+    const { root, db } = store();
+    thread(db, "main", { folder: WT, title: "Main" }); message(db, "main", "start the main work here", T);
+    thread(db, "task", { folder: WT, parent: "main", title: "Task" }); origin(db, "task", "main", "app_owned"); run(db, "task", 1, "running");
+    message(db, "task", "review the parser change carefully", T + 60_000);
+    const prompts = reader({ s: [{ text: "review the parser change carefully", at: T + 61_000 }] });
+    const s = [{ key: "s", cwd: WT, agent: "codex", sessionId: "s" }];
+    expect(t3SessionInfo(root, s, 1_000, prompts).get("s")).toMatchObject({ id: "task" });
+    run(db, "task", 2, "completed"); // the task is no longer active: only "main" is left as a candidate
+    expect(t3SessionInfo(root, s, 2_000, prompts).get("s")).toMatchObject({ id: "task" });
+  });
+
+  it("reads the first prompts from the CLI's own transcript (Codex, past injected context)", () => {
+    const home = mkdtempSync(join(tmpdir(), "ab-t3-codex-")); roots.push({ root: home, db: new DatabaseSync(":memory:") });
+    const id = "01a191b9-dd62-7e22-a224-6bac1cbe0a40", dir = join(home, "codex", "sessions", "2026", "10", "31");
+    mkdirSync(dir, { recursive: true });
+    const user = (text: string, at: number) => ({ type: "response_item", timestamp: new Date(at).toISOString(), payload: { type: "message", role: "user", content: [{ type: "input_text", text }] } });
+    writeFileSync(join(dir, `rollout-2026-10-31T20-30-39-${id}.jsonl`), [
+      { type: "session_meta", timestamp: new Date(T).toISOString(), payload: { id, cwd: ROOT, source: "exec" } },
+      user("# AGENTS.md instructions for E:/Development/game", T + 1_000),
+      user("<environment_context>\n  <cwd>E:/Development/game</cwd>\n</environment_context>", T + 1_000),
+      user("do we detect t3 code main chats?", T + 2_000),
+    ].map((r) => JSON.stringify(r)).join("\n") + "\n");
+    const read = transcriptPrompts({ claude: join(home, "claude"), codex: join(home, "codex"), opencode: join(home, "opencode") });
+    const got = read({ agent: "codex", cwd: ROOT, sessionId: id });
+    expect(got.map((p) => p.text)).toContain("do we detect t3 code main chats?");
+    expect(got.find((p) => p.text === "do we detect t3 code main chats?")!.at).toBe(T + 2_000);
   });
 
   it("reads the first prompts from the CLI's own transcript (Claude)", () => {

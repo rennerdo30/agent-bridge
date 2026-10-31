@@ -39,7 +39,13 @@ export type PromptReader = (session: { agent: string; cwd: string; sessionId: st
 export const T3_INDEX_MS = 60_000, T3_INDEX_MISS_MS = 10_000;
 /** Prompt matching: compared prefix, shortest prompt that counts, prompts read, time window, retry for no match. */
 const PROMPT_CHARS = 300, MIN_PROMPT_CHARS = 12, MAX_PROMPTS = 8, PROMPT_WINDOW_MS = 10 * 60_000, MAX_POOL = 500;
-export const T3_PROMPT_RETRY_MS = 60_000;
+/** Only a session's first hour of prompts is compared (keeps the message query narrow). */
+const PROMPT_SPAN_MS = 60 * 60_000, MAX_PROMPT_LINKS = 2_000;
+/** A session without a match is retried after a minute; one that already showed all its compared prompts, after
+ * ten. Retries are spread by up to the jitter so many sessions never re-read their transcripts in the same poll. */
+export const T3_PROMPT_RETRY_MS = 60_000, T3_PROMPT_SETTLED_MS = 10 * 60_000, T3_PROMPT_JITTER_MS = 15_000;
+/** Context CLIs inject as user messages (instructions, environment, local commands): never a real prompt. */
+const INJECTED = /^(# AGENTS\.md|<(environment_context|user_instructions|permissions|command-name|command-message|command-args|local-command|system-reminder|turn_aborted|user_shell_command))/i;
 const MAX_PAYLOAD = 65_536;
 const AGENTS: Record<string, string> = { claudeAgent: "claude", claude: "claude", codex: "codex", opencode: "opencode", antigravity: "antigravity", muse: "muse" };
 const RUN_STATUS: Record<string, T3SessionInfo["status"]> = { running: "running", queued: "queued", completed: "done", failed: "failed", interrupted: "interrupted", cancelled: "cancelled" };
@@ -97,7 +103,8 @@ function buildIndex(input: DatabaseSync): T3Index {
     .map(r => [String(r.child_thread_id), String(r.origin)]));
   const index: T3Index = { folders: new Map(), roots: new Map() };
   for (const chat of chats.values()) {
-    if (chat.folder === null) {
+    // A chat without a folder of its own, or whose "worktree" is the project root itself, works in the root.
+    if (chat.folder === null || (chat.projectRoot !== null && chat.folder === t3FolderKey(chat.projectRoot))) {
       if (chat.projectRoot === null || origin.get(chat.id) === "provider_native") continue;
       const key = t3FolderKey(chat.projectRoot);
       (index.roots.get(key) ?? index.roots.set(key, []).get(key)!).push(chat);
@@ -116,7 +123,13 @@ function buildIndex(input: DatabaseSync): T3Index {
 /** Per T3 home: the folder index, when it was read, and the session folders it was built for. */
 const indexes = new Map<string, { at: number; index: T3Index; seen: Set<string>; failed: boolean }>();
 /** Prompt matches per T3 home, agent and session ID: a transcript's beginning never changes, so a match is kept. */
-const promptLinks = new Map<string, { chat: string | null; at: number }>();
+const promptLinks = new Map<string, { chat: string | null; retryAt: number }>();
+/** Most recently used last; the oldest entry goes once the cap is reached. */
+function remember(key: string, value: { chat: string | null; retryAt: number }): void {
+  promptLinks.delete(key); promptLinks.set(key, value);
+  if (promptLinks.size > MAX_PROMPT_LINKS) promptLinks.delete(promptLinks.keys().next().value!);
+}
+const spread = (key: string) => [...key].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7) % T3_PROMPT_JITTER_MS;
 const normalize = (text: string) => text.replace(/\s+/g, " ").trim().slice(0, PROMPT_CHARS);
 
 /** The default reader: the first page of the session's own transcript, through Bridge's transcript readers. */
@@ -161,21 +174,34 @@ export function t3SessionInfo(root: string | undefined, sessions: { key: string;
         CASE WHEN octet_length(payload_json)<=${MAX_PAYLOAD} AND json_valid(payload_json) THEN substr(json_extract(payload_json,'$.text'),1,${PROMPT_CHARS * 4}) END text
       FROM orchestration_v2_projection_messages WHERE role='user' AND created_at BETWEEN ? AND ?
         AND thread_id IN (${pool.map(() => "?").join(",")})`).all(from, to, ...pool.map(c => c.id)) as { thread_id: unknown; text: unknown }[];
+    const linkKey = (s: { agent: string; sessionId?: string | null }) => `${root}|${s.agent}|${s.sessionId}`;
+    /** A chat this session already matched by prompt, if it is still in the given pool. */
+    const known = (pool: FolderChat[], s: { agent: string; sessionId?: string | null }) => {
+      const hit = s.sessionId ? promptLinks.get(linkKey(s)) : undefined;
+      return hit?.chat ? pool.find(c => c.id === hit.chat) : undefined;
+    };
     const byPrompt = (pool: FolderChat[], s: { agent: string; cwd: string; sessionId?: string | null }): FolderChat | undefined => {
       if (!prompts || !s.sessionId || !pool.length || pool.length > MAX_POOL) return undefined;
-      const key = `${root}|${s.agent}|${s.sessionId}`, hit = promptLinks.get(key);
-      if (hit && (hit.chat !== null || now - hit.at < T3_PROMPT_RETRY_MS)) return hit.chat === null ? undefined : pool.find(c => c.id === hit.chat);
+      const key = linkKey(s), hit = promptLinks.get(key);
+      if (hit?.chat) { const chat = pool.find(c => c.id === hit.chat); if (chat) return chat; } // a vanished chat re-matches
+      else if (hit && now < hit.retryAt) return undefined;
       let first: { text: string; at: number }[] = [];
       try { first = prompts({ agent: s.agent, cwd: s.cwd, sessionId: s.sessionId }); } catch { first = []; }
-      const wanted = first.map(p => ({ text: normalize(p.text), at: p.at })).filter(p => p.text.length >= MIN_PROMPT_CHARS && Number.isFinite(p.at) && p.at > 0).slice(0, MAX_PROMPTS);
-      let chat: FolderChat | undefined;
+      const real = first.map(p => ({ text: normalize(p.text), at: p.at }))
+        .filter(p => p.text.length >= MIN_PROMPT_CHARS && Number.isFinite(p.at) && p.at > 0 && !INJECTED.test(p.text));
+      const begin = real.length ? Math.min(...real.map(p => p.at)) : 0;
+      const wanted = real.filter(p => p.at <= begin + PROMPT_SPAN_MS).slice(0, MAX_PROMPTS);
+      let chat: FolderChat | undefined, failed = false;
       if (wanted.length) {
         const ats = wanted.map(p => p.at), texts = new Set(wanted.map(p => p.text));
-        const rows = userMessages(pool, new Date(Math.min(...ats) - PROMPT_WINDOW_MS).toISOString(), new Date(Math.max(...ats) + PROMPT_WINDOW_MS).toISOString());
-        const matched = new Set(rows.filter(r => typeof r.text === "string" && texts.has(normalize(r.text))).map(r => String(r.thread_id)));
-        if (matched.size === 1) chat = pool.find(c => matched.has(c.id));
+        try {
+          const rows = userMessages(pool, new Date(Math.min(...ats) - PROMPT_WINDOW_MS).toISOString(), new Date(Math.max(...ats) + PROMPT_WINDOW_MS).toISOString());
+          const matched = new Set(rows.filter(r => typeof r.text === "string" && texts.has(normalize(r.text))).map(r => String(r.thread_id)));
+          if (matched.size === 1) chat = pool.find(c => matched.has(c.id));
+        } catch { failed = true; } // an unreadable message table costs this match only, never the other links
       }
-      promptLinks.set(key, { chat: chat?.id ?? null, at: now });
+      const settled = !failed && wanted.length >= MAX_PROMPTS;
+      remember(key, { chat: chat?.id ?? null, retryAt: now + (settled ? T3_PROMPT_SETTLED_MS : T3_PROMPT_RETRY_MS) + spread(key) });
       return chat;
     };
     const linked = new Map<string, { chat: FolderChat; status: T3SessionInfo["status"] }>();
@@ -185,7 +211,8 @@ export function t3SessionInfo(root: string | undefined, sessions: { key: string;
       if (entry) {
         const candidates = [...entry.owners.filter(c => fits(c, s.agent)),
           ...entry.shared.filter(c => fits(c, s.agent)).filter(c => ["running", "queued", "waiting"].includes(statusOf(c)))];
-        chat = candidates.length === 1 ? candidates[0] : byPrompt(candidates, s);
+        // A prompt match already made for this session wins over "the only candidate left".
+        chat = known([...entry.owners, ...entry.shared].filter(c => fits(c, s.agent)), s) ?? (candidates.length === 1 ? candidates[0] : byPrompt(candidates, s));
       } else {
         // A project root: plenty of sessions there are not T3 chats, so only a prompt match links.
         chat = byPrompt((cached.index.roots.get(key) ?? []).filter(c => fits(c, s.agent)), s);
