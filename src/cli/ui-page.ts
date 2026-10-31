@@ -799,6 +799,26 @@ main.wrap { padding-top: 32px; max-width: 1240px; }
 .av { border-radius: 8px; font-weight: 700; letter-spacing: -.02em; }
 .av.sm { width: 24px; height: 24px; border-radius: 6px; font-size: 11.5px; }
 
+/* AB-468: T3 Code chats, read from T3's local store. */
+.t3-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.t3-proj { margin: 22px 0 8px; display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.t3-proj h3 { margin: 0; font-size: 14px; font-weight: 650; }
+.t3-proj .small { min-width: 0; }
+.t3-row { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; gap: 14px; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+.t3-row:last-child { border-bottom: 0; }
+.t3-row.kid { grid-template-columns: 24px minmax(0, 1fr) auto; gap: 10px; padding: 7px 16px 7px calc(16px + var(--d, 1) * 22px); background: var(--panel-2); }
+.t3-row.kid .t3-title { font-size: 13px; font-weight: 500; }
+.t3-row .line1 { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.t3-title { font-weight: 600; min-width: 0; }
+.t3-row .sub { display: flex; align-items: center; gap: 8px; margin-top: 3px; font-size: 12px; color: var(--muted); flex-wrap: wrap; }
+.t3-row .side { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; font-size: 12px; color: var(--faint); white-space: nowrap; }
+.t3-kids { font: inherit; font-size: 12px; color: var(--accent); background: none; border: 0; padding: 0; cursor: pointer; }
+.t3-kids:hover { text-decoration: underline; }
+.t3-more { padding: 8px 16px 10px calc(16px + 22px); font-size: 12px; color: var(--faint); background: var(--panel-2); border-bottom: 1px solid var(--line); }
+.pill.ask { background: var(--warn-soft); color: var(--warn); }
+.t3-wait { font-size: 12px; font-weight: 600; color: var(--warn); }
+.pill.idle { background: var(--panel-2); color: var(--muted); }
+
 /* Overview: one figures strip instead of a card per number. */
 #ovStats { display: flex; flex-wrap: wrap; gap: 0; background: var(--panel); border-radius: 10px; box-shadow: var(--shadow); overflow: hidden; }
 #ovStats .stat { flex: 1 1 150px; background: none; border: 0; border-right: 1px solid var(--line); border-radius: 0; box-shadow: none; padding: 16px 20px; }
@@ -1097,6 +1117,7 @@ form#send select#to {
   <nav class="side-nav">
     <a href="#/" id="tabOverview"><span class="ico" aria-hidden="true">▦</span>Overview</a>
     <a href="#/approvals" id="tabApprovals"><span class="ico" aria-hidden="true">!</span>Waiting for you</a>
+    <a href="#/t3" id="tabT3"><span class="ico" aria-hidden="true">◧</span>T3 Code</a>
     <a href="#/network" id="tabNet"><span class="ico" aria-hidden="true">⇄</span>Network</a>
     <a href="#/decisions" id="tabDecisions"><span class="ico" aria-hidden="true">✓</span>Decisions</a>
     <a href="#/search" id="tabSearch"><span class="ico" aria-hidden="true">⌕</span>Search history</a>
@@ -1194,6 +1215,14 @@ form#send select#to {
     </div>
     <div class="side-search dec-search"><input id="decFilter" type="search" placeholder="Search topics and text" autocomplete="off" aria-label="Search decisions"></div>
     <div id="decList" class="panel"></div>
+  </div>
+
+  <div id="t3" class="hidden">
+    <div class="page-head t3-head">
+      <div><h2>T3 Code</h2><p class="muted">The chats in T3 Code on this PC, read from T3's own data. Read-only: open a chat in T3 to work in it.</p></div>
+      <label class="toggle"><input type="checkbox" id="t3Archived"><span class="track" aria-hidden="true"></span>Show archived</label>
+    </div>
+    <div id="t3List"></div>
   </div>
 
   <div id="network" class="hidden">
@@ -1302,7 +1331,7 @@ const LOG_PAGES = 20;
 const FOLD_STEPS = 3;
 /** Finished subagents older than this move into the session's archive. */
 const ARCHIVE_AFTER_MS = 30 * 60_000;
-const NETWORK_HASH = "#/network", APPROVALS_HASH = "#/approvals", DECISIONS_HASH = "#/decisions", SEARCH_HASH = "#/search", DB_HASH = "#/db";
+const NETWORK_HASH = "#/network", APPROVALS_HASH = "#/approvals", DECISIONS_HASH = "#/decisions", SEARCH_HASH = "#/search", DB_HASH = "#/db", T3_HASH = "#/t3";
 /** Open approval requests are re-read this often (they expire into a "deny" after a few minutes). */
 const APPROVALS_POLL_MS = 3000;
 /** Network status refresh while the tab is open, and faster while a pairing code waits for the other PC. */
@@ -1387,6 +1416,7 @@ function parseRoute() {
   if (location.hash === DECISIONS_HASH) return { session: null, group: null, page: "decisions" };
   if (location.hash === SEARCH_HASH) return { session: null, group: null, page: "search" };
   if (location.hash === DB_HASH) return { session: null, group: null, page: "db" };
+  if (location.hash === T3_HASH) return { session: null, group: null, page: "t3" };
   const m = /^#\\/s\\/([^/]+)(?:\\/(.+))?$/.exec(location.hash);
   return m ? { session: decodeURIComponent(m[1]), group: m[2] ? decodeURIComponent(m[2]) : null } : { session: null, group: null };
 }
@@ -1500,11 +1530,13 @@ function render() {
   $("decisions").classList.toggle("hidden", page !== "decisions");
   $("search").classList.toggle("hidden", page !== "search");
   $("db").classList.toggle("hidden", page !== "db");
+  $("t3").classList.toggle("hidden", page !== "t3");
   if (inNetwork) renderNetwork();
   else if (page === "approvals") renderApprovals();
   else if (page === "decisions") renderDecisions();
   else if (page === "search") renderSearch();
   else if (page === "db") renderDb();
+  else if (page === "t3") renderT3();
   else if (inSession) renderSession();
   else renderOverview();
   renderSendForm(inSession);
@@ -1769,10 +1801,11 @@ function renderSide() {
   $("tabDecisions").className = route.page === "decisions" ? "on" : "";
   $("tabSearch").className = route.page === "search" ? "on" : "";
   $("tabDb").className = route.page === "db" ? "on" : "";
+  $("tabT3").className = route.page === "t3" ? "on" : "";
   setHtml("tabNet", '<span class="ico" aria-hidden="true">⇄</span>Network' + networkTabDot());
   setHtml("tabApprovals", '<span class="ico" aria-hidden="true">!</span>Waiting for you' + (approvals.length ? '<span class="count attn">' + approvals.length + "</span>" : ""));
   const cur = route.session && model.byName.get(route.session);
-  $("mTitle").textContent = route.network ? "Network" : route.page === "approvals" ? "Waiting for you" : route.page === "decisions" ? "Decisions" : route.page === "search" ? "Search history" : route.page === "db" ? "Database" : route.session ? (cur ? sessionTitle(cur) : route.session) : "Overview";
+  $("mTitle").textContent = route.network ? "Network" : route.page === "approvals" ? "Waiting for you" : route.page === "decisions" ? "Decisions" : route.page === "search" ? "Search history" : route.page === "db" ? "Database" : route.page === "t3" ? "T3 Code" : route.session ? (cur ? sessionTitle(cur) : route.session) : "Overview";
   const q = $("sessFilter").value.trim().toLowerCase();
   const groups = sideGroups(q);
   const html = groups.length
@@ -3326,6 +3359,79 @@ setInterval(() => {
   for (const el of $("apList").querySelectorAll("[data-deadline]")) { const left = Number(el.dataset.deadline) - Date.now(); el.textContent = left > 0 ? "auto-deny in " + mmss(left) : "expiring"; }
   if (Date.now() - apLoadedAt >= APPROVALS_POLL_MS) void loadApprovals();
 }, 1000);
+
+/* ---- T3 Code chats (GET /api/t3/chats, AB-468): read-only from T3's local store ---- */
+let t3Data = null, t3LoadedAt = 0, t3Loading = false;
+const t3Open = new Set();
+const T3_REFRESH_MS = 10_000;
+const T3_AGENTS = new Set(["claude", "codex", "opencode", "antigravity", "muse"]);
+const T3_PILLS = { running: ["running", "working"], queued: ["running", "queued"], waiting: ["ask", "waiting for an answer"], done: ["done", "done"], failed: ["failed", "failed"], interrupted: ["interrupted", "interrupted"], cancelled: ["cancelled", "cancelled"], idle: ["idle", "idle"] };
+const t3Pill = (status) => { const p = T3_PILLS[status] || ["idle", "unknown"]; return '<span class="pill ' + p[0] + '">' + esc(p[1]) + "</span>"; };
+const t3Av = (chat, sm) => av(T3_AGENTS.has(chat.agent) ? chat.agent : "other", sm).replace('">', '" title="' + esc(chat.provider) + '">');
+const t3When = (t) => t ? '<span title="' + esc(new Date(t).toLocaleString()) + '">' + esc(ago(t)) + "</span>" : "";
+
+async function loadT3() {
+  if (t3Loading) return;
+  t3Loading = true;
+  try {
+    const r = await fetch("/api/t3/chats" + ($("t3Archived").checked ? "?archived=1" : ""));
+    const d = await r.json().catch(() => null);
+    t3Data = r.ok && d ? d : { state: "unavailable", reason: "The dashboard could not read the T3 chat list." };
+  } catch {
+    t3Data = t3Data || { state: "unavailable", reason: "The dashboard could not read the T3 chat list." };
+  } finally {
+    t3Loading = false;
+    t3LoadedAt = Date.now();
+  }
+  if (route.page === "t3") renderT3();
+}
+
+function t3Row(chat, kid) {
+  const chips = (chat.model ? '<span class="chip">' + esc(chat.model) + "</span>" : '<span class="chip">' + esc(chat.provider) + "</span>") +
+    (chat.relation === "fork" ? '<span class="chip" title="Forked from another chat">fork</span>' : "") +
+    (chat.archived ? '<span class="chip">archived</span>' : "") +
+    (chat.settled ? '<span class="chip" title="Marked settled in T3">settled</span>' : "");
+  const kids = !kid && chat.childCount
+    ? '<button type="button" class="t3-kids" data-t3-kids="' + esc(chat.id) + '" aria-expanded="' + (t3Open.has(chat.id) ? "true" : "false") + '">' +
+      (t3Open.has(chat.id) ? "▾ " : "▸ ") + chat.childCount + " subagent chat" + (chat.childCount === 1 ? "" : "s") +
+      (chat.childRunning ? " · " + chat.childRunning + " working" : "") + "</button>" + (chat.childWaiting ? '<span class="t3-wait">' + chat.childWaiting + " waiting for an answer</span>" : "")
+    : "";
+  return '<div class="t3-row' + (kid ? " kid" : "") + '"' + (kid ? ' style="--d:' + Math.min(chat.depth || 1, 6) + '"' : "") + ">" + t3Av(chat, kid) +
+    '<div style="min-width:0"><div class="line1"><span class="t3-title ell" title="' + esc(chat.title) + '">' + esc(chat.title) + "</span>" + t3Pill(chat.status) + "</div>" +
+    '<div class="sub">' + chips + kids + "</div></div>" +
+    '<div class="side">' + t3When(chat.updatedAt) + (chat.branch ? '<span class="chip ell" style="max-width:180px" title="branch">' + esc(chat.branch) + "</span>" : "") + "</div></div>";
+}
+
+function renderT3() {
+  if (t3Data === null || Date.now() - t3LoadedAt > T3_REFRESH_MS) void loadT3();
+  if (t3Data === null) return setHtml("t3List", '<div class="panel"><div class="empty">Reading the T3 chats…</div></div>');
+  if (t3Data.state !== "ready") return setHtml("t3List", '<div class="panel"><div class="empty">T3 chats are unavailable: ' + esc(t3Data.reason || "unknown reason") + ".</div></div>");
+  if (!t3Data.chats.length) return setHtml("t3List", '<div class="panel"><div class="empty">No T3 chats' + (t3Data.archivedHidden ? " (" + t3Data.archivedHidden + " archived hidden)" : "") + ".</div></div>");
+  const projects = new Map(t3Data.projects.map((p) => [p.id, p]));
+  const order = [], byProject = new Map();
+  for (const chat of t3Data.chats) {
+    if (!byProject.has(chat.projectId)) { byProject.set(chat.projectId, []); order.push(chat.projectId); }
+    byProject.get(chat.projectId).push(chat);
+  }
+  const note = (t3Data.truncated ? "Showing the " + t3Data.chats.length + " most recent of " + t3Data.total + " chats. " : "") +
+    (t3Data.archivedHidden ? t3Data.archivedHidden + " archived chat" + (t3Data.archivedHidden === 1 ? "" : "s") + " hidden." : "");
+  setHtml("t3List", (note ? '<p class="small muted">' + esc(note) + "</p>" : "") + order.map((pid) => {
+    const p = projects.get(pid) || { title: "Unknown project", root: "" };
+    return '<div class="t3-proj"><h3>' + esc(p.title || folder(p.root)) + '</h3><span class="small faint ell" title="' + esc(p.root) + '">' + esc(p.root) + "</span></div>" +
+      '<div class="panel">' + byProject.get(pid).map((chat) => t3Row(chat, false) +
+        (t3Open.has(chat.id) ? chat.children.map((k) => t3Row(k, true)).join("") +
+          (chat.childCount > chat.children.length ? '<div class="t3-more">' + (chat.childCount - chat.children.length) + " older subagent chats not shown.</div>" : "") : "")).join("") + "</div>";
+  }).join(""));
+}
+$("t3Archived").addEventListener("change", () => { t3Data = null; void loadT3(); renderT3(); });
+$("t3List").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-t3-kids]");
+  if (!b) return;
+  const key = b.dataset.t3Kids;
+  if (t3Open.has(key)) t3Open.delete(key); else t3Open.add(key);
+  renderT3();
+});
+setInterval(() => { if (route.page === "t3" && !document.hidden && Date.now() - t3LoadedAt >= T3_REFRESH_MS) void loadT3(); }, 2000);
 
 /* ---- Job outcomes (GET /api/job-outcomes, docs/job-outcomes.md): merged, held, unmerged or discarded ---- */
 let outcomes = null, outcomesOff = false, outcomesAt = 0;

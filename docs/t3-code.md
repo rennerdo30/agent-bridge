@@ -1,5 +1,43 @@
 # T3 Code host adapter (experimental, automatically detected)
 
+## Integration plan: local files first, no changes to T3 (AB-467)
+
+Bridge integrates with T3 Code as far as possible without changing or updating T3. T3 keeps
+its state in `<T3CODE_HOME>/userdata/statev2.sqlite` on the same machine, so everything Bridge
+reads comes from that store, opened read-only with short connections. Bridge never writes to
+it, never runs migrations or checkpoints, and never opens T3's auth tables, `secrets/` or
+token files. Every query uses an allowlist of tables and columns.
+
+| # | Package | Source in the T3 store |
+| --- | --- | --- |
+| 1 | Chat list and dashboard view (done, below) | `orchestration_v2_projection_threads`, `projection_projects`, `orchestration_v2_projection_runs`, `orchestration_v2_projection_runtime_requests` |
+| 2 | Full timeline in history: tool calls, commands, file changes, subagent links, attachment manifest | `orchestration_v2_projection_turn_items`, `orchestration_v2_projection_subagents`, `userdata/attachments` |
+| 3 | Link Bridge sessions to their T3 chats; T3 titles on session cards | `orchestration_v2_projection_provider_threads`, `orchestration_v2_projection_provider_sessions` |
+| 4 | T3 chats of paired PCs, each PC reading only its own store | the paired dashboard read |
+| 5 | Optional: wake an idle T3 chat for new Bridge mail | the running T3 app over loopback; a database write would start no run and could corrupt T3's state |
+
+Messages and thread metadata already reach history search (next section). The host adapter
+further below stays for hosts that inject T3's scoped transport. T3 itself discards
+intermediate message edits when it compacts; those cannot be recovered from any source.
+
+## Chat list (dashboard "T3 Code" view)
+
+`GET /api/t3/chats` (dashboard key required; optional `archived=1`) returns this PC's T3
+chats from the local store: projects, chat title, provider instance and matching Bridge agent
+kind, model, branch, archived/settled flags and status. Status is `waiting` while T3 has a
+pending runtime request for the chat (it needs an answer), otherwise the latest run's status
+(`running`, `queued`, `done`, `failed`, `interrupted`, `cancelled`), or `idle` without runs.
+
+Subagent chats nest under their parent chat (`depth` counts levels); forks and chats whose
+parent is gone are top-level. Each top-level chat carries its newest 30 descendants plus
+counts of all, working and waiting ones. Chats needing an answer sort first, then the most
+recently active; at most 200 top-level chats are returned, with `truncated` and
+`archivedHidden` saying what was left out. Deleted chats are never listed.
+
+Results are cached for 10 seconds per T3 home and archive filter. A missing, busy, invalid or
+unknown-schema store returns `{ state: "unavailable", reason }`, never an empty list. Tests:
+`test/t3-chats.test.ts` (synthetic store; no T3 install needed).
+
 ## Local history (independent of host transport)
 
 Bridge's existing background history worker can retain local T3 history without OAuth,

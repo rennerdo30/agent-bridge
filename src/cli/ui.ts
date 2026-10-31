@@ -49,6 +49,8 @@ import { doctor } from "../core/doctor.js";
 import { MAX_HISTORY_LIMIT, searchMessages } from "../core/message-history.js";
 import { DEFAULT_RUN_PAGE_SIZE, pageRuns } from "../core/run-history.js";
 import { type TranscriptPaths } from "../core/transcripts/index.js";
+import { localT3HistoryRoot } from "../core/transcripts/common.js";
+import { cachedT3Chats } from "../core/t3-chats.js";
 import { HISTORY_MAX_QUERY_CHARS, historySearchSchema, readHistory, readHistorySource } from "../core/history.js";
 import { answerHistory, type HistoryAnswerDependencies } from "../core/history-answer.js";
 import { readDecisions, decisionScopeSchema, MAX_DECISION_TEXT_CHARS, MAX_DECISION_TOPIC_CHARS, type DecisionsArgs } from "../core/decisions.js";
@@ -399,6 +401,13 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
       return send(res, 200, nativeDefaults());
     }
     if (req.method === "GET" && url.pathname === "/api/storage") return send(res, 200, doctor(opts.home));
+    // AB-468: T3 Code chats on this PC, read-only from T3's local store (src/core/t3-chats.ts).
+    if (req.method === "GET" && url.pathname === "/api/t3/chats") {
+      const archived = url.searchParams.get("archived");
+      if ([...url.searchParams.keys()].some((key) => key !== "archived") || (archived !== null && archived !== "1")) return send(res, 400, { error: "Unknown parameter." });
+      const root = opts.transcripts && Object.hasOwn(opts.transcripts, "t3") ? opts.transcripts.t3 : localT3HistoryRoot();
+      return send(res, 200, cachedT3Chats(root, archived === "1"));
+    }
     if (req.method === "GET" && url.pathname === "/api/archive/messages") {
       const limit = url.searchParams.get("limit");
       const before = url.searchParams.get("before");
