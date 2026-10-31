@@ -428,6 +428,9 @@ it("keeps one checkpoint for a T3 home reached through a link", () => {
   for (let n = 0; n < 20 && (viaAlias.tick(), viaAlias.discovering); n++);
   const keys = f.db.prepare("SELECT source FROM history_cursors WHERE source LIKE 'durable-t3:%' AND source NOT LIKE '%:status'").all();
   expect(keys).toHaveLength(1);
+  // The alias ingestor really read the source (a fault would also leave a single checkpoint).
+  expect(viaAlias.discovering).toBe(false);
+  expect(f.status()).toMatchObject({ state: "ready" });
 });
 
 it("never implicitly discovers owner T3 storage in tests and refuses malformed explicit homes", () => {
