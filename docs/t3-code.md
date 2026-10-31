@@ -9,8 +9,14 @@ nonsecret `userdata/environment-id`. An invalid explicit home refuses that sourc
 it never falls back to the default. Test workers with `AGENT_BRIDGE_TEST_ROOT` never
 discover T3 implicitly; fixtures must supply a synthetic `TranscriptPaths.t3`.
 
-Coverage is project/thread metadata (including archived threads, title and recorded
-parent/fork relation) plus surviving v2 `message.updated` events. Conversations use
+**Default coverage is project/thread metadata only** (including archived threads, title and
+recorded parent/fork relation). T3 is a wrapper over ordinary provider sessions whose
+transcripts Bridge already indexes, so importing T3's copy of the message text would show
+every message twice in search (AB-473). In this default the event log is not read at all.
+The message import described below stays available to explicit callers
+(`ConversationIngestor` option `t3Messages: true`); it adds surviving v2
+`message.updated` events. Linking T3 chats to the provider transcripts they ran on is
+tracked separately (AB-469/AB-470). Conversations use
 `t3:<environment-id>:<thread-id>`, with agent `other`; these IDs are T3 identities.
 If that composed key exceeds the public 256-character session-filter limit, a
 stable SHA-256 key is used instead. Exact environment/thread IDs remain in retained

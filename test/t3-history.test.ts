@@ -53,7 +53,7 @@ function event(input: DatabaseSync, sequence: number, text = "local_t3_orchid", 
     .run(sequence, `event-${sequence}`, threadId, sequence, type, at, raw, version);
   return Buffer.from(raw);
 }
-function fixture(environment = "environment-one", encoded = true) {
+function fixture(environment = "environment-one", encoded = true, messages = true) {
   vi.stubEnv("AGENT_BRIDGE_BACKUP_INTERVAL_MS", "0");
   const env = makeEnv(); close.push(() => env.cleanup());
   const store = new MessageStore(env.db, nullLogger); close.push(() => store.close());
@@ -72,7 +72,8 @@ function fixture(environment = "environment-one", encoded = true) {
     .run(project, at, at);
   thread(input, "child", "root"); thread(input, "root");
   const paths: TranscriptPaths = { claude: join(env.home, "claude"), codex: join(env.home, "codex"), opencode: join(env.home, "opencode"), t3: root };
-  let ingest = new ConversationIngestor(db, env.home, paths, bridge); close.push(() => ingest.close());
+  // These #152 cases cover the explicit message import (AB-473 keeps it off by default).
+  let ingest = new ConversationIngestor(db, env.home, paths, bridge, { t3Messages: messages }); close.push(() => ingest.close());
   // Query this standalone v2 fixture directly. Supplying the separate bridge DB
   // would intentionally serve its legacy history until a migration is verified.
   const index = new HistoryIndex(db, null, paths); close.push(() => index.close());
@@ -82,7 +83,7 @@ function fixture(environment = "environment-one", encoded = true) {
   const rows = (part?: string) => db.prepare(`SELECT * FROM conversation_records ${part ? "WHERE part=?" : ""} ORDER BY id`).all(...(part ? [part] : []));
   return { env, root, file, input, db, bridge, paths, project, index, state, status, rows, closeInput,
     get ingest() { return ingest; },
-    restart() { ingest.close(); ingest = new ConversationIngestor(db, env.home, paths, bridge); },
+    restart() { ingest.close(); ingest = new ConversationIngestor(db, env.home, paths, bridge, { t3Messages: messages }); },
     drain() {
       for (let n = 0; n < 120; n++) { ingest.tick(); if (!ingest.discovering) return; }
       throw new Error("bounded T3 backlog did not drain");
@@ -104,6 +105,25 @@ function oneFragment(f: Fixture) {
   });
   try { f.ingest.tick(); } finally { slow.mockRestore(); clock.mockRestore(); }
 }
+
+// AB-473: T3 wraps provider sessions whose transcripts Bridge already indexes. By default T3 adds what only
+// it knows (titles, projects, relations, archived chats) and never its copy of the message text.
+it("by default imports T3 thread metadata only: titles are searchable, message text is not duplicated and the event log is not read", () => {
+  const f = fixture("environment-one", true, false);
+  event(f.input, 5);
+  const prepare = vi.spyOn(DatabaseSync.prototype, "prepare");
+  f.drain();
+  expect(prepare.mock.calls.some(([sql]) => String(sql).includes("FROM orchestration_events WHERE sequence>"))).toBe(false);
+  prepare.mockRestore();
+  const id = "t3:environment-one:child";
+  expect(readConversation(f.db, { id }).conversation).toMatchObject({ id, parent: "t3:environment-one:root", project: conversationProject(f.project) });
+  expect(f.rows("t3:metadata").map(r => JSON.parse(raw(r).toString()).title)).toContain("Archived child azalea_title");
+  expect(f.index.search({ query: "azalea_title" }).hits.length).toBeGreaterThan(0);
+  expect(f.index.search({ query: "local_t3_orchid" }).hits).toEqual([]);
+  expect(f.rows("t3:fragment")).toEqual([]);
+  expect(receipts(f)).toEqual([]);
+  expect(f.status()).toMatchObject({ state: "ready", reason: "coverage: thread metadata only; message text comes from the provider transcripts" });
+});
 
 it.each([false, true])("imports archived metadata, exact lineage and message text through existing FTS and conversation pages (encoded=%s)", encoded => {
   const f = fixture("environment-one", encoded), expected = event(f.input, 5);
