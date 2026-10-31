@@ -1,5 +1,46 @@
 # T3 Code host adapter (experimental, automatically detected)
 
+## Local history (independent of host transport)
+
+Bridge's existing background history worker can retain local T3 history without OAuth,
+an MCP network connection, or an active provider session connected to Bridge. It reads
+`<T3CODE_HOME>/userdata/statev2.sqlite` (default `~/.t3/userdata/statev2.sqlite`) and the
+nonsecret `userdata/environment-id`. An invalid explicit home refuses that source;
+it never falls back to the default. Test workers with `AGENT_BRIDGE_TEST_ROOT` never
+discover T3 implicitly; fixtures must supply a synthetic `TranscriptPaths.t3`.
+
+Coverage is project/thread metadata (including archived threads, title and recorded
+parent/fork relation) plus surviving v2 `message.updated` events. Conversations use
+`t3:<environment-id>:<thread-id>`, with agent `other`; these IDs are T3 identities.
+Metadata project roots pass through Bridge's normal project mapping. This does not
+join provider-native sessions or infer coordinator/main roles.
+
+The reader validates the three allowlisted tables' required columns/keys, opens a
+short read-only connection with a 25 ms busy timeout each tick, and scans ordered
+primary-key event metadata windows from sequence zero. It fetches supported full
+message payloads in 64 KiB byte chunks through the existing compressed retention,
+derived search indexing and durable cursors. Metadata uses periodic keyset pages.
+Backlogs participate in the existing worker's discovery state and budget; there is
+no extra scheduler. Missing, busy or unsupported sources preserve retained history
+and native import cursors. Replacement file/environment identity or a decreasing
+highwater refuses that source, preserving its prior checkpoint.
+
+Raw `t3:fragment` records do not certify completeness. A separate `t3:complete`
+receipt identifies an entirely retained event by sequence and event ID. If a pending
+event disappears during T3 compaction, partial bytes remain with an explicit
+`t3:incomplete-compacted-source` receipt; later retained revisions import independently.
+Unknown message versions/shapes receive unavailable receipts. Source availability
+and coverage are recorded under `durable-t3:*:status` in existing history cursors.
+T3 keeps first/latest message revisions during compaction: revisions already removed
+before Bridge observes them cannot be recovered. Tools/activity, attachments as
+separate assets, and fork-inherited visible timelines are outside this package.
+
+`test/t3-history.test.ts` uses synthetic installed-schema databases to check searchable
+imports, archived lineage, append/bootstrap, restart/chunk retention, compaction,
+index failure recovery, source replacement/schema/busy isolation, WAL concurrency
+and source preservation. Owner history ingestion and installed/live acceptance are
+not part of these offline fixtures.
+
 AB-446 adds a scoped MCP HTTP adapter for session messaging and T3-owned tasks. AB-457 automatically detects deliberately injected transport and defaults validated T3 sessions to a reduced MCP surface. It does not install, update or configure T3. Ordinary Bridge sessions without injected transport retain their provider paths and full tool surface.
 
 ## Prerequisites

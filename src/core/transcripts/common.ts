@@ -38,7 +38,7 @@ export interface NativeSubagent {
   updatedAt: number;
 }
 export type TranscriptSession = Pick<PeerInfo, "agent" | "cwd" | "sessionId">;
-export interface TranscriptPaths { claude: string; codex: string; opencode: string; antigravity?: string; muse?: string }
+export interface TranscriptPaths { claude: string; codex: string; opencode: string; antigravity?: string; muse?: string; t3?: string }
 
 export function transcriptPaths(env: NodeJS.ProcessEnv = process.env, home = homedir()): TranscriptPaths {
   return {
@@ -47,6 +47,9 @@ export function transcriptPaths(env: NodeJS.ProcessEnv = process.env, home = hom
     opencode: resolve(join(env.XDG_DATA_HOME?.trim() || join(home, ".local", "share"), "opencode")),
     antigravity: resolve(env.ANTIGRAVITY_CLI_HOME?.trim() || join(home, ".gemini", "antigravity-cli")),
     muse: resolve(join(env.XDG_DATA_HOME?.trim() || join(home, ".local", "share"), "muse")),
+    // Test workers must inject a synthetic path explicitly, even if they inherited T3CODE_HOME.
+    // Preserve malformed explicit values for refusal by the reader; never fall back to owner storage.
+    t3: "AGENT_BRIDGE_TEST_ROOT" in env ? undefined : env.T3CODE_HOME ?? join(home, ".t3"),
   };
 }
 

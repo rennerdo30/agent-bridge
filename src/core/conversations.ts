@@ -30,6 +30,7 @@ import { decodeBytes, encodeBytes, encodeText, registerHistoryFunctions } from "
 import { decodeHistoryRow } from "./history-migration.js";
 import { CLAUDE_CHILD_FACTS_TABLE, refreshClaudeChildFacts } from "./history-sources.js";
 import { cleanupSavepoint } from "./savepoint.js";
+import { T3History } from "./t3-history.js";
 
 import { CONVERSATION_BYTES, indexedConversationText } from "./conversation-text.js";
 export { CONVERSATION_BYTES, indexedConversationText } from "./conversation-text.js";
@@ -97,6 +98,7 @@ export class ConversationIngestor {
   private claudeFacts = true;
   private readonly encoded: boolean;
   private readonly fts: boolean;
+  private readonly t3: T3History;
   constructor(
     private db: DatabaseSync,
     private home: string,
@@ -118,6 +120,11 @@ export class ConversationIngestor {
         .prepare("SELECT coalesce(max(checked),0) n FROM (SELECT checked FROM conversation_sources UNION ALL SELECT checked FROM conversation_projects)")
         .get()!.n,
     );
+    this.t3 = new T3History(paths.t3, db, {
+      cursor: key => this.cursor(key),
+      advance: (key, value) => this.advance(key, value),
+      put: (...args) => this.put(...args),
+    });
   }
 
   private watchRoots(): void {
@@ -155,6 +162,7 @@ export class ConversationIngestor {
   get discovering(): boolean {
     return (
       this.jobQueue.length > 0 ||
+      this.t3.discovering ||
       this.idleSources <
         Number(
           this.db.prepare("SELECT count(*) n FROM conversation_sources").get()!
@@ -1181,6 +1189,9 @@ export class ConversationIngestor {
     // Every durable insert is idempotent; publish cursors only after its records.
     // Filesystem reads and Git discovery must never hold the shared writer lock.
     let work = 0;
+    // One bounded local-source slice shares this tick's budget, before native imports.
+    // Missing/busy/unsupported T3 sources report their own status and leave native cursors alone.
+    work += this.t3.tick(deadline);
     {
       // Several queued snapshots per batch (bounded by the batch deadline), so a retained backlog
       // converges in minutes rather than one job per tick (AB-147).
