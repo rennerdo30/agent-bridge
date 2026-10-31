@@ -30,29 +30,35 @@ intermediate message edits when it compacts; those cannot be recovered from any 
 ## T3 chats on session entries
 
 T3 gives most chats a folder of their own (`worktreePath`). In `GET /api/state`, a local
-session gets a `t3` object (`id`, `title`, `provider`, `model`, `status`, `parentTitle`,
-`harness`) when it runs in a T3 chat's folder and exactly one candidate chat there fits its
-agent. The dashboard then shows the chat title instead of the folder name, a T3 badge, and
-"waiting for an answer" while T3 has a pending request for the chat. Status is `waiting`,
-else the latest run's status (`running`, `queued`, `done`, `failed`, `interrupted`,
-`cancelled`), or `idle` without runs.
+session gets a `t3` object (`id`, `title`, `provider`, `model`, `projectRoot`, `status`,
+`parentTitle`, `harness`) when it runs in a T3 chat's folder and exactly one candidate chat
+there fits its agent. The dashboard keeps the project folder as the session's title: for a T3
+worktree chat that is its T3 project's folder (`projectRoot`) instead of the worktree's
+generated name. The chat title goes on the second line, with a T3 badge and "waiting for an
+answer" while T3 has a pending request for the chat. Status is `waiting`, else the latest
+run's status (`running`, `queued`, `done`, `failed`, `interrupted`, `cancelled`), or `idle`.
 
-- **Candidates in a folder:** the chat that owns it (top-level, or a child with its own
-  folder). A T3 delegated task that ran in its parent's folder (`app_owned`) is a separate
-  session, so it counts only while it has an active run. Provider-native subagents run inside
-  the parent's process and never count.
-- **Provider switches:** a chat matches every agent it has run on (`_provider_threads`).
-  `harness` is `current` for its present provider and `earlier` otherwise. A still-connected
-  earlier-provider session folds into the current one in the dashboard lists, so each chat
-  shows once; it stays reachable by its own page.
+- **Agents:** a chat's agent comes from T3's driver kind (`default_provider`, and `driver` in
+  `_provider_threads`), not the provider instance name. An unknown driver never links.
+- **Candidates in a folder:** the chat that owns it: a top-level chat, or a child whose known
+  parent works in another folder or the project root. A T3 delegated task that ran in its
+  parent's folder (`app_owned`) is a separate session, so it counts only while it has an
+  active run. Provider-native subagents run inside the parent's process and never count. A
+  child whose parent is unknown (deleted or unreadable) never owns a folder.
+- **Provider switches:** a chat matches every agent it has run on. `harness` is `current` for
+  its present provider and `earlier` otherwise. All connected sessions of one chat fold into
+  one entry in the dashboard lists (the current provider's, else the newest), taking their
+  subagent runs and child sessions along; folded sessions stay reachable by their own pages,
+  linked from the chat's session page.
 - **Never guessed:** sessions in a folder with several candidates for their agent, two
   same-agent sessions claiming one chat, deleted chats and chats without their own folder get
   nothing and keep their usual entry.
 
 The folder index is rebuilt at most once a minute, or once early (after 10 seconds) when a
-session appears in a folder the index did not know; per poll only indexed lookups for the
-matched chats run. A missing, busy, locked or unknown-schema store means no T3 details.
-Tests: `test/t3-sessions.test.ts` (synthetic store; no T3 install needed).
+session appears in a folder the index did not know; a store that cannot be indexed is retried
+after 10 seconds, not on every poll. Per poll only indexed lookups for matched chats run. A
+missing, busy, locked or unknown-schema store means no T3 details. Tests:
+`test/t3-sessions.test.ts` (synthetic store; no T3 install needed).
 
 ## Local history (independent of host transport)
 

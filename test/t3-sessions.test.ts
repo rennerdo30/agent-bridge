@@ -9,6 +9,9 @@ import { UI_PAGE } from "../src/cli/ui-page.js";
 // AB-468: the installed T3 store's tables this feature reads (unused columns kept so the reader
 // cannot depend on a trimmed shape), plus an auth table it must never need.
 const SCHEMA = `
+CREATE TABLE projection_projects(project_id TEXT PRIMARY KEY,title TEXT NOT NULL,workspace_root TEXT NOT NULL,
+ scripts_json TEXT NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,deleted_at TEXT);
+INSERT INTO projection_projects VALUES('p1','game','E:/Development/game','[]','2026-10-31T12:00:00Z','2026-10-31T12:00:00Z',NULL);
 CREATE TABLE orchestration_v2_projection_threads(thread_id TEXT PRIMARY KEY,project_id TEXT NOT NULL,title TEXT NOT NULL,
  default_provider TEXT NOT NULL,runtime_mode TEXT NOT NULL,interaction_mode TEXT NOT NULL,active_provider_thread_id TEXT,
  created_at TEXT NOT NULL,updated_at TEXT NOT NULL,archived_at TEXT,deleted_at TEXT,payload_json TEXT NOT NULL,provider_instance_id TEXT);
@@ -35,11 +38,12 @@ function store() {
   return { root, db };
 }
 const at = "2026-10-31T12:00:00Z";
-function thread(db: DatabaseSync, id: string, o: { title?: string; provider?: string; folder?: string | null; parent?: string; deleted?: boolean; model?: string } = {}) {
+/** `provider` is T3's driver kind (default_provider); `instance` its provider instance name (defaults to the driver). */
+function thread(db: DatabaseSync, id: string, o: { title?: string; provider?: string; instance?: string; folder?: string | null; parent?: string; deleted?: boolean; model?: string; pad?: number } = {}) {
   db.prepare(`INSERT INTO orchestration_v2_projection_threads VALUES(?,'p1',?,?,'full-access','default',NULL,?,?,NULL,?,?,?)`).run(
     id, o.title ?? id, o.provider ?? "codex", at, at, o.deleted ? at : null,
     JSON.stringify({ id, worktreePath: o.folder ?? null, lineage: { parentThreadId: o.parent ?? null, relationshipToParent: o.parent ? "subagent" : null },
-      modelSelection: o.model ? { model: o.model } : null }), o.provider ?? "codex");
+      modelSelection: o.model ? { model: o.model } : null, pad: "x".repeat(o.pad ?? 0) }), o.instance ?? o.provider ?? "codex");
 }
 /** How T3 started a child chat: a delegated task (its own session) or a provider-native subagent (inside the parent's process). */
 const origin = (db: DatabaseSync, child: string, parent: string, how: "app_owned" | "provider_native") =>
@@ -60,11 +64,11 @@ describe("T3 chats behind Bridge sessions (AB-468)", () => {
     thread(db, "asks", { title: "Needs an answer", folder: "E:/AgentData/game/t3-bbbb2222", provider: "claudeAgent" });
     db.prepare(`INSERT INTO orchestration_v2_projection_runtime_requests VALUES('q','asks',NULL,NULL,'user-input','pending',?,NULL,'{}')`).run(at);
     const info = t3SessionInfo(root, [
-      // Separators, case and the D: alias of the same drive do not matter.
-      { key: "codex-t3-aaaa1111", cwd: "d:\\agentdata\\GAME\\t3-aaaa1111\\", agent: "codex" },
+      // Separators, a trailing separator and the D: alias of the same drive do not matter.
+      { key: "codex-t3-aaaa1111", cwd: "D:\\AgentData\\game\\t3-aaaa1111\\", agent: "codex" },
       { key: "claude-asks", cwd: "E:/AgentData/game/t3-bbbb2222", agent: "claude" },
     ], 1_000);
-    expect(info.get("codex-t3-aaaa1111")).toEqual({ id: "chat", title: "Dungeon epic round 2", provider: "codex", model: "gpt-6.1-sol", status: "done", parentTitle: "Game main thread", harness: "current" });
+    expect(info.get("codex-t3-aaaa1111")).toEqual({ id: "chat", title: "Dungeon epic round 2", provider: "codex", model: "gpt-6.1-sol", projectRoot: "E:/Development/game", status: "done", parentTitle: "Game main thread", harness: "current" });
     expect(info.get("claude-asks")).toMatchObject({ title: "Needs an answer", status: "waiting", parentTitle: null });
     db.close();
   });
@@ -157,6 +161,40 @@ describe("T3 chats behind Bridge sessions (AB-468)", () => {
 
   it("normalizes folder keys", () => {
     expect(t3FolderKey("D:\\AgentData\\x\\")).toBe(t3FolderKey("E:/AgentData/x"));
+    // Folder names are case-insensitive only on Windows.
+    expect(t3FolderKey("E:/agentdata/X") === t3FolderKey("E:/AgentData/x")).toBe(process.platform === "win32");
+  });
+
+  it("links by T3's driver kind: a custom instance name still links, an unknown driver never matches any agent", () => {
+    const { root, db } = store();
+    thread(db, "custom", { folder: WT, provider: "claudeAgent", instance: "claude-work", title: "Custom instance" });
+    thread(db, "unknown", { folder: "E:/AgentData/game/t3-grok", provider: "grok", title: "Unknown driver" });
+    const info = t3SessionInfo(root, [
+      { key: "claude", cwd: WT, agent: "claude" }, { key: "codex", cwd: WT, agent: "codex" },
+      { key: "u-codex", cwd: "E:/AgentData/game/t3-grok", agent: "codex" }, { key: "u-claude", cwd: "E:/AgentData/game/t3-grok", agent: "claude" },
+    ], 1_000);
+    expect(info.get("claude")).toMatchObject({ title: "Custom instance", provider: "claude-work", harness: "current" });
+    expect([...info.keys()]).toEqual(["claude"]);
+  });
+
+  it("never lets a child own its folder on missing parent information", () => {
+    for (const how of ["provider_native", "app_owned"] as const) {
+      const { root, db } = store();
+      thread(db, "big-parent", { folder: WT, pad: 70_000 }); // unreadable here: payload over the size limit
+      thread(db, "child", { folder: WT, parent: "big-parent" }); origin(db, "child", "big-parent", how); run(db, "child", 1, "completed");
+      expect(t3SessionInfo(root, [{ key: "s", cwd: WT, agent: "codex" }], 1_000).size, how).toBe(0);
+    }
+  });
+
+  it("retries a store that cannot be indexed after the short window, not on every poll", () => {
+    const { root, db } = store();
+    thread(db, "chat", { folder: WT, title: "Chat" });
+    db.exec("DROP TABLE orchestration_v2_projection_subagents");
+    const s = [{ key: "s", cwd: WT, agent: "codex" }], t0 = 50_000_000;
+    expect(t3SessionInfo(root, s, t0).size).toBe(0);
+    db.exec(SCHEMA.split(";").find((q) => q.includes("CREATE TABLE orchestration_v2_projection_subagents"))!);
+    expect(t3SessionInfo(root, s, t0 + 1_000).size).toBe(0); // the failed attempt is remembered
+    expect(t3SessionInfo(root, s, t0 + T3_INDEX_MISS_MS).get("s")).toMatchObject({ title: "Chat" });
   });
 });
 
@@ -167,37 +205,60 @@ describe("T3 chats on the normal session entries (AB-468)", () => {
       classList: { toggle: vi.fn(), add: vi.fn(), remove: vi.fn(), contains: () => false }, setAttribute: vi.fn(), parentElement: { addEventListener: vi.fn() }, addEventListener: vi.fn() });
     const document = { hidden: false, title: "", documentElement: { dataset: {} }, getElementById: el, addEventListener: vi.fn(), querySelectorAll: () => [] };
     return new Function("document", "window", "location", "localStorage", "setInterval", "fetch", "Notification", script +
-      "\nreturn { sideSession, sessionTitle, sessionMatches, sideGroups, load: s => { state = s; model = buildModel(s); return model; } };")
+      "\nreturn { sideSession, sideMember, sessionTitle, sessionMatches, sideGroups, load: s => { state = s; model = buildModel(s); return model; } };")
       (document, { addEventListener: vi.fn() }, { hash: "" }, { getItem: () => null, setItem: vi.fn(), removeItem: vi.fn() }, () => 0,
         vi.fn(() => new Promise(() => {})), Object.assign(vi.fn(), { permission: "default" }));
   }
   const peer = (t3?: object) => ({ name: "codex-t3-aaaa1111", agent: "codex", cwd: "E:\\AgentData\\game\\t3-aaaa1111", activity: "busy", ...(t3 ? { t3 } : {}) });
   const session = (p: object) => ({ name: (p as { name: string }).name, peer: p, live: true, groups: [], children: [], running: 0 });
 
-  it("shows the T3 chat title with a T3 badge instead of the worktree folder, escaped", () => {
+  it("keeps the project folder as the title (the T3 project's folder, not the worktree name) and puts the chat title on the second line, escaped", () => {
     const ui = page();
-    const x = session(peer({ id: "chat", title: "Dungeon <epic>", provider: "codex", model: null, status: "waiting", parentTitle: 'Main "x" <y> $`' }));
-    expect(ui.sessionTitle(x)).toBe("Dungeon <epic>");
+    const x = session(peer({ id: "chat", title: "Dungeon <epic>", provider: "codex", model: null, projectRoot: "E:\\Development\\animal-catch-game", status: "waiting", parentTitle: 'Main "x" <y> $`' }));
+    expect(ui.sessionTitle(x)).toBe("animal-catch-game");
     const html = ui.sideSession(x);
-    expect(html).toContain('<span class="t3-ttl"><span class="ell">Dungeon &lt;epic&gt;</span><span class="chip t3"');
+    expect(html).toContain('<span class="t3-ttl"><span class="ell">animal-catch-game</span><span class="chip t3"');
+    expect(html).toContain('<small class="ell">Dungeon &lt;epic&gt; · busy');
     expect(html).not.toContain(">t3-aaaa1111<");
     expect(html).toContain('<span class="chip t3" title="T3 Code chat · waiting for an answer · subagent of Main &quot;x&quot; &lt;y&gt; $`">T3</span>');
     expect(html).toContain('<span class="t3-ask">waiting for an answer</span>');
     expect(ui.sessionMatches(x, "dungeon")).toBe(true);
   });
 
-  it("shows one entry per T3 chat: a still-connected earlier provider session folds into the current one", () => {
+  const t3 = { id: "chat", title: "Switched chat", provider: "codex", model: null, projectRoot: null, status: "running", parentTitle: null };
+  const listed = (ui: any) => ui.sideGroups("").flatMap((g: { items: { name: string }[] }) => g.items.map((x) => x.name)).sort();
+
+  it("shows one entry per T3 chat: an earlier provider's session folds into the current one with its subagents", () => {
     const ui = page();
-    const t3 = { id: "chat", title: "Switched chat", provider: "codex", model: null, status: "running", parentTitle: null };
     const m = ui.load({ peers: [
       { name: "claude-old", agent: "claude", cwd: "E:/wt", activity: "idle", startedAt: 1, t3: { ...t3, harness: "earlier" } },
       { name: "codex-new", agent: "codex", cwd: "E:/wt", activity: "busy", startedAt: 2, t3: { ...t3, harness: "current" } },
       { name: "claude-other", agent: "claude", cwd: "E:/Development/repo", activity: "idle", startedAt: 3 },
-    ], runs: [], jobs: {}, messages: [] });
-    const listed = ui.sideGroups("").flatMap((g: { items: { name: string }[] }) => g.items.map((x) => x.name));
-    expect(listed.sort()).toEqual(["claude-other", "codex-new"]);
-    expect(m.byName.get("codex-new").folded).toEqual(["claude-old"]);
+      { name: "kid", agent: "codex", cwd: "E:/AgentData/worktrees/x", activity: "busy", startedAt: 4, subagent: true, parent: "claude-old" },
+    ], runs: [{ name: "r1", job: "codex-job-aa11", by: "claude-old", agent: "codex", status: "running", startedAt: 5, updatedAt: 6, task: "t" }], jobs: {}, messages: [] });
+    expect(listed(ui)).toEqual(["claude-other", "codex-new"]);
+    const cur = m.byName.get("codex-new");
+    expect(cur.folded).toEqual(["claude-old"]);
+    expect(cur.groups.map((g: { key: string }) => g.key)).toEqual(["codex-job-aa11"]); // the folded session's job stays visible
+    expect(cur.children.map((c: { name: string }) => c.name)).toEqual(["kid"]);
+    expect(cur.running).toBe(1);
     expect(m.byName.get("claude-old").foldedInto).toBe("codex-new"); // still reachable by its own page
+  });
+
+  it("folds sessions of earlier providers into the newest one while the current provider's session is not connected", () => {
+    const ui = page();
+    ui.load({ peers: [
+      { name: "claude-a", agent: "claude", cwd: "E:/wt", activity: "idle", startedAt: 1, t3: { ...t3, harness: "earlier" } },
+      { name: "muse-b", agent: "muse", cwd: "E:/wt", activity: "idle", startedAt: 2, t3: { ...t3, harness: "earlier" } },
+    ], runs: [], jobs: {}, messages: [] });
+    expect(listed(ui)).toEqual(["muse-b"]);
+  });
+
+  it("shows the T3 chat on grouped project rows too", () => {
+    const ui = page();
+    const html = ui.sideMember(session({ ...peer({ ...t3, harness: "current", title: "Grouped <chat>" }), projectGroup: "g", projectMain: true }));
+    expect(html).toContain("Grouped &lt;chat&gt; · busy");
+    expect(html).toContain('class="chip t3"');
   });
 
   it("leaves sessions that are not T3 chats unchanged", () => {

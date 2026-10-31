@@ -1488,13 +1488,21 @@ function buildModel(s) {
     (parent ? parent.children : orphans).push(c);
   }
   for (const x of sessions) x.running = x.groups.filter((g) => g.status === "running").length;
-  // AB-468: one T3 chat, one entry. After a provider switch in T3, a still-connected session of the
-  // earlier provider folds into the chat's current session (it stays reachable by its own page).
-  for (const x of sessions) {
-    const t = x.live && x.peer && x.peer.t3;
-    if (!t || t.harness !== "earlier") continue;
-    const cur = sessions.find((y) => y !== x && y.live && y.peer && y.peer.t3 && y.peer.t3.id === t.id && y.peer.t3.harness === "current");
-    if (cur) { x.foldedInto = cur.name; (cur.folded = cur.folded || []).push(x.name); cur.running += x.running; }
+  // AB-468: one T3 chat, one entry. After provider switches in T3, every connected session of the same chat
+  // folds into one: the current provider's, else the newest. Its subagent runs and child sessions move along;
+  // the folded session stays reachable by its own page (linked from the chat's session page).
+  const byChat = new Map();
+  for (const x of sessions) if (x.live && x.peer && x.peer.t3) (byChat.get(x.peer.t3.id) || byChat.set(x.peer.t3.id, []).get(x.peer.t3.id)).push(x);
+  for (const list of byChat.values()) {
+    if (list.length < 2) continue;
+    const rep = list.find((y) => y.peer.t3.harness === "current") || [...list].sort((a, b) => (b.peer.startedAt || 0) - (a.peer.startedAt || 0))[0];
+    for (const x of list) {
+      if (x === rep) continue;
+      x.foldedInto = rep.name; (rep.folded = rep.folded || []).push(x.name);
+      rep.groups.push(...x.groups); rep.children.push(...x.children); rep.running += x.running;
+    }
+    const order = new Map(sorted.map((g, i) => [g.key, i]));
+    rep.groups.sort((a, b) => order.get(a.key) - order.get(b.key));
   }
   return { sessions, byName, groups, sorted, orphans };
 }
@@ -1534,8 +1542,9 @@ let lastTree = "";
 
 const groupMatches = (g, q) => [g.title, g.task, g.agent, g.model, g.job].some((s) => String(s || "").toLowerCase().includes(q));
 const sessionMatches = (x, q) => [x.name, x.peer && x.peer.cwd, x.peer && x.peer.t3 && x.peer.t3.title].some((s) => String(s || "").toLowerCase().includes(q));
-/** AB-468: a session running in a T3 Code chat's own folder is that chat; it shows the chat's title (peer.t3). */
-const peerTitle = (p) => (p && p.t3 && p.t3.title) || (p ? folder(p.cwd) : "");
+/** AB-468: the main line is the project folder. A session in a T3 Code chat's worktree (peer.t3) shows its T3
+ * project's folder instead of the worktree's generated name; the chat title goes on the second line. */
+const peerTitle = (p) => p ? folder((p.t3 && p.t3.projectRoot) || p.cwd) : "";
 const sessionTitle = (x) => (x.peer ? peerTitle(x.peer) : "") || shortName(x.name);
 const T3_STATUS = { running: "working", queued: "queued", waiting: "waiting for an answer", done: "done", failed: "failed", interrupted: "interrupted", cancelled: "cancelled", idle: "idle" };
 const t3Status = (p) => T3_STATUS[p.t3.status] || "unknown";
@@ -1777,7 +1786,7 @@ async function showNative(x, key) {
 /** One session in the sidebar: folder, name and state, with how many subagents work. Subagents are listed on its page. */
 function sideSession(x) {
   const p = x.peer, cur = x.name === route.session;
-  const sub = shortName(x.name) + (p ? " · " + (p.projectGroup ? (p.projectMain ? "main · " : "secondary · ") : "") + (p.unavailable ? "unavailable" : p.activity || "connected") : " · ended");
+  const sub = (p && p.t3 ? p.t3.title : shortName(x.name)) + (p ? " · " + (p.projectGroup ? (p.projectMain ? "main · " : "secondary · ") : "") + (p.unavailable ? "unavailable" : p.activity || "connected") : " · ended");
   return '<div class="tree-sess' + (cur ? " cur" : "") + (x.live ? "" : " ended") + '">' +
     '<a href="' + href(x.name) + '" title="' + esc(x.name + (p ? " · " + p.cwd : "")) + '"' + (cur ? ' aria-current="page"' : "") + ">" + (p ? dot(p.activity) : '<span class="dot off"></span>') +
     '<span class="lbl ell">' + titled(sessionTitle(x), p) + '<small class="ell">' + esc(sub) + t3Asks(p) + "</small></span>" +
@@ -1832,7 +1841,7 @@ function sideMember(x) {
   const state = p.unavailable ? "unavailable" : p.activity || "connected";
   return '<div class="tree-sess member' + (main ? " main" : " secondary") + (cur ? " cur" : "") + (x.live ? "" : " ended") + '">' +
     '<a href="' + href(x.name) + '" title="' + esc(x.name + (p.cwd ? " · " + p.cwd : "")) + '"' + (cur ? ' aria-current="page"' : "") + ">" + dot(p.activity) +
-    '<span class="lbl ell">' + esc(agent) + (main ? '<span class="main-tag">main</span>' : "") + '<small class="ell">' + esc(state) + "</small></span>" +
+    '<span class="lbl ell">' + (p.t3 ? titled(agent, p) : esc(agent)) + (main ? '<span class="main-tag">main</span>' : "") + '<small class="ell">' + esc(p.t3 ? p.t3.title + " · " + state : state) + t3Asks(p) + "</small></span>" +
     (x.running ? '<span class="count" title="subagents working">' + x.running + "</span>" : "") + "</a></div>";
 }
 
@@ -1938,7 +1947,7 @@ function renderOverview() {
   const card = (x) => {
     const p = x.peer;
     const head = p
-      ? '<div class="head">' + av(p.agent) + '<div style="min-width:0;flex:1"><div class="title ell">' + titled(peerTitle(p), p) + '</div><div class="small muted ell">' + esc(x.name) + t3Asks(p) + "</div></div>" + dot(p.activity) + "</div>"
+      ? '<div class="head">' + av(p.agent) + '<div style="min-width:0;flex:1"><div class="title ell">' + titled(peerTitle(p), p) + '</div><div class="small muted ell">' + esc(p.t3 ? p.t3.title : x.name) + t3Asks(p) + "</div></div>" + dot(p.activity) + "</div>"
       : '<div class="head">' + av("other") + '<div style="min-width:0;flex:1"><div class="title ell">' + esc(x.name) + '</div><div class="small muted">not connected</div></div></div>';
     const stats = '<div class="stats"><span><b>' + x.groups.length + "</b>subagents</span>" + (x.running ? '<span style="color:var(--busy)"><b style="color:inherit">' + x.running + "</b>working</span>" : "") +
       (p ? "<span><b>" + up(p.startedAt) + "</b>connected</span>" : x.groups[0] ? "<span>last " + ago(x.groups[0].updatedAt) + "</span>" : "") + "</div>";
@@ -1966,8 +1975,9 @@ function renderSession() {
   $("sHead").innerHTML = p
     ? '<div class="head" style="display:flex;gap:12px;align-items:center">' + av(p.agent) + '<div style="min-width:0;flex:1"><div class="title ell" style="font-weight:650;font-size:15px">' + titled(peerTitle(p), p) + '</div><div class="small muted ell">' + esc(p.name) + "</div></div>" + dot(p.activity) + "</div>" +
       '<div class="kv"><span>status</span><span>' + esc(p.activity || "unknown") + "</span>" +
-      (p.t3 ? "<span>T3 chat</span><span>" + esc(t3Status(p) + (p.t3.model ? " · " + p.t3.model : "") + (p.t3.parentTitle ? " · subagent of " + p.t3.parentTitle : "") +
-        (p.t3.harness === "earlier" ? " · ran this chat before T3 switched it to " + p.t3.provider : "") + (x.folded ? " · earlier provider session: " + x.folded.join(", ") : "")) + "</span>" : "") +
+      (p.t3 ? "<span>T3 chat</span><span>" + esc(p.t3.title + " · " + t3Status(p) + (p.t3.model ? " · " + p.t3.model : "") + (p.t3.parentTitle ? " · subagent of " + p.t3.parentTitle : "") +
+        (p.t3.harness === "earlier" ? " · ran this chat before T3 switched it to " + p.t3.provider : "")) + "</span>" : "") +
+      (x.folded && x.folded.length ? "<span>also this chat</span><span>" + x.folded.map((n) => '<a href="' + href(n) + '">' + esc(n) + "</a>").join(", ") + "</span>" : "") +
       "<span>folder</span><span>" + esc(p.cwd) + "</span><span>connected</span><span>" + up(p.startedAt) + " ago</span>" +
       (p.sessionId ? "<span>session</span><span>" + esc(p.sessionId) + "</span>" : "") + "<span>version</span><span>" + esc(p.version || "?") + " " + versionChip(p) + "</span></div>" +
       // Quiet secondary actions; being the project main is a state (a chip), not a disabled button.

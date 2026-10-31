@@ -19,12 +19,14 @@ import { DatabaseSync } from "node:sqlite";
 
 export interface T3SessionInfo {
   id: string; title: string; provider: string; model: string | null;
+  /** The T3 project's folder (its workspace root): the project a worktree chat belongs to. */
+  projectRoot: string | null;
   status: "running" | "queued" | "waiting" | "done" | "failed" | "interrupted" | "cancelled" | "idle";
   parentTitle: string | null;
   /** T3 can switch a chat between providers: `current` runs the chat now, `earlier` ran it before the switch. */
   harness: "current" | "earlier";
 }
-interface FolderChat { id: string; title: string; provider: string; agent: string; agents: Set<string>; model: string | null; parentId: string | null }
+interface FolderChat { id: string; title: string; provider: string; agent: string; agents: Set<string>; model: string | null; parentId: string | null; projectRoot: string | null }
 
 /** The folder → chat index is rebuilt at most this often, or sooner for a folder it does not know yet. */
 export const T3_INDEX_MS = 60_000, T3_INDEX_MISS_MS = 10_000;
@@ -53,37 +55,47 @@ function open(root: string): DatabaseSync | undefined {
  */
 interface FolderEntry { owners: FolderChat[]; shared: FolderChat[] }
 function buildIndex(input: DatabaseSync): Map<string, FolderEntry> {
-  const rows = input.prepare(`SELECT substr(thread_id,1,513) id,substr(title,1,301) title,
-      substr(coalesce(provider_instance_id,default_provider),1,65) provider,
+  const roots = new Map((input.prepare(`SELECT project_id,substr(workspace_root,1,4097) root FROM projection_projects`).all() as { project_id: unknown; root: unknown }[])
+    .filter(r => typeof r.root === "string" && r.root.length > 0 && r.root.length <= 4096).map(r => [String(r.project_id), r.root as string]));
+  const rows = input.prepare(`SELECT substr(thread_id,1,513) id,substr(project_id,1,513) project_id,substr(title,1,301) title,
+      substr(coalesce(provider_instance_id,default_provider),1,65) provider,substr(default_provider,1,65) driver,
       json_extract(payload_json,'$.worktreePath') folder,json_extract(payload_json,'$.modelSelection.model') model,
       json_extract(payload_json,'$.lineage.parentThreadId') parent
     FROM orchestration_v2_projection_threads
-    WHERE deleted_at IS NULL AND octet_length(payload_json)<=${MAX_PAYLOAD} AND json_valid(payload_json)
-      AND json_type(payload_json,'$.worktreePath')='text'`).all() as Record<string, unknown>[];
+    WHERE deleted_at IS NULL AND octet_length(payload_json)<=${MAX_PAYLOAD} AND json_valid(payload_json)`).all() as Record<string, unknown>[];
+  // Every readable chat's own folder (null: none, it works in the project root), for parent lookups.
+  const folderOf = new Map<string, string | null>();
+  for (const row of rows) if (id(row.id)) folderOf.set(row.id, typeof row.folder === "string" && row.folder && row.folder.length <= 4096 ? t3FolderKey(row.folder) : null);
   const chats = new Map<string, FolderChat & { folder: string }>();
   for (const row of rows) {
     if (!id(row.id) || typeof row.folder !== "string" || !row.folder || row.folder.length > 4096) continue;
-    const provider = typeof row.provider === "string" ? row.provider : "", agent = AGENTS[provider] ?? "other";
-    chats.set(row.id, { id: row.id, title: (typeof row.title === "string" && row.title) || "Untitled chat", provider, agent, agents: new Set([agent]),
-      model: typeof row.model === "string" ? row.model.slice(0, 120) : null, parentId: id(row.parent) ? row.parent : null, folder: t3FolderKey(row.folder) });
+    // The agent comes from T3's driver kind (an instance can have any name); an unknown driver never links.
+    const provider = typeof row.provider === "string" ? row.provider : "", agent = AGENTS[String(row.driver)] ?? "other";
+    chats.set(row.id, { id: row.id, title: (typeof row.title === "string" && row.title) || "Untitled chat", provider, agent, agents: new Set(agent === "other" ? [] : [agent]),
+      model: typeof row.model === "string" ? row.model.slice(0, 120) : null, parentId: id(row.parent) ? row.parent : null,
+      projectRoot: roots.get(String(row.project_id)) ?? null, folder: t3FolderKey(row.folder) });
   }
   // Every provider a chat has run on (one row per provider harness the chat used).
-  for (const r of input.prepare(`SELECT DISTINCT thread_id,provider FROM orchestration_v2_projection_provider_threads`).all() as { thread_id: unknown; provider: unknown }[])
-    if (typeof r.thread_id === "string" && typeof r.provider === "string") chats.get(r.thread_id)?.agents.add(AGENTS[r.provider] ?? "other");
+  for (const r of input.prepare(`SELECT DISTINCT thread_id,coalesce(driver,provider) driver FROM orchestration_v2_projection_provider_threads`).all() as { thread_id: unknown; driver: unknown }[]) {
+    const agent = AGENTS[String(r.driver)];
+    if (typeof r.thread_id === "string" && agent) chats.get(r.thread_id)?.agents.add(agent);
+  }
   const origin = new Map((input.prepare(`SELECT child_thread_id,origin FROM orchestration_v2_projection_subagents`).all() as { child_thread_id: unknown; origin: unknown }[])
     .map(r => [String(r.child_thread_id), String(r.origin)]));
   const index = new Map<string, FolderEntry>();
   for (const chat of chats.values()) {
     const entry = index.get(chat.folder) ?? index.set(chat.folder, { owners: [], shared: [] }).get(chat.folder)!;
-    const inParentFolder = chat.parentId !== null && chats.get(chat.parentId)?.folder === chat.folder;
-    if (!inParentFolder) entry.owners.push(chat);
+    // Owner: a top-level chat, or a child whose (known) parent works in another folder or the project root.
+    // A child whose parent is unknown here (deleted, unreadable) never owns a folder on missing information.
+    const parentKnown = chat.parentId !== null && folderOf.has(chat.parentId);
+    if (chat.parentId === null || (parentKnown && folderOf.get(chat.parentId) !== chat.folder)) entry.owners.push(chat);
     else if (origin.get(chat.id) === "app_owned") entry.shared.push(chat);
   }
   return index;
 }
 
 /** Per T3 home: the folder index, when it was read, and the session folders it was built for. */
-const indexes = new Map<string, { at: number; index: Map<string, FolderEntry>; seen: Set<string> }>();
+const indexes = new Map<string, { at: number; index: Map<string, FolderEntry>; seen: Set<string>; failed: boolean }>();
 
 /**
  * T3 chat details for the given sessions (folder + agent), keyed like the input. A session is linked
@@ -100,16 +112,21 @@ export function t3SessionInfo(root: string | undefined, sessions: { key: string;
     // A folder first seen after the index was built (a new chat) may rebuild it early, once; folders
     // that are simply not T3 chats (the main checkout, other sessions) never keep forcing rebuilds.
     const fresh = sessions.some(s => { const k = t3FolderKey(s.cwd); return !cached?.index.has(k) && !cached?.seen.has(k); });
-    if (!cached || now - cached.at >= T3_INDEX_MS || (fresh && now - cached.at >= T3_INDEX_MISS_MS)) {
-      cached = { at: now, index: buildIndex(input), seen: new Set(sessions.map(s => t3FolderKey(s.cwd))) };
+    const age = cached ? now - cached.at : Infinity;
+    if (!cached || (cached.failed ? age >= T3_INDEX_MISS_MS : age >= T3_INDEX_MS || (fresh && age >= T3_INDEX_MISS_MS))) {
+      const seen = new Set(sessions.map(s => t3FolderKey(s.cwd)));
+      // A store that cannot be indexed (busy, unknown schema) is retried after the short window, not every poll.
+      try { cached = { at: now, index: buildIndex(input), seen, failed: false }; }
+      catch { cached = { at: now, index: new Map(), seen, failed: true }; }
       indexes.set(root, cached);
     }
+    if (cached.failed) return out;
     const waiting = input.prepare(`SELECT 1 FROM orchestration_v2_projection_runtime_requests WHERE thread_id=? AND status='pending' LIMIT 1`);
     const latest = input.prepare(`SELECT status FROM orchestration_v2_projection_runs WHERE thread_id=? ORDER BY ordinal DESC LIMIT 1`);
     const title = input.prepare(`SELECT substr(title,1,301) title FROM orchestration_v2_projection_threads WHERE thread_id=? AND deleted_at IS NULL`);
     const statusOf = (chat: FolderChat): T3SessionInfo["status"] =>
       waiting.get(chat.id) ? "waiting" : RUN_STATUS[String((latest.get(chat.id) as { status?: unknown } | undefined)?.status ?? "")] ?? "idle";
-    const fits = (chat: FolderChat, agent: string) => chat.agents.has(agent) || chat.agent === "other";
+    const fits = (chat: FolderChat, agent: string) => chat.agents.has(agent);
     const linked = new Map<string, { chat: FolderChat; status: T3SessionInfo["status"] }>();
     for (const s of sessions) {
       const entry = cached.index.get(t3FolderKey(s.cwd));
@@ -126,9 +143,9 @@ export function t3SessionInfo(root: string | undefined, sessions: { key: string;
       if (!l || claims.get(`${l.chat.id}|${s.agent}`)! > 1) continue;
       const chat = l.chat;
       const parent = chat.parentId ? title.get(chat.parentId) as { title?: unknown } | undefined : undefined;
-      out.set(s.key, { id: chat.id, title: chat.title, provider: chat.provider, model: chat.model,
+      out.set(s.key, { id: chat.id, title: chat.title, provider: chat.provider, model: chat.model, projectRoot: chat.projectRoot,
         status: l.status,
-        parentTitle: typeof parent?.title === "string" ? parent.title : null, harness: chat.agent === s.agent || chat.agent === "other" ? "current" : "earlier" });
+        parentTitle: typeof parent?.title === "string" ? parent.title : null, harness: chat.agent === s.agent ? "current" : "earlier" });
     }
     return out;
   } catch {

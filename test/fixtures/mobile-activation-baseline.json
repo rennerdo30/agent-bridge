@@ -1,8 +1,14 @@
 {
   "base": "0fed680017e823197b1fb3344598632f5cd219ed",
   "uiSha256": "876fbc073c419e55a05c806b75c4993d254510c444cbd81d70098efbd22fb98c",
-  "pageSha256": "e1f480c59a81b66027a44e4c226498e391b5c80fcd10cf620d2bd68f77b6c447",
+  "pageSha256": "c4d691958b150e0bad232086b042ac4e14ba1908c1c7eec76b4d34ff4ac2969e",
   "updates": {
+    "AB-468-review": {
+      "base": "d3637fba",
+      "previousPageSha256": "e1f480c59a81b66027a44e4c226498e391b5c80fcd10cf620d2bd68f77b6c447",
+      "reason": "AB-468 (PR #153) review and owner fixes: the session title stays the project folder (for a T3 worktree chat its T3 project's folder, peer.t3.projectRoot) and the T3 chat title moves to the second line of sidebar rows, session cards and grouped project rows (sideMember); the session page T3 row starts with the chat title and links the sessions folded into it. Folding now groups all connected sessions of one T3 chat under the current provider's session, else the newest, and moves their subagent runs (re-sorted) and child sessions with them. Sessions without peers[].t3 render exactly as before. Page re-pinned. The mobileDashboardPage addition, the optional mobile page and default mobile activation behavior are unchanged.",
+      "commit": "same commit as this pin (first commit after d3637fba)"
+    },
     "AB-468": {
       "base": "b9a7349f",
       "previousPageSha256": "0b787ddb1b4511a7ef032d866baa49cfb04a8f42174078f052626bf31e6961dd",
