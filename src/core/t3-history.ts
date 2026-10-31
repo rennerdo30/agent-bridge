@@ -5,6 +5,7 @@ import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { CONVERSATION_BYTES } from "./conversation-text.js";
 import { decodeBytes } from "./history-codec.js";
 import { conversationProject } from "./project-store.js";
+import { physicalPath } from "./project-identity.js";
 import { parse, time } from "./transcripts/common.js";
 
 const digest = (value: string) => createHash("sha256").update(value).digest("hex");
@@ -64,7 +65,10 @@ export class T3History {
   private readonly codec: string;
   private verifySource?: () => void;
   constructor(private root: string | undefined, private db: DatabaseSync, private sink: Sink, private readonly messages = false) {
-    const path = root && isAbsolute(root) ? resolve(root).replace(/^d:/i, "E:") : root ?? "disabled";
+    // AB-475: one checkpoint per physical T3 home. physicalPath resolves SUBST, mapped drives and links on any
+    // machine; no drive layout is assumed. An unresolvable home keeps its plain spelling.
+    const physical = (p: string) => { try { return physicalPath(p); } catch { return p; } };
+    const path = root && isAbsolute(root) ? physical(resolve(root)) : root ?? "disabled";
     this.key = `durable-t3:${digest(process.platform === "win32" ? path.toLowerCase() : path)}`;
     this.sink = {
       cursor: key => sink.cursor(key),

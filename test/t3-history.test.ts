@@ -1,5 +1,5 @@
 import { DatabaseSync } from "node:sqlite";
-import { mkdirSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
 import fs from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
 import { join } from "node:path";
@@ -416,6 +416,18 @@ it("records unsupported message shapes/versions explicitly and does not fetch un
   expect(f.rows("t3:fragment")).toHaveLength(1);
   expect(f.index.search({ query: "unrelated_payload" }).hits).toHaveLength(0);
   expect(f.index.search({ query: "supported_after_gap" }).hits).toHaveLength(1);
+});
+
+// AB-475: the checkpoint belongs to the physical T3 home, whatever spelling (link, junction, drive alias) reaches it.
+it("keeps one checkpoint for a T3 home reached through a link", () => {
+  const f = fixture();
+  f.drain();
+  const alias = join(f.env.home, "t3-alias");
+  symlinkSync(f.root, alias, process.platform === "win32" ? "junction" : "dir");
+  const viaAlias = new ConversationIngestor(f.db, f.env.home, { ...f.paths, t3: alias }, f.bridge); close.push(() => viaAlias.close());
+  for (let n = 0; n < 20 && (viaAlias.tick(), viaAlias.discovering); n++);
+  const keys = f.db.prepare("SELECT source FROM history_cursors WHERE source LIKE 'durable-t3:%' AND source NOT LIKE '%:status'").all();
+  expect(keys).toHaveLength(1);
 });
 
 it("never implicitly discovers owner T3 storage in tests and refuses malformed explicit homes", () => {
