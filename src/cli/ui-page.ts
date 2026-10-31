@@ -801,9 +801,13 @@ main.wrap { padding-top: 32px; max-width: 1240px; }
 /* AB-468: a session that is a T3 Code chat. */
 .chip.t3 { color: var(--accent); background: var(--accent-soft); border-color: transparent; font-weight: 600; font-size: 10.5px; padding: 0 6px; margin-left: 6px; vertical-align: 1px; }
 .t3-ask { color: var(--warn); font-weight: 600; }
-.t3-ttl { display: flex; align-items: center; min-width: 0; }
-.t3-ttl > .ell { min-width: 0; }
-.t3-ttl > .chip.t3 { flex: none; }
+.ttl { display: flex; align-items: center; min-width: 0; }
+.ttl > .ell { min-width: 0; }
+.ttl > .chip { flex: none; }
+/* The harness a session runs on, next to its title, in the agent's colour. */
+.chip.harness { font-weight: 600; font-size: 10.5px; padding: 0 6px; margin-left: 6px; vertical-align: 1px; border-color: transparent; }
+.chip.harness.claude { color: var(--claude); } .chip.harness.codex { color: var(--codex); } .chip.harness.opencode { color: var(--opencode); }
+.chip.harness.antigravity { color: var(--antigravity); } .chip.harness.muse { color: var(--muse); }
 
 /* Overview: one figures strip instead of a card per number. */
 #ovStats { display: flex; flex-wrap: wrap; gap: 0; background: var(--panel); border-radius: 10px; box-shadow: var(--shadow); overflow: hidden; }
@@ -1550,7 +1554,11 @@ const T3_STATUS = { running: "working", queued: "queued", waiting: "waiting for 
 const t3Status = (p) => T3_STATUS[p.t3.status] || "unknown";
 const t3Chip = (p) => p && p.t3 ? '<span class="chip t3" title="' + esc("T3 Code chat · " + t3Status(p) + (p.t3.parentTitle ? " · subagent of " + p.t3.parentTitle : "")) + '">T3</span>' : "";
 /** A title that may end in the T3 badge: the title truncates, the badge stays visible. */
-const titled = (text, p) => p && p.t3 ? '<span class="t3-ttl"><span class="ell">' + esc(text) + "</span>" + t3Chip(p) + "</span>" : esc(text);
+const HARNESS = { claude: "Claude", codex: "Codex", opencode: "opencode", antigravity: "Antigravity", muse: "Muse" };
+/** The harness badge (Claude, Codex, ...) every session shows; only known agents get one. */
+const harnessChip = (p) => p && Object.hasOwn(HARNESS, p.agent) ? '<span class="chip harness ' + p.agent + '" title="Runs on ' + HARNESS[p.agent] + '">' + HARNESS[p.agent] + "</span>" : "";
+/** A title with its badges (harness, then T3 when T3 hosts the chat): the title truncates, the badges stay visible. */
+const titled = (text, p) => p ? '<span class="ttl"><span class="ell">' + esc(text) + "</span>" + harnessChip(p) + t3Chip(p) + "</span>" : esc(text);
 const t3Asks = (p) => p && p.t3 && p.t3.status === "waiting" ? ' · <span class="t3-ask">waiting for an answer</span>' : "";
 
 /** Live sessions grouped by PC (this PC first, busiest first), then ended sessions that have subagents. */
@@ -1841,7 +1849,7 @@ function sideMember(x) {
   const state = p.unavailable ? "unavailable" : p.activity || "connected";
   return '<div class="tree-sess member' + (main ? " main" : " secondary") + (cur ? " cur" : "") + (x.live ? "" : " ended") + '">' +
     '<a href="' + href(x.name) + '" title="' + esc(x.name + (p.cwd ? " · " + p.cwd : "")) + '"' + (cur ? ' aria-current="page"' : "") + ">" + dot(p.activity) +
-    '<span class="lbl ell">' + (p.t3 ? titled(agent, p) : esc(agent)) + (main ? '<span class="main-tag">main</span>' : "") + '<small class="ell">' + esc(p.t3 ? p.t3.title + " · " + state : state) + t3Asks(p) + "</small></span>" +
+    '<span class="lbl ell">' + (p.t3 ? '<span class="ttl"><span class="ell">' + esc(agent) + "</span>" + t3Chip(p) + "</span>" : esc(agent)) + (main ? '<span class="main-tag">main</span>' : "") + '<small class="ell">' + esc(p.t3 ? p.t3.title + " · " + state : state) + t3Asks(p) + "</small></span>" +
     (x.running ? '<span class="count" title="subagents working">' + x.running + "</span>" : "") + "</a></div>";
 }
 

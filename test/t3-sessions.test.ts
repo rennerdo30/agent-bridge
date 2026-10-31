@@ -217,7 +217,7 @@ describe("T3 chats on the normal session entries (AB-468)", () => {
     const x = session(peer({ id: "chat", title: "Dungeon <epic>", provider: "codex", model: null, projectRoot: "E:\\Development\\animal-catch-game", status: "waiting", parentTitle: 'Main "x" <y> $`' }));
     expect(ui.sessionTitle(x)).toBe("animal-catch-game");
     const html = ui.sideSession(x);
-    expect(html).toContain('<span class="t3-ttl"><span class="ell">animal-catch-game</span><span class="chip t3"');
+    expect(html).toContain('<span class="ttl"><span class="ell">animal-catch-game</span><span class="chip harness codex" title="Runs on Codex">Codex</span><span class="chip t3"');
     expect(html).toContain('<small class="ell">Dungeon &lt;epic&gt; · busy');
     expect(html).not.toContain(">t3-aaaa1111<");
     expect(html).toContain('<span class="chip t3" title="T3 Code chat · waiting for an answer · subagent of Main &quot;x&quot; &lt;y&gt; $`">T3</span>');
@@ -261,10 +261,15 @@ describe("T3 chats on the normal session entries (AB-468)", () => {
     expect(html).toContain('class="chip t3"');
   });
 
-  it("leaves sessions that are not T3 chats unchanged", () => {
+  it("gives every session its harness badge; sessions that are not T3 chats keep their folder title and no T3 badge", () => {
     const ui = page();
     const x = session(peer());
     expect(ui.sessionTitle(x)).toBe("t3-aaaa1111");
-    expect(ui.sideSession(x)).not.toContain("chip t3");
+    const html = ui.sideSession(x);
+    expect(html).toContain('<span class="ttl"><span class="ell">t3-aaaa1111</span><span class="chip harness codex" title="Runs on Codex">Codex</span></span>');
+    expect(html).not.toContain("chip t3");
+    expect(ui.sideSession(session({ ...peer(), agent: "claude" }))).toContain('<span class="chip harness claude" title="Runs on Claude">Claude</span>');
+    // Unknown agent kinds get no badge (and never reach a class name).
+    expect(ui.sideSession(session({ ...peer(), agent: 'x" onclick="y' }))).not.toContain("chip harness");
   });
 });

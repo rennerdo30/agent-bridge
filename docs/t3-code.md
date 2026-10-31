@@ -35,7 +35,8 @@ session gets a `t3` object (`id`, `title`, `provider`, `model`, `projectRoot`, `
 there fits its agent. The dashboard keeps the project folder as the session's title: for a T3
 worktree chat that is its T3 project's folder (`projectRoot`) instead of the worktree's
 generated name. The chat title goes on the second line, with a T3 badge and "waiting for an
-answer" while T3 has a pending request for the chat. Status is `waiting`, else the latest
+answer" while T3 has a pending request for the chat. Every session, T3 or not, also shows a
+harness badge for the agent it runs on (Claude, Codex, opencode, Antigravity, Muse). Status is `waiting`, else the latest
 run's status (`running`, `queued`, `done`, `failed`, `interrupted`, `cancelled`), or `idle`.
 
 - **Agents:** a chat's agent comes from T3's driver kind (`default_provider`, and `driver` in
