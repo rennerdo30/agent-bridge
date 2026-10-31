@@ -1,9 +1,9 @@
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { T3_INDEX_MISS_MS, T3_INDEX_MS, t3FolderKey, t3SessionInfo } from "../src/core/t3-sessions.js";
+import { T3_INDEX_MISS_MS, T3_INDEX_MS, T3_PROMPT_RETRY_MS, t3FolderKey, t3SessionInfo, transcriptPrompts, type PromptReader } from "../src/core/t3-sessions.js";
 import { UI_PAGE } from "../src/cli/ui-page.js";
 
 // AB-468: the installed T3 store's tables this feature reads (unused columns kept so the reader
@@ -23,6 +23,8 @@ CREATE TABLE orchestration_v2_projection_provider_threads(provider_thread_id TEX
  provider TEXT NOT NULL,provider_session_id TEXT,status TEXT,first_run_ordinal INTEGER,last_run_ordinal INTEGER,updated_at TEXT,payload_json TEXT,driver TEXT,provider_instance_id TEXT);
 CREATE TABLE orchestration_v2_projection_subagents(subagent_id TEXT PRIMARY KEY,thread_id TEXT NOT NULL,run_id TEXT,parent_node_id TEXT,provider TEXT,
  provider_thread_id TEXT,child_thread_id TEXT,origin TEXT,status TEXT,started_at TEXT,completed_at TEXT,updated_at TEXT,payload_json TEXT,driver TEXT,provider_instance_id TEXT);
+CREATE TABLE orchestration_v2_projection_messages(message_id TEXT PRIMARY KEY,thread_id TEXT NOT NULL,run_id TEXT,node_id TEXT,role TEXT NOT NULL,
+ streaming INTEGER NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,payload_json TEXT NOT NULL);
 CREATE TABLE auth_sessions(do_not_read TEXT);`;
 
 const roots: { root: string; db: DatabaseSync }[] = [];
@@ -195,6 +197,88 @@ describe("T3 chats behind Bridge sessions (AB-468)", () => {
     db.exec(SCHEMA.split(";").find((q) => q.includes("CREATE TABLE orchestration_v2_projection_subagents"))!);
     expect(t3SessionInfo(root, s, t0 + 1_000).size).toBe(0); // the failed attempt is remembered
     expect(t3SessionInfo(root, s, t0 + T3_INDEX_MISS_MS).get("s")).toMatchObject({ title: "Chat" });
+  });
+});
+
+// AB-470: main chats share the project root, so the folder cannot tell them apart. T3 stores the same prompt
+// text the provider transcript holds, at about the same time.
+describe("T3 chats in a shared folder, linked by the session's first prompts (AB-470)", () => {
+  const ROOT = "E:/Development/game", T = Date.parse("2026-10-31T14:18:37Z");
+  let n = 0;
+  const message = (db: DatabaseSync, thread: string, text: string, at: number) =>
+    db.prepare(`INSERT INTO orchestration_v2_projection_messages VALUES(?,?,NULL,NULL,'user',0,?,?,?)`)
+      .run(`m${++n}`, thread, new Date(at).toISOString(), new Date(at).toISOString(), JSON.stringify({ text }));
+  const reader = (byId: Record<string, { text: string; at: number }[]>) => vi.fn<PromptReader>((s) => byId[s.sessionId] ?? []);
+  const session = (sessionId: string, agent = "codex") => ({ key: sessionId, cwd: ROOT, agent, sessionId });
+
+  it("links a project-root session to the one chat with its first real prompt, and leaves other root sessions alone", () => {
+    const { root, db } = store();
+    thread(db, "main", { title: "Assess T3 integration" }); message(db, "main", "how does our t3 integration look now?", T);
+    thread(db, "other", { title: "Other chat" }); message(db, "other", "something else entirely", T + 1_000);
+    const prompts = reader({
+      // Codex sends injected context first; it matches nothing and is skipped by the comparison.
+      s1: [{ text: "# AGENTS.md instructions for E:/Development/game", at: T + 1_500 }, { text: "how does our  t3 integration\nlook now?", at: T + 2_000 }],
+      s2: [{ text: "a plain codex session started outside T3", at: T + 3_000 }],
+    });
+    const info = t3SessionInfo(root, [session("s1"), session("s2")], 1_000, prompts);
+    expect(info.get("s1")).toMatchObject({ id: "main", title: "Assess T3 integration", harness: "current", projectRoot: ROOT });
+    expect(info.has("s2")).toBe(false);
+  });
+
+  it("never guesses: no prompt reader, no session ID, a prompt outside the time window or a prompt two chats share", () => {
+    const { root, db } = store();
+    thread(db, "a"); message(db, "a", "please continue with the plan", T);
+    thread(db, "b"); message(db, "b", "please continue with the plan", T + 30_000);
+    thread(db, "c"); message(db, "c", "only chat c asked this question", T);
+    const prompts = reader({ shared: [{ text: "please continue with the plan", at: T + 1_000 }], late: [{ text: "only chat c asked this question", at: T + 3_600_000 }] });
+    expect(t3SessionInfo(root, [session("shared"), session("late")], 1_000, prompts).size).toBe(0);
+    expect(t3SessionInfo(root, [{ key: "x", cwd: ROOT, agent: "codex" }], 2_000, prompts).size).toBe(0);
+    expect(t3SessionInfo(root, [session("late")], 3_000).size).toBe(0);
+  });
+
+  it("only links a chat that ran on the session's agent", () => {
+    const { root, db } = store();
+    thread(db, "claude-chat", { provider: "claudeAgent" }); message(db, "claude-chat", "fix the dashboard layout please", T);
+    const prompts = reader({ s: [{ text: "fix the dashboard layout please", at: T + 1_000 }] });
+    expect(t3SessionInfo(root, [session("s", "codex")], 1_000, prompts).size).toBe(0);
+    expect(t3SessionInfo(root, [session("s", "claude")], 2_000, prompts).get("s")).toMatchObject({ id: "claude-chat" });
+  });
+
+  it("tells several candidate chats in one worktree apart by prompt", () => {
+    const { root, db } = store();
+    thread(db, "main", { folder: WT, title: "Main" }); message(db, "main", "start the main work here", T);
+    thread(db, "task", { folder: WT, parent: "main", title: "Delegated task" }); origin(db, "task", "main", "app_owned"); run(db, "task", 1, "running");
+    message(db, "task", "review the parser change carefully", T + 60_000);
+    const prompts = reader({ s: [{ text: "review the parser change carefully", at: T + 61_000 }] });
+    expect(t3SessionInfo(root, [{ key: "s", cwd: WT, agent: "codex", sessionId: "s" }], 1_000, prompts).get("s")).toMatchObject({ id: "task", title: "Delegated task" });
+  });
+
+  it("reads a session's transcript once for a match, and retries a session without a match only after a while", () => {
+    const { root, db } = store();
+    thread(db, "main"); message(db, "main", "how does our t3 integration look now?", T);
+    const prompts = reader({ hit: [{ text: "how does our t3 integration look now?", at: T }], miss: [{ text: "not a t3 prompt at all", at: T }] });
+    const t0 = 90_000_000, both = [session("hit"), session("miss")];
+    const first = t3SessionInfo(root, both, t0, prompts); t3SessionInfo(root, both, t0 + 1_000, prompts);
+    expect(first.get("hit")).toMatchObject({ id: "main" });
+    expect(first.has("miss")).toBe(false); // the only chat in this root is still not a guess
+    expect(prompts.mock.calls.filter(([x]) => x.sessionId === "hit")).toHaveLength(1);
+    expect(prompts.mock.calls.filter(([x]) => x.sessionId === "miss")).toHaveLength(1);
+    t3SessionInfo(root, both, t0 + T3_PROMPT_RETRY_MS, prompts);
+    expect(prompts.mock.calls.filter(([x]) => x.sessionId === "hit")).toHaveLength(1);
+    expect(prompts.mock.calls.filter(([x]) => x.sessionId === "miss")).toHaveLength(2);
+  });
+
+  it("reads the first prompts from the CLI's own transcript (Claude)", () => {
+    const home = mkdtempSync(join(tmpdir(), "ab-t3-claude-")); roots.push({ root: home, db: new DatabaseSync(":memory:") });
+    const id = "0f9d5c0e-1111-4222-8333-444455556666", dir = join(home, "projects", ROOT.replace(/[^A-Za-z0-9]/g, "-"));
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, `${id}.jsonl`), [
+      { type: "ai-title", aiTitle: "T3 integration status", sessionId: id },
+      { type: "user", timestamp: new Date(T + 2_000).toISOString(), message: { role: "user", content: [{ type: "text", text: "how does our t3 integration look now?" }] } },
+      { type: "assistant", timestamp: new Date(T + 3_000).toISOString(), message: { role: "assistant", content: [{ type: "text", text: "Checking." }] } },
+    ].map((r) => JSON.stringify(r)).join("\n") + "\n");
+    const read = transcriptPrompts({ claude: home, codex: join(home, "codex"), opencode: join(home, "opencode") });
+    expect(read({ agent: "claude", cwd: ROOT, sessionId: id })).toEqual([{ text: "how does our t3 integration look now?", at: T + 2_000 }]);
   });
 });
 
