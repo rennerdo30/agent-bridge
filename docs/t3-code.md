@@ -12,7 +12,8 @@ discover T3 implicitly; fixtures must supply a synthetic `TranscriptPaths.t3`.
 **Default coverage is project/thread metadata only** (including archived threads, title and
 recorded parent/fork relation). T3 is a wrapper over ordinary provider sessions whose
 transcripts Bridge already indexes, so importing T3's copy of the message text would show
-every message twice in search (AB-473). In this default the event log is not read at all.
+every message twice in search (AB-473). In this default no message payloads are read; only the
+event log's last sequence and identity are checked to detect a replaced or rolled-back source.
 The message import described below stays available to explicit callers
 (`ConversationIngestor` option `t3Messages: true`); it adds surviving v2
 `message.updated` events. Linking T3 chats to the provider transcripts they ran on is

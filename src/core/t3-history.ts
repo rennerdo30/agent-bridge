@@ -241,7 +241,7 @@ export class T3History {
       const backlog = () => this.messages && (!!state.pending || state.sequence < high);
       this.discovering = backlog() || Date.now() >= state.refreshAt;
       if (Date.now() < deadline && Date.now() >= state.refreshAt) work += this.metadata(input, state);
-      // Without message import the event log is never scanned.
+      // Without message import no event payloads are read (only the identity/rollback checks above).
       for (let n = 0; this.messages && n < STEPS && Date.now() < deadline; n++) {
         if (state.pending) { this.copy(input, state); work++; continue; }
         // Primary-key sequence windows include version metadata so future message versions
@@ -264,7 +264,8 @@ export class T3History {
         this.save(state); work++;
       }
       this.discovering = backlog() || Date.now() >= state.refreshAt;
-      this.status(state.incomplete ? "incomplete" : "ready", this.messages ? "coverage: metadata and surviving v2 message.updated events only"
+      // A messages-on checkpoint may carry `incomplete`; it describes message coverage, not metadata.
+      this.status(this.messages && state.incomplete ? "incomplete" : "ready", this.messages ? "coverage: metadata and surviving v2 message.updated events only"
         : "coverage: thread metadata only; message text comes from the provider transcripts");
       return work;
     } catch (error) {

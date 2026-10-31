@@ -108,7 +108,7 @@ function oneFragment(f: Fixture) {
 
 // AB-473: T3 wraps provider sessions whose transcripts Bridge already indexes. By default T3 adds what only
 // it knows (titles, projects, relations, archived chats) and never its copy of the message text.
-it("by default imports T3 thread metadata only: titles are searchable, message text is not duplicated and the event log is not read", () => {
+it("by default imports T3 thread metadata only: titles are searchable, message text is not duplicated and no event payloads are read", () => {
   const f = fixture("environment-one", true, false);
   event(f.input, 5);
   const prepare = vi.spyOn(DatabaseSync.prototype, "prepare");
