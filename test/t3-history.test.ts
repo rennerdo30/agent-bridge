@@ -9,7 +9,7 @@ import { decodeBytes } from "../src/core/history-codec.js";
 import { MessageStore } from "../src/core/store.js";
 import { nullLogger } from "../src/core/logger.js";
 import { conversationProject } from "../src/core/project-store.js";
-import { transcriptPaths, type TranscriptPaths } from "../src/core/transcripts/common.js";
+import { localT3HistoryRoot, type TranscriptPaths } from "../src/core/transcripts/common.js";
 import { makeEnv } from "./helpers.js";
 
 // Installed 7c3b3b3 schema, including unused columns: the reader must not depend on
@@ -314,9 +314,9 @@ it("records unsupported message shapes/versions explicitly and does not fetch un
 });
 
 it("never implicitly discovers owner T3 storage in tests and refuses malformed explicit homes", () => {
-  expect(transcriptPaths({ AGENT_BRIDGE_TEST_ROOT: "", T3CODE_HOME: "inherited-owner-home" }, "/synthetic").t3).toBeUndefined();
-  expect(transcriptPaths({ T3CODE_HOME: "" }, "/synthetic").t3).toBe("");
-  expect(transcriptPaths({}, "/synthetic").t3).toMatch(/[\\/]synthetic[\\/]\.t3$/);
+  expect(localT3HistoryRoot({ AGENT_BRIDGE_TEST_ROOT: "", T3CODE_HOME: "inherited-owner-home" }, "/synthetic")).toBeUndefined();
+  expect(localT3HistoryRoot({ T3CODE_HOME: "" }, "/synthetic")).toBe("");
+  expect(localT3HistoryRoot({}, "/synthetic")).toMatch(/[\\/]synthetic[\\/]\.t3$/);
   const f = fixture(); f.paths.t3 = ""; f.restart(); f.drain();
   expect(f.status().reason).toBe("invalid explicit T3 home"); expect(f.rows()).toHaveLength(0);
 });

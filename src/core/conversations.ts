@@ -17,6 +17,7 @@ import {
   object,
   parse,
   safeFile,
+  localT3HistoryRoot,
   type TranscriptPaths,
 } from "./transcripts/common.js";
 import { conversationProject, syncProjectMirror } from "./project-store.js";
@@ -120,7 +121,7 @@ export class ConversationIngestor {
         .prepare("SELECT coalesce(max(checked),0) n FROM (SELECT checked FROM conversation_sources UNION ALL SELECT checked FROM conversation_projects)")
         .get()!.n,
     );
-    this.t3 = new T3History(paths.t3, db, {
+    this.t3 = new T3History(Object.hasOwn(paths, "t3") ? paths.t3 : localT3HistoryRoot(), db, {
       cursor: key => this.cursor(key),
       advance: (key, value) => this.advance(key, value),
       put: (...args) => this.put(...args),
