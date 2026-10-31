@@ -15,8 +15,16 @@
     "src/cli/dashboard.ts:ensure": "d19ca8a9485ccc07d588997e3497bc11545e730a264e9a6f59bf1ceb0dfcda49",
     "src/cli/dashboard.ts:close": "534d315c24ff13f59aa4082abf2fb66906e6bee9b979a6348979cbaef89ec7b4"
   },
-  "uiSha256": "3493cb09446e0a7844f7e946529f36dd591c0fb6cc890c5ba30ac2739ac08c0f",
+  "uiSha256": "6d0ecbde7f3a4016aef241af6e6bb34c959e06590bf2075d1aed670c2a44b83c",
   "updates": {
+    "AB-470-root-chat-prompts": {
+      "base": "47023b32",
+      "changes": [],
+      "previousUiSha256": "3493cb09446e0a7844f7e946529f36dd591c0fb6cc890c5ba30ac2739ac08c0f",
+      "uiSha256": "6d0ecbde7f3a4016aef241af6e6bb34c959e06590bf2075d1aed670c2a44b83c",
+      "reason": "AB-470: startUi's withT3 also passes each local peer's sessionId and a prompt reader (transcriptPrompts over the configured or default transcript paths) to t3SessionInfo, so sessions in a shared project root can be matched to their T3 chat by their first prompts. The transcriptPaths name joins the existing transcripts/common.js import and the t3Prompts definition is added. No mobile route, mobile state, startup, listen or close control flow changes; broker/node/dashboard method pins are unchanged.",
+      "commit": "same commit as this pin (merge of 47023b32 into the AB-470 branch)"
+    },
     "AB-468-local-sessions": {
       "base": "18bd3371",
       "changes": [],

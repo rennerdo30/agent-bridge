@@ -18,7 +18,7 @@ adds a second entry for the same chat.
 | --- | --- | --- |
 | 1 | T3 chat title, status and badge on the existing session entries, across provider switches (done, below) | `orchestration_v2_projection_threads`, `_provider_threads`, `_subagents`, `_runs`, `_runtime_requests` |
 | 2 | History: one conversation per T3 chat, linked to the provider transcripts it ran on, without duplicate messages; then tool calls, commands, file changes and attachments | `_turn_items`, `_provider_threads` (run ranges per provider), `_subagents`, `userdata/attachments` |
-| 3 | Link chats that share a folder with other chats of the same agent (usually main chats in the project root): T3 does not store usable native session IDs, so another reliable key is needed | to be determined |
+| 3 | Link chats that share a folder (usually main chats in the project root) by the session's first prompts (below) | `orchestration_v2_projection_messages` plus the CLI's own transcript |
 | 4 | T3 details for sessions on paired PCs, each PC reading only its own store | the paired dashboard read |
 | 5 | Optional: wake an idle T3 chat for new Bridge mail | the running T3 app over loopback; a database write would start no run and could corrupt T3's state |
 
@@ -51,9 +51,21 @@ run's status (`running`, `queued`, `done`, `failed`, `interrupted`, `cancelled`)
   one entry in the dashboard lists (the current provider's, else the newest), taking their
   subagent runs and child sessions along; folded sessions stay reachable by their own pages,
   linked from the chat's session page.
-- **Never guessed:** sessions in a folder with several candidates for their agent, two
-  same-agent sessions claiming one chat, deleted chats and chats without their own folder get
-  nothing and keep their usual entry.
+- **Shared folders (AB-470):** when the folder alone is not enough (a project root, where main
+  chats and plenty of non-T3 sessions work, or a worktree with several candidates), the session's
+  first prompts are read from its own CLI transcript (Bridge's transcript readers, first page)
+  and compared with the T3 user messages of the candidate chats in that folder: whitespace-
+  normalized, first 300 characters, up to 8 prompts from the session's first hour; each prompt
+  only matches a T3 message within 10 minutes of it. T3 stores the same prompt text the provider transcript holds;
+  injected context (instructions, environment blocks, local commands) is skipped. Exactly one
+  matching chat links. A match is kept for the session (and wins over a lone remaining
+  candidate); a session without a match is retried after about a minute, or ten once its
+  compared prompts can no longer change (eight seen, or its first hour and window are over). An unreadable message table costs only these matches. In a project
+  root (or a worktree that is the root) a chat is never linked by being the only candidate.
+  **Known limit:** a provider fork or resumed session that copies its parent's first prompts
+  matches the parent chat; with both connected the claim guard leaves both unlinked.
+- **Never guessed:** no match or several matching chats, two same-agent sessions claiming one
+  chat, and deleted chats get nothing and keep their usual entry.
 
 Folders compare by physical location: separators, a trailing separator and (on Windows)
 case do not matter, and drive aliases (SUBST, mapped drives, junctions, symlinks) resolve

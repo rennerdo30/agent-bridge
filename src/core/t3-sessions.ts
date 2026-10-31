@@ -1,6 +1,8 @@
 import { lstatSync, realpathSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import type { TranscriptPaths, TranscriptSession } from "./transcripts/common.js";
+import { readTranscript } from "./transcripts/index.js";
 import { physicalPath } from "./project-identity.js";
 
 /**
@@ -14,8 +16,11 @@ import { physicalPath } from "./project-identity.js";
  * T3 is a wrapper: the same chat is a Claude, Codex, ... session underneath, and T3 can switch its
  * provider. A session in the chat's folder is linked when its agent is the current provider or one
  * the chat ran on before (`harness: "earlier"`), so a switch never makes a second, unlinked entry.
- * Chats in a shared folder (usually the project root) and folders claimed by several chats are
- * not matched: a session is never guessed to be a chat. Any store problem means "no T3 data".
+ * AB-470: where the folder alone is not enough (the project root that main chats share, or a worktree
+ * several chats could be), the session's own first prompts are compared with the T3 user messages of the
+ * candidate chats: T3 stores the same prompt text at about the same time. Exactly one matching chat links;
+ * otherwise the session stays unlinked, so a session is never guessed to be a chat. Any store problem
+ * means "no T3 data".
  */
 
 export interface T3SessionInfo {
@@ -28,9 +33,20 @@ export interface T3SessionInfo {
   harness: "current" | "earlier";
 }
 interface FolderChat { id: string; title: string; provider: string; agent: string; agents: Set<string>; model: string | null; parentId: string | null; projectRoot: string | null }
+/** The session's first prompts (oldest first), from its own CLI transcript. */
+export type PromptReader = (session: { agent: string; cwd: string; sessionId: string }) => { text: string; at: number }[];
 
 /** The folder → chat index is rebuilt at most this often, or sooner for a folder it does not know yet. */
 export const T3_INDEX_MS = 60_000, T3_INDEX_MISS_MS = 10_000;
+/** Prompt matching: compared prefix, shortest prompt that counts, prompts read, time window, retry for no match. */
+const PROMPT_CHARS = 300, MIN_PROMPT_CHARS = 12, MAX_PROMPTS = 8, PROMPT_WINDOW_MS = 10 * 60_000, MAX_POOL = 500;
+/** Only a session's first hour of prompts is compared (keeps the message query narrow). */
+const PROMPT_SPAN_MS = 60 * 60_000, MAX_PROMPT_LINKS = 2_000;
+/** A session without a match is retried after a minute; one that already showed all its compared prompts, after
+ * ten. Retries are spread by up to the jitter so many sessions never re-read their transcripts in the same poll. */
+export const T3_PROMPT_RETRY_MS = 60_000, T3_PROMPT_SETTLED_MS = 10 * 60_000, T3_PROMPT_JITTER_MS = 15_000;
+/** Context CLIs inject as user messages (instructions, environment, local commands): never a real prompt. */
+const INJECTED = /^(# AGENTS\.md|Caveat: The messages below|<(environment_context|user_instructions|permissions|command-name|command-message|command-args|local-command|system-reminder|turn_aborted|user_shell_command|bash-input|bash-stdout|bash-stderr|task-notification|user-prompt-submit-hook|agent-bridge-message|channel))/i;
 const MAX_PAYLOAD = 65_536;
 const AGENTS: Record<string, string> = { claudeAgent: "claude", claude: "claude", codex: "codex", opencode: "opencode", antigravity: "antigravity", muse: "muse" };
 const RUN_STATUS: Record<string, T3SessionInfo["status"]> = { running: "running", queued: "queued", completed: "done", failed: "failed", interrupted: "interrupted", cancelled: "cancelled" };
@@ -88,7 +104,10 @@ function open(root: string): DatabaseSync | undefined {
  * Provider-native subagents in the parent's folder run inside the parent's process and are skipped.
  */
 interface FolderEntry { owners: FolderChat[]; shared: FolderChat[] }
-function buildIndex(input: DatabaseSync): Map<string, FolderEntry> {
+/** `folders`: chats with a folder of their own. `roots`: per project root, the chats working there (no folder of
+ * their own), except provider-native subagents, which never are a session of their own. */
+interface T3Index { folders: Map<string, FolderEntry>; roots: Map<string, FolderChat[]> }
+function buildIndex(input: DatabaseSync): T3Index {
   const roots = new Map((input.prepare(`SELECT project_id,substr(workspace_root,1,4097) root FROM projection_projects`).all() as { project_id: unknown; root: unknown }[])
     .filter(r => typeof r.root === "string" && r.root.length > 0 && r.root.length <= 4096).map(r => [String(r.project_id), r.root as string]));
   const rows = input.prepare(`SELECT substr(thread_id,1,513) id,substr(project_id,1,513) project_id,substr(title,1,301) title,
@@ -100,14 +119,14 @@ function buildIndex(input: DatabaseSync): Map<string, FolderEntry> {
   // Every readable chat's own folder (null: none, it works in the project root), for parent lookups.
   const folderOf = new Map<string, string | null>();
   for (const row of rows) if (id(row.id)) folderOf.set(row.id, typeof row.folder === "string" && row.folder && row.folder.length <= 4096 ? t3FolderKey(row.folder) : null);
-  const chats = new Map<string, FolderChat & { folder: string }>();
+  const chats = new Map<string, FolderChat & { folder: string | null }>();
   for (const row of rows) {
-    if (!id(row.id) || typeof row.folder !== "string" || !row.folder || row.folder.length > 4096) continue;
+    if (!id(row.id)) continue;
     // The agent comes from T3's driver kind (an instance can have any name); an unknown driver never links.
     const provider = typeof row.provider === "string" ? row.provider : "", agent = AGENTS[String(row.driver)] ?? "other";
     chats.set(row.id, { id: row.id, title: (typeof row.title === "string" && row.title) || "Untitled chat", provider, agent, agents: new Set(agent === "other" ? [] : [agent]),
       model: typeof row.model === "string" ? row.model.slice(0, 120) : null, parentId: id(row.parent) ? row.parent : null,
-      projectRoot: roots.get(String(row.project_id)) ?? null, folder: t3FolderKey(row.folder) });
+      projectRoot: roots.get(String(row.project_id)) ?? null, folder: folderOf.get(row.id) ?? null });
   }
   // Every provider a chat has run on (one row per provider harness the chat used).
   for (const r of input.prepare(`SELECT DISTINCT thread_id,coalesce(driver,provider) driver FROM orchestration_v2_projection_provider_threads`).all() as { thread_id: unknown; driver: unknown }[]) {
@@ -116,9 +135,16 @@ function buildIndex(input: DatabaseSync): Map<string, FolderEntry> {
   }
   const origin = new Map((input.prepare(`SELECT child_thread_id,origin FROM orchestration_v2_projection_subagents`).all() as { child_thread_id: unknown; origin: unknown }[])
     .map(r => [String(r.child_thread_id), String(r.origin)]));
-  const index = new Map<string, FolderEntry>();
+  const index: T3Index = { folders: new Map(), roots: new Map() };
   for (const chat of chats.values()) {
-    const entry = index.get(chat.folder) ?? index.set(chat.folder, { owners: [], shared: [] }).get(chat.folder)!;
+    // A chat without a folder of its own, or whose "worktree" is the project root itself, works in the root.
+    if (chat.folder === null || (chat.projectRoot !== null && chat.folder === t3FolderKey(chat.projectRoot))) {
+      if (chat.projectRoot === null || origin.get(chat.id) === "provider_native") continue;
+      const key = t3FolderKey(chat.projectRoot);
+      (index.roots.get(key) ?? index.roots.set(key, []).get(key)!).push(chat);
+      continue;
+    }
+    const entry = index.folders.get(chat.folder) ?? index.folders.set(chat.folder, { owners: [], shared: [] }).get(chat.folder)!;
     // Owner: a top-level chat, or a child whose (known) parent works in another folder or the project root.
     // A child whose parent is unknown here (deleted, unreadable) never owns a folder on missing information.
     const parentKnown = chat.parentId !== null && folderOf.has(chat.parentId);
@@ -129,14 +155,30 @@ function buildIndex(input: DatabaseSync): Map<string, FolderEntry> {
 }
 
 /** Per T3 home: the folder index, when it was read, and the session folders it was built for. */
-const indexes = new Map<string, { at: number; index: Map<string, FolderEntry>; seen: Set<string>; failed: boolean }>();
+const indexes = new Map<string, { at: number; index: T3Index; seen: Set<string>; failed: boolean }>();
+/** Prompt matches per T3 home, agent and session ID: a transcript's beginning never changes, so a match is kept. */
+const promptLinks = new Map<string, { chat: string | null; retryAt: number }>();
+/** Most recently used last; the oldest entry goes once the cap is reached. */
+function remember(key: string, value: { chat: string | null; retryAt: number }): void {
+  promptLinks.delete(key); promptLinks.set(key, value);
+  if (promptLinks.size > MAX_PROMPT_LINKS) promptLinks.delete(promptLinks.keys().next().value!);
+}
+const spread = (key: string) => [...key].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7) % T3_PROMPT_JITTER_MS;
+const normalize = (text: string) => text.replace(/\s+/g, " ").trim().slice(0, PROMPT_CHARS);
+
+/** The default reader: the first page of the session's own transcript, through Bridge's transcript readers. */
+export function transcriptPrompts(paths: TranscriptPaths): PromptReader {
+  return (session) => (readTranscript(session as TranscriptSession, "0", undefined, paths)?.items ?? [])
+    .filter((item) => item.kind === "user" && typeof item.text === "string").map((item) => ({ text: item.text!, at: item.at }));
+}
 
 /**
  * T3 chat details for the given sessions (folder + agent), keyed like the input. A session is linked
  * only when exactly one candidate chat in its folder ran on its agent, and no other session with the
  * same agent links to that chat; everything else is left unlinked.
  */
-export function t3SessionInfo(root: string | undefined, sessions: { key: string; cwd: string; agent: string }[], now = Date.now()): Map<string, T3SessionInfo> {
+export function t3SessionInfo(root: string | undefined, sessions: { key: string; cwd: string; agent: string; sessionId?: string | null }[], now = Date.now(),
+  prompts?: PromptReader): Map<string, T3SessionInfo> {
   const out = new Map<string, T3SessionInfo>();
   if (root === undefined || !sessions.length) return out;
   const input = open(root);
@@ -145,13 +187,14 @@ export function t3SessionInfo(root: string | undefined, sessions: { key: string;
     let cached = indexes.get(root);
     // A folder first seen after the index was built (a new chat) may rebuild it early, once; folders
     // that are simply not T3 chats (the main checkout, other sessions) never keep forcing rebuilds.
-    // The same applies to a session whose agent no chat in its folder has run on yet: right after T3 switched a chat's
-    // provider, the new provider's session is linked within the short window instead of showing as a second entry.
+    // The same applies to a session whose agent no chat in its folder (or project root) has run on yet: right after T3
+    // switched a chat's provider, the new provider's session is linked within the short window instead of showing twice.
     const tag = (s: { cwd: string; agent: string }) => `${t3FolderKey(s.cwd)}|${s.agent}`;
     const fresh = sessions.some(s => {
       if (cached?.seen.has(tag(s))) return false;
-      const entry = cached?.index.get(t3FolderKey(s.cwd));
-      return !entry || ![...entry.owners, ...entry.shared].some(c => c.agents.has(s.agent));
+      const key = t3FolderKey(s.cwd), entry = cached?.index.folders.get(key);
+      const chats = [...(entry ? [...entry.owners, ...entry.shared] : []), ...(cached?.index.roots.get(key) ?? [])];
+      return !chats.some(c => c.agents.has(s.agent));
     });
     const age = cached ? now - cached.at : Infinity;
     if (!cached || (cached.failed ? age >= T3_INDEX_MISS_MS : age >= T3_INDEX_MS || (fresh && age >= T3_INDEX_MISS_MS))) {
@@ -159,7 +202,7 @@ export function t3SessionInfo(root: string | undefined, sessions: { key: string;
       const seen = new Set(sessions.map(tag));
       // A store that cannot be indexed (busy, unknown schema) is retried after the short window, not every poll.
       try { cached = { at: now, index: buildIndex(input), seen, failed: false }; }
-      catch { cached = { at: now, index: new Map(), seen, failed: true }; }
+      catch { cached = { at: now, index: { folders: new Map(), roots: new Map() }, seen, failed: true }; }
       indexes.set(root, cached);
     }
     if (cached.failed) return out;
@@ -169,13 +212,62 @@ export function t3SessionInfo(root: string | undefined, sessions: { key: string;
     const statusOf = (chat: FolderChat): T3SessionInfo["status"] =>
       waiting.get(chat.id) ? "waiting" : RUN_STATUS[String((latest.get(chat.id) as { status?: unknown } | undefined)?.status ?? "")] ?? "idle";
     const fits = (chat: FolderChat, agent: string) => chat.agents.has(agent);
+    // AB-470: which one of several candidate chats this session is, by its first prompts.
+    const userMessages = (pool: FolderChat[], from: string, to: string) => input.prepare(`SELECT thread_id,created_at,
+        CASE WHEN octet_length(payload_json)<=${MAX_PAYLOAD} AND json_valid(payload_json) THEN substr(json_extract(payload_json,'$.text'),1,${PROMPT_CHARS * 4}) END text
+      FROM orchestration_v2_projection_messages WHERE role='user' AND created_at BETWEEN ? AND ?
+        AND thread_id IN (${pool.map(() => "?").join(",")})`).all(from, to, ...pool.map(c => c.id)) as { thread_id: unknown; created_at: unknown; text: unknown }[];
+    const linkKey = (s: { agent: string; sessionId?: string | null }) => `${root}|${s.agent}|${s.sessionId}`;
+    /** A chat this session already matched by prompt, if it is still in the given pool. */
+    const known = (pool: FolderChat[], s: { agent: string; sessionId?: string | null }) => {
+      const key = linkKey(s), hit = s.sessionId ? promptLinks.get(key) : undefined;
+      const chat = hit?.chat ? pool.find(c => c.id === hit.chat) : undefined;
+      if (chat) remember(key, hit!); // a live match is used: keep it, evict old misses first
+      return chat;
+    };
+    const byPrompt = (pool: FolderChat[], s: { agent: string; cwd: string; sessionId?: string | null }): FolderChat | undefined => {
+      if (!prompts || !s.sessionId || !pool.length || pool.length > MAX_POOL) return undefined;
+      const key = linkKey(s), hit = promptLinks.get(key);
+      if (hit?.chat) { const chat = pool.find(c => c.id === hit.chat); if (chat) { remember(key, hit); return chat; } } // a vanished chat re-matches
+      else if (hit && now < hit.retryAt) return undefined;
+      let first: { text: string; at: number }[] = [];
+      try { first = prompts({ agent: s.agent, cwd: s.cwd, sessionId: s.sessionId }); } catch { first = []; }
+      const real = first.map(p => ({ text: normalize(p.text), at: p.at }))
+        .filter(p => p.text.length >= MIN_PROMPT_CHARS && Number.isFinite(p.at) && p.at > 0 && !INJECTED.test(p.text));
+      const begin = real.length ? Math.min(...real.map(p => p.at)) : 0;
+      const wanted = real.filter(p => p.at <= begin + PROMPT_SPAN_MS).slice(0, MAX_PROMPTS);
+      let chat: FolderChat | undefined, failed = false;
+      if (wanted.length) {
+        const ats = wanted.map(p => p.at);
+        // Each prompt only matches a T3 message with the same text within the window of that prompt.
+        const near = (text: string, at: number) => wanted.some(p => p.text === text && Math.abs(p.at - at) <= PROMPT_WINDOW_MS);
+        try {
+          const rows = userMessages(pool, new Date(Math.min(...ats) - PROMPT_WINDOW_MS).toISOString(), new Date(Math.max(...ats) + PROMPT_WINDOW_MS).toISOString());
+          const matched = new Set(rows.filter(r => typeof r.text === "string" && typeof r.created_at === "string" && near(normalize(r.text), Date.parse(r.created_at)))
+            .map(r => String(r.thread_id)));
+          if (matched.size === 1) chat = pool.find(c => matched.has(c.id));
+        } catch { failed = true; } // an unreadable message table costs this match only, never the other links
+      }
+      // Once all compared prompts are known (eight of them, or the first hour and its window are over), more reads
+      // cannot change the result: retry rarely.
+      const settled = !failed && (wanted.length >= MAX_PROMPTS || (real.length > 0 && now > begin + PROMPT_SPAN_MS + PROMPT_WINDOW_MS));
+      remember(key, { chat: chat?.id ?? null, retryAt: now + (settled ? T3_PROMPT_SETTLED_MS : T3_PROMPT_RETRY_MS) + spread(key) });
+      return chat;
+    };
     const linked = new Map<string, { chat: FolderChat; status: T3SessionInfo["status"] }>();
     for (const s of sessions) {
-      const entry = cached.index.get(t3FolderKey(s.cwd));
-      if (!entry) continue;
-      const candidates = [...entry.owners.filter(c => fits(c, s.agent)),
-        ...entry.shared.filter(c => fits(c, s.agent)).filter(c => ["running", "queued", "waiting"].includes(statusOf(c)))];
-      if (candidates.length === 1) linked.set(s.key, { chat: candidates[0]!, status: statusOf(candidates[0]!) });
+      const key = t3FolderKey(s.cwd), entry = cached.index.folders.get(key);
+      let chat: FolderChat | undefined;
+      if (entry) {
+        const candidates = [...entry.owners.filter(c => fits(c, s.agent)),
+          ...entry.shared.filter(c => fits(c, s.agent)).filter(c => ["running", "queued", "waiting"].includes(statusOf(c)))];
+        // A prompt match already made for this session wins over "the only candidate left".
+        chat = known([...entry.owners, ...entry.shared].filter(c => fits(c, s.agent)), s) ?? (candidates.length === 1 ? candidates[0] : byPrompt(candidates, s));
+      } else {
+        // A project root: plenty of sessions there are not T3 chats, so only a prompt match links.
+        chat = byPrompt((cached.index.roots.get(key) ?? []).filter(c => fits(c, s.agent)), s);
+      }
+      if (chat) linked.set(s.key, { chat, status: statusOf(chat) });
     }
     // Two sessions of the same agent claiming one chat cannot both be it: link neither.
     const claims = new Map<string, number>();
