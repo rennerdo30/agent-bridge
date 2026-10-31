@@ -6,37 +6,53 @@ Bridge integrates with T3 Code as far as possible without changing or updating T
 its state in `<T3CODE_HOME>/userdata/statev2.sqlite` on the same machine, so everything Bridge
 reads comes from that store, opened read-only with short connections. Bridge never writes to
 it, never runs migrations or checkpoints, and never opens T3's auth tables, `secrets/` or
-token files. Every query uses an allowlist of tables and columns.
+token files. Every query names its tables and columns.
+
+T3 is a wrapper, not a harness: every T3 chat runs on an ordinary Claude, Codex, opencode,
+Antigravity or Muse session that Bridge already sees as a session and indexes from its
+transcripts. T3 can also switch a chat to another provider, which starts a new underlying
+session. Integration therefore **links** T3 chats to those sessions and transcripts; it never
+adds a second entry for the same chat.
 
 | # | Package | Source in the T3 store |
 | --- | --- | --- |
-| 1 | Chat list and dashboard view (done, below) | `orchestration_v2_projection_threads`, `projection_projects`, `orchestration_v2_projection_runs`, `orchestration_v2_projection_runtime_requests` |
-| 2 | Full timeline in history: tool calls, commands, file changes, subagent links, attachment manifest | `orchestration_v2_projection_turn_items`, `orchestration_v2_projection_subagents`, `userdata/attachments` |
-| 3 | Link Bridge sessions to their T3 chats; T3 titles on session cards | `orchestration_v2_projection_provider_threads`, `orchestration_v2_projection_provider_sessions` |
-| 4 | T3 chats of paired PCs, each PC reading only its own store | the paired dashboard read |
+| 1 | T3 chat title, status and badge on the existing session entries, across provider switches (done, below) | `orchestration_v2_projection_threads`, `_provider_threads`, `_subagents`, `_runs`, `_runtime_requests` |
+| 2 | History: one conversation per T3 chat, linked to the provider transcripts it ran on, without duplicate messages; then tool calls, commands, file changes and attachments | `_turn_items`, `_provider_threads` (run ranges per provider), `_subagents`, `userdata/attachments` |
+| 3 | Link chats that share a folder with other chats of the same agent (usually main chats in the project root): T3 does not store usable native session IDs, so another reliable key is needed | to be determined |
+| 4 | T3 details for sessions on paired PCs, each PC reading only its own store | the paired dashboard read |
 | 5 | Optional: wake an idle T3 chat for new Bridge mail | the running T3 app over loopback; a database write would start no run and could corrupt T3's state |
 
-Messages and thread metadata already reach history search (next section). The host adapter
-further below stays for hosts that inject T3's scoped transport. T3 itself discards
+Messages and thread metadata already reach history search (next section); until package 2
+links them, the same messages can also appear through the provider transcripts. The host
+adapter further below stays for hosts that inject T3's scoped transport. T3 itself discards
 intermediate message edits when it compacts; those cannot be recovered from any source.
 
-## Chat list (dashboard "T3 Code" view)
+## T3 chats on session entries
 
-`GET /api/t3/chats` (dashboard key required; optional `archived=1`) returns this PC's T3
-chats from the local store: projects, chat title, provider instance and matching Bridge agent
-kind, model, branch, archived/settled flags and status. Status is `waiting` while T3 has a
-pending runtime request for the chat (it needs an answer), otherwise the latest run's status
-(`running`, `queued`, `done`, `failed`, `interrupted`, `cancelled`), or `idle` without runs.
+T3 gives most chats a folder of their own (`worktreePath`). In `GET /api/state`, a local
+session gets a `t3` object (`id`, `title`, `provider`, `model`, `status`, `parentTitle`,
+`harness`) when it runs in a T3 chat's folder and exactly one candidate chat there fits its
+agent. The dashboard then shows the chat title instead of the folder name, a T3 badge, and
+"waiting for an answer" while T3 has a pending request for the chat. Status is `waiting`,
+else the latest run's status (`running`, `queued`, `done`, `failed`, `interrupted`,
+`cancelled`), or `idle` without runs.
 
-Subagent chats nest under their parent chat (`depth` counts levels); forks and chats whose
-parent is gone are top-level. Each top-level chat carries its newest 30 descendants plus
-counts of all, working and waiting ones. Chats needing an answer sort first, then the most
-recently active; at most 200 top-level chats are returned, with `truncated` and
-`archivedHidden` saying what was left out. Deleted chats are never listed.
+- **Candidates in a folder:** the chat that owns it (top-level, or a child with its own
+  folder). A T3 delegated task that ran in its parent's folder (`app_owned`) is a separate
+  session, so it counts only while it has an active run. Provider-native subagents run inside
+  the parent's process and never count.
+- **Provider switches:** a chat matches every agent it has run on (`_provider_threads`).
+  `harness` is `current` for its present provider and `earlier` otherwise. A still-connected
+  earlier-provider session folds into the current one in the dashboard lists, so each chat
+  shows once; it stays reachable by its own page.
+- **Never guessed:** sessions in a folder with several candidates for their agent, two
+  same-agent sessions claiming one chat, deleted chats and chats without their own folder get
+  nothing and keep their usual entry.
 
-Results are cached for 10 seconds per T3 home and archive filter. A missing, busy, invalid or
-unknown-schema store returns `{ state: "unavailable", reason }`, never an empty list. Tests:
-`test/t3-chats.test.ts` (synthetic store; no T3 install needed).
+The folder index is rebuilt at most once a minute, or once early (after 10 seconds) when a
+session appears in a folder the index did not know; per poll only indexed lookups for the
+matched chats run. A missing, busy, locked or unknown-schema store means no T3 details.
+Tests: `test/t3-sessions.test.ts` (synthetic store; no T3 install needed).
 
 ## Local history (independent of host transport)
 
