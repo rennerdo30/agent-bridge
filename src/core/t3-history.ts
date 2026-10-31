@@ -8,10 +8,15 @@ import { conversationProject } from "./project-store.js";
 import { parse, time } from "./transcripts/common.js";
 
 const digest = (value: string) => createHash("sha256").update(value).digest("hex");
+function conversationKey(environment: string, thread: string): string {
+  const readable = `t3:${environment}:${thread}`;
+  return readable.length <= 256 ? readable : `t3:${digest(JSON.stringify([environment, thread]))}`;
+}
 // App-owned IDs include namespaced mcp:/thread:delegated-task: values, not just native transcript UUIDs.
 const id = (value: unknown): value is string => typeof value === "string" && value.length > 0 && value.length <= 512 &&
   value.trim() === value && !/[\x00-\x1f\x7f]/.test(value);
 const REFRESH_MS = 60_000, WINDOW = 32, STEPS = 8;
+const MAX_MESSAGE_BYTES = 1024 * 1024;
 const columns = {
   projection_projects: { project_id: "TEXT", title: "TEXT", workspace_root: "TEXT" },
   orchestration_v2_projection_threads: { thread_id: "TEXT", project_id: "TEXT", title: "TEXT", created_at: "TEXT", updated_at: "TEXT", archived_at: "TEXT", deleted_at: "TEXT", payload_json: "TEXT" },
@@ -55,9 +60,15 @@ export class T3History {
   discovering: boolean;
   private readonly key: string;
   private readonly codec: string;
+  private verifySource?: () => void;
   constructor(private root: string | undefined, private db: DatabaseSync, private sink: Sink) {
     const path = root && isAbsolute(root) ? resolve(root).replace(/^d:/i, "E:") : root ?? "disabled";
     this.key = `durable-t3:${digest(process.platform === "win32" ? path.toLowerCase() : path)}`;
+    this.sink = {
+      cursor: key => sink.cursor(key),
+      advance: (key, value) => { if (key !== `${this.key}:status`) this.verifySource?.(); sink.advance(key, value); },
+      put: (...args) => { this.verifySource?.(); sink.put(...args); },
+    };
     this.discovering = root !== undefined;
     this.codec = db.prepare("SELECT 1 FROM pragma_table_info('conversation_records') WHERE name='raw_codec'").get() ? "raw_codec" : "0 AS raw_codec";
   }
@@ -66,7 +77,8 @@ export class T3History {
   }
   private save(state: State): void { this.sink.advance(this.key, JSON.stringify(state)); }
   private conversation(environment: string, thread: string): string {
-    const name = `t3:${environment}:${thread}`;
+    this.verifySource?.();
+    const name = conversationKey(environment, thread);
     this.db.prepare("INSERT OR IGNORE INTO conversations(id,agent,session) VALUES(?,'other',?)").run(name, name);
     return name;
   }
@@ -104,7 +116,7 @@ export class T3History {
       throw new SourceFault("unsupported thread relation");
     const conversation = this.conversation(state.environment, row.thread_id), project = conversationProject(row.workspace_root);
     this.db.prepare("UPDATE conversations SET parent=?,project=? WHERE id=?")
-      .run(relation.parentThreadId ? `t3:${state.environment}:${relation.parentThreadId}` : null, project, conversation);
+      .run(relation.parentThreadId ? conversationKey(state.environment, relation.parentThreadId) : null, project, conversation);
     if (project) this.db.prepare("INSERT OR IGNORE INTO conversation_projects(project) VALUES(?)").run(project);
     const raw = Buffer.from(JSON.stringify({ source: "t3-local-metadata", environmentId: state.environment, ...row, relation }));
     if (raw.length > CONVERSATION_BYTES) throw new SourceFault("unsupported oversized metadata");
@@ -135,14 +147,26 @@ export class T3History {
       state.sequence = event.sequence; delete state.pending; this.save(state); return;
     }
     // Sequence + event id identifies an immutable full message revision, not updated_at.
-    const row = query(input, `SELECT substr(event_id,1,513) event_id,substr(stream_id,1,513) stream_id,
+    // octet_length can read TEXT length metadata without loading its contents. Admit before
+    // any CAST/JSON expression, whose operands otherwise materialize the complete row.
+    const admission = query(input, "SELECT octet_length(payload_json) bytes,substr(event_id,1,513) event_id FROM orchestration_events WHERE sequence=?", event.sequence)[0];
+    if (admission) {
+      if (admission.event_id !== event.event_id || !Number.isSafeInteger(admission.bytes) || admission.bytes < 0)
+        throw new SourceFault("invalid message identity or size");
+      if (admission.bytes > MAX_MESSAGE_BYTES) {
+        event.bytes = admission.bytes;
+        this.receipt(state, event, "unavailable-oversized-message"); state.incomplete = true;
+        state.sequence = event.sequence; delete state.pending; this.save(state); return;
+      }
+    }
+    const row = admission ? query(input, `SELECT substr(event_id,1,513) event_id,substr(stream_id,1,513) stream_id,
       substr(event_type,1,129) event_type,application_event_version,substr(aggregate_kind,1,32) aggregate_kind,
       octet_length(payload_json) bytes,substr(CAST(payload_json AS BLOB),?,?) raw,
       CASE WHEN ?=0 AND json_valid(payload_json) THEN
         json_type(payload_json,'$.text')='text' AND json_type(payload_json,'$.id')='text'
         AND json_extract(payload_json,'$.threadId')=stream_id
         AND json_extract(payload_json,'$.role') IN ('user','assistant') END supported
-      FROM orchestration_events WHERE sequence=?`, event.offset + 1, CONVERSATION_BYTES, event.offset, event.sequence)[0];
+      FROM orchestration_events WHERE sequence=? AND octet_length(payload_json)<=?`, event.offset + 1, CONVERSATION_BYTES, event.offset, event.sequence, MAX_MESSAGE_BYTES)[0] : undefined;
     if (!row) {
       // A failed derived insert can retain one extra fragment before its cursor is
       // confirmed. Repair that fragment even if compaction has since removed the row.
@@ -189,6 +213,13 @@ export class T3History {
         file = realpathSync.native(join(this.root, "userdata", "statev2.sqlite"));
         identity = fileIdentity(file); environment = environmentId(this.root);
         input = new DatabaseSync(file, { readOnly: true, timeout: 25 });
+        this.verifySource = () => {
+          try {
+            if (realpathSync.native(join(this.root!, "userdata", "statev2.sqlite")) !== file ||
+                fileIdentity(file) !== identity || environmentId(this.root!) !== environment) throw new Error();
+          } catch { throw new SourceFault("source binding changed before publication; prior checkpoint preserved"); }
+        };
+        this.verifySource();
       } catch (error) { throw error instanceof SourceFault ? error : new SourceFault("source missing, busy or unreadable"); }
       this.schema(input);
       const tail = query(input, "SELECT sequence,substr(event_id,1,513) event_id FROM orchestration_events ORDER BY sequence DESC LIMIT 1")[0];
@@ -234,6 +265,6 @@ export class T3History {
     } catch (error) {
       if (!(error instanceof SourceFault)) throw error; // Destination/index failures must never advance the source cursor.
       this.status("unavailable", error.message); this.discovering = false; return work;
-    } finally { input?.close(); }
+    } finally { this.verifySource = undefined; input?.close(); }
   }
 }

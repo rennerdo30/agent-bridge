@@ -1,5 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { mkdirSync, renameSync, writeFileSync } from "node:fs";
+import fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { ConversationIngestor, readConversation, CONVERSATION_BYTES } from "../src/core/conversations.js";
@@ -11,6 +13,8 @@ import { nullLogger } from "../src/core/logger.js";
 import { conversationProject } from "../src/core/project-store.js";
 import { localT3HistoryRoot, type TranscriptPaths } from "../src/core/transcripts/common.js";
 import { makeEnv } from "./helpers.js";
+import { historySearchSchema } from "../src/core/history-query.js";
+import { conversationPageSchema } from "../src/core/conversation-query.js";
 
 // Installed 7c3b3b3 schema, including unused columns: the reader must not depend on
 // newer ProjectionStore tables or inspect provider-session/auth storage.
@@ -278,6 +282,87 @@ it("refuses a replacement file even when event IDs and highwater are identical",
   renameSync(f.file, `${f.file}.retired`); renameSync(replacement, f.file);
   expect(() => f.ingest.tick()).not.toThrow(); expect(f.state()).toEqual(before); expect(f.rows()).toEqual(rows);
   expect(f.status().state).toBe("unavailable");
+});
+
+it("review: refuses a source swapped after environment sampling but before SQLite open", () => {
+  const f = fixture(); event(f.input, 1); f.drain();
+  const before = f.state(), rows = f.rows(), replacement = `${f.file}.opening-replacement`;
+  const other = new DatabaseSync(replacement); other.exec(SCHEMA);
+  for (const table of ["projection_projects", "orchestration_v2_projection_threads", "orchestration_events"])
+    for (const row of f.input.prepare(`SELECT * FROM ${table}`).all())
+      other.prepare(`INSERT INTO ${table} VALUES(${Object.keys(row).map(() => "?").join(",")})`).run(...Object.values(row));
+  event(other, 2, "foreign_opening_replacement"); other.close(); f.closeInput();
+  const read = fs.readSync;
+  let swapped = false;
+  fs.readSync = ((...args: any[]) => {
+    const count = (read as any)(...args);
+    if (!swapped && Buffer.isBuffer(args[1]) && args[1].subarray(0, count).toString().trim() === "environment-one") {
+      swapped = true;
+      renameSync(f.file, `${f.file}.opening-retired`); renameSync(replacement, f.file);
+      writeFileSync(join(f.root, "userdata", "environment-id"), "replacement-environment");
+    }
+    return count;
+  }) as typeof fs.readSync;
+  syncBuiltinESMExports();
+  try { f.ingest.tick(); } finally { fs.readSync = read; syncBuiltinESMExports(); }
+  expect(swapped).toBe(true);
+  expect(f.state()).toEqual(before); expect(f.rows()).toEqual(rows);
+  expect(f.status().state).toBe("unavailable");
+  expect(f.index.search({ query: "foreign_opening_replacement" }).hits).toHaveLength(0);
+});
+
+it("review: revalidates environment binding after a source read and before destination publication", () => {
+  const f = fixture(); event(f.input, 1); f.drain(); const before = f.rows();
+  event(f.input, 2, "foreign_publication_replacement");
+  const prepare = DatabaseSync.prototype.prepare;
+  let changed = false;
+  const intercept = vi.spyOn(DatabaseSync.prototype, "prepare").mockImplementation(function(this: DatabaseSync, sql: string) {
+    const statement = prepare.call(this, sql);
+    if (this !== f.input && this.location() === f.file && sql.includes("CAST(payload_json AS BLOB)")) {
+      const all = statement.all.bind(statement);
+      vi.spyOn(statement, "all").mockImplementation((...args) => {
+        const result = all(...args);
+        if (!changed) { changed = true; writeFileSync(join(f.root, "userdata", "environment-id"), "replacement-environment"); }
+        return result;
+      });
+    }
+    return statement;
+  });
+  try { f.ingest.tick(); } finally { intercept.mockRestore(); }
+  expect(changed).toBe(true); expect(f.rows()).toEqual(before);
+  expect(f.state().sequence).toBe(1); expect(f.status().state).toBe("unavailable");
+  expect(f.index.search({ query: "foreign_publication_replacement" }).hits).toHaveLength(0);
+});
+
+it("review: admits payload size before any CAST or JSON evaluation and reports unsupported rows", () => {
+  const f = fixture(); event(f.input, 1, "x".repeat(1024 * 1024 + 1));
+  const prepare = DatabaseSync.prototype.prepare;
+  let payloadEvaluations = 0;
+  const intercept = vi.spyOn(DatabaseSync.prototype, "prepare").mockImplementation(function(this: DatabaseSync, sql: string) {
+    if (this !== f.input && this.location() === f.file && sql.includes("CAST(payload_json AS BLOB)")) payloadEvaluations++;
+    return prepare.call(this, sql);
+  });
+  try { f.drain(); } finally { intercept.mockRestore(); }
+  expect(payloadEvaluations).toBe(0); expect(f.rows("t3:fragment")).toHaveLength(0);
+  expect(receipts(f)).toMatchObject([{ sequence: 1, outcome: "unavailable-oversized-message", confirmedBytes: 0 }]);
+  expect(f.status().state).toBe("incomplete");
+  event(f.input, 2, "supported_after_size_refusal"); f.drain();
+  expect(f.index.search({ query: "supported_after_size_refusal" }).hits).toHaveLength(1);
+});
+
+it.each([250, 500])("review: retains exact %i-character T3 IDs with public-query-compatible keys", length => {
+  const f = fixture(), child = "thread:delegated-task:" + "x".repeat(length - 22);
+  thread(f.input, child, "root"); const expected = event(f.input, 1, `public_t3_identity_${length}`, child);
+  f.drain();
+  const hit = f.index.search({ query: `public_t3_identity_${length}` }).hits[0];
+  expect(hit).toBeDefined();
+  expect(historySearchSchema.safeParse({ query: "identity", filters: { session: hit!.session } }).success).toBe(true);
+  expect(conversationPageSchema.safeParse({ id: hit!.conversation }).success).toBe(true);
+  const metadata = f.rows("t3:metadata").map(r => JSON.parse(raw(r).toString())).find(r => r.thread_id === child);
+  expect(metadata.thread_id).toBe(child); expect(metadata.environmentId).toBe("environment-one");
+  expect(readConversation(f.db, { id: hit!.conversation! }).conversation?.parent).toBe("t3:environment-one:root");
+  expect(fragments(f, 1)).toEqual(expected);
+  const prior = f.rows(); f.restart(); f.drain(); expect(f.rows()).toEqual(prior);
 });
 
 it.each(["missing", "unknown", "busy"])("isolates %s T3 failure from native capture and preserves prior retained history", mode => {

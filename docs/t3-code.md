@@ -12,6 +12,9 @@ discover T3 implicitly; fixtures must supply a synthetic `TranscriptPaths.t3`.
 Coverage is project/thread metadata (including archived threads, title and recorded
 parent/fork relation) plus surviving v2 `message.updated` events. Conversations use
 `t3:<environment-id>:<thread-id>`, with agent `other`; these IDs are T3 identities.
+If that composed key exceeds the public 256-character session-filter limit, a
+stable SHA-256 key is used instead. Exact environment/thread IDs remain in retained
+metadata and event provenance; source IDs are never truncated.
 Metadata project roots pass through Bridge's normal project mapping. This does not
 join provider-native sessions or infer coordinator/main roles.
 
@@ -20,10 +23,16 @@ short read-only connection with a 25 ms busy timeout each tick, and scans ordere
 primary-key event metadata windows from sequence zero. It fetches supported full
 message payloads in 64 KiB byte chunks through the existing compressed retention,
 derived search indexing and durable cursors. Metadata uses periodic keyset pages.
+Before any whole-value CAST or JSON evaluation, a length-only query admits at most
+1 MiB of encoded message JSON. Larger messages receive an explicit
+`t3:unavailable-oversized-message` receipt and incomplete coverage, without fetching
+their payload. The bound includes JSON overhead, not just message text.
 Backlogs participate in the existing worker's discovery state and budget; there is
 no extra scheduler. Missing, busy or unsupported sources preserve retained history
 and native import cursors. Replacement file/environment identity or a decreasing
 highwater refuses that source, preserving its prior checkpoint.
+File/environment binding is checked again after SQLite opens and before destination
+publication, rather than trusting the pre-open pathname sample alone.
 
 Raw `t3:fragment` records do not certify completeness. A separate `t3:complete`
 receipt identifies an entirely retained event by sequence and event ID. If a pending
