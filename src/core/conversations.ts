@@ -105,6 +105,8 @@ export class ConversationIngestor {
     private home: string,
     private paths: TranscriptPaths,
     private source: DatabaseSync = db,
+    /** AB-473: T3 message import stays off by default (provider transcripts carry the same messages). */
+    options: { t3Messages?: boolean } = {},
   ) {
     // History store v2 compresses raw bytes (raw_codec); bridge.db and v1 stores keep them plain.
     this.encoded = !!db.prepare("SELECT 1 FROM pragma_table_info('conversation_records') WHERE name='raw_codec'").get();
@@ -125,7 +127,7 @@ export class ConversationIngestor {
       cursor: key => this.cursor(key),
       advance: (key, value) => this.advance(key, value),
       put: (...args) => this.put(...args),
-    });
+    }, options.t3Messages === true);
   }
 
   private watchRoots(): void {

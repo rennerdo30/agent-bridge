@@ -53,15 +53,17 @@ function environmentId(root: string): string {
   } finally { closeSync(fd); }
 }
 
-/** Local T3 retained v2 events only. No connection or read transaction survives a tick.
- * All durable bytes/indexing go through ConversationIngestor's existing idempotent sink.
- * A completion receipt, rather than the existence of raw fragments, certifies a retained revision. */
+/** Local T3 thread metadata (title, project, parent/fork relation, archived chats). No connection or read
+ * transaction survives a tick. All durable bytes/indexing go through ConversationIngestor's existing sink.
+ * AB-473: T3 is a wrapper over provider sessions whose transcripts Bridge already indexes, so message text is
+ * not imported by default (it would appear twice in search). `messages` keeps the retained v2 message import
+ * for explicit callers; there a completion receipt, not raw fragments, certifies a retained revision. */
 export class T3History {
   discovering: boolean;
   private readonly key: string;
   private readonly codec: string;
   private verifySource?: () => void;
-  constructor(private root: string | undefined, private db: DatabaseSync, private sink: Sink) {
+  constructor(private root: string | undefined, private db: DatabaseSync, private sink: Sink, private readonly messages = false) {
     const path = root && isAbsolute(root) ? resolve(root).replace(/^d:/i, "E:") : root ?? "disabled";
     this.key = `durable-t3:${digest(process.platform === "win32" ? path.toLowerCase() : path)}`;
     this.sink = {
@@ -236,9 +238,11 @@ export class T3History {
       const anchor = query(input, "SELECT substr(event_id,1,513) event_id FROM orchestration_events WHERE sequence=?", state.high)[0];
       if (anchor && anchor.event_id !== state.highId) throw new SourceFault("source event identity replaced; prior checkpoint preserved");
       state.high = high; state.highId = highId; this.save(state);
-      this.discovering = !!state.pending || state.sequence < high || Date.now() >= state.refreshAt;
+      const backlog = () => this.messages && (!!state.pending || state.sequence < high);
+      this.discovering = backlog() || Date.now() >= state.refreshAt;
       if (Date.now() < deadline && Date.now() >= state.refreshAt) work += this.metadata(input, state);
-      for (let n = 0; n < STEPS && Date.now() < deadline; n++) {
+      // Without message import no event payloads are read (only the identity/rollback checks above).
+      for (let n = 0; this.messages && n < STEPS && Date.now() < deadline; n++) {
         if (state.pending) { this.copy(input, state); work++; continue; }
         // Primary-key sequence windows include version metadata so future message versions
         // receive an unavailable receipt. Never fetch payloads for unrelated activity.
@@ -259,8 +263,10 @@ export class T3History {
         }
         this.save(state); work++;
       }
-      this.discovering = !!state.pending || state.sequence < high || Date.now() >= state.refreshAt;
-      this.status(state.incomplete ? "incomplete" : "ready", "coverage: metadata and surviving v2 message.updated events only");
+      this.discovering = backlog() || Date.now() >= state.refreshAt;
+      // A messages-on checkpoint may carry `incomplete`; it describes message coverage, not metadata.
+      this.status(this.messages && state.incomplete ? "incomplete" : "ready", this.messages ? "coverage: metadata and surviving v2 message.updated events only"
+        : "coverage: thread metadata only; message text comes from the provider transcripts");
       return work;
     } catch (error) {
       if (!(error instanceof SourceFault)) throw error; // Destination/index failures must never advance the source cursor.
