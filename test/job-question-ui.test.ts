@@ -44,6 +44,15 @@ describe("open job questions in the dashboard (AB-249)", () => {
     expect(html).not.toContain("data-jq-send");
     expect(html).toContain("message_subagent");
   });
+  it("labels asked time, bounded timeout and the responsible parent on a job question", () => {
+    const p=page(); p.setModel(p.group);
+    const html=p.jobQuestionCard({...jq,delegation:{deadline:Date.now()+60_000,eligible:true,state:"waiting",recipients:["claude-parent"],detail:"Question stays open"}});
+    expect(html).toContain("<b>Asked:</b> " + new Date(jq.createdAt).toLocaleString());
+    expect(html).toContain("Parent timeout:</b> 15 min · due");
+    expect(html).toContain('data-q-kind="job-question"');
+    expect(html).toContain("Delegate to parent");
+    expect(html).toContain('data-jq-send="'+jq.id+'"');
+  });
 
   it("sends the answer to the job's latest run like message_subagent", async () => {
     const p = page(); p.setModel(p.group); p.setQuestions([jq]); p.setDraft("jq:" + jq.id, "Yes, delete it.");

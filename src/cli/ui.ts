@@ -475,7 +475,8 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
       // Unanswered questions from delegated jobs to their parent (or the project main) are listed too (AB-249).
       let jobQuestions: (JobQuestion & { kind: "job-question"; owner: string | null })[] = [];
       try {
-        const open = openJobQuestions(dbPath);
+        let open: JobQuestion[] = openJobQuestions(dbPath);
+        try { open = await networkRequest("jobQuestions", {}); } catch { /* Retain legacy read-only cards. */ }
         const owners = open.length ? await readStoredJobsResponsive(opts.home, new Set(open.map((q) => q.job))) : new Map();
         jobQuestions = open.map((q) => ({ ...q, kind: "job-question", owner: owners.get(q.job)?.owner ?? null }));
       } catch (err) { opts.log.debug("job questions unavailable", { err: String(err) }); }
@@ -497,12 +498,16 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
         saveConfigValue(opts.home,"questionAlerts",args.data); return send(res,200,args.data);
       }
     }
-    const questionMatch = /^\/api\/questions\/([0-9a-f-]{36})(\/dismiss)?$/.exec(url.pathname);
+    const questionMatch = /^\/api\/questions\/([0-9a-f-]{36})(\/dismiss|\/delegate)?$/.exec(url.pathname);
     if (req.method === "POST" && questionMatch) {
       if (req.headers["x-agent-bridge"] !== "1") return send(res,403,{error:"missing header"});
       const body=await readJson(req);
       try {
-        if (questionMatch[2]) {
+        if (questionMatch[2] === "/delegate") {
+          if (body.kind !== "question" && body.kind !== "job-question") return send(res,400,{error:"Invalid question kind"});
+          return send(res,200,await networkRequest("delegateQuestion",{id:questionMatch[1]!,kind:body.kind}));
+        }
+        if (questionMatch[2] === "/dismiss") {
           if ((body.status !== "cancelled" && body.status !== "superseded") || typeof body.reason !== "string" || body.supersededBy !== undefined && typeof body.supersededBy !== "string") return send(res,400,{error:"A dismissal status and reason are required"});
           return send(res,200,await networkRequest("dismissOwner",{id:questionMatch[1]!,status:body.status,reason:body.reason,...(typeof body.supersededBy === "string" ? {supersededBy:body.supersededBy} : {})}));
         }

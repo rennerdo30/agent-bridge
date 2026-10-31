@@ -140,6 +140,16 @@ describe("job questions to the parent (AB-249)", () => {
       const data = await (await fetch(ui.url.replace(/\/\?t=.*$/, "") + "/api/approvals", { headers: { cookie } })).json() as { approvals: Record<string, unknown>[] };
       expect(data.approvals).toEqual([expect.objectContaining({ kind: "job-question", job: "codex-job-one", owner: "claude-parent", recipient: "claude-parent",
         rerouted: false, body: "Should I publish now?", id: sent.messages[0]!.id })]);
+      const base=ui.url.replace(/\/\?t=.*$/, ""), headers={cookie,"content-type":"application/json","x-agent-bridge":"1"};
+      const delegate=await fetch(base+"/api/questions/"+sent.messages[0]!.id+"/delegate",{method:"POST",headers,body:JSON.stringify({kind:"job-question"})});
+      expect(delegate.status).toBe(200);
+      expect(await delegate.json()).toMatchObject({state:"queued",recipients:["claude-parent"]});
+      expect(openJobQuestions(env.db)).toHaveLength(1);
+      const registryMain=await node("codex-new-main",path); await registryMain.setProjectMain("codex-new-main");
+      const fallback=await fetch(base+"/api/questions/"+sent.messages[0]!.id+"/delegate",{method:"POST",headers,body:JSON.stringify({kind:"job-question"})});
+      expect(fallback.status).toBe(200);
+      await expect.poll(() => registryMain.unread().some(m => m.conversationId === `question-delegation-${sent.messages[0]!.id}`)).toBe(true);
+      expect(openJobQuestions(env.db)).toHaveLength(1);
     } finally { await ui.close(); }
   });
 

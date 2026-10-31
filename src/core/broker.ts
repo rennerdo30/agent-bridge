@@ -90,6 +90,7 @@ import { DASHBOARD_JOB_CONVERSATION } from "./job-control.js";
 import { DECISION_MESSAGE_HOP, MAX_DECISION_TEXT_CHARS, MAX_DECISION_TOPIC_CHARS, decisionApplies, decisionScopeSchema, type OwnerDecision } from "./decisions.js";
 import { askOwnerSchema, questionAnswerSchema, QUESTIONS_FILE } from "./owner-questions.js";
 import { OwnerQuestionService, OWNER_ADDRESS } from "./owner-question-service.js";
+import { openJobQuestions } from "./job-questions.js";
 import { BROKER_TCP_FILE, ensurePrivateSocketDirectory, isEphemeralBrokerTcpRecord, resolvePipePath } from "./paths.js";
 import { hasEndpointActivationWitness, type EndpointReservation } from "./endpoint-reservation.js";
 
@@ -416,6 +417,12 @@ export class Broker {
   private ownerQuestions(): OwnerQuestionService {
     return this.questions ??= new OwnerQuestionService(dirname(this.store.file), this.store, this.log, () => this.localPeers().map(p => this.projectPeer(p)), (peer, message) => { const c = this.connByName(peer.name); if (c) this.emit(c, "message", message); }, decision => {
       for (const c of this.conns) if (c.peer && !c.peer.jobAgent && decisionApplies(decision,c.peer)) { const message=this.queueDecision(decision,c.peer); if (message) this.emit(c,"message",message); }
+    }, name => {
+      const job = this.storedJobs().find(j => j.name === name);
+      // Nested runners do not accept ordinary inbox mail. Escalate to their responsible session,
+      // retaining the existing parent-offline/project-main selection instead of inventing control mail.
+      const sessionJob = job?.parentJob ? { ...job, parentJob: undefined, owner: primaryFor(job) } : job;
+      return sessionJob ? { recipient: this.jobRecipient(sessionJob, true), owner: typeof job!.owner === "string" ? job!.owner : null } : undefined;
     });
   }
   private readonly groups: ProjectGroups;
@@ -488,7 +495,13 @@ export class Broker {
         try { const linked=readJsonSnapshot(join(root,".pair-desk.json")).value; if (isRecord(linked) && typeof linked.project === "string") deskProject=linked.project; } catch { /* Desk linking is optional. */ }
         return this.ownerQuestions().store.ask(args, root, { session: peer.name, sessionId: peer.sessionId, peerId:peer.id, agent: peer.agent, main: main?.name ?? peer.name, mainSessionId:main ? main.sessionId : peer.sessionId, mainPeerId:main?.id ?? peer.id, ...(args.job ? {job:args.job} : {}) }, this.now(),deskProject);
       },
-      ownerQuestions: () => this.ownerQuestions().list(),
+      ownerQuestions: () => this.ownerQuestions().dashboardQuestions(),
+      jobQuestions: () => this.ownerQuestions().jobQuestions(),
+      delegateQuestion: (c, a) => {
+        if (c.peer) throw new BridgeError("unauthorized", "Only the local owner dashboard can delegate questions.");
+        const args = z.object({ id: z.uuid(), kind: z.enum(["question", "job-question"]) }).strict().parse(a);
+        return this.ownerQuestions().delegate(args.id, args.kind);
+      },
       answerOwner: (c,a) => {
         // An authenticated dashboard connection has no agent peer. Models cannot answer for the owner.
         if (c.peer) throw new BridgeError("unauthorized", "Only the local owner dashboard can answer questions.");
@@ -908,7 +921,9 @@ export class Broker {
         });
         this.purge();
         this.log.info("broker listening", { pipe: this.pipePath });
-        if (this.store.file !== ":memory:" && existsSync(join(dirname(this.store.file),QUESTIONS_FILE))) optional("owner questions", () => { this.ownerQuestions(); });
+        if (this.store.file !== ":memory:") optional("question maintenance", () => {
+          if (existsSync(join(dirname(this.store.file),QUESTIONS_FILE)) || openJobQuestions(this.store.file).length) this.ownerQuestions();
+        });
         // Another broker may have enabled or changed pairing since this session started.
         if (this.networking) this.networking.config = readNetworkConfig(this.networking.home, this.networking.config);
         if (this.networking?.config.enabled) {
@@ -2663,6 +2678,7 @@ export class Broker {
     const own = sender.jobAgent ? this.storedJobs().find((j) => `job:${j.id}` === sender.id) : undefined;
     const supervisorMail = Boolean(own && (to === sender.jobParent || mastersFor(own).includes(to)));
     const question = isJobQuestion({ conversationId: args.conversationId ?? "" });
+    if (question && sender.jobAgent) this.ownerQuestions();
     if (own) {
       if (to === sender.jobParent || mastersFor(own).includes(to)) to = this.jobRecipient(own, question);
       else if (Array.isArray(own.ownershipHistory) && own.ownershipHistory.some((h) => isRecord(h) && h.fromRootName === to)) to = String(own.rootName);

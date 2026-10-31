@@ -6,6 +6,7 @@
 import { FAVICON_HREF, LOGO_SVG } from "./logo.js";
 import { renderMarkdown } from "./markdown.js";
 import { DEFAULT_NETWORK_PORT, NETWORK_NAME_PATTERN } from "../network/constants.js";
+import { QUESTION_PARENT_TIMEOUT_MS } from "../core/question-delegation.js";
 
 /** Default HTML is byte-identical; the fixed local entry is inserted only for a ready prepared host. */
 export function safeMobileStatus(value: unknown): string {
@@ -3014,11 +3015,34 @@ async function saveQuestionSettings() {
   const r=await fetch("/api/questions/settings",{method:"POST",headers:{"content-type":"application/json","x-agent-bridge":"1"},body:JSON.stringify(qSettings)});
   if (r.ok) { qSettings=await r.json(); showQuestionSettings(); }
 }
+function questionTiming(q) {
+  const at = q.askedAt == null ? q.createdAt : q.askedAt;
+  const d = q.delegation, deadline = d ? d.deadline : at + ${QUESTION_PARENT_TIMEOUT_MS};
+  const asked = Number.isFinite(at) ? new Date(at).toLocaleString() + " · " + ago(at) : "unavailable";
+  const elapsed = Date.now() >= deadline;
+  return '<p class="small muted"><b>Asked:</b> ' + esc(asked) + '</p>' +
+    (q.status && q.status !== "open" ? '' : '<p class="small" role="status"><b>Parent timeout:</b> 15 min · ' +
+      esc(Number.isFinite(deadline) ? (elapsed ? "elapsed" : "due " + new Date(deadline).toLocaleString()) : "unavailable") +
+      (d ? ' · <b>' + esc(d.state) + '</b>' + (d.recipients.length ? ' · ' + d.recipients.map(esc).join(", ") : '') + '. ' + esc(d.detail) : '. Escalation status unavailable; the question stays open.') + '</p>' +
+      (d && d.eligible ? '<button class="ghost" data-q-delegate="' + esc(q.id) + '" data-q-kind="' + esc(q.kind) + '"' + (apBusy.has(q.id) ? ' disabled' : '') + '>Delegate to parent</button>' : ''));
+}
+async function delegateQuestion(id, kind) {
+  if (apBusy.has(id)) return;
+  apBusy.add(id); lastApKey=""; renderApprovals(); renderSessionQuestions();
+  try {
+    const r = await fetch("/api/questions/" + encodeURIComponent(id) + "/delegate", {method:"POST",headers:{"content-type":"application/json","x-agent-bridge":"1"},body:JSON.stringify({kind}),signal:AbortSignal.timeout(ANSWER_TIMEOUT_MS)});
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data.error || "Delegation failed");
+    const q = approvals.find(q => q.id === id); if (q) q.delegation=data;
+    apResults.set(id,{kind:"ok",text:"Delegation: " + data.state + ". " + data.detail,at:Date.now()});
+  } catch (error) { apResults.set(id,{kind:"err",text:"Delegation unconfirmed. Refresh before retrying: " + error.message,at:Date.now()}); }
+  finally { apBusy.delete(id); lastApKey=""; renderApprovals(); renderSessionQuestions(); void loadApprovals(); }
+}
 function questionCard(q) {
   const busy=apBusy.has(q.id), open=q.status === "open", disabled=busy ? " disabled" : "";
   return '<article class="ap-card question-card'+(qHighlighted.has(q.id) ? ' focused' : '')+'" id="question-'+esc(q.id)+'"><div class="q-kind">OWNER QUESTION · '+esc(q.status)+'</div>'+
     '<h3>'+esc(q.title)+'</h3><div class="small muted">'+esc(folder(q.project))+" · "+q.askers.map(a => esc(a.session+(a.job ? " / "+a.job : ""))).join(", ")+'</div>'+
-    '<p class="q-context">'+esc(q.context)+'</p><p><b>'+ (q.blocking ? "Blocking: "+esc(q.blocks) : "Non-blocking")+'</b><br>Meanwhile: '+esc(q.meanwhile)+'</p>'+
+    questionTiming(q)+'<p class="q-context">'+esc(q.context)+'</p><p><b>'+ (q.blocking ? "Blocking: "+esc(q.blocks) : "Non-blocking")+'</b><br>Meanwhile: '+esc(q.meanwhile)+'</p>'+
     '<div class="small muted">Affected projects: '+q.affectedProjects.map(p => esc(folder(p))).join(", ")+'</div>'+
     q.links.map(l => '<div class="small"><b>'+esc(l.kind)+':</b> '+(l.kind === "issue" && q.deskProject ? '<a class="link" href="http://127.0.0.1:8765/#/'+encodeURIComponent(q.deskProject)+'/'+encodeURIComponent(l.value)+'" target="_blank" rel="noopener">'+esc(l.value)+'</a>' : '<code>'+esc(l.value)+'</code>')+'</div>').join("")+
     (open ? '<p class="small muted">'+(q.default ? 'Declared default: '+esc(q.default.option)+' after '+esc(new Date(q.default.deadline).toLocaleString())+'. This grants no tool permission.' : 'No answer means no decision. This stays visible until answered or explicitly dismissed.')+'</p>' : '')+
@@ -3104,7 +3128,7 @@ function jobQuestionCard(q) {
   return '<article class="ap-card question-card" id="jq-' + esc(q.id) + '"><div class="q-kind">SUBAGENT QUESTION · open</div>' +
     '<div class="ap-head">' + av(q.agent) + '<div class="grow"><b class="ell">' + (g ? '<a class="link" href="' + href(g.owner, g.key) + '">' + esc(title) + "</a>" : esc(title)) + '</b><div class="small muted ell">' +
     esc(q.agent + " subagent" + (q.owner ? " of " + q.owner : "")) + '</div></div><span class="ap-time">' + esc(ago(q.createdAt)) + "</span></div>" + asked +
-    '<div class="q-context">' + esc(q.body) + "</div>" +
+    questionTiming(q) + '<div class="q-context">' + esc(q.body) + "</div>" +
     (g ? '<div class="ap-actions"><input class="ap-why" data-jq-text="' + esc(q.id) + '" maxlength="8000" placeholder="Answer the subagent" aria-label="Answer the subagent"><button class="ghost" data-jq-send="' + esc(q.id) + '"' + (busy ? " disabled" : "") + ">Send to subagent</button></div>"
       : '<p class="small muted">Its run is not listed here. Its session answers with message_subagent.</p>') +
     '<div class="small muted">The answer reaches the subagent like message_subagent. It never grants tool permission.</div></article>';
@@ -3175,7 +3199,7 @@ function renderApprovals() {
   const items = apFilter === "history" ? questionHistory.filter(q => q.status !== "open") : approvals.filter(a => apFilter === "all" || approvalKind(a) === apFilter);
   const shown=new Set(items.map(a => a.id));
   for (const tab of $("apFilters").querySelectorAll("button")) tab.setAttribute("aria-pressed",String(tab.dataset.apFilter === apFilter));
-  const key = JSON.stringify([items,apFilter, [...apResults].map(([id, r]) => id + r.text), [...apBusy]]);
+  const key = JSON.stringify([items,apFilter, Math.floor(Date.now()/60000), [...apResults].map(([id, r]) => id + r.text), [...apBusy]]);
   updateNotifyButton();
   if (key === lastApKey) return;
   lastApKey = key;
@@ -3273,11 +3297,12 @@ $("apList").addEventListener("click", (e) => {
   if (d.qOption) void answerQuestion(d.id,d.qOption,false);
   if (d.qSend) void answerQuestion(d.qSend,null,false);
   if (d.qCancel) void answerQuestion(d.qCancel,null,true);
+  if (d.qDelegate) void delegateQuestion(d.qDelegate,d.qKind);
   if (d.jqSend) void answerJobQuestion(d.jqSend);
   if (d.qScope) { apDrafts.set("scope:"+d.qScope,apDrafts.get("scope:"+d.qScope) === "all" ? "project" : "all"); lastApKey=""; renderApprovals(); }
 });
 $("sQs").addEventListener("input", (e) => { const d=e.target.dataset || {}; if (d.jqText) apDrafts.set("jq:"+d.jqText,e.target.value); });
-$("sQs").addEventListener("click", (e) => { const b=e.target.closest("button[data-jq-send]"); if (b) void answerJobQuestion(b.dataset.jqSend); });
+$("sQs").addEventListener("click", (e) => { const b=e.target.closest("button"); if (!b) return; if (b.dataset.jqSend) void answerJobQuestion(b.dataset.jqSend); if (b.dataset.qDelegate) void delegateQuestion(b.dataset.qDelegate,b.dataset.qKind); });
 $("apFilters").addEventListener("click",e => { const b=e.target.closest("[data-ap-filter]"); if (!b) return; apFilter=b.dataset.apFilter; for (const tab of $("apFilters").querySelectorAll("button")) tab.setAttribute("aria-pressed",String(tab === b)); renderApprovals(); });
 $("questionSound").addEventListener("change",() => { qSettings.sound=$("questionSound").checked; void saveQuestionSettings(); });
 $("questionToast").addEventListener("change",() => { qSettings.toast=$("questionToast").checked; void saveQuestionSettings(); });
