@@ -284,7 +284,9 @@ export interface RequestMap {
   /** Separate opcode so an older broker refuses rather than silently ignoring the guard. */
   guardedSend: [SendArgs, SendResult];
   askOwner: [import("./owner-questions.js").AskOwnerArgs, { question: import("./owner-questions.js").OwnerQuestion; merged: boolean; similar: string[] }];
-  ownerQuestions: [Record<string, never>, import("./owner-questions.js").OwnerQuestion[]];
+  ownerQuestions: [Record<string, never>, import("./question-delegation.js").DelegatedOwnerQuestion[]];
+  jobQuestions: [Record<string, never>, import("./question-delegation.js").DelegatedJobQuestion[]];
+  delegateQuestion: [{ id: string; kind: import("./question-delegation.js").QuestionKind }, import("./question-delegation.js").QuestionDelegation];
   answerOwner: [{ id: string; answer: import("./owner-questions.js").QuestionAnswerArgs }, import("./owner-questions.js").OwnerQuestion];
   dismissOwner: [{ id: string; status: "cancelled" | "superseded"; reason: string; supersededBy?: string }, import("./owner-questions.js").OwnerQuestion];
   dashboardHeartbeat: [{ tab: string; visible: boolean }, { alerts: { id: string; at: number }[]; settings: import("./owner-questions.js").QuestionAlertSettings }];
