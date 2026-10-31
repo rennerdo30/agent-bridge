@@ -1545,7 +1545,9 @@ const SIDE_COLLAPSED_KEY = "ab-side-collapsed";
 let lastTree = "";
 
 const groupMatches = (g, q) => [g.title, g.task, g.agent, g.model, g.job].some((s) => String(s || "").toLowerCase().includes(q));
-const sessionMatches = (x, q) => [x.name, x.peer && x.peer.cwd, x.peer && x.peer.t3 && x.peer.t3.title].some((s) => String(s || "").toLowerCase().includes(q));
+const sessionMatches = (x, q) => [x.name, x.peer && x.peer.cwd, chatLine(x.peer)].some((s) => String(s || "").toLowerCase().includes(q));
+/** AB-474: the chat title on a session's second line: the T3 chat's, else the CLI's own (peer.chatTitle). */
+const chatLine = (p) => (p && (p.t3 ? p.t3.title : p.chatTitle)) || "";
 /** AB-468: the main line is the project folder. A session in a T3 Code chat's worktree (peer.t3) shows its T3
  * project's folder instead of the worktree's generated name; the chat title goes on the second line. */
 const peerTitle = (p) => p ? folder((p.t3 && p.t3.projectRoot) || p.cwd) : "";
@@ -1794,7 +1796,7 @@ async function showNative(x, key) {
 /** One session in the sidebar: folder, name and state, with how many subagents work. Subagents are listed on its page. */
 function sideSession(x) {
   const p = x.peer, cur = x.name === route.session;
-  const sub = (p && p.t3 ? p.t3.title : shortName(x.name)) + (p ? " · " + (p.projectGroup ? (p.projectMain ? "main · " : "secondary · ") : "") + (p.unavailable ? "unavailable" : p.activity || "connected") : " · ended");
+  const sub = (chatLine(p) || shortName(x.name)) + (p ? " · " + (p.projectGroup ? (p.projectMain ? "main · " : "secondary · ") : "") + (p.unavailable ? "unavailable" : p.activity || "connected") : " · ended");
   return '<div class="tree-sess' + (cur ? " cur" : "") + (x.live ? "" : " ended") + '">' +
     '<a href="' + href(x.name) + '" title="' + esc(x.name + (p ? " · " + p.cwd : "")) + '"' + (cur ? ' aria-current="page"' : "") + ">" + (p ? dot(p.activity) : '<span class="dot off"></span>') +
     '<span class="lbl ell">' + titled(sessionTitle(x), p) + '<small class="ell">' + esc(sub) + t3Asks(p) + "</small></span>" +
@@ -1849,7 +1851,7 @@ function sideMember(x) {
   const state = p.unavailable ? "unavailable" : p.activity || "connected";
   return '<div class="tree-sess member' + (main ? " main" : " secondary") + (cur ? " cur" : "") + (x.live ? "" : " ended") + '">' +
     '<a href="' + href(x.name) + '" title="' + esc(x.name + (p.cwd ? " · " + p.cwd : "")) + '"' + (cur ? ' aria-current="page"' : "") + ">" + dot(p.activity) +
-    '<span class="lbl ell">' + (p.t3 ? '<span class="ttl"><span class="ell">' + esc(agent) + "</span>" + t3Chip(p) + "</span>" : esc(agent)) + (main ? '<span class="main-tag">main</span>' : "") + '<small class="ell">' + esc(p.t3 ? p.t3.title + " · " + state : state) + t3Asks(p) + "</small></span>" +
+    '<span class="lbl ell">' + (p.t3 ? '<span class="ttl"><span class="ell">' + esc(agent) + "</span>" + t3Chip(p) + "</span>" : esc(agent)) + (main ? '<span class="main-tag">main</span>' : "") + '<small class="ell">' + esc(chatLine(p) ? chatLine(p) + " · " + state : state) + t3Asks(p) + "</small></span>" +
     (x.running ? '<span class="count" title="subagents working">' + x.running + "</span>" : "") + "</a></div>";
 }
 
@@ -1955,7 +1957,7 @@ function renderOverview() {
   const card = (x) => {
     const p = x.peer;
     const head = p
-      ? '<div class="head">' + av(p.agent) + '<div style="min-width:0;flex:1"><div class="title ell">' + titled(peerTitle(p), p) + '</div><div class="small muted ell">' + esc(p.t3 ? p.t3.title : x.name) + t3Asks(p) + "</div></div>" + dot(p.activity) + "</div>"
+      ? '<div class="head">' + av(p.agent) + '<div style="min-width:0;flex:1"><div class="title ell">' + titled(peerTitle(p), p) + '</div><div class="small muted ell">' + esc(chatLine(p) || x.name) + t3Asks(p) + "</div></div>" + dot(p.activity) + "</div>"
       : '<div class="head">' + av("other") + '<div style="min-width:0;flex:1"><div class="title ell">' + esc(x.name) + '</div><div class="small muted">not connected</div></div></div>';
     const stats = '<div class="stats"><span><b>' + x.groups.length + "</b>subagents</span>" + (x.running ? '<span style="color:var(--busy)"><b style="color:inherit">' + x.running + "</b>working</span>" : "") +
       (p ? "<span><b>" + up(p.startedAt) + "</b>connected</span>" : x.groups[0] ? "<span>last " + ago(x.groups[0].updatedAt) + "</span>" : "") + "</div>";

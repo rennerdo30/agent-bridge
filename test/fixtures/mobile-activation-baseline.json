@@ -1,8 +1,14 @@
 {
   "base": "0fed680017e823197b1fb3344598632f5cd219ed",
   "uiSha256": "876fbc073c419e55a05c806b75c4993d254510c444cbd81d70098efbd22fb98c",
-  "pageSha256": "f7d8e3d7cb1cc6dc33628277d12b0b5967a8a1fbf0f4517f0c735c8ce5f0de41",
+  "pageSha256": "ed81d93641077997d99d2b04a373a7d062c4bed4ead7aace75a68555e8b3e8e3",
   "updates": {
+    "AB-474-chat-titles": {
+      "base": "26f0f404",
+      "previousPageSha256": "f7d8e3d7cb1cc6dc33628277d12b0b5967a8a1fbf0f4517f0c735c8ce5f0de41",
+      "reason": "AB-474: the desktop dashboard script shows a session's own chat title (peer.chatTitle) on the second line of sidebar rows, session cards and grouped rows when it has no T3 chat (a T3 chat's title still wins), via a chatLine helper; the sidebar search also matches it. Every value is escaped. Sessions without either title render as before. Page re-pinned. The mobileDashboardPage addition, the optional mobile page and default mobile activation behavior are unchanged.",
+      "commit": "same commit as this pin (first commit after 26f0f404)"
+    },
     "AB-468-harness-badge": {
       "base": "ccdc7283",
       "previousPageSha256": "c4d691958b150e0bad232086b042ac4e14ba1908c1c7eec76b4d34ff4ac2969e",
