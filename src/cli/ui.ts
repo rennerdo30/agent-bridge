@@ -50,7 +50,7 @@ import { MAX_HISTORY_LIMIT, searchMessages } from "../core/message-history.js";
 import { DEFAULT_RUN_PAGE_SIZE, pageRuns } from "../core/run-history.js";
 import { type TranscriptPaths } from "../core/transcripts/index.js";
 import { localT3HistoryRoot, transcriptPaths } from "../core/transcripts/common.js";
-import { t3SessionInfo, transcriptPrompts, type T3SessionInfo } from "../core/t3-sessions.js";
+import { t3LocalSessions, t3SessionInfo, transcriptPrompts, type T3SessionInfo } from "../core/t3-sessions.js";
 import { HISTORY_MAX_QUERY_CHARS, historySearchSchema, readHistory, readHistorySource } from "../core/history.js";
 import { answerHistory, type HistoryAnswerDependencies } from "../core/history-answer.js";
 import { readDecisions, decisionScopeSchema, MAX_DECISION_TEXT_CHARS, MAX_DECISION_TOPIC_CHARS, type DecisionsArgs } from "../core/decisions.js";
@@ -323,8 +323,8 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
   const t3Root = opts.transcripts && Object.hasOwn(opts.transcripts, "t3") ? opts.transcripts.t3 : localT3HistoryRoot();
   const t3Prompts = transcriptPrompts(opts.transcripts ?? transcriptPaths());
   const withT3 = <P extends PeerInfo>(list: P[]): (P & { t3?: T3SessionInfo })[] => {
-    const local = list.filter((p) => !p.name.includes("/") && typeof p.cwd === "string" && p.cwd);
-    const info = t3SessionInfo(t3Root, local.map((p) => ({ key: p.name, cwd: p.cwd!, agent: p.agent, sessionId: p.sessionId })), Date.now(), t3Prompts);
+    const local = t3LocalSessions(list);
+    const info = t3SessionInfo(t3Root, local.map((p) => ({ key: p.name, cwd: p.cwd, agent: p.agent, sessionId: p.sessionId })), Date.now(), t3Prompts);
     return list.map((p) => (info.has(p.name) ? { ...p, t3: info.get(p.name)! } : p));
   };
   // Pushes "this conversation moved" to open dashboards as soon as the history worker retains new lines (AB-383).

@@ -1,8 +1,9 @@
-import { realpathSync } from "node:fs";
+import { lstatSync, realpathSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { TranscriptPaths, TranscriptSession } from "./transcripts/common.js";
 import { readTranscript } from "./transcripts/index.js";
+import { physicalPath } from "./project-identity.js";
 
 /**
  * AB-468: which Bridge sessions are T3 Code chats. T3 gives most chats a folder of their own
@@ -51,10 +52,43 @@ const AGENTS: Record<string, string> = { claudeAgent: "claude", claude: "claude"
 const RUN_STATUS: Record<string, T3SessionInfo["status"]> = { running: "running", queued: "queued", completed: "done", failed: "failed", interrupted: "interrupted", cancelled: "cancelled" };
 const id = (v: unknown): v is string => typeof v === "string" && v.length > 0 && v.length <= 512 && v.trim() === v && !/[\x00-\x1f\x7f]/.test(v);
 
-/** Same location, same key: separators, case and the E:/D: alias of one drive do not matter. */
+/**
+ * The sessions to match against T3 chats: this PC's CLI sessions themselves. A Bridge job running in a chat's folder
+ * is not that chat (and would otherwise make two same-agent sessions there, so neither would be linked).
+ */
+export function t3LocalSessions<P extends { name: string; cwd?: string | null; subagent?: boolean; jobAgent?: unknown }>(peers: P[]): (P & { cwd: string })[] {
+  return peers.filter((p): p is P & { cwd: string } => !p.name.includes("/") && !p.subagent && !p.jobAgent && typeof p.cwd === "string" && p.cwd.length > 0);
+}
+
+/** Physical spellings of parent folders (worktrees share a few parents); cleared with every index rebuild. */
+const parents = new Map<string, string>();
+const slashes = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "");
+/**
+ * Same location, same key: separators, a trailing separator and (on Windows) case do not matter, and drive aliases
+ * (SUBST, mapped drives, junctions, symlinks) resolve to the physical folder via physicalPath (AB-399). No machine's
+ * drive layout is assumed. The parent is resolved once and cached; the folder itself only when it is a link.
+ */
 export function t3FolderKey(path: string): string {
-  const p = path.replace(/\\/g, "/").replace(/\/+$/, "").replace(/^d:/i, "E:");
-  return process.platform === "win32" ? p.toLowerCase() : p;
+  const plain = slashes(path) || path;
+  let real = plain;
+  const cut = plain.lastIndexOf("/");
+  if (isAbsolute(plain) && cut > 0) {
+    let link = false;
+    try { link = lstatSync(plain).isSymbolicLink(); } catch { link = false; }
+    if (link) {
+      try { real = slashes(physicalPath(plain)) || plain; } catch { real = plain; }
+    } else {
+      const parent = plain.slice(0, cut);
+      let resolved = parents.get(parent);
+      if (resolved === undefined) {
+        try { resolved = slashes(physicalPath(parent)) || parent; } catch { resolved = parent; }
+        if (parents.size >= 4_096) parents.clear();
+        parents.set(parent, resolved);
+      }
+      real = `${resolved}/${plain.slice(cut + 1)}`;
+    }
+  }
+  return process.platform === "win32" ? real.toLowerCase() : real;
 }
 
 function open(root: string): DatabaseSync | undefined {
@@ -153,10 +187,19 @@ export function t3SessionInfo(root: string | undefined, sessions: { key: string;
     let cached = indexes.get(root);
     // A folder first seen after the index was built (a new chat) may rebuild it early, once; folders
     // that are simply not T3 chats (the main checkout, other sessions) never keep forcing rebuilds.
-    const fresh = sessions.some(s => { const k = t3FolderKey(s.cwd); return !cached?.index.folders.has(k) && !cached?.index.roots.has(k) && !cached?.seen.has(k); });
+    // The same applies to a session whose agent no chat in its folder (or project root) has run on yet: right after T3
+    // switched a chat's provider, the new provider's session is linked within the short window instead of showing twice.
+    const tag = (s: { cwd: string; agent: string }) => `${t3FolderKey(s.cwd)}|${s.agent}`;
+    const fresh = sessions.some(s => {
+      if (cached?.seen.has(tag(s))) return false;
+      const key = t3FolderKey(s.cwd), entry = cached?.index.folders.get(key);
+      const chats = [...(entry ? [...entry.owners, ...entry.shared] : []), ...(cached?.index.roots.get(key) ?? [])];
+      return !chats.some(c => c.agents.has(s.agent));
+    });
     const age = cached ? now - cached.at : Infinity;
     if (!cached || (cached.failed ? age >= T3_INDEX_MISS_MS : age >= T3_INDEX_MS || (fresh && age >= T3_INDEX_MISS_MS))) {
-      const seen = new Set(sessions.map(s => t3FolderKey(s.cwd)));
+      parents.clear(); // drive mappings may have changed since the last index
+      const seen = new Set(sessions.map(tag));
       // A store that cannot be indexed (busy, unknown schema) is retried after the short window, not every poll.
       try { cached = { at: now, index: buildIndex(input), seen, failed: false }; }
       catch { cached = { at: now, index: { folders: new Map(), roots: new Map() }, seen, failed: true }; }
