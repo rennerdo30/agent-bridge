@@ -5,6 +5,12 @@ import { DurationShardSequencer } from "./scripts/test-shards.mjs";
 /** Tests start real named pipes / sockets and child processes; shared CI runners can be slow. */
 const lane = process.env.AGENT_BRIDGE_TEST_LANE ?? "all";
 const TEST_TIMEOUT_MS = lane === "fast" ? 30_000 : 120_000;
+/**
+ * AB-477: in CI (GitHub Actions sets CI=true) a failed test is retried once, in place, so a one-off load flake does
+ * not fail a whole job. scripts/ci-reporter.mjs still lists every retried test as FLAKY/RETRIED in the log and the job
+ * summary, so they stay visible. Local runs never retry.
+ */
+const RETRIES = ["", "0", "false"].includes((process.env.CI ?? "").toLowerCase()) ? 0 : 1;
 
 export default defineConfig({
   // Root tests import the portable mobile client without installing the Expo app.
@@ -17,6 +23,7 @@ export default defineConfig({
     exclude: [...configDefaults.exclude, ".agent-bridge-test/**"],
     // --shard=i/n packs files by measured Windows duration; execution order is unchanged.
     sequence: { sequencer: DurationShardSequencer },
+    retry: RETRIES,
     testTimeout: TEST_TIMEOUT_MS,
     hookTimeout: TEST_TIMEOUT_MS,
     // Never inherit the parent link of a subagent that runs the suite.
