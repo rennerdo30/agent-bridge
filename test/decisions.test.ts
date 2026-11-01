@@ -210,6 +210,17 @@ describe("shared decision broker", () => {
     try { expect(db.prepare("SELECT COUNT(*) AS n FROM messages WHERE recipient = ?").get(reload.name)!.n).toBe(2); } finally { db.close(); }
   });
 
+  it("delivers a decision addressed to a host session id recorded before the session reported that id", async () => {
+    const owner = env.node("claude-owner");
+    const peer = env.node("codex-peer", "codex");
+    await owner.start(); await peer.start();
+    const scoped = await owner.decide({ topic: "late-id", text: "For the host session", scope: { sessions: ["late-host-session"] } });
+    expect(scoped.deliveredTo).toEqual([]);
+    await peer.setSessionId("late-host-session");
+    await until(() => peer.unread().length === 1);
+    expect(peer.unread()[0]!.conversationId).toBe(`decision-${scoped.decision.id}`);
+  });
+
   it("retains current revisions and delivery receipts through a broker restart", async () => {
     const owner = env.node("claude-owner");
     await owner.start(); await owner.setSessionId("owner-session");
