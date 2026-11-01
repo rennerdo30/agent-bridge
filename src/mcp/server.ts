@@ -68,7 +68,9 @@ import { formatParentRoute, parentFromEnv, type ParentClient } from "../core/par
 import type { DashboardInfo } from "../cli/dashboard.js";
 import { openBrowser } from "../cli/open.js";
 import { MessageWaitStore, matchesNotificationWait, matchesWait, resumeWaitHint, singleWaitTimeoutMs, SINGLE_WAIT_SEC, waitForReadReceipt, type WaitFilters } from "./message-wait.js";
-import { RewakeEndpoint, shouldWakeClaudeMessage } from "./rewake.js";
+import { RewakeEndpoint, shouldWakeClaudeMessage, type T3Delivery } from "./rewake.js";
+import { t3ChatForNativeSession, t3CliFromEnv, t3HomeFromEnv, t3SendMessage } from "../core/t3-chat.js";
+import { homedir } from "node:os";
 import { DEFAULT_FOLLOW_UP, FOLLOW_UP_GATE_REASONS, JobManager, type Job, type Resume, type Run, type RunResult } from "./jobs.js";
 import { isBridgeWorktree, isInside, resumeArgs, runDelegate, type DelegateArgs, type RunContext } from "./delegate-run.js";
 import { JobRunners } from "./job-host.js";
@@ -575,8 +577,16 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
   if (!t3Host && agent === "claude" && node) {
     // With the channel active, messages already arrive as channel events: waking too would deliver them twice.
     const shouldWake = (m: BridgeMessage) => claudeWakeCandidate(ctx, m);
+    // AB-481: in a T3 Code chat, wake-ups go into the chat as visible messages through T3's own CLI.
+    const t3Cli = nativeT3 ? t3CliFromEnv(process.env) : undefined;
+    const t3Home = t3HomeFromEnv(process.env, homedir());
+    const t3Delivery: T3Delivery | undefined = t3Cli ? {
+      chat: (sessionId) => t3ChatForNativeSession(t3Home, sessionId),
+      send: (threadId, text, signal) => t3SendMessage(t3Cli, threadId, text, { env: process.env, signal }),
+    } : undefined;
+    if (nativeT3) log.info("T3 Code chat", { t3Delivery: Boolean(t3Delivery) });
     rewake = new RewakeEndpoint(home, node, shouldWake, log.child("rewake"), (event) => reportModActivity(ctx, event), ctx.claudeMailScopes,
-      { noted: (id) => oversizedMessageNoted(ctx, id), note: (ids) => noteOversizedMessages(ctx, ids) });
+      { noted: (id) => oversizedMessageNoted(ctx, id), note: (ids) => noteOversizedMessages(ctx, ids) }, undefined, t3Delivery);
     try {
       await rewake.start();
       ctx.rewakeAvailable = true;

@@ -187,6 +187,37 @@ job started from a T3 chat is not taken for one. A plain CLI started from T3's b
 the variable too and counts as a T3 chat. The plugin, skill and relay-agent descriptions carry the same
 "T3's own tools first" note, since they cannot see the environment.
 
+### Bridge messages visible in T3 chats (AB-481)
+
+T3 shows a chat's user and assistant messages, reasoning and tool calls. It does not show what a Claude
+session gets through hooks: Bridge mail attached to tool results while a turn runs, and the prompt a Stop-hook
+or mod wake-up starts an idle turn with. So without this, the user never sees the message that woke the agent.
+
+In a T3 Code chat (above), Claude sessions wake through the chat itself:
+
+- **Which chat:** T3 records the provider's own session id in
+  `orchestration_v2_projection_provider_threads.payload_json` → `nativeThreadRef.nativeId`. Bridge looks the
+  session up there (read-only, one short connection, deleted and archived chats skipped; two matching chats
+  are never guessed between). No match: nothing changes.
+- **How:** when the session is idle and mail that would wake it arrives, Bridge sends one chat message with
+  T3's own CLI: `$T3CODE_CLI_PATH thread send --json <thread> -`, the text on stdin. It is the usual wake-up
+  text (`[agent-bridge] New actionable message(s) arrived:` and the messages), bounded like a hook result.
+  T3 starts the turn and keeps the message in the chat. Arrivals within 1.5 seconds go out together.
+- **Read state:** the delivery owns its messages until its own prompt shows them: no hook injects them, no other
+  wake-up takes them, no mod acknowledgement confirms them, and nothing sends them again. They are marked read
+  when the wake turn's prompt shows them. The mod holds and the Stop hooks keep waiting without waking.
+- **Busy chats:** unchanged. Mail arriving mid-turn goes out with the tool hooks (not visible in T3); the CLI
+  cannot put a message into a running turn. Mail still unread when the turn ends goes into the chat.
+- **Fallback:** a send the CLI refuses (no CLI, it could not start) returns the messages at once; a send whose
+  prompt does not show up within 20 seconds of idle time (including an unknown outcome; time while another
+  turn runs does not count, since T3 queues behind it) returns them as repeats. Either way T3 delivery stops for
+  that session and the mod or the waiting Stop hook wakes it with them. A send is never retried: the CLI has no
+  request id. A send that times out (30 seconds) or is pending when the session's server stops is ended with its
+  whole process tree (on Windows by the child's own PID).
+- **Credentials:** T3's CLI signs itself in; Bridge never reads T3's auth tables, secrets or token files.
+
+Claude only for now; Codex, opencode, Antigravity and Muse chats in T3 keep their own wake paths.
+
 ### Selector
 
 Set `AGENT_BRIDGE_MCP_PROFILE` at server startup:
@@ -214,7 +245,7 @@ Before the first Bridge registration, the adapter initializes MCP, discovers lit
 
 Bridge keeps its usual provider `agent` and native `sessionId`. A separate `frontend` binding contains `kind: "t3"`, a digest of the scoped endpoint, the exact T3 thread ID and the inherited provider instance ID. It contains no authorization value or raw endpoint. Native `_meta.threadId` is never used as a T3 ID. `peers`, `health` and `t3_capabilities` expose this distinction. The frontend is present in the initial `helloT3`, and brokers without that operation refuse rather than silently discarding it. Hosted registrations, remembered names and project-main identity are isolated from other T3 threads and ordinary provider sessions, including when native IDs are absent or reused. A reconnect of the same bound frontend can replace its old server while retaining its new provider-native session ID.
 
-Incoming Bridge mail uses the existing quiet-message, hop, direct-wake, auto-wake and awaited-reply policy. Eligible arrivals are coalesced into a pointer sent with `t3_thread_send` to the exact bound T3 thread in `queue` mode. The pointer carries stable Bridge IDs and asks the model to read its existing Bridge inbox; it contains no mail bodies. Its deterministic `clientRequestId` is reused for the same pointer. Native Codex queue, Claude channel/rewake, opencode notification wake and Muse/Antigravity hook delivery are suppressed in host mode.
+This section covers hosts that inject T3's scoped transport; ordinary T3 Code chats use the section above. Incoming Bridge mail uses the existing quiet-message, hop, direct-wake, auto-wake and awaited-reply policy. Eligible arrivals are coalesced into a pointer sent with `t3_thread_send` to the exact bound T3 thread in `queue` mode. The pointer carries stable Bridge IDs and asks the model to read its existing Bridge inbox; it contains no mail bodies. Its deterministic `clientRequestId` is reused for the same pointer. Native Codex queue, Claude channel/rewake, opencode notification wake and Muse/Antigravity hook delivery are suppressed in host mode.
 
 T3 dispatch receipts describe `queued`, `started`, `steered` or `restarted` delivery. They do **not** prove that the model read Bridge mail. Wake acceptance never marks mail read. Only the existing authenticated inbox consumption path does that. Unknown dispatch outcomes remain explicit and are not retried automatically or sent through another route. Mail stays unread for a later inbox call.
 

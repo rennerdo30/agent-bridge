@@ -11,6 +11,27 @@ import { tokensEqual } from "../core/token.js";
 import { escapeAttr, formatMessage, formatMessages } from "./format.js";
 import { selectForDelivery, unshownMessageNotes } from "./output-bounds.js";
 import type { ClaudeMailScopes } from "./claude-mail-scope.js";
+import type { T3SendOutcome } from "../core/t3-chat.js";
+
+/**
+ * AB-481: inside a T3 Code chat, Stop-hook and mod wake-ups start turns T3 does not show, so the user never sees
+ * the message that woke the agent. With this, an idle session's wake-up goes into its T3 chat as a visible chat
+ * message instead (through T3's own CLI); T3 starts the turn and keeps the message in the chat's history.
+ */
+export interface T3Delivery {
+  /** The T3 chat this Claude session runs in, or undefined. */
+  chat(sessionId: string): string | undefined;
+  /** The signal aborts a pending send when the endpoint stops. */
+  send(threadId: string, text: string, signal: AbortSignal): Promise<T3SendOutcome>;
+}
+/** Messages arriving together go out as one chat message. */
+const T3_COALESCE_MS = 1_500;
+/** A T3 delivery whose prompt did not show up within this much idle time: T3 delivery stops and the mod or hooks take over. */
+export const T3_TURN_CONFIRM_MS = 20_000;
+/** A session whose chat was not found is looked up again at most this often. */
+const T3_LOOKUP_RETRY_MS = 60_000;
+/** Abort reason that tells a waiting Stop hook to wake the session: T3 delivery handed its messages back. */
+const T3_FALLBACK = "t3-fallback";
 
 /**
  * Wake an idle Claude Code session when something it is waiting for arrives: a background subagent's
@@ -134,6 +155,22 @@ export class RewakeEndpoint {
   private modSeen = false;
   /** A turn is running (from the hooks and the mod): the mod waits until the session is idle. */
   private busy = false;
+  /** AB-481: the T3 chat of this session, once found. */
+  private t3Thread: string | undefined;
+  private t3LookedUpAt = 0;
+  /** T3 delivery failed or started no turn: the mod and the Stop hooks wake this session again. */
+  private t3Off = false;
+  /**
+   * The one T3 delivery in progress. Its messages and notes belong to it alone (not to the mod's hand-outs): no other
+   * hand-out takes them and no mod acknowledgement confirms them; only that delivery's own prompt does (confirmPrompt).
+   */
+  private t3Pending: { ids: Set<string>; notes: Set<string>; abort: AbortController } | null = null;
+  /** Every CLI send still running, also after its prompt settled the delivery: stop() ends them all. */
+  private readonly t3Sends = new Set<AbortController>();
+  private t3Timer: NodeJS.Timeout | undefined;
+  private t3ConfirmTimer: NodeJS.Timeout | undefined;
+  private stopped = false;
+  private readonly onT3Message = () => this.scheduleT3();
 
   constructor(
     private readonly home: string,
@@ -146,14 +183,25 @@ export class RewakeEndpoint {
     private readonly oversized?: OversizedMessages,
     /** How long the standby waits before taking a message (tests shorten it). */
     private readonly standbyGraceMs = STANDBY_GRACE_MS,
+    /** AB-481: set in a T3 Code chat with T3's CLI available. */
+    private readonly t3?: T3Delivery,
+    /** How long a T3 delivery may take to start a turn (tests shorten it). */
+    private readonly t3ConfirmMs = T3_TURN_CONFIRM_MS,
   ) {}
+
+  /** T3 delivers this session's wake-ups: its T3 chat is known and delivery has not failed. */
+  get t3Active(): boolean {
+    return Boolean(this.t3) && !this.t3Off && !this.retired && !this.stopped && this.t3Chat() !== undefined;
+  }
 
   /**
    * A message a wake-up may carry: it should wake the session, and it is not an oversized message whose note was
    * shown (AB-404) or is on its way to its own mod turn.
    */
   private readonly deliverable = (m: BridgeMessage): boolean =>
-    this.shouldWake(m) && !this.oversized?.noted(m.id) && !this.modNoteInFlight(m.id);
+    this.shouldWake(m) && !this.oversized?.noted(m.id) && !this.modNoteInFlight(m.id) && !this.t3Pending?.ids.has(m.id) && !this.t3Pending?.notes.has(m.id);
+  /** A message a Stop-hook waiter may wake for: not while T3 delivers this session's wake-ups (AB-481). */
+  private readonly hookWakeable = (m: BridgeMessage): boolean => this.wakeable(m) && !this.t3Active;
   /** A message that should start a wake-up: deliverable, and not a note this endpoint handed out and awaits (AB-404). */
   private readonly wakeable = (m: BridgeMessage): boolean => this.deliverable(m) && !this.handedNotes.has(m.id);
 
@@ -197,7 +245,8 @@ export class RewakeEndpoint {
       // Another server of this session took over: nothing is handed out here (it would be handed out twice).
       if (this.retired) this.reply(res, "", true);
       else if (url.searchParams.get("role") === "mod") this.waitMod(res);
-      // With the mod, the turn-end hooks end at once: the mod does the waking.
+      // With the mod, the turn-end hooks end at once: the mod does the waking. With T3 delivery they keep
+      // waiting without waking (hookWakeable), as the fallback should T3 delivery stop (AB-481).
       else if (this.modSeen) this.reply(res, "", true);
       else if (url.searchParams.get("role") === "standby") this.waitStandby(res);
       else this.waitPrimary(res);
@@ -209,6 +258,7 @@ export class RewakeEndpoint {
       this.server!.listen(0, HOST, () => resolve());
     });
     this.port = (this.server.address() as AddressInfo).port;
+    if (this.t3) this.node.on("message", this.onT3Message);
   }
 
   private reply(res: ServerResponse, text: string, superseded: boolean): void {
@@ -223,7 +273,7 @@ export class RewakeEndpoint {
    * wake-up text is bounded like a hook result. Only messages shown in full are handed out; one too large to
    * show is listed by id once (it stays unread and inbox pages it), and the rest wait for the next wake-up.
    */
-  private handOut(toMod = false): string {
+  private handOut(toMod: boolean | "t3" = false): string {
     const render = (shown: BridgeMessage[], oversized: BridgeMessage[], deferred: BridgeMessage[]) => [
       shown.length ? formatMessages(shown, { header: WAKE_HEADER, repeat: (m) => this.repeated(m.id) }) : WAKE_HEADER,
       ...unshownMessageNotes(oversized, deferred.length, (id) => `inbox(id="${id}", offset=0)`)
@@ -235,13 +285,16 @@ export class RewakeEndpoint {
     // delivered once the session shows activity (confirmDelivery) or, for the mod, once their own prompt
     // runs or the mod acknowledges them; until then a retry or the next poll still gets them. A note for an
     // oversized message is confirmed the same way, and only then is it not listed again (AB-404).
-    for (const m of shown) {
-      if (toMod) this.modHandedOut.set(m.id, this.turnEnds);
-      else this.handedOut.add(m.id);
-    }
-    for (const m of oversized) {
-      if (toMod) this.modNotes.set(m.id, { ends: this.turnEnds, starts: this.turnStarts });
-      else this.handedNotes.add(m.id);
+    // A T3 delivery records its own hand-out (flushT3).
+    if (toMod !== "t3") {
+      for (const m of shown) {
+        if (toMod) this.modHandedOut.set(m.id, this.turnEnds);
+        else this.handedOut.add(m.id);
+      }
+      for (const m of oversized) {
+        if (toMod) this.modNotes.set(m.id, { ends: this.turnEnds, starts: this.turnStarts });
+        else this.handedNotes.add(m.id);
+      }
     }
     return shown.length || oversized.length ? render(shown, oversized, deferred) : "";
   }
@@ -254,10 +307,11 @@ export class RewakeEndpoint {
     const ac = new AbortController();
     this.waiter = ac;
     res.on("close", () => ac.abort("closed"));
-    void this.node.waitForMessage(REWAKE_POLL_MS, this.wakeable, ac.signal).then((first) => {
+    void this.node.waitForMessage(REWAKE_POLL_MS, this.hookWakeable, ac.signal).then((first) => {
       if (this.waiter === ac) this.waiter = null;
       let text = "";
-      if (first && !res.destroyed) {
+      // AB-481: T3 delivery stopped while this hook waited; it wakes the session with the messages it handed back.
+      if ((first || ac.signal.reason === T3_FALLBACK) && !res.destroyed) {
         text = this.handOut();
         this.log.info("waking the session", { count: this.handedOut.size });
         // If no activity follows, Claude Code dropped the wake-up: the standby hook tries again.
@@ -293,7 +347,7 @@ export class RewakeEndpoint {
       void this.node
         // Not while a wake-up is unconfirmed: that one is retried (retryWake), and handing out again here would
         // repeat its messages without marking them as repeats (a deferred message would re-select them).
-        .waitForMessage(REWAKE_POLL_MS, (m) => this.wakeable(m) && !this.pendingWake() && !this.waiter, ac.signal)
+        .waitForMessage(REWAKE_POLL_MS, (m) => this.hookWakeable(m) && !this.pendingWake() && !this.waiter, ac.signal)
         .then((m) => {
           if (done) return;
           if (!m) return finish("", false);
@@ -329,7 +383,8 @@ export class RewakeEndpoint {
     void (async () => {
       while (!ac.signal.aborted && Date.now() < deadline) {
         const waiting = this.node.unread().some(this.wakeable);
-        if (waiting && !this.busy) break;
+        // AB-481: T3 delivery wakes this session; the mod stays the fallback should it stop.
+        if (waiting && !this.busy && !this.t3Active) break;
         // Busy with a message already waiting: check again shortly (waitForMessage would return it at once).
         if (waiting) await new Promise<void>((r) => setTimeout(r, MOD_TICK_MS).unref());
         else await this.node.waitForMessage(MOD_TICK_MS, this.wakeable, ac.signal);
@@ -351,13 +406,101 @@ export class RewakeEndpoint {
 
   /** Whether the mod wakes this session (the Stop hook then leaves messages to it instead of blocking). */
   get modActive(): boolean {
-    return this.modSeen;
+    return this.modSeen || this.t3Active;
   }
 
   /** A turn ended (the Stop hook ran). */
   sessionIdle(): void {
     if (this.busy) this.turnEnds++;
     this.setBusy(false);
+    // A pending T3 delivery's window starts over: only a full idle window without its prompt counts.
+    if (this.t3Pending && this.t3ConfirmTimer) this.armT3Confirm(this.t3Pending);
+    this.scheduleT3();
+  }
+
+  private scheduleT3(): void {
+    if (!this.t3 || this.t3Off || this.t3Timer) return;
+    this.t3Timer = setTimeout(() => { this.t3Timer = undefined; void this.flushT3(); }, T3_COALESCE_MS);
+    this.t3Timer.unref();
+  }
+
+  /** The session's T3 chat; while unknown, looked up again at most once a minute. */
+  private t3Chat(): string | undefined {
+    if (this.t3Thread || !this.t3 || !this.registered) return this.t3Thread;
+    if (this.t3LookedUpAt && Date.now() - this.t3LookedUpAt < T3_LOOKUP_RETRY_MS) return undefined;
+    this.t3LookedUpAt = Date.now();
+    try { this.t3Thread = this.t3.chat(this.registered); } catch { this.t3Thread = undefined; }
+    if (this.t3Thread) this.log.info("T3 chat found; wake-ups go into it as chat messages", { thread: this.t3Thread });
+    return this.t3Thread;
+  }
+
+  /**
+   * AB-481: an idle session's waiting messages go into its T3 chat as one chat message. The delivery owns them until
+   * its own prompt shows them (confirmPrompt): no hook injects them, no other wake-up takes them, nothing re-sends them.
+   */
+  private async flushT3(): Promise<void> {
+    if (!this.t3 || this.t3Off || this.retired || this.stopped || this.busy || this.t3Pending) return;
+    const thread = this.t3Chat();
+    if (!thread || !this.node.unread().some(this.wakeable)) return;
+    const text = this.handOut("t3");
+    if (!text) return;
+    const pending = { ids: new Set(wakeMessageIds(text)), notes: new Set(wakeNoteIds(text)), abort: new AbortController() };
+    this.t3Pending = pending;
+    this.t3Sends.add(pending.abort);
+    let outcome: T3SendOutcome;
+    try { outcome = await this.t3.send(thread, text, pending.abort.signal); }
+    catch (error) { outcome = { state: "unknown", reason: String(error) }; }
+    finally { this.t3Sends.delete(pending.abort); }
+    // Stopped meanwhile, or the delivery was already settled: nothing more to do here.
+    if (this.stopped || this.t3Pending !== pending) return;
+    if (outcome.state === "failed") {
+      // Never reached T3: the messages go straight back to the mod and the hooks.
+      this.log.warn("T3 delivery refused; wake-ups go back to the mod and hooks", { reason: outcome.reason });
+      this.takeBackT3(pending, false);
+      return;
+    }
+    this.log.info(outcome.state === "accepted" ? "wake-up sent into the T3 chat" : "T3 delivery outcome unknown; not retried",
+      { count: pending.ids.size, ...(outcome.state === "accepted" ? { delivery: outcome.delivery, runId: outcome.runId } : { reason: outcome.reason }) });
+    this.armT3Confirm(pending);
+  }
+
+  /**
+   * The delivery's prompt should show up soon. T3 queues it behind a running turn, so busy time does not count:
+   * only a session that stayed idle for the whole window without that prompt gets its messages back (as repeats).
+   */
+  private armT3Confirm(pending: NonNullable<RewakeEndpoint["t3Pending"]>): void {
+    clearTimeout(this.t3ConfirmTimer);
+    this.t3ConfirmTimer = setTimeout(() => {
+      this.t3ConfirmTimer = undefined;
+      if (this.t3Pending !== pending || this.stopped) return;
+      if (this.busy) { this.armT3Confirm(pending); return; }
+      this.log.warn("a T3 delivery's prompt never showed up; wake-ups go back to the mod and hooks", { count: pending.ids.size });
+      this.takeBackT3(pending, true);
+    }, this.t3ConfirmMs);
+    this.t3ConfirmTimer.unref();
+  }
+
+  /** The delivery's prompt showed its messages: the next waiting mail may go out. */
+  private settleT3(pending: NonNullable<RewakeEndpoint["t3Pending"]>): void {
+    if (this.t3Pending !== pending || pending.ids.size || pending.notes.size) return;
+    clearTimeout(this.t3ConfirmTimer);
+    this.t3ConfirmTimer = undefined;
+    this.t3Pending = null;
+    this.scheduleT3();
+  }
+
+  /** T3 delivery stops for this session; its messages return (as repeats, if T3 may have shown them) and a fallback wakes it. */
+  private takeBackT3(pending: NonNullable<RewakeEndpoint["t3Pending"]>, maybeShown: boolean): void {
+    this.t3Off = true;
+    if (this.t3Pending === pending) this.t3Pending = null;
+    clearTimeout(this.t3ConfirmTimer);
+    this.t3ConfirmTimer = undefined;
+    if (maybeShown) this.markRepeat(pending.ids);
+    // The mod re-checks within MOD_TICK_MS by itself; a waiting Stop hook is woken now.
+    if (this.modSeen) return;
+    if (this.waiter) this.waiter.abort(T3_FALLBACK);
+    else if (this.standby) this.standby.wake();
+    else this.log.warn("no wake-up hook waits; the returned messages go out with the next turn", { count: pending.ids.size });
   }
 
   /** Read mod hand-outs: shown in their own turn or acknowledged by the mod. */
@@ -412,6 +555,7 @@ export class RewakeEndpoint {
    * again goes back to the hooks, as a repeat.
    */
   inFlight(id: string): boolean {
+    if (this.t3Pending?.ids.has(id) || this.t3Pending?.notes.has(id)) return true;
     if (this.modNoteInFlight(id)) return true;
     const at = this.modHandedOut.get(id);
     if (at === undefined) return false;
@@ -426,10 +570,14 @@ export class RewakeEndpoint {
   confirmPrompt(prompt: string): void {
     if (!prompt.includes(WAKE_HEADER)) return;
     // AB-404: only notes this endpoint handed out and awaits; a marker for any other id is not one of its notes.
-    this.confirmNotes([...new Set([...this.handedNotes, ...this.modNotes.keys(), ...this.ackedNotes])].filter((id) => prompt.includes(oversizedNoteMarker(id))));
+    const pending = this.t3Pending;
+    const shownNotes = [...new Set([...this.handedNotes, ...this.modNotes.keys(), ...this.ackedNotes, ...(pending?.notes ?? [])])].filter((id) => prompt.includes(oversizedNoteMarker(id)));
+    for (const id of shownNotes) pending?.notes.delete(id);
+    this.confirmNotes(shownNotes);
     const ids = new Set(wakeMessageIds(prompt));
+    for (const id of ids) { this.handedOut.delete(id); this.modHandedOut.delete(id); pending?.ids.delete(id); }
+    if (pending) this.settleT3(pending);
     if (!ids.size) return;
-    for (const id of ids) { this.handedOut.delete(id); this.modHandedOut.delete(id); }
     const shown = this.node.unread().filter((m) => ids.has(m.id)).map((m) => m.id);
     if (shown.length) this.node.markRead(shown);
   }
@@ -532,6 +680,9 @@ export class RewakeEndpoint {
   /** Publish the endpoint for this Claude session id so the hook can find it. */
   register(sessionId: string): void {
     if (!this.server || this.retired || this.registered === sessionId) return;
+    // Another session id: its T3 chat is looked up again.
+    this.t3Thread = undefined;
+    this.t3LookedUpAt = 0;
     const file = sessionFile(this.home, sessionId);
     mkdirSync(join(this.home, SESSIONS_DIR), { recursive: true });
     const reg: RewakeRegistration = { port: this.port, secret: this.secret, pid: process.pid };
@@ -542,6 +693,11 @@ export class RewakeEndpoint {
   }
 
   async stop(): Promise<void> {
+    this.stopped = true;
+    if (this.t3) this.node.off("message", this.onT3Message);
+    clearTimeout(this.t3Timer);
+    clearTimeout(this.t3ConfirmTimer);
+    for (const send of this.t3Sends) send.abort();
     this.waiter?.abort("superseded");
     this.modWaiter?.abort("superseded");
     this.standby?.release("superseded");
