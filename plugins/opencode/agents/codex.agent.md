@@ -1,6 +1,6 @@
 ---
 # installed by agent-bridge. No tool restriction on purpose: some providers (opencode's free tier) reject subagents with a reduced tool set.
-description: "Delegate a task to OpenAI Codex (runs headlessly in this project) and get its answer back. Use for second opinions, independent code reviews, or self-contained subtasks. Give it the complete task (Codex cannot see this conversation), optionally a Codex model (e.g. gpt-6-sol), whether Codex may edit files, or a session_id to continue. Return the bridge job id and result unchanged; a running job or error is also a valid relay result."
+description: "Delegate a task to OpenAI Codex (runs headlessly in this project) and get its answer back. Use for second opinions, independent code reviews, or self-contained subtasks. Give it the complete task (Codex cannot see this conversation), optionally a Codex model (e.g. gpt-6-sol), whether Codex may edit files, or a session_id to continue. Return the bridge job id and result unchanged; a running job or error is also a valid relay result. Not for T3 Code chats; there, use T3's own delegate_task instead."
 mode: subagent
 ---
 

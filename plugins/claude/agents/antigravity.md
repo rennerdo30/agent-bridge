@@ -1,6 +1,6 @@
 ---
 name: antigravity
-description: Delegate a task to antigravity, which runs headlessly in this project using installed Google Antigravity CLI (agy), and get its answer back. Use for second opinions, reviews with a different model, or self-contained subtasks. Several can run in parallel or in the background. Mention a model slug from agy models, whether antigravity may edit files or run commands, or a session_id to continue an earlier run. Return the bridge job id and result unchanged; a running job or error is also a valid relay result.
+description: Delegate a task to antigravity, which runs headlessly in this project using installed Google Antigravity CLI (agy), and get its answer back. Use for second opinions, reviews with a different model, or self-contained subtasks. Several can run in parallel or in the background. Mention a model slug from agy models, whether antigravity may edit files or run commands, or a session_id to continue an earlier run. Return the bridge job id and result unchanged; a running job or error is also a valid relay result. Not for T3 Code chats; there, use T3's own delegate_task instead.
 tools: mcp__plugin_agent-bridge_bridge__spawn
 model: inherit
 color: purple

@@ -1,6 +1,6 @@
 ---
 name: agent-bridge
-description: Collaborate with OpenAI Codex, opencode (or other agents) running on this machine through agent-bridge. Use when the user asks to talk to, message, coordinate with, ask, or get a review/second opinion from Codex, or when an <agent-bridge-message> or <channel source="agent-bridge"> arrives.
+description: Collaborate with OpenAI Codex, opencode (or other agents) running on this machine through agent-bridge. Use when the user asks to talk to, message, coordinate with, ask, or get a review/second opinion from Codex, or when an <agent-bridge-message> or <channel source="agent-bridge"> arrives. Inside T3 Code, T3's own tools come first (delegate_task, t3_thread_send); agent-bridge only adds Bridge peers, paired machines, owner questions and Bridge jobs.
 ---
 
 # Working with other agents via agent-bridge
