@@ -1,6 +1,6 @@
 {
   "name": "agent-bridge",
-  "version": "0.31.1",
+  "version": "0.32.0",
   "description": "Peer messaging, delegation and conversation history across coding agents (Claude Code, Codex, opencode, Antigravity, Muse). Inside T3 Code it is an add-on: use T3's own tools first.",
   "author": {
     "name": "rennerdo30",

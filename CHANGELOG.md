@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.32.0
+
+- **Bridge messages show up in T3 Code chats (AB-481).** In a T3 Code chat, an idle Claude session is no longer woken by a turn T3 does not show: Bridge finds the session's T3 chat (`nativeThreadRef` in T3's store, read-only) and sends the wake-up text into it with T3's own CLI (`T3CODE_CLI_PATH thread send`). T3 starts the turn and keeps the message in the chat's history. The messages are read once that turn's prompt shows them; a refused send, or one whose prompt does not show up within 20 seconds of idle time, hands them back to the mod or Stop hooks (as repeats when T3 may have shown them). Busy chats are unchanged; other providers follow.
+- **Inside T3 Code, agent-bridge is an add-on (AB-483).** Ordinary T3 Code chats are recognised by `T3CODE_CLI_PATH` and get the reduced tool set (local `spawn` refused in favour of T3's `delegate_task`; `list_models` and `usage_limits` hidden) and instructions that name T3's own tools first. `AGENT_BRIDGE_MCP_PROFILE=full` keeps every tool; `AGENT_BRIDGE_HOST=off` turns the detection off. Bridge jobs, the daemon and diagnostics strip the marker. Plugin, skill and relay-agent descriptions say the same and no longer mention the removed `ask` tool.
+- **New sessions no longer get every owner decision as a message (AB-482).** A new or relocated session sees current decisions in the SessionStart note and through `decisions`; only decisions recorded while it is connected arrive as messages, including ones addressed to its host session id before it reported that id.
+
 ## 0.31.1
 
 - Add local T3 chat history import and dashboard chat browsing with root-chat linking.
