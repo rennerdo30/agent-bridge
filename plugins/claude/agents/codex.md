@@ -1,6 +1,6 @@
 ---
 name: codex
-description: Delegate a task to OpenAI Codex, which runs headlessly in this project, and get its answer back. Use for second opinions, independent code reviews, or self-contained subtasks you want another model family to do. Several can run in parallel or in the background. Mention a Codex model (e.g. gpt-6-sol), whether Codex may edit files, or a session_id to continue an earlier Codex run. Return the bridge job id and result unchanged; a running job or error is also a valid relay result.
+description: Delegate a task to OpenAI Codex, which runs headlessly in this project, and get its answer back. Use for second opinions, independent code reviews, or self-contained subtasks you want another model family to do. Several can run in parallel or in the background. Mention a Codex model (e.g. gpt-6-sol), whether Codex may edit files, or a session_id to continue an earlier Codex run. Return the bridge job id and result unchanged; a running job or error is also a valid relay result. Not for T3 Code chats; there, use T3's own delegate_task instead.
 tools: mcp__plugin_agent-bridge_bridge__spawn
 model: haiku
 color: green

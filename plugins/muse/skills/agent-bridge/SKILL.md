@@ -1,6 +1,6 @@
 ---
 name: agent-bridge
-description: Coordinate with other coding agents using local peer messaging and delegated jobs.
+description: Coordinate with other coding agents using local peer messaging and delegated jobs. Inside T3 Code, T3's own tools come first (delegate_task, t3_thread_send); agent-bridge only adds Bridge peers, paired machines, owner questions and Bridge jobs.
 ---
 
 Use peers to see connected agents and jobs. Send substantive results or questions

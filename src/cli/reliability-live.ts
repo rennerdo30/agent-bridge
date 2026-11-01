@@ -10,6 +10,7 @@ import type { Logger } from "../core/logger.js";
 import type { CodingAgent } from "../core/protocol.js";
 import { pluginSourceDir } from "./opencode-install.js";
 import { readStore } from "../mcp/jobs.js";
+import { withoutT3Context } from "../core/job-environment.js";
 
 /**
  * Real-CLI checks of the subagent features that live in the MCP server: live messages to a running
@@ -211,7 +212,8 @@ class LiveHost {
       args: [bundle, `--agent=${host}`],
       cwd,
       env: {
-        ...process.env,
+        // AB-483: a diagnostic host started from a T3 Code terminal is no T3 chat.
+        ...withoutT3Context(process.env),
         AGENT_BRIDGE_HOME: home,
         CLAUDE_PROJECT_DIR: cwd,
         AGENT_BRIDGE_DASHBOARD: "off",

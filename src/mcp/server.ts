@@ -40,7 +40,7 @@ import { t } from "../core/i18n.js";
 import { createLogger, type Logger } from "../core/logger.js";
 import { BridgeNode } from "../core/node.js";
 import { T3Host, T3HostError, t3DelegateInput, t3Mode, t3RequestId, t3TransportFromEnv, type T3DelegateInput } from "../core/t3-host.js";
-import { mcpProfileFromEnv, profileAllowsTool, type McpProfile } from "../core/t3-identity.js";
+import { mcpProfileFromEnv, nativeT3FromEnv, profileAllowsTool, type McpProfile } from "../core/t3-identity.js";
 import { T3Waker } from "./t3-wake.js";
 import { formatHealth, probeBrokerHealth } from "../core/health.js";
 import { isInternalBridgeProcess, isPluginCacheCwd } from "../core/session-visibility.js";
@@ -280,6 +280,8 @@ function describeError(err: unknown): string {
 /** Everything the tool and hook handlers share. */
 export interface ServerContext {
   t3Host?: T3Host;
+  /** AB-483: an ordinary chat inside the T3 Code app (no injected transport); selects the reduced tool set. */
+  nativeT3?: boolean;
   /** In-memory, authenticated Claude host-mod mail capabilities. */
   claudeMailScopes?: ClaudeMailScopes;
   childInbox?: LocalCoordinator;
@@ -364,13 +366,16 @@ export function delegationTargets(_agent: AgentKind): CodingAgent[] {
 }
 
 /** Inside a T3 Code session, T3's own tools come first; agent-bridge fills only the gaps. */
-const T3_NATIVE_FIRST = "In this T3 Code session, use T3 Code's tools and your native tooling whenever they cover the need; " +
-  "use agent-bridge tools only for what T3 Code does not offer (paired-machine work, Bridge peers and Bridge jobs). ";
+const T3_NATIVE_FIRST = "This session runs inside T3 Code. Here agent-bridge is only an add-on: T3 Code's own tools come first. " +
+  "Use T3 Code for subagents and delegation (delegate_task, task_status, task_cancel; it runs every provider it lists), " +
+  "for other T3 chats (t3_thread_send, t3_thread_read) and for models (orchestrator_capabilities), and your native tooling for the rest; " +
+  "use agent-bridge tools only for what T3 Code does not offer: Bridge peers outside T3 Code, paired machines, owner questions and decisions, " +
+  "history search, file transfer and Bridge jobs that already exist. ";
 
 export function instructionsFor(agent: AgentKind, targets: CodingAgent[], profile: McpProfile = "full", t3Session = profile === "reduced"): string {
   if (profile === "reduced") return (
     T3_NATIVE_FIRST +
-    "agent-bridge supplies peer and paired-machine coordination in this validated T3 session. " +
+    "agent-bridge supplies peer and paired-machine coordination in this T3 session. " +
     '"health"/"peers": broker status and job results. "send": peer messages (reply_to). "inbox": read mail; include_quiet=true includes retained quiet messages. ' +
     '"wait_for_message" defaults to notify mode: register once, then keep working or end the turn. A dispatch receipt does not prove inbox consumption. ' +
     `"spawn" (required agent: ${targets.join(", ")}) is remote-only: explicit nonempty paired-machine host plus absolute cwd on that PC; remoteJobs allowlists and normal permissions apply; no local fallback. Use wait=true to return the answer. ` +
@@ -435,8 +440,10 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
   if (t3Detected && (!t3Detected.capabilities.features.threadManagement || !t3Detected.tools.includes("t3_thread_send"))) {
     await t3Host?.close(); throw new T3HostError("unavailable", "messaging");
   }
-  const mcpProfile = mcpProfileFromEnv(process.env, t3Host?.binding);
-  log.info("starting MCP server", { agent, cwd, cwdKnown, delegated, internal, version: APP_VERSION, node: process.version });
+  // Bridge jobs and internal processes are never the T3 chat itself, even with an inherited marker.
+  const nativeT3 = !t3Host && !delegated && !internal && nativeT3FromEnv(process.env);
+  const mcpProfile = mcpProfileFromEnv(process.env, t3Host?.binding, nativeT3);
+  log.info("starting MCP server", { agent, cwd, cwdKnown, delegated, internal, nativeT3, mcpProfile, version: APP_VERSION, node: process.version });
   // A stray rejection (e.g. a refused background broker request) must not end the session or its hosted broker.
   guardServerErrors(log);
 
@@ -462,7 +469,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
   let channel = !t3Host && agent === "claude" && cfg.delivery === "channel";
   let launchInspected: () => void = () => {};
   const launchKnown = new Promise<void>((r) => (launchInspected = r));
-  const ctx: ServerContext = { agent, cfg, node, log, home, t3Host, cwd: () => node?.cwd ?? cwd, channelActive: () => channel, parent: delegated ? parentFromEnv() : null, launchKnown };
+  const ctx: ServerContext = { agent, cfg, node, log, home, t3Host, nativeT3, cwd: () => node?.cwd ?? cwd, channelActive: () => channel, parent: delegated ? parentFromEnv() : null, launchKnown };
   const t3Waker = t3Host && node ? new T3Waker(t3Host, node, cfg, log.child("t3-wake"), 1500, home) : undefined;
   if (t3Host && node) await node.setWakePolicy(cfg.wakeOnDirect, true, cfg.maxHops);
   if (!node && ctx.parent && process.env[PARENT_JOB_ENV] && process.env[ROOT_SESSION_ENV]) {
@@ -539,7 +546,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
         agent === "claude"
           ? { experimental: { "claude/channel": {} }, tools: {} }
           : { experimental: { [CODEX_SANDBOX_META]: {} }, tools: {} },
-      instructions: instructionsFor(agent, targets, mcpProfile, Boolean(t3Host?.binding)),
+      instructions: instructionsFor(agent, targets, mcpProfile, Boolean(t3Host?.binding) || nativeT3),
     },
   );
   if (!delegated) {
@@ -762,7 +769,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
     return jobs.find(ref, false);
   };
   const { node, log, cfg, home } = ctx;
-  const mcpProfile = mcpProfileFromEnv(process.env, ctx.t3Host?.binding);
+  const mcpProfile = mcpProfileFromEnv(process.env, ctx.t3Host?.binding, ctx.nativeT3);
   const remoteOnly = mcpProfile === "reduced";
   // The only broker-free exception is this process's established private delegated coordinator.
   const privateChecklistLineage = !node && ctx.parent && ctx.jobs instanceof JobManager && ctx.childInbox instanceof LocalCoordinator &&
@@ -1759,7 +1766,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
         .string()
         .regex(MODEL_NAME_PATTERN)
         .optional()
-        .describe("Model ID for the selected agent; see list_models."),
+        .describe(`Model ID for the selected agent${remoteOnly ? " on that paired machine" : "; see list_models"}.`),
       effort: z
         .string()
         .regex(/^[A-Za-z0-9_-]{1,20}$/)

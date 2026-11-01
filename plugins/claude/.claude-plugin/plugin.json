@@ -2,7 +2,7 @@
   "name": "agent-bridge",
   "displayName": "agent-bridge",
   "version": "0.31.1",
-  "description": "Talk to OpenAI Codex from Claude Code: live peer messaging over a local pipe, plus headless delegation (ask).",
+  "description": "Peer messaging, delegation and conversation history across coding agents (Claude Code, Codex, opencode, Antigravity, Muse). Inside T3 Code it is an add-on: use T3's own tools first.",
   "author": {
     "name": "rennerdo30",
     "url": "https://github.com/rennerdo30"

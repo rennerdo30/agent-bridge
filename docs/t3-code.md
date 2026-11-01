@@ -167,15 +167,37 @@ AB-458's [native injection contract](t3-native-bridge-contract.md) traces upstre
 
 ## MCP profiles
 
+### Ordinary T3 Code chats (AB-483)
+
+Most T3 chats get no injected transport, so the host adapter below never runs for them. Bridge still
+recognises them: T3's desktop app sets `T3CODE_CLI_PATH` on its backend process, and every provider
+process T3 starts (Claude, Codex, opencode, Antigravity, Muse) inherits it. When it is set (non-empty),
+`AGENT_BRIDGE_HOST` is absent or `auto` (`t3` still requires injected transport), and the server is neither a Bridge job nor an internal
+Bridge process, the session counts as a T3 Code chat:
+
+- it gets the reduced tool set below (local `spawn` refused, `list_models` and `usage_limits` hidden),
+  because T3's own `delegate_task` runs every provider locally;
+- its server instructions say that agent-bridge is only an add-on there and name T3's tools for
+  subagents, other chats and models;
+- message delivery does not change (hooks, channel, rewake); this is no frontend identity.
+
+`AGENT_BRIDGE_MCP_PROFILE=full` keeps every tool (instructions still put T3 first); `AGENT_BRIDGE_HOST=off`
+or `native` turns the detection off. Bridge child boundaries (jobs, the daemon) strip `T3CODE_CLI_PATH`, so a
+job started from a T3 chat is not taken for one. A plain CLI started from T3's built-in terminal inherits
+the variable too and counts as a T3 chat. The plugin, skill and relay-agent descriptions carry the same
+"T3's own tools first" note, since they cannot see the environment.
+
+### Selector
+
 Set `AGENT_BRIDGE_MCP_PROFILE` at server startup:
 
 | Value | Behavior |
 | --- | --- |
-| absent or `auto` | Reduced only after successful T3 capabilities/current-thread negotiation; full for ordinary sessions. |
-| `reduced` | Requires a validated T3 binding; otherwise refuses startup. |
+| absent or `auto` | Reduced after successful T3 capabilities/current-thread negotiation, or in an ordinary T3 Code chat (above); full for other sessions. |
+| `reduced` | Requires a validated T3 binding or a T3 Code chat; otherwise refuses startup. |
 | `full` | Retains the legacy full tool surface, including T3 wrappers when hosted. Host identity, delivery, native-child and permission checks still apply. |
 
-Unknown profile values refuse with a sanitized configuration error. Profile selection happens after the handshake and before Bridge registration; an untrusted environment hint cannot hide core tools. The central registration filter removes tools from MCP inventory and applies matching server instructions and delegation parameter hints, rather than asking the model to ignore tools.
+Unknown profile values refuse with a sanitized configuration error. Profile selection happens after the handshake and before Bridge registration. Apart from the T3 Code chat marker above, environment hints cannot hide core tools; that marker only hides tools T3 itself provides. The central registration filter removes tools from MCP inventory and applies matching server instructions and delegation parameter hints, rather than asking the model to ignore tools.
 
 | Reduced surface | Tools and behavior |
 | --- | --- |

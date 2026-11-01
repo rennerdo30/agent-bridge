@@ -1,7 +1,7 @@
 {
   "name": "agent-bridge-opencode",
   "version": "0.31.1",
-  "description": "agent-bridge for opencode: message and delegate between opencode, Claude Code and Codex sessions on one machine.",
+  "description": "agent-bridge for opencode: peer messaging, delegation and conversation history across coding agents (Claude Code, Codex, opencode, Antigravity, Muse). Inside T3 Code it is an add-on: use T3's own tools first.",
   "license": "MIT",
   "type": "module",
   "main": "./dist/agent-bridge.js",

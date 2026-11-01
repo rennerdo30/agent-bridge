@@ -6,6 +6,7 @@ import { DEFAULT_CONFIG } from "../src/core/config.js";
 import { nullLogger } from "../src/core/logger.js";
 import { T3Host, T3HostError, T3_TOOL_NAMES, t3TransportFromEnv, type T3Connect } from "../src/core/t3-host.js";
 import { withoutT3Context } from "../src/core/job-environment.js";
+import { mcpProfileFromEnv, nativeT3FromEnv } from "../src/core/t3-identity.js";
 import { childEnv } from "../src/core/delegate.js";
 import { jobEnvironment } from "../src/core/job-environment.js";
 import { daemonEnvironment } from "../src/core/daemon-launcher.js";
@@ -65,7 +66,7 @@ const taskReceipt = (options?: { id: string; value: string | boolean }[], model 
   latestTerminalRunId: null, latestTerminalStatus: null, latestTerminalSummary: null });
 
 beforeEach(() => {
-  for (const key of ["AGENT_BRIDGE_HOST", "AGENT_BRIDGE_MCP_PROFILE", "T3_ACP_MCP_ENDPOINT", "T3_ACP_MCP_AUTHORIZATION", "AGENT_BRIDGE_DELEGATE_DEPTH", "AGENT_BRIDGE_INTERNAL"]) vi.stubEnv(key, undefined);
+  for (const key of ["AGENT_BRIDGE_HOST", "AGENT_BRIDGE_MCP_PROFILE", "T3CODE_CLI_PATH", "T3_ACP_MCP_ENDPOINT", "T3_ACP_MCP_AUTHORIZATION", "AGENT_BRIDGE_DELEGATE_DEPTH", "AGENT_BRIDGE_INTERNAL"]) vi.stubEnv(key, undefined);
   vi.stubGlobal("fetch", vi.fn(() => { throw Error("Unexpected network"); }));
   vi.clearAllMocks();
 });
@@ -152,7 +153,7 @@ it("discovers omitted custom models with one bounded catalog search instead of r
 });
 
 type Entry = { spec: { inputSchema: Record<string, z.ZodType>; description: string }; call: (args: any, extra: any) => Promise<any> };
-async function registry(profile?: string, hosted = true, agent: "codex" | "claude" = "codex") {
+async function registry(profile?: string, hosted = true, agent: "codex" | "claude" = "codex", nativeT3 = false) {
   vi.stubEnv("AGENT_BRIDGE_MCP_PROFILE", profile);
   const r = replay(caps(true));
   if (hosted) await r.host.capabilities();
@@ -161,7 +162,7 @@ async function registry(profile?: string, hosted = true, agent: "codex" | "claud
   const entries = new Map<string, Entry>();
   const mcp = { registerTool: (name: string, spec: Entry["spec"], call: Entry["call"]) => entries.set(name, { spec, call }) };
   const ctx = { agent, node, cfg: structuredClone(DEFAULT_CONFIG), log: nullLogger, home: process.env.AGENT_BRIDGE_HOME!, cwd: () => "/fixture", channelActive: () => false,
-    jobs, runners: {}, ...(hosted ? { t3Host: r.host } : {}) } as unknown as ServerContext;
+    jobs, runners: {}, ...(hosted ? { t3Host: r.host } : {}), ...(nativeT3 ? { nativeT3 } : {}) } as unknown as ServerContext;
   registerTools(mcp as unknown as McpServer, ctx, ["codex"]);
   return { entries, jobs, ctx, node };
 }
@@ -278,6 +279,34 @@ it("defaults validated T3 to reduced registration with remote-only spawn/ask; fu
   }
 });
 
+it("detects a native T3 Code chat by T3CODE_CLI_PATH; explicit opt-out selectors win", () => {
+  const marker = { T3CODE_CLI_PATH: "C:/Users/fixture/.t3/bin/t3.cmd" };
+  for (const AGENT_BRIDGE_HOST of [undefined, "auto"]) expect(nativeT3FromEnv({ ...marker, AGENT_BRIDGE_HOST })).toBe(true);
+  // `t3` keeps requiring injected transport; every other explicit selector opts out.
+  for (const AGENT_BRIDGE_HOST of ["t3", "off", "native", "full", ""]) expect(nativeT3FromEnv({ ...marker, AGENT_BRIDGE_HOST })).toBe(false);
+  expect(nativeT3FromEnv({})).toBe(false);
+  expect(nativeT3FromEnv({ T3CODE_CLI_PATH: "  " })).toBe(false);
+  expect(nativeT3FromEnv({ T3CODE_HOME: "C:/Users/fixture/.t3" })).toBe(false);
+  expect(mcpProfileFromEnv({}, undefined, true)).toBe("reduced");
+  expect(mcpProfileFromEnv({ AGENT_BRIDGE_MCP_PROFILE: "reduced" }, undefined, true)).toBe("reduced");
+  expect(mcpProfileFromEnv({ AGENT_BRIDGE_MCP_PROFILE: "full" }, undefined, true)).toBe("full");
+  expect(mcpProfileFromEnv({}, undefined, false)).toBe("full");
+});
+
+it("gives a native T3 chat (no injected transport) the reduced registration; full keeps the legacy surface", async () => {
+  const native = await registry(undefined, false, "claude", true);
+  for (const name of ["list_models", "usage_limits", "t3_delegate", "t3_send"]) expect(native.entries.has(name), name).toBe(false);
+  for (const name of ["send", "inbox", "peers", "ask_owner", "decide", "search_history", "send_files", "message_subagent"]) expect(native.entries.has(name), name).toBe(true);
+  expect(native.entries.get("spawn")!.spec.inputSchema.host!.safeParse(undefined).success).toBe(false);
+  const full = await registry("full", false, "claude", true);
+  expect(full.entries.has("list_models")).toBe(true);
+  expect(full.entries.get("spawn")!.spec.inputSchema.host!.safeParse(undefined).success).toBe(true);
+  // No reduced parameter may point at a hidden tool.
+  for (const [name, tool] of native.entries) for (const [param, schema] of Object.entries(tool.spec.inputSchema ?? {})) {
+    expect((schema as { description?: string }).description ?? "", `${name}.${param}`).not.toMatch(/list_models|usage_limits/);
+  }
+});
+
 it("refuses reduced without validated host and does not trust profile environment before handshake", async () => {
   await expect(registry("reduced", false)).rejects.toThrow(/validated T3/i);
   await expect(registry("invalid", true)).rejects.toThrow(/profile/i);
@@ -353,12 +382,25 @@ it("tells T3 sessions to prefer T3 Code tools, and only T3 sessions", () => {
 });
 
 it("strips profile and host selectors case-insensitively at shared child boundary without changing grants", () => {
-  const clean = withoutT3Context({ ...injected, agent_bridge_host: "t3", agent_bridge_mcp_profile: "reduced", T3_ACP_MCP_NODE: "node", AGENT_BRIDGE_PARENT_TOKEN: "fixture-parent", KEEP: "yes" });
+  const clean = withoutT3Context({ ...injected, agent_bridge_host: "t3", agent_bridge_mcp_profile: "reduced", T3_ACP_MCP_NODE: "node", t3code_cli_path: "C:/fixture/t3.cmd", T3CODE_HOME: "C:/fixture/.t3", AGENT_BRIDGE_PARENT_TOKEN: "fixture-parent", KEEP: "yes" });
   expect(Object.keys(clean).filter(k => /^(AGENT_BRIDGE_HOST|AGENT_BRIDGE_MCP_PROFILE|T3_ACP_MCP_.*)$/i.test(k))).toEqual([]);
-  expect(clean).toEqual({ AGENT_BRIDGE_PARENT_TOKEN: "fixture-parent", KEEP: "yes" });
-  for (const [key, value] of Object.entries({ ...injected, AGENT_BRIDGE_HOST: "t3", AGENT_BRIDGE_MCP_PROFILE: "reduced" })) vi.stubEnv(key, value);
+  // T3CODE_CLI_PATH marks a T3 chat (AB-483); T3CODE_HOME only locates T3's store and stays.
+  expect(clean).toEqual({ T3CODE_HOME: "C:/fixture/.t3", AGENT_BRIDGE_PARENT_TOKEN: "fixture-parent", KEEP: "yes" });
+  for (const [key, value] of Object.entries({ ...injected, AGENT_BRIDGE_HOST: "t3", AGENT_BRIDGE_MCP_PROFILE: "reduced", T3CODE_CLI_PATH: "C:/fixture/t3.cmd" })) vi.stubEnv(key, value);
   for (const env of [childEnv({ AGENT_BRIDGE_MCP_PROFILE: "full" }), jobEnvironment(process.env), daemonEnvironment({ cli: "/fixture/cli", home: "/fixture/home", pipe: "fixture-pipe", cwd: "/fixture" })]) {
-    expect(Object.keys(env).filter(k => /^(AGENT_BRIDGE_HOST|AGENT_BRIDGE_MCP_PROFILE|T3_ACP_MCP_.*)$/i.test(k))).toEqual([]);
+    expect(Object.keys(env).filter(k => /^(AGENT_BRIDGE_HOST|AGENT_BRIDGE_MCP_PROFILE|T3_ACP_MCP_.*|T3CODE_CLI_PATH)$/i.test(k))).toEqual([]);
+  }
+});
+
+it("startup treats a T3 Code chat as T3 only outside Bridge jobs, internal processes and opt-out selectors", async () => {
+  // AGENT_BRIDGE_MCP_PROFILE=reduced refuses unless startup recognised the chat, so it observes the wiring.
+  vi.stubEnv("AGENT_BRIDGE_MCP_PROFILE", "reduced");
+  vi.stubEnv("T3CODE_CLI_PATH", "C:/fixture/.t3/bin/t3.cmd");
+  await expect(startServer(["--agent=claude"])).rejects.toThrow("STOP before broker");
+  for (const [key, value] of [["AGENT_BRIDGE_DELEGATE_DEPTH", "1"], ["AGENT_BRIDGE_INTERNAL", "1"], ["AGENT_BRIDGE_HOST", "off"]]) {
+    vi.stubEnv(key!, value!);
+    await expect(startServer(["--agent=claude"])).rejects.toThrow(/requires a validated T3 host/);
+    vi.stubEnv(key!, undefined);
   }
 });
 
