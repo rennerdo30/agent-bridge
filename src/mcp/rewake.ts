@@ -11,6 +11,24 @@ import { tokensEqual } from "../core/token.js";
 import { escapeAttr, formatMessage, formatMessages } from "./format.js";
 import { selectForDelivery, unshownMessageNotes } from "./output-bounds.js";
 import type { ClaudeMailScopes } from "./claude-mail-scope.js";
+import type { T3SendOutcome } from "../core/t3-chat.js";
+
+/**
+ * AB-481: inside a T3 Code chat, Stop-hook and mod wake-ups start turns T3 does not show, so the user never sees
+ * the message that woke the agent. With this, an idle session's wake-up goes into its T3 chat as a visible chat
+ * message instead (through T3's own CLI); T3 starts the turn and keeps the message in the chat's history.
+ */
+export interface T3Delivery {
+  /** The T3 chat this Claude session runs in, or undefined. */
+  chat(sessionId: string): string | undefined;
+  send(threadId: string, text: string): Promise<T3SendOutcome>;
+}
+/** Messages arriving together go out as one chat message. */
+const T3_COALESCE_MS = 1_500;
+/** A T3 delivery that started no turn this long: T3 delivery stops and the mod takes over (like WAKE_CONFIRM_MS). */
+export const T3_TURN_CONFIRM_MS = 20_000;
+/** A session whose chat was not found is looked up again at most this often. */
+const T3_LOOKUP_RETRY_MS = 60_000;
 
 /**
  * Wake an idle Claude Code session when something it is waiting for arrives: a background subagent's
@@ -134,6 +152,15 @@ export class RewakeEndpoint {
   private modSeen = false;
   /** A turn is running (from the hooks and the mod): the mod waits until the session is idle. */
   private busy = false;
+  /** AB-481: the T3 chat of this session, once found. */
+  private t3Thread: string | undefined;
+  private t3LookedUpAt = 0;
+  /** T3 delivery failed or started no turn: the mod and the Stop hooks wake this session again. */
+  private t3Off = false;
+  private t3Sending = false;
+  private t3Timer: NodeJS.Timeout | undefined;
+  private t3ConfirmTimer: NodeJS.Timeout | undefined;
+  private readonly onT3Message = () => this.scheduleT3();
 
   constructor(
     private readonly home: string,
@@ -146,7 +173,16 @@ export class RewakeEndpoint {
     private readonly oversized?: OversizedMessages,
     /** How long the standby waits before taking a message (tests shorten it). */
     private readonly standbyGraceMs = STANDBY_GRACE_MS,
+    /** AB-481: set in a T3 Code chat with T3's CLI available. */
+    private readonly t3?: T3Delivery,
+    /** How long a T3 delivery may take to start a turn (tests shorten it). */
+    private readonly t3ConfirmMs = T3_TURN_CONFIRM_MS,
   ) {}
+
+  /** T3 delivers this session's wake-ups: its T3 chat is known and delivery has not failed. */
+  get t3Active(): boolean {
+    return Boolean(this.t3) && !this.t3Off && !this.retired && this.t3Chat() !== undefined;
+  }
 
   /**
    * A message a wake-up may carry: it should wake the session, and it is not an oversized message whose note was
@@ -197,8 +233,8 @@ export class RewakeEndpoint {
       // Another server of this session took over: nothing is handed out here (it would be handed out twice).
       if (this.retired) this.reply(res, "", true);
       else if (url.searchParams.get("role") === "mod") this.waitMod(res);
-      // With the mod, the turn-end hooks end at once: the mod does the waking.
-      else if (this.modSeen) this.reply(res, "", true);
+      // With the mod or T3 delivery, the turn-end hooks end at once: those do the waking.
+      else if (this.modSeen || this.t3Active) this.reply(res, "", true);
       else if (url.searchParams.get("role") === "standby") this.waitStandby(res);
       else this.waitPrimary(res);
     });
@@ -209,6 +245,7 @@ export class RewakeEndpoint {
       this.server!.listen(0, HOST, () => resolve());
     });
     this.port = (this.server.address() as AddressInfo).port;
+    if (this.t3) this.node.on("message", this.onT3Message);
   }
 
   private reply(res: ServerResponse, text: string, superseded: boolean): void {
@@ -329,7 +366,8 @@ export class RewakeEndpoint {
     void (async () => {
       while (!ac.signal.aborted && Date.now() < deadline) {
         const waiting = this.node.unread().some(this.wakeable);
-        if (waiting && !this.busy) break;
+        // AB-481: T3 delivery wakes this session; the mod stays the fallback should it stop.
+        if (waiting && !this.busy && !this.t3Active) break;
         // Busy with a message already waiting: check again shortly (waitForMessage would return it at once).
         if (waiting) await new Promise<void>((r) => setTimeout(r, MOD_TICK_MS).unref());
         else await this.node.waitForMessage(MOD_TICK_MS, this.wakeable, ac.signal);
@@ -351,13 +389,72 @@ export class RewakeEndpoint {
 
   /** Whether the mod wakes this session (the Stop hook then leaves messages to it instead of blocking). */
   get modActive(): boolean {
-    return this.modSeen;
+    return this.modSeen || this.t3Active;
   }
 
   /** A turn ended (the Stop hook ran). */
   sessionIdle(): void {
     if (this.busy) this.turnEnds++;
     this.setBusy(false);
+    this.scheduleT3();
+  }
+
+  private scheduleT3(): void {
+    if (!this.t3 || this.t3Off || this.t3Timer) return;
+    this.t3Timer = setTimeout(() => { this.t3Timer = undefined; void this.flushT3(); }, T3_COALESCE_MS);
+    this.t3Timer.unref();
+  }
+
+  /** The session's T3 chat; while unknown, looked up again at most once a minute. */
+  private t3Chat(): string | undefined {
+    if (this.t3Thread || !this.t3 || !this.registered) return this.t3Thread;
+    if (this.t3LookedUpAt && Date.now() - this.t3LookedUpAt < T3_LOOKUP_RETRY_MS) return undefined;
+    this.t3LookedUpAt = Date.now();
+    try { this.t3Thread = this.t3.chat(this.registered); } catch { this.t3Thread = undefined; }
+    if (this.t3Thread) this.log.info("T3 chat found; wake-ups go into it as chat messages", { thread: this.t3Thread });
+    return this.t3Thread;
+  }
+
+  /**
+   * AB-481: an idle session's waiting messages go into its T3 chat as one chat message. They are handed out like a
+   * mod wake-up (kept from the hooks, read once the wake turn's prompt shows them), so T3's turn is their delivery.
+   */
+  private async flushT3(): Promise<void> {
+    if (!this.t3 || this.t3Off || this.retired || this.busy || this.t3Sending || this.t3ConfirmTimer) return;
+    const thread = this.t3Chat();
+    if (!thread || !this.node.unread().some(this.wakeable)) return;
+    const text = this.handOut(true);
+    if (!text) return;
+    const ids = wakeMessageIds(text), notes = wakeNoteIds(text), started = this.turnStarts;
+    this.t3Sending = true;
+    let outcome: T3SendOutcome;
+    try { outcome = await this.t3.send(thread, text); }
+    catch (error) { outcome = { state: "unknown", reason: String(error) }; }
+    finally { this.t3Sending = false; }
+    if (outcome.state === "failed") {
+      // Never reached T3: the messages go straight back to the mod and the hooks.
+      this.log.warn("T3 delivery refused; wake-ups go back to the mod and hooks", { reason: outcome.reason });
+      this.takeBackT3(ids, notes, false);
+      return;
+    }
+    this.log.info(outcome.state === "accepted" ? "wake-up sent into the T3 chat" : "T3 delivery outcome unknown; not retried",
+      { count: ids.length, ...(outcome.state === "accepted" ? { delivery: outcome.delivery, runId: outcome.runId } : { reason: outcome.reason }) });
+    // T3 starts the turn (or queues it behind a running one). No turn at all: stop using T3 for this session.
+    this.t3ConfirmTimer = setTimeout(() => {
+      this.t3ConfirmTimer = undefined;
+      if (this.turnStarts !== started) { this.scheduleT3(); return; }
+      this.log.warn("a T3 delivery started no turn; wake-ups go back to the mod and hooks", { count: ids.length });
+      this.takeBackT3(ids, notes, true);
+    }, this.t3ConfirmMs);
+    this.t3ConfirmTimer.unref();
+  }
+
+  /** T3 delivery stops for this session; unconfirmed hand-outs return (as repeats, if T3 may have shown them). */
+  private takeBackT3(ids: string[], notes: string[], maybeShown: boolean): void {
+    this.t3Off = true;
+    const back = ids.filter((id) => this.modHandedOut.delete(id));
+    for (const id of notes) this.modNotes.delete(id);
+    if (maybeShown) this.markRepeat(back);
   }
 
   /** Read mod hand-outs: shown in their own turn or acknowledged by the mod. */
@@ -532,6 +629,9 @@ export class RewakeEndpoint {
   /** Publish the endpoint for this Claude session id so the hook can find it. */
   register(sessionId: string): void {
     if (!this.server || this.retired || this.registered === sessionId) return;
+    // Another session id: its T3 chat is looked up again.
+    this.t3Thread = undefined;
+    this.t3LookedUpAt = 0;
     const file = sessionFile(this.home, sessionId);
     mkdirSync(join(this.home, SESSIONS_DIR), { recursive: true });
     const reg: RewakeRegistration = { port: this.port, secret: this.secret, pid: process.pid };
@@ -542,6 +642,9 @@ export class RewakeEndpoint {
   }
 
   async stop(): Promise<void> {
+    if (this.t3) this.node.off("message", this.onT3Message);
+    clearTimeout(this.t3Timer);
+    clearTimeout(this.t3ConfirmTimer);
     this.waiter?.abort("superseded");
     this.modWaiter?.abort("superseded");
     this.standby?.release("superseded");
