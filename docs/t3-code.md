@@ -203,14 +203,17 @@ In a T3 Code chat (above), Claude sessions wake through the chat itself:
   T3's own CLI: `$T3CODE_CLI_PATH thread send --json <thread> -`, the text on stdin. It is the usual wake-up
   text (`[agent-bridge] New actionable message(s) arrived:` and the messages), bounded like a hook result.
   T3 starts the turn and keeps the message in the chat. Arrivals within 1.5 seconds go out together.
-- **Read state:** the messages are handed out like a mod wake-up: no hook injects them meanwhile, and they are
-  marked read when the wake turn's prompt shows them.
+- **Read state:** the delivery owns its messages until its own prompt shows them: no hook injects them, no other
+  wake-up takes them, no mod acknowledgement confirms them, and nothing sends them again. They are marked read
+  when the wake turn's prompt shows them. The mod holds and the Stop hooks keep waiting without waking.
 - **Busy chats:** unchanged. Mail arriving mid-turn goes out with the tool hooks (not visible in T3); the CLI
   cannot put a message into a running turn. Mail still unread when the turn ends goes into the chat.
-- **Fallback:** a send the CLI refuses (no CLI, it could not start) returns the messages at once; a send that
-  starts no turn within 20 seconds (including an unknown outcome) returns them as repeats. Either way T3
-  delivery stops for that session and the mod (or the Stop hooks) wakes it as before. A send is never retried:
-  the CLI has no request id.
+- **Fallback:** a send the CLI refuses (no CLI, it could not start) returns the messages at once; a send whose
+  prompt does not show up within 20 seconds of idle time (including an unknown outcome; time while another
+  turn runs does not count, since T3 queues behind it) returns them as repeats. Either way T3 delivery stops for
+  that session and the mod or the waiting Stop hook wakes it with them. A send is never retried: the CLI has no
+  request id. A send that times out (30 seconds) or is pending when the session's server stops is ended with its
+  whole process tree (on Windows by the child's own PID).
 - **Credentials:** T3's CLI signs itself in; Bridge never reads T3's auth tables, secrets or token files.
 
 Claude only for now; Codex, opencode, Antigravity and Muse chats in T3 keep their own wake paths.

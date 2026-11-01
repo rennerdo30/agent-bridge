@@ -19,7 +19,7 @@ import { makeEnv, until, type TestEnv } from "./helpers.js";
 function fakeSpawn(answer: { stdout?: string; code?: number; error?: Error; hang?: boolean }) {
   const calls: { command: string; args: string[]; stdin: string; killed: boolean }[] = [];
   const spawnFn = ((command: string, args: string[]) => {
-    const child = Object.assign(new EventEmitter(), { stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough(), kill: () => { call.killed = true; return true; } });
+    const child = Object.assign(new EventEmitter(), { pid: 4242, stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough(), kill: () => { call.killed = true; return true; } });
     const call = { command, args, stdin: "", killed: false };
     calls.push(call);
     child.stdin.on("data", (c: Buffer) => { call.stdin += c.toString("utf8"); });
@@ -47,8 +47,9 @@ describe("t3SendMessage (T3's CLI)", () => {
       .toEqual({ state: "accepted", delivery: "queued", runId: "run-7" });
     expect(posix.calls[0]).toMatchObject({ command: "/home/u/.t3/bin/t3", args: ["thread", "send", "--json", "thread-1", "-"], stdin: text });
     const win = fakeSpawn({ stdout: receipt });
-    expect((await t3SendMessage("C:\\Users\\u\\.t3\\bin\\t3.cmd", "thread-1", text, { spawnFn: win.spawnFn, platform: "win32" })).state).toBe("accepted");
-    expect(win.calls[0]!.args).toEqual(["/d", "/s", "/c", "\"C:\\Users\\u\\.t3\\bin\\t3.cmd\" thread send --json thread-1 -"]);
+    expect((await t3SendMessage("C:\\Users\\First Last\\.t3\\bin\\t3.cmd", "thread-1", text, { spawnFn: win.spawnFn, platform: "win32" })).state).toBe("accepted");
+    // `cmd /s /c` strips one outer pair of quotes: the launcher path keeps its own quotes (paths with spaces).
+    expect(win.calls[0]!.args).toEqual(["/d", "/s", "/c", "\"\"C:\\Users\\First Last\\.t3\\bin\\t3.cmd\" thread send --json thread-1 -\""]);
     expect(win.calls[0]!.stdin).toBe(text);
   });
 
@@ -62,6 +63,17 @@ describe("t3SendMessage (T3's CLI)", () => {
     expect((await t3SendMessage("/t3", "thread-1", "x", { spawnFn: hung.spawnFn, platform: "linux", timeoutMs: 50 })).state).toBe("unknown");
     expect(hung.calls[0]!.killed).toBe(true);
     expect(exit1.calls).toHaveLength(1);
+    // On Windows the launcher runs under cmd.exe: its whole tree goes, by this child's own PID.
+    const hungWin = fakeSpawn({ hang: true });
+    expect((await t3SendMessage("C:\\t3.cmd", "thread-1", "x", { spawnFn: hungWin.spawnFn, platform: "win32", timeoutMs: 50 })).state).toBe("unknown");
+    expect(hungWin.calls[1]).toMatchObject({ command: "taskkill", args: ["/pid", "4242", "/T", "/F"] });
+    // Stopping the endpoint aborts a pending send the same way.
+    const stopped = fakeSpawn({ hang: true });
+    const ac = new AbortController();
+    const pending = t3SendMessage("/t3", "thread-1", "x", { spawnFn: stopped.spawnFn, platform: "linux", signal: ac.signal });
+    ac.abort();
+    expect((await pending).state).toBe("unknown");
+    expect(stopped.calls[0]!.killed).toBe(true);
   });
 });
 
@@ -98,8 +110,9 @@ describe("RewakeEndpoint with T3 delivery", () => {
   let peer: BridgeNode;
   let rewake: RewakeEndpoint;
   let ctx: ServerContext;
-  let sent: { thread: string; text: string }[];
+  let sent: { thread: string; text: string; signal: AbortSignal }[];
   let outcome: T3SendOutcome;
+  let hold: Promise<void> | null;
 
   async function setup(chat: string | null = "chat-1") {
     env = makeEnv();
@@ -109,8 +122,12 @@ describe("RewakeEndpoint with T3 delivery", () => {
     ctx = { agent: "claude", cfg: { ...DEFAULT_CONFIG }, node: me, log: nullLogger, home: env.home, cwd: () => env.home,
       channelActive: () => false, rewakeAvailable: true, jobs: new JobManager(me, nullLogger) } as ServerContext;
     sent = [];
+    hold = null;
     outcome = { state: "accepted", delivery: "started", runId: "run-1" };
-    const t3: T3Delivery = { chat: (s) => (s === "sess-1" && chat ? chat : undefined), send: async (thread, text) => { sent.push({ thread, text }); return outcome; } };
+    const t3: T3Delivery = {
+      chat: (s) => (s === "sess-1" && chat ? chat : undefined),
+      send: async (thread, text, signal) => { sent.push({ thread, text, signal }); if (hold) await hold; return outcome; },
+    };
     rewake = new RewakeEndpoint(env.home, me, (m) => claudeWakeCandidate(ctx, m), nullLogger, (event) => reportModActivity(ctx, event),
       undefined, undefined, undefined, t3, 300);
     await rewake.start();
@@ -119,36 +136,68 @@ describe("RewakeEndpoint with T3 delivery", () => {
   }
   afterEach(async () => { await rewake.stop(); await env.cleanup(); });
 
-  function wait(role?: string) {
+  function call(path: string, method = "GET", timeoutMs = 4_000) {
     const reg = JSON.parse(readFileSync(sessionFile(env.home, "sess-1"), "utf8")) as { port: number; secret: string };
-    return fetch(`http://127.0.0.1:${reg.port}/wait${role ? `?role=${role}` : ""}`, { headers: { authorization: `Bearer ${reg.secret}` }, signal: AbortSignal.timeout(4_000) })
-      .then(async (r) => JSON.parse(await r.text()) as { text: string; superseded: boolean });
+    return fetch(`http://127.0.0.1:${reg.port}${path}`, { method, headers: { authorization: `Bearer ${reg.secret}` }, signal: AbortSignal.timeout(timeoutMs) });
+  }
+  /** A Stop-hook (or mod) poll; resolves with what it was handed, or "" if it was still waiting at the timeout. */
+  function wait(role?: string, timeoutMs = 4_000): Promise<string> {
+    return call(`/wait${role ? `?role=${role}` : ""}`, "GET", timeoutMs)
+      .then(async (r) => (JSON.parse(await r.text()) as { text: string }).text, () => "");
   }
 
   it("an idle session's message goes into its T3 chat once, readable, and is read when that turn's prompt shows it", async () => {
     await setup();
-    // The mod polls too: while T3 delivers, it must not submit the same message as an invisible turn.
-    let modText = "";
-    const mod = wait("mod").then((r) => { modText = r.text; }, () => {});
+    // A Stop hook waits too: while T3 delivers, it must not wake the session with the same message.
+    const hook = wait(undefined, 3_000);
     await peer.send({ to: me.name, body: "Build finished, 12 tests passed." });
     await until(() => sent.length === 1, 5_000);
     expect(sent[0]!.thread).toBe("chat-1");
     expect(sent[0]!.text.startsWith(WAKE_HEADER)).toBe(true);
     expect(sent[0]!.text).toContain("Build finished, 12 tests passed.");
     const [id] = wakeMessageIds(sent[0]!.text);
-    // On its way to its own T3 turn: the Stop hooks step aside and no hook injects it as well.
     expect(ctx.wakeDelivery!.modActive!()).toBe(true);
-    expect(await wait()).toEqual({ text: "", superseded: true });
     expect(ctx.wakeDelivery!.inFlight!(id!)).toBe(true);
     // T3's turn starts with that text as its prompt.
     ctx.wakeDelivery!.active();
     ctx.wakeDelivery!.confirmPrompt!(sent[0]!.text);
     expect(me.unread().map((m) => m.id)).not.toContain(id);
+    expect(await hook).toBe("");
     ctx.wakeDelivery!.idle!();
     await new Promise((r) => setTimeout(r, 2_000));
     expect(sent).toHaveLength(1);
-    expect(modText).toBe("");
-    void mod;
+  });
+
+  it("the mod holds while T3 delivers, and its acknowledgements never confirm a T3 delivery", async () => {
+    await setup();
+    const mod = wait("mod", 3_000);
+    await peer.send({ to: me.name, body: "for T3 only" });
+    await until(() => sent.length === 1, 5_000);
+    const [id] = wakeMessageIds(sent[0]!.text);
+    // An unrelated mod turn report (or a legacy acknowledgement) while the T3 delivery waits for its prompt.
+    expect((await call("/mod?busy=1", "POST")).status).toBe(204);
+    expect((await call("/mod?busy=0", "POST")).status).toBe(204);
+    expect(me.unread().map((m) => m.id)).toContain(id);
+    expect(ctx.wakeDelivery!.inFlight!(id!)).toBe(true);
+    expect(await mod).toBe("");
+  });
+
+  it("an unrelated turn neither confirms a T3 delivery nor sends its messages again", async () => {
+    await setup();
+    outcome = { state: "unknown", reason: "timeout" };
+    await peer.send({ to: me.name, body: "send me once" });
+    await until(() => sent.length === 1, 5_000);
+    const [id] = wakeMessageIds(sent[0]!.text);
+    // A user prompt starts and ends before the T3 delivery's prompt shows up.
+    ctx.wakeDelivery!.active();
+    ctx.wakeDelivery!.confirmPrompt!("an ordinary user prompt");
+    await new Promise((r) => setTimeout(r, 500));
+    ctx.wakeDelivery!.idle!();
+    await new Promise((r) => setTimeout(r, 2_500));
+    expect(sent).toHaveLength(1);
+    // Its prompt never came: it goes back to the hooks as a repeat, never through T3 again.
+    expect(ctx.wakeDelivery!.repeated!(id!)).toBe(true);
+    expect(ctx.wakeDelivery!.inFlight!(id!)).toBe(false);
   });
 
   it("a busy session's message is left to the hooks; it goes to T3 only after the turn ends unshown", async () => {
@@ -161,27 +210,46 @@ describe("RewakeEndpoint with T3 delivery", () => {
     await until(() => sent.length === 1, 5_000);
   });
 
-  it("a refused send gives the messages straight back to the mod; the mod takes them", async () => {
+  it("without the mod, a refused send wakes the session through the waiting Stop hook", async () => {
     await setup();
     outcome = { state: "failed", reason: "no CLI" };
+    const hook = wait(undefined, 5_000);
     await peer.send({ to: me.name, body: "refused" });
-    await until(() => sent.length === 1, 5_000);
-    await until(() => !ctx.wakeDelivery!.modActive!(), 2_000);
-    // Not in flight anymore: a hook of the next turn may show it.
-    expect(ctx.wakeDelivery!.inFlight!(wakeMessageIds(sent[0]!.text)[0]!)).toBe(false);
-    const mod = await wait("mod");
-    expect(mod.text).toContain("refused");
+    expect(await hook).toContain("refused");
+    expect(sent).toHaveLength(1);
+    expect(ctx.wakeDelivery!.modActive!()).toBe(false);
   });
 
-  it("a send that starts no turn stops T3 delivery; its messages go back to the mod as repeats", async () => {
+  it("without the mod, a send whose prompt never shows wakes the session through the Stop hook, as a repeat", async () => {
     await setup();
     outcome = { state: "unknown", reason: "timeout" };
+    const hook = wait(undefined, 5_000);
     await peer.send({ to: me.name, body: "lost" });
+    const text = await hook;
+    expect(text).toContain("lost");
+    expect(ctx.wakeDelivery!.repeated!(wakeMessageIds(sent[0]!.text)[0]!)).toBe(true);
+  });
+
+  it("with the mod, a refused send gives the messages to the mod", async () => {
+    await setup();
+    outcome = { state: "failed", reason: "no CLI" };
+    expect((await call("/mod?busy=0", "POST")).status).toBe(204);
+    await peer.send({ to: me.name, body: "to the mod" });
     await until(() => sent.length === 1, 5_000);
-    const [id] = wakeMessageIds(sent[0]!.text);
-    await until(() => !ctx.wakeDelivery!.modActive!(), 3_000);
-    expect(ctx.wakeDelivery!.repeated!(id!)).toBe(true);
-    expect((await wait("mod")).text).toContain("lost");
+    expect(await wait("mod")).toContain("to the mod");
+  });
+
+  it("stopping the endpoint aborts a pending send and leaves nothing behind", async () => {
+    await setup();
+    let release!: () => void;
+    hold = new Promise((r) => { release = r; });
+    await peer.send({ to: me.name, body: "pending at stop" });
+    await until(() => sent.length === 1, 5_000);
+    await rewake.stop();
+    expect(sent[0]!.signal.aborted).toBe(true);
+    release();
+    await new Promise((r) => setTimeout(r, 500));
+    expect(sent).toHaveLength(1);
   });
 
   it("without a known T3 chat nothing changes: the Stop hooks wake the session as before", async () => {
@@ -189,9 +257,7 @@ describe("RewakeEndpoint with T3 delivery", () => {
     expect(ctx.wakeDelivery!.modActive!()).toBe(false);
     const woke = wait();
     await peer.send({ to: me.name, body: "plain wake" });
-    expect((await woke).text).toContain("plain wake");
+    expect(await woke).toContain("plain wake");
     expect(sent).toHaveLength(0);
   });
 });
-
-

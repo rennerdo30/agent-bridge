@@ -66,9 +66,10 @@ export type SpawnFn = typeof spawn;
 
 /** Send one message to a T3 chat through T3's CLI. Never throws; never retries. */
 export function t3SendMessage(cli: string, threadId: string, message: string,
-  options: { env?: NodeJS.ProcessEnv; timeoutMs?: number; spawnFn?: SpawnFn; platform?: NodeJS.Platform } = {}): Promise<T3SendOutcome> {
+  options: { env?: NodeJS.ProcessEnv; timeoutMs?: number; spawnFn?: SpawnFn; platform?: NodeJS.Platform; signal?: AbortSignal } = {}): Promise<T3SendOutcome> {
   if (!THREAD_ID.test(threadId)) return Promise.resolve({ state: "failed", reason: "invalid thread id" });
   if (!message.trim()) return Promise.resolve({ state: "failed", reason: "empty message" });
+  if (options.signal?.aborted) return Promise.resolve({ state: "failed", reason: "stopped" });
   const platform = options.platform ?? process.platform;
   const run = options.spawnFn ?? spawn;
   const args = ["thread", "send", "--json", threadId, "-"];
@@ -76,27 +77,30 @@ export function t3SendMessage(cli: string, threadId: string, message: string,
     let child: ReturnType<SpawnFn>;
     try {
       // The launcher is a .cmd on Windows: it needs cmd.exe. Its path is checked (t3CliFromEnv) and quoted; the
-      // thread id is checked above; the message goes through stdin, never through a command line.
+      // thread id is checked above; the message goes through stdin, never through a command line. `cmd /s /c`
+      // strips one outer pair of quotes, so the whole command gets one more pair (paths with spaces).
       child = platform === "win32"
-        ? run(process.env.ComSpec || "cmd.exe", ["/d", "/s", "/c", `"${cli}" ${args.join(" ")}`], { env: options.env, windowsHide: true, windowsVerbatimArguments: true, stdio: ["pipe", "pipe", "pipe"] })
+        ? run(process.env.ComSpec || "cmd.exe", ["/d", "/s", "/c", `""${cli}" ${args.join(" ")}"`], { env: options.env, windowsHide: true, windowsVerbatimArguments: true, stdio: ["pipe", "pipe", "pipe"] })
         : run(cli, args, { env: options.env, stdio: ["pipe", "pipe", "pipe"] });
     } catch (error) {
       resolve({ state: "failed", reason: `could not start the T3 CLI: ${(error as Error).message}` });
       return;
     }
     let out = "", settled = false;
+    const onAbort = () => { killTree(child, platform, run); finish({ state: "unknown", reason: "stopped" }); };
     const finish = (outcome: T3SendOutcome) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      options.signal?.removeEventListener("abort", onAbort);
       resolve(outcome);
     };
     const timer = setTimeout(() => {
-      // Only this send's own child (by handle, never by name).
-      try { child.kill(); } catch { /* gone */ }
+      killTree(child, platform, run);
       finish({ state: "unknown", reason: "the T3 CLI did not answer in time" });
     }, options.timeoutMs ?? T3_SEND_TIMEOUT_MS);
     timer.unref();
+    options.signal?.addEventListener("abort", onAbort, { once: true });
     child.stdout?.on("data", (chunk: Buffer) => { if (out.length < MAX_OUTPUT) out += chunk.toString("utf8"); });
     child.stderr?.resume();
     child.on("error", (error) => finish({ state: "failed", reason: `could not start the T3 CLI: ${error.message}` }));
@@ -108,6 +112,24 @@ export function t3SendMessage(cli: string, threadId: string, message: string,
     child.stdin?.on("error", () => { /* reported through close */ });
     child.stdin?.end(message, "utf8");
   });
+}
+
+/**
+ * End this send's own CLI: on Windows the launcher runs under cmd.exe, so its whole tree (by the child's own PID,
+ * never by name), elsewhere the child itself. A late send after this could otherwise race the fallback.
+ */
+function killTree(child: ReturnType<SpawnFn>, platform: NodeJS.Platform, run: SpawnFn): void {
+  if (platform === "win32" && child.pid) {
+    try {
+      const killer = run("taskkill", ["/pid", String(child.pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
+      killer.on("error", () => { try { child.kill(); } catch { /* gone */ } });
+      const bound = setTimeout(() => { try { killer.kill(); } catch { /* gone */ } }, 10_000);
+      bound.unref();
+      killer.on("close", () => clearTimeout(bound));
+      return;
+    } catch { /* fall through */ }
+  }
+  try { child.kill(); } catch { /* gone */ }
 }
 
 function parseReceipt(out: string, threadId: string): { delivery: string; runId: string | null } | undefined {

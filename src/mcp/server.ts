@@ -582,7 +582,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
     const t3Home = t3HomeFromEnv(process.env, homedir());
     const t3Delivery: T3Delivery | undefined = t3Cli ? {
       chat: (sessionId) => t3ChatForNativeSession(t3Home, sessionId),
-      send: (threadId, text) => t3SendMessage(t3Cli, threadId, text, { env: process.env }),
+      send: (threadId, text, signal) => t3SendMessage(t3Cli, threadId, text, { env: process.env, signal }),
     } : undefined;
     if (nativeT3) log.info("T3 Code chat", { t3Delivery: Boolean(t3Delivery) });
     rewake = new RewakeEndpoint(home, node, shouldWake, log.child("rewake"), (event) => reportModActivity(ctx, event), ctx.claudeMailScopes,
