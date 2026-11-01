@@ -200,6 +200,36 @@ describe("RewakeEndpoint with T3 delivery", () => {
     expect(ctx.wakeDelivery!.inFlight!(id!)).toBe(false);
   });
 
+  it("the confirmation window counts only a full idle stretch: a turn ending just before it runs out starts it over", async () => {
+    await setup();
+    outcome = { state: "unknown", reason: "timeout" };
+    await peer.send({ to: me.name, body: "queued behind a turn" });
+    await until(() => sent.length === 1, 5_000);
+    const [id] = wakeMessageIds(sent[0]!.text);
+    // A turn runs for most of the 300 ms window and ends just before it runs out.
+    ctx.wakeDelivery!.active();
+    await new Promise((r) => setTimeout(r, 250));
+    ctx.wakeDelivery!.idle!();
+    await new Promise((r) => setTimeout(r, 150));
+    expect(ctx.wakeDelivery!.inFlight!(id!)).toBe(true);
+    // A full idle window without its prompt: back to the hooks, as a repeat.
+    await until(() => !ctx.wakeDelivery!.inFlight!(id!), 2_000);
+    expect(ctx.wakeDelivery!.repeated!(id!)).toBe(true);
+  });
+
+  it("a send whose prompt showed up before the CLI returned is still ended when the endpoint stops", async () => {
+    await setup();
+    let release!: () => void;
+    hold = new Promise((r) => { release = r; });
+    await peer.send({ to: me.name, body: "prompt first" });
+    await until(() => sent.length === 1, 5_000);
+    ctx.wakeDelivery!.active();
+    ctx.wakeDelivery!.confirmPrompt!(sent[0]!.text);
+    await rewake.stop();
+    expect(sent[0]!.signal.aborted).toBe(true);
+    release();
+  });
+
   it("a busy session's message is left to the hooks; it goes to T3 only after the turn ends unshown", async () => {
     await setup();
     ctx.wakeDelivery!.active();

@@ -165,6 +165,8 @@ export class RewakeEndpoint {
    * hand-out takes them and no mod acknowledgement confirms them; only that delivery's own prompt does (confirmPrompt).
    */
   private t3Pending: { ids: Set<string>; notes: Set<string>; abort: AbortController } | null = null;
+  /** Every CLI send still running, also after its prompt settled the delivery: stop() ends them all. */
+  private readonly t3Sends = new Set<AbortController>();
   private t3Timer: NodeJS.Timeout | undefined;
   private t3ConfirmTimer: NodeJS.Timeout | undefined;
   private stopped = false;
@@ -411,6 +413,8 @@ export class RewakeEndpoint {
   sessionIdle(): void {
     if (this.busy) this.turnEnds++;
     this.setBusy(false);
+    // A pending T3 delivery's window starts over: only a full idle window without its prompt counts.
+    if (this.t3Pending && this.t3ConfirmTimer) this.armT3Confirm(this.t3Pending);
     this.scheduleT3();
   }
 
@@ -442,9 +446,11 @@ export class RewakeEndpoint {
     if (!text) return;
     const pending = { ids: new Set(wakeMessageIds(text)), notes: new Set(wakeNoteIds(text)), abort: new AbortController() };
     this.t3Pending = pending;
+    this.t3Sends.add(pending.abort);
     let outcome: T3SendOutcome;
     try { outcome = await this.t3.send(thread, text, pending.abort.signal); }
     catch (error) { outcome = { state: "unknown", reason: String(error) }; }
+    finally { this.t3Sends.delete(pending.abort); }
     // Stopped meanwhile, or the delivery was already settled: nothing more to do here.
     if (this.stopped || this.t3Pending !== pending) return;
     if (outcome.state === "failed") {
@@ -691,7 +697,7 @@ export class RewakeEndpoint {
     if (this.t3) this.node.off("message", this.onT3Message);
     clearTimeout(this.t3Timer);
     clearTimeout(this.t3ConfirmTimer);
-    this.t3Pending?.abort.abort();
+    for (const send of this.t3Sends) send.abort();
     this.waiter?.abort("superseded");
     this.modWaiter?.abort("superseded");
     this.standby?.release("superseded");
