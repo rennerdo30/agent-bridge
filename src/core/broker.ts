@@ -2249,7 +2249,8 @@ export class Broker {
     const missed = peer.sessionId ? conn.missedDecisions : undefined;
     if (missed) {
       conn.missedDecisions = undefined;
-      for (const decision of this.store.decisions.list()) {
+      // Every missed revision, not only the current one, in recording order (list is newest first).
+      for (const decision of this.store.decisions.list({ history: true }).reverse()) {
         if (!missed.has(decision.id) || !decisionApplies(decision, peer)) continue;
         const message = this.queueDecision(decision, peer);
         if (message) this.emit(conn, "message", message);

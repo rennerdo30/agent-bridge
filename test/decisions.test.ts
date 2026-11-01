@@ -215,10 +215,12 @@ describe("shared decision broker", () => {
     const peer = env.node("codex-peer", "codex");
     await owner.start(); await peer.start();
     const scoped = await owner.decide({ topic: "late-id", text: "For the host session", scope: { sessions: ["late-host-session"] } });
+    const revised = await owner.decide({ topic: "late-id", text: "Revised for the host session", scope: { sessions: ["late-host-session"] } });
     expect(scoped.deliveredTo).toEqual([]);
+    expect(revised.deliveredTo).toEqual([]);
     await peer.setSessionId("late-host-session");
-    await until(() => peer.unread().length === 1);
-    expect(peer.unread()[0]!.conversationId).toBe(`decision-${scoped.decision.id}`);
+    await until(() => peer.unread().length === 2);
+    expect(peer.unread().map((m) => m.conversationId)).toEqual([`decision-${scoped.decision.id}`, `decision-${revised.decision.id}`]);
   });
 
   it("retains current revisions and delivery receipts through a broker restart", async () => {
