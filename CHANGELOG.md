@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.31.1
+
+- Add local T3 chat history import and dashboard chat browsing with root-chat linking.
+- Prevent duplicate T3 history and key checkpoints by physical source path.
+- Show Claude and Codex chat titles on their sessions.
+- Show question timestamps and delegate unanswered questions to the parent after 15 minutes.
+- Retry failed CI tests once while retaining explicit flaky/retried reporting.
+- Validation limitation: current main has a failed Windows Node 24 integration shard; owner requested release with this known failure.
+
 ## 0.31.0
 
 - **Breaking: one delegation tool (AB-462).** The ten per-agent tools (`ask_claude`, `spawn_codex`, ...) and `ask` are gone, without aliases. Use `spawn` with a required `agent` (`claude`, `codex`, `opencode`, `antigravity`, `muse`). It starts a background job as before; `wait: true` runs it in this server and returns the answer (what `ask_<agent>` did). `access: "ask"` and `ask_owner` are unchanged.
