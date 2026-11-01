@@ -1,0 +1,254 @@
+import { createRequire as __abCreateRequire } from 'node:module'; const require = __abCreateRequire(import.meta.url);
+
+// src/core/transcripts/common.ts
+import { readdirSync, realpathSync, statSync } from "node:fs";
+
+// src/core/byte-source.ts
+import { closeSync, fstatSync, openSync, readSync } from "node:fs";
+var active = null;
+var rawOpens = 0;
+function withByteSources(resolver, read) {
+  if (!resolver) return read();
+  const previous = active;
+  active = resolver;
+  try {
+    const result = read();
+    if (result instanceof Promise) throw new Error("withByteSources needs a synchronous reader");
+    return result;
+  } finally {
+    active = previous;
+  }
+}
+function activeByteSources() {
+  return active;
+}
+function openFileSource(file) {
+  const fd = openSync(file, "r");
+  rawOpens++;
+  let size;
+  try {
+    size = fstatSync(fd).size;
+  } catch (err) {
+    closeSync(fd);
+    throw err;
+  }
+  let open = true;
+  return {
+    size,
+    read: (buffer, offset, length, position) => readSync(fd, buffer, offset, length, position),
+    close: () => {
+      if (open) {
+        open = false;
+        closeSync(fd);
+      }
+    }
+  };
+}
+function openByteSource(file) {
+  return active?.open(file) ?? openFileSource(file);
+}
+
+// src/core/transcripts/common.ts
+import { homedir } from "node:os";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
+var MAX_TRANSCRIPT_CHUNK_BYTES = 512 * 1024;
+var TRANSCRIPT_TAIL_BYTES = 1024 * 1024;
+var MAX_TOOL_PREVIEW_CHARS = 1200;
+var MAX_TEXT_CHARS = 16e3;
+var MAX_TITLE_CHARS = 160;
+var MAX_NATIVE_SUBAGENTS = 200;
+var MAX_DISCOVERY_FILES = 2e4;
+var MAX_DISCOVERY_BYTES = 8 * 1024 * 1024;
+var MAX_CURSOR_CHARS = 256;
+var SQLITE_READ_TIMEOUT_MS = 100;
+var INITIAL_HEADER_BYTES = 8 * 1024;
+var TRANSCRIPT_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+function transcriptPaths(env = process.env, home = homedir()) {
+  return {
+    claude: resolve(env.CLAUDE_CONFIG_DIR?.trim() || join(home, ".claude")),
+    codex: resolve(env.CODEX_HOME?.trim() || join(home, ".codex")),
+    opencode: resolve(join(env.XDG_DATA_HOME?.trim() || join(home, ".local", "share"), "opencode")),
+    antigravity: resolve(env.ANTIGRAVITY_CLI_HOME?.trim() || join(home, ".gemini", "antigravity-cli")),
+    muse: resolve(join(env.XDG_DATA_HOME?.trim() || join(home, ".local", "share"), "muse"))
+  };
+}
+function localT3HistoryRoot(env = process.env, home = homedir()) {
+  return "AGENT_BRIDGE_TEST_ROOT" in env ? void 0 : env.T3CODE_HOME ?? join(home, ".t3");
+}
+function object(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+function parse(value) {
+  try {
+    return object(JSON.parse(value));
+  } catch {
+    return {};
+  }
+}
+function time(value) {
+  const at = typeof value === "number" ? value : typeof value === "string" ? Date.parse(value) : 0;
+  return Number.isFinite(at) ? at : 0;
+}
+function preview(value, limit = MAX_TOOL_PREVIEW_CHARS) {
+  let text = "";
+  if (typeof value === "string") text = value;
+  else if (value !== void 0 && value !== null) {
+    try {
+      text = JSON.stringify(value);
+    } catch {
+      return "";
+    }
+  }
+  return text.length > limit ? `${text.slice(0, limit)}\u2026` : text;
+}
+function contentText(value) {
+  if (typeof value === "string") return value;
+  if (!Array.isArray(value)) return "";
+  return value.map(object).filter((p) => ["text", "input_text", "output_text"].includes(p.type) && typeof p.text === "string").map((p) => p.text).join("\n");
+}
+function directory(dir) {
+  try {
+    return readdirSync(dir);
+  } catch {
+    return [];
+  }
+}
+function fileStat(file) {
+  try {
+    return statSync(file);
+  } catch {
+    return null;
+  }
+}
+function safeFile(root, file, canonicalRoot) {
+  try {
+    const actual = realpathSync.native(file), rel = relative(canonicalRoot ?? realpathSync.native(root), actual);
+    return rel && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel) ? actual : null;
+  } catch {
+    return null;
+  }
+}
+function readJsonl(file, from = "0", maxBytes = MAX_TRANSCRIPT_CHUNK_BYTES) {
+  const { entries, next } = readJsonlChunk(file, from, maxBytes);
+  return { entries, next };
+}
+var JSONL_MARK_BYTES = 256;
+function readJsonlChunk(file, from = "0", maxBytes = MAX_TRANSCRIPT_CHUNK_BYTES, opts = {}) {
+  const match = /^(?:j:)?(\d+)(?::([01]))?$/.exec(from);
+  let offset = match ? Number(match[1]) : 0, discard = match?.[2] === "1";
+  if (!Number.isSafeInteger(offset)) offset = 0;
+  let src;
+  const bytesBefore = (end) => {
+    const out = Buffer.alloc(Math.min(JSONL_MARK_BYTES, end));
+    return out.subarray(0, src.read(out, 0, out.length, end - out.length));
+  };
+  try {
+    src = openByteSource(file);
+    const size = src.size;
+    if (opts.expect && (offset > size || !bytesBefore(offset).equals(opts.expect))) return { entries: [], next: from, length: 0, maxBytes, rewritten: true };
+    if (from === "tail") {
+      offset = Math.max(0, size - TRANSCRIPT_TAIL_BYTES);
+      maxBytes = Math.max(maxBytes, TRANSCRIPT_TAIL_BYTES);
+    }
+    if (offset > size) {
+      offset = 0;
+      discard = false;
+    }
+    if (offset > 0 && !discard) {
+      const previous = Buffer.alloc(1);
+      src.read(previous, 0, 1, offset - 1);
+      discard = previous[0] !== 10;
+    }
+    const buf = Buffer.alloc(Math.min(maxBytes, Math.max(0, size - offset)));
+    const length = src.read(buf, 0, buf.length, offset);
+    const entries = [];
+    let start = 0;
+    for (let i = 0; i < length; i++) {
+      if (buf[i] !== 10) continue;
+      if (!discard) entries.push({ value: parse(buf.subarray(start, i).toString("utf8")), offset: offset + start });
+      discard = false;
+      start = i + 1;
+    }
+    if (start === 0 && length === maxBytes) {
+      offset += length;
+      discard = true;
+    } else if (discard) offset += length;
+    else offset += start;
+    return { entries, next: `j:${offset}:${discard ? 1 : 0}`, length, maxBytes, ...opts.mark ? { mark: bytesBefore(offset) } : {} };
+  } catch {
+    return { entries: [], next: `j:${offset}:${discard ? 1 : 0}`, length: 0, maxBytes, ...opts.expect ? { rewritten: true } : {} };
+  } finally {
+    src?.close();
+  }
+}
+function readHead(file) {
+  let src;
+  try {
+    src = openByteSource(file);
+    const size = src.size;
+    for (let limit = INITIAL_HEADER_BYTES; limit <= MAX_TRANSCRIPT_CHUNK_BYTES; limit *= 2) {
+      const buf = Buffer.alloc(Math.min(size, limit));
+      const length = src.read(buf, 0, buf.length, 0), newline = buf.indexOf(10);
+      if (newline >= 0) return parse(buf.subarray(0, newline).toString("utf8"));
+      if (length < limit) break;
+    }
+    return {};
+  } catch {
+    return {};
+  } finally {
+    src?.close();
+  }
+}
+function readTail(file) {
+  return readJsonl(file, String(Math.max(0, tailSize(file) - MAX_TRANSCRIPT_CHUNK_BYTES))).entries.map((e) => e.value);
+}
+function tailSize(file) {
+  const retained = activeByteSources()?.open(file);
+  if (!retained) return fileStat(file)?.size ?? 0;
+  try {
+    return retained.size;
+  } finally {
+    retained.close();
+  }
+}
+function scanJsonl(file) {
+  const entries = [];
+  let from = "0";
+  for (let bytes = 0; bytes < MAX_DISCOVERY_BYTES; bytes += MAX_TRANSCRIPT_CHUNK_BYTES) {
+    const page = readJsonl(file, from);
+    entries.push(...page.entries);
+    if (page.next === from) break;
+    from = page.next;
+  }
+  return entries;
+}
+
+export {
+  withByteSources,
+  activeByteSources,
+  openFileSource,
+  MAX_TRANSCRIPT_CHUNK_BYTES,
+  MAX_TEXT_CHARS,
+  MAX_TITLE_CHARS,
+  MAX_NATIVE_SUBAGENTS,
+  MAX_DISCOVERY_FILES,
+  MAX_DISCOVERY_BYTES,
+  MAX_CURSOR_CHARS,
+  SQLITE_READ_TIMEOUT_MS,
+  TRANSCRIPT_ID,
+  transcriptPaths,
+  localT3HistoryRoot,
+  object,
+  parse,
+  time,
+  preview,
+  contentText,
+  directory,
+  fileStat,
+  safeFile,
+  readJsonl,
+  readJsonlChunk,
+  readHead,
+  readTail,
+  scanJsonl
+};
