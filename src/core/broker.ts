@@ -2055,16 +2055,9 @@ export class Broker {
     };
     return this.store.decisions.enqueue(decision, this.decisionSessionKey(peer), message, () => this.store.insert(message)) ? message : null;
   }
-
-  private queueCurrentDecisions(peer: PeerInfo): BridgeMessage[] {
-    // Hello may precede the hook that identifies this session. Waiting for that identity avoids
-    // sending a second copy on reload before its previous receipt can be found.
-    if (peer.jobAgent || !peer.sessionId) return [];
-    return this.store.decisions.list().filter((d) => decisionApplies(d, peer)).flatMap((d) => {
-      const message = this.queueDecision(d, peer);
-      return message ? [message] : [];
-    });
-  }
+  // AB-482: a new or relocated session gets no backlog of existing decisions as messages (that was one
+  // message per decision for every new chat). It sees them in the SessionStart note and via `decisions`;
+  // only decisions recorded while it is connected arrive as messages (notifyDecision).
 
   private checkAuth(protocol: number, token: unknown, canHost?: unknown): void {
     if (protocol !== PROTOCOL_VERSION) {
@@ -2162,7 +2155,7 @@ export class Broker {
     this.log.info("peer joined", { name: peer.name, agent: peer.agent, jobAgent: peer.jobAgent, cwd: peer.cwd, claimed });
     if (!peer.jobAgent) this.broadcastEvent("peer_joined", peer, conn);
     // Deliver the backlog right after the hello response has been written.
-    this.replayMail(conn, peer, () => { this.queueCurrentDecisions(peer); });
+    this.replayMail(conn, peer);
     return { brokerPid: process.pid, brokerVersion: APP_VERSION, name: peer.name, sessionId: peer.sessionId, ...(peer.frontend ? { frontend: peer.frontend } : {}), peers: this.livePeers().filter((x) => x.id !== peer.id) };
   }
 
@@ -2247,7 +2240,6 @@ export class Broker {
       conn.mailReady = registration;
     }
     if (replay) this.replayMail(conn, peer);
-    for (const message of this.queueCurrentDecisions(peer)) this.emit(conn, "message", message);
     return peer;
   }
 
