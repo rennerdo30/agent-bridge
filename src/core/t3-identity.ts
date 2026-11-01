@@ -14,12 +14,12 @@ export type McpProfile = "full" | "reduced";
  * AB-483: an ordinary chat inside the T3 Code app. T3's desktop app sets T3CODE_CLI_PATH on its backend,
  * and every provider process the backend starts inherits it. This selects tools and instructions only;
  * it is no frontend identity and changes no delivery. Bridge children strip it (withoutT3Context), and
- * callers exclude delegated and internal Bridge processes. An explicit AGENT_BRIDGE_HOST other than
- * `auto` or `t3` opts out, like it does for injected transport.
+ * callers exclude delegated and internal Bridge processes. Any explicit AGENT_BRIDGE_HOST other than `auto`
+ * opts out (`t3` keeps meaning "injected transport required").
  */
 export function nativeT3FromEnv(env: NodeJS.ProcessEnv): boolean {
   const selector = env.AGENT_BRIDGE_HOST;
-  if (selector !== undefined && selector !== "auto" && selector !== "t3") return false;
+  if (selector !== undefined && selector !== "auto") return false;
   return Boolean(env.T3CODE_CLI_PATH?.trim());
 }
 

@@ -1766,7 +1766,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
         .string()
         .regex(MODEL_NAME_PATTERN)
         .optional()
-        .describe("Model ID for the selected agent; see list_models."),
+        .describe(`Model ID for the selected agent${remoteOnly ? " on that paired machine" : "; see list_models"}.`),
       effort: z
         .string()
         .regex(/^[A-Za-z0-9_-]{1,20}$/)

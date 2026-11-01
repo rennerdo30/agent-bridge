@@ -172,7 +172,7 @@ AB-458's [native injection contract](t3-native-bridge-contract.md) traces upstre
 Most T3 chats get no injected transport, so the host adapter below never runs for them. Bridge still
 recognises them: T3's desktop app sets `T3CODE_CLI_PATH` on its backend process, and every provider
 process T3 starts (Claude, Codex, opencode, Antigravity, Muse) inherits it. When it is set (non-empty),
-`AGENT_BRIDGE_HOST` is absent, `auto` or `t3`, and the server is neither a Bridge job nor an internal
+`AGENT_BRIDGE_HOST` is absent or `auto` (`t3` still requires injected transport), and the server is neither a Bridge job nor an internal
 Bridge process, the session counts as a T3 Code chat:
 
 - it gets the reduced tool set below (local `spawn` refused, `list_models` and `usage_limits` hidden),
