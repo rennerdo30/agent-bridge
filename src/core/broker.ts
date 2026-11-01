@@ -149,6 +149,8 @@ interface Conn {
   authed: boolean;
   inFlight: number;
   mailGeneration: number;
+  /** AB-482: session-scoped decisions recorded while this session had no host session id yet; delivered once it reports one. */
+  missedDecisions?: Set<string>;
   /** Published only after this exact registration finished queued-mail expiry. */
   mailReady?: QueueRegistration;
   /** The listener that accepted it: only local-pipe peers share this machine's PID namespace (AB-399). */
@@ -1247,14 +1249,13 @@ export class Broker {
   /** Deferred replay is outside dispatch: storage faults must not become uncaught exceptions.
    * Honour stream backpressure so a large retained inbox is not repeatedly disconnected on replay.
    */
-  private replayMail(conn: Conn, peer: PeerInfo, before?: () => void): void {
+  private replayMail(conn: Conn, peer: PeerInfo): void {
     const registration = { id: peer.id, name: peer.name, sessionId: peer.sessionId, generation: conn.mailGeneration };
     const current = () => this.queueReady(conn, peer) && conn.mailGeneration === registration.generation && !conn.socket.destroyed && conn.peer === peer && peer.id === registration.id &&
       peer.name === registration.name && peer.sessionId === registration.sessionId && this.connByName(registration.name) === conn;
     setImmediate(() => {
       if (!current()) return;
       try {
-        before?.();
         const mail = this.unreadMail(peer.name, PENDING_MAX_LIMIT);
         let at = 0;
         const pump = () => {
@@ -2039,7 +2040,12 @@ export class Broker {
   private notifyDecision(decision: Omit<OwnerDecision, "current">): string[] {
     const deliveredTo: string[] = [];
     for (const c of this.conns) {
-      if (!c.peer || c.peer.jobAgent || !decisionApplies(decision, c.peer)) continue;
+      if (!c.peer || c.peer.jobAgent) continue;
+      if (!decisionApplies(decision, c.peer)) {
+        // It may be addressed to the host session id this session has not reported yet.
+        if (!c.peer.sessionId && decision.scope !== "all" && "sessions" in decision.scope) (c.missedDecisions ??= new Set()).add(decision.id);
+        continue;
+      }
       const message = this.queueDecision(decision, c.peer);
       if (message) { this.emit(c, "message", message); deliveredTo.push(c.peer.name); }
     }
@@ -2055,16 +2061,9 @@ export class Broker {
     };
     return this.store.decisions.enqueue(decision, this.decisionSessionKey(peer), message, () => this.store.insert(message)) ? message : null;
   }
-
-  private queueCurrentDecisions(peer: PeerInfo): BridgeMessage[] {
-    // Hello may precede the hook that identifies this session. Waiting for that identity avoids
-    // sending a second copy on reload before its previous receipt can be found.
-    if (peer.jobAgent || !peer.sessionId) return [];
-    return this.store.decisions.list().filter((d) => decisionApplies(d, peer)).flatMap((d) => {
-      const message = this.queueDecision(d, peer);
-      return message ? [message] : [];
-    });
-  }
+  // AB-482: a new or relocated session gets no backlog of existing decisions as messages (that was one
+  // message per decision for every new chat). It sees them in the SessionStart note and via `decisions`;
+  // only decisions recorded while it is connected arrive as messages (notifyDecision).
 
   private checkAuth(protocol: number, token: unknown, canHost?: unknown): void {
     if (protocol !== PROTOCOL_VERSION) {
@@ -2162,7 +2161,7 @@ export class Broker {
     this.log.info("peer joined", { name: peer.name, agent: peer.agent, jobAgent: peer.jobAgent, cwd: peer.cwd, claimed });
     if (!peer.jobAgent) this.broadcastEvent("peer_joined", peer, conn);
     // Deliver the backlog right after the hello response has been written.
-    this.replayMail(conn, peer, () => { this.queueCurrentDecisions(peer); });
+    this.replayMail(conn, peer);
     return { brokerPid: process.pid, brokerVersion: APP_VERSION, name: peer.name, sessionId: peer.sessionId, ...(peer.frontend ? { frontend: peer.frontend } : {}), peers: this.livePeers().filter((x) => x.id !== peer.id) };
   }
 
@@ -2247,7 +2246,16 @@ export class Broker {
       conn.mailReady = registration;
     }
     if (replay) this.replayMail(conn, peer);
-    for (const message of this.queueCurrentDecisions(peer)) this.emit(conn, "message", message);
+    const missed = peer.sessionId ? conn.missedDecisions : undefined;
+    if (missed) {
+      conn.missedDecisions = undefined;
+      // Every missed revision, not only the current one, in recording order (list is newest first).
+      for (const decision of this.store.decisions.list({ history: true }).reverse()) {
+        if (!missed.has(decision.id) || !decisionApplies(decision, peer)) continue;
+        const message = this.queueDecision(decision, peer);
+        if (message) this.emit(conn, "message", message);
+      }
+    }
     return peer;
   }
 

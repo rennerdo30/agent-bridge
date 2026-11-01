@@ -196,14 +196,31 @@ describe("shared decision broker", () => {
     await reload.start(); await reload.setSessionId("stable-session");
     await reload.relocate(join(env.home, "elsewhere"));
     expect(reload.unread()).toEqual([]);
+    // AB-482 (owner, 2026-11-01): a new session gets no backlog of existing decisions as messages;
+    // only decisions recorded while it is connected arrive.
     const fresh = env.node("codex-fresh", "codex");
     await fresh.start(); await fresh.setSessionId("fresh-session");
-    await until(() => fresh.unread().length === 1);
+    await fresh.decisions(); // Round trip: a backlog would have been queued by now.
+    expect(fresh.unread()).toEqual([]);
     const update = await owner.decide({ topic: "render", text: "Keep near detail", scope: "all" });
-    await until(() => reload.unread().length === 1 && fresh.unread().length === 2);
+    await until(() => reload.unread().length === 1 && fresh.unread().length === 1);
+    expect(fresh.unread()[0]!.conversationId).toBe(`decision-${update.decision.id}`);
     expect(reload.unread()[0]!.conversationId).toBe(`decision-${update.decision.id}`);
     const db = new DatabaseSync(env.db, { readOnly: true });
     try { expect(db.prepare("SELECT COUNT(*) AS n FROM messages WHERE recipient = ?").get(reload.name)!.n).toBe(2); } finally { db.close(); }
+  });
+
+  it("delivers a decision addressed to a host session id recorded before the session reported that id", async () => {
+    const owner = env.node("claude-owner");
+    const peer = env.node("codex-peer", "codex");
+    await owner.start(); await peer.start();
+    const scoped = await owner.decide({ topic: "late-id", text: "For the host session", scope: { sessions: ["late-host-session"] } });
+    const revised = await owner.decide({ topic: "late-id", text: "Revised for the host session", scope: { sessions: ["late-host-session"] } });
+    expect(scoped.deliveredTo).toEqual([]);
+    expect(revised.deliveredTo).toEqual([]);
+    await peer.setSessionId("late-host-session");
+    await until(() => peer.unread().length === 2);
+    expect(peer.unread().map((m) => m.conversationId)).toEqual([`decision-${scoped.decision.id}`, `decision-${revised.decision.id}`]);
   });
 
   it("retains current revisions and delivery receipts through a broker restart", async () => {
