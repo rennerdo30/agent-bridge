@@ -191,10 +191,15 @@ the variable too and counts as a T3 chat. The plugin, skill and relay-agent desc
 
 A task started with T3's `delegate_task` runs in its own chat, often in its own worktree, and its provider
 loads the Bridge plugin like any session. The broker looks the session up in T3's store (read-only: the
-provider session id in `nativeThreadRef`, then the chat's `lineage.parentThreadId`). A chat with a parent is a
-T3 subagent: it is never its project's main, gets no `project:` mail and has no project group; peer lists and
-the dashboard mark it `t3Child` ("T3 subagent"). A top-level chat is cached for good; a session T3 does not
-know yet is looked up again with backoff (15 seconds, doubling to 10 minutes).
+provider session id in `nativeThreadRef`, then the chat's `lineage.relationshipToParent`). A `subagent` chat is
+a T3 delegated task: it has no project group, is never its project's main, gets no `project:` mail, holds no
+project-wide job control, is not an owner-answer fallback and does not change the project checklist. Peer
+lists and the dashboard mark it `t3Child` ("T3 subagent"). A `fork` the user made stays an ordinary member.
+
+A session whose place T3 has not recorded yet (no session id, or no matching chat within two minutes) is
+pending: it is elected main only while no resolved member is available, and that role is not recorded until
+its place is known. Answers are cached; unknown sessions are looked up every 5 seconds while pending, then
+with backoff to 10 minutes. On a PC without a T3 store nothing is pending.
 
 ### Bridge messages visible in T3 chats (AB-481)
 

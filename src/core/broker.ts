@@ -477,7 +477,7 @@ export class Broker {
     private readonly networking?: { home: string; config: NetworkConfig },
     private readonly dashboardHost?: { ensure(force: boolean, port?: number): Promise<import("../cli/dashboard.js").DashboardInfo | null> },
   ) {
-    this.groups = new ProjectGroups(jobsPath ? dirname(jobsPath) : undefined);
+    this.groups = new ProjectGroups(jobsPath ? dirname(jobsPath) : undefined, (p) => this.t3Lineages.isChild(p));
     this.nativeChildren = new NativeChildren(this.store);
     this.handlers = {
       coreStatus: () => ({ version: APP_VERSION, pid: process.pid, uptimeSeconds: Math.floor(process.uptime()), ...this.hosting,
@@ -616,7 +616,7 @@ export class Broker {
           const peer = caller();
           current = this.currentChecklistAuthority(recovered);
           if (!current || current.name !== name || current.remote || !this.jobsPath ||
-              !new ChecklistProjectGroups(dirname(this.jobsPath)).canControl(peer, current, this.localPeers()))
+              !new ChecklistProjectGroups(dirname(this.jobsPath), (p) => this.t3Lineages.isChild(p)).canControl(peer, current, this.localPeers()))
             throw new BridgeError("unauthorized", "Current authority does not allow this checklist operation.");
         };
         authorize();
@@ -1488,11 +1488,14 @@ export class Broker {
 
   private projectPeer(peer: PeerInfo): PeerInfo {
     const decorated = this.groups.decorate(peer), key = decorated.projectGroup;
+    // Like a Bridge job, a T3 delegated child is no member of its project group (decorate leaves it ungrouped):
+    // no main, no project mail, no project-wide job control.
+    if (this.t3Lineages.isChild(peer)) return { ...decorated, t3Child: true };
     if (!key || peer.jobAgent || peer.subagent) return decorated;
-    // Like a Bridge job, a T3 delegated child is no member of its project group: no main, no project mail.
-    if (this.t3Lineages.isChild(peer)) return { ...decorated, projectGroup: undefined, t3Child: true };
+    // A session whose T3 place is still pending is elected only when no resolved member is available.
     const members = this.localPeers().filter((p) => this.projectMember(p) && this.groups.decorate(p).projectGroup === key)
-      .sort((a, b) => a.startedAt - b.startedAt || a.name.localeCompare(b.name));
+      .sort((a, b) => Number(this.t3Lineages.role(a) === "pending") - Number(this.t3Lineages.role(b) === "pending") ||
+        a.startedAt - b.startedAt || a.name.localeCompare(b.name));
     // Remembered retired mains are in-memory state only; past the grace window the current main keeps its role.
     const at = this.now();
     for (const [group, entry] of this.retiredProjectMains) if (at - entry.at > RETIRED_MAIN_GRACE_MS || at < entry.at) this.retiredProjectMains.delete(group);
@@ -1500,7 +1503,9 @@ export class Broker {
     // A retired main whose session reconnects soon (a resumed CLI) takes its role back, as after a broker restart.
     if (back) { this.retiredProjectMains.delete(key); this.recordProjectMain(key, `project:${basename(decorated.projectRoot!)}`, back); }
     let main = members.find(p => this.projectMains.has(key) && ownsProjectMain(this.projectMains.get(key)!, p));
-    if (!main) { main = members[0]; if (main) this.recordProjectMain(key, `project:${basename(decorated.projectRoot!)}`, main); }
+    // A pending session may act as main while it is alone, but the role is recorded only once its T3 place is
+    // known: otherwise a T3 child that connected first would keep it after T3 recorded it (AB-460).
+    if (!main) { main = members[0]; if (main && this.t3Lineages.role(main) !== "pending") this.recordProjectMain(key, `project:${basename(decorated.projectRoot!)}`, main); }
     return { ...decorated, projectMain: main?.id === peer.id, projectAddress: `project:${basename(decorated.projectRoot!)}`, projectRoute: this.projectRoutes.get(key) };
   }
 

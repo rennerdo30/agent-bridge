@@ -18,7 +18,7 @@ let broker: Broker;
 const clients: BridgeClient[] = [];
 
 /** A synthetic T3 store with the two tables Bridge reads: provider sessions and chats with their lineage. */
-function t3Home(chats: { thread: string; nativeId: string; parent?: string }[]): string {
+function t3Home(chats: { thread: string; nativeId: string; parent?: string; relation?: "subagent" | "fork" }[]): string {
   const home = join(env.home, "t3");
   mkdirSync(join(home, "userdata"), { recursive: true });
   const db = new DatabaseSync(join(home, "userdata", "statev2.sqlite"));
@@ -26,7 +26,7 @@ function t3Home(chats: { thread: string; nativeId: string; parent?: string }[]):
     CREATE TABLE orchestration_v2_projection_provider_threads (thread_id TEXT, payload_json TEXT)`);
   for (const c of chats) {
     db.prepare(`INSERT INTO orchestration_v2_projection_threads VALUES (?, ?, NULL)`)
-      .run(c.thread, JSON.stringify({ lineage: c.parent ? { parentThreadId: c.parent } : {} }));
+      .run(c.thread, JSON.stringify({ lineage: c.parent ? { parentThreadId: c.parent, relationshipToParent: c.relation ?? "subagent" } : {} }));
     db.prepare(`INSERT INTO orchestration_v2_projection_provider_threads VALUES (?, ?)`)
       .run(c.thread, JSON.stringify({ nativeThreadRef: { nativeId: c.nativeId } }));
   }
@@ -75,5 +75,29 @@ describe("AB-460 T3 delegated children", () => {
     const sent = await sender.request("send", { to: address, body: "for the team", conversationId: "ab460" });
     expect(sent.deliveredTo).toContain("claude-lead");
     expect(sent.deliveredTo).not.toContain("codex-t3-child");
+  });
+
+  it("keeps a fork the user made of a chat as an ordinary member that can be main", async () => {
+    broker.setT3Home(t3Home([
+      { thread: "parent-chat", nativeId: "lead-session" },
+      { thread: "fork-chat", nativeId: "fork-session", parent: "parent-chat", relation: "fork" },
+    ]));
+    const now = Date.now();
+    const fork = await session({ id: "fork", name: "claude-fork", agent: "claude", startedAt: now - 60_000 });
+    await session({ id: "lead", name: "claude-lead", agent: "claude", startedAt: now });
+    const peers = await fork.request("peers", {});
+    expect(peers.find((p) => p.name === "claude-fork")?.projectMain).toBe(true);
+    expect(peers.find((p) => p.name === "claude-fork")?.t3Child).toBeUndefined();
+  });
+
+  it("does not elect a session T3 has not recorded yet while a resolved member is available", async () => {
+    // The child connected before T3 recorded its provider session: its place is pending, not "ordinary".
+    broker.setT3Home(t3Home([{ thread: "parent-chat", nativeId: "lead-session" }]));
+    const now = Date.now();
+    await session({ id: "child", name: "codex-t3-child", agent: "codex", startedAt: now - 60_000 });
+    const lead = await session({ id: "lead", name: "claude-lead", agent: "claude", startedAt: now });
+    const peers = await lead.request("peers", {});
+    expect(peers.find((p) => p.name === "claude-lead")?.projectMain).toBe(true);
+    expect(peers.find((p) => p.name === "codex-t3-child")?.projectMain).toBe(false);
   });
 });

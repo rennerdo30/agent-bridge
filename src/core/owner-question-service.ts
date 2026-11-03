@@ -60,7 +60,7 @@ export class OwnerQuestionService {
       q.answer.decisionId = decision.id; this.store.save(q);
     }
     const peers = this.peers();
-    const mains = peers.filter(p => !p.jobAgent && !p.subagent && !p.unavailable && normalizeProject(p.projectRoot ?? p.cwd) === normalizeProject(q.project));
+    const mains = peers.filter(p => !p.jobAgent && !p.subagent && !p.t3Child && !p.unavailable && normalizeProject(p.projectRoot ?? p.cwd) === normalizeProject(q.project));
     const main = mains.find(p => p.projectMain) ?? mains[0];
     const destinations=q.askers.flatMap(a => [{ name:a.session,sessionId:a.sessionId,peerId:a.peerId },{name:a.main,sessionId:a.mainSessionId,peerId:a.mainPeerId},...(a.job ? [{name:a.job,sessionId:null,peerId:undefined}] : [])]);
     const resolveDestination=(name:string) => {
