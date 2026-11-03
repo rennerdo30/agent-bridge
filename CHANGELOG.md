@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.32.2
+
+- **Read-only storage audit (AB-485).** `agent-bridge storage audit --root <path>` finds `.agent-bridge` directories under explicitly selected roots and reports observed logical file sizes, timestamps, canonical Git project identity and bounded attribution from allowlisted job/session metadata. It skips links and `.git` entries, leaves unknown historical causes unknown, and marks incomplete scans and attribution. Totals are not allocated disk space or a consistent snapshot; partial totals are lower bounds. The command performs no cleanup, migration or storage changes and does not open secret, authentication, configuration or log files for attribution.
+
 ## 0.32.1
 
 - **T3 delegated tasks are subagents, not project sessions (AB-460).** A task started with T3's `delegate_task` loads the Bridge plugin and used to connect as an ordinary project member, so the oldest one could become the project main and receive `project:` mail (seen live: `project:strategy-game` routed to a delegated Codex task). The broker now looks each session up in T3's store (read-only: provider session id, then the chat's `lineage.relationshipToParent`). A `subagent` chat has no project group, is never main, gets no project mail or project-wide job control, is not an owner-answer fallback and cannot change the project checklist; peers mark it `t3Child` and the dashboard says "T3 subagent". Forks you make stay ordinary sessions. A session T3 has not recorded yet is pending for up to two minutes: it gets these roles only while no confirmed session is available.
