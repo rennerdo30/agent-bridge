@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, writeFileSync, readdirSync, lstatSync, readFileSync, symlinkSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readdirSync, lstatSync, readFileSync, symlinkSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -125,6 +125,67 @@ it("deduplicates overlapping explicit roots without losing recursive bytes", () 
   expect(runStorage(["audit", "--root", child, "--root", root, "--root", folder, "--json"], fixture(), s => lines.push(s))).toBe(0);
   const result = JSON.parse(lines.join("\n"));
   expect(result.directories).toHaveLength(1); expect(result.directories[0]).toMatchObject({ bytes: 7, directBytes: 0, complete: true });
+  expect(result.entries).toBe(audit(root).value.entries);
+});
+
+it.each(["included config", "separate Git directory"])("keeps a missing home absent with %s in the actual CLI", layout => {
+  const root = fixture(), repo = join(root, "repo"), git = layout === "included config" ? join(repo, ".git") : join(root, "git-data");
+  mkdirSync(join(repo, "sub", ".agent-bridge"), { recursive: true });
+  mkdirSync(join(git, "objects"), { recursive: true }); mkdirSync(join(git, "refs"));
+  writeFileSync(join(git, "HEAD"), "ref: refs/heads/main\n");
+  writeFileSync(join(git, "config"), "[core]\n bare = false\n" + (layout === "included config" ? "[include]\n path = extra-config\n" : ""));
+  if (layout === "included config") writeFileSync(join(git, "extra-config"), "[core]\n logAllRefUpdates = true\n");
+  else writeFileSync(join(repo, ".git"), `gitdir: ${git.replace(/\\/g, "/")}\n`);
+  const env = { ...process.env, AGENT_BRIDGE_HOME: join(root, "missing-home"), GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: join(root, "no-global-config") };
+  const probe = spawnSync("git", ["-C", repo, "rev-parse", "--show-toplevel"], { encoding: "utf8", env, timeout: 10_000, windowsHide: true });
+  console.log(`Owned Git fixture PID ${probe.pid}, exited ${probe.status}`);
+  expect(probe.status, probe.stderr).toBe(0); // Both are valid layouts that previously triggered the writable fallback.
+  const bundle = join(root, "cli.mjs");
+  buildSync({ entryPoints: ["src/cli/main.ts"], outfile: bundle, bundle: true, platform: "node", format: "esm", packages: "external", logLevel: "silent" });
+  symlinkSync(join(process.cwd(), "node_modules"), join(root, "node_modules"), process.platform === "win32" ? "junction" : "dir");
+  const before = snapshot(repo);
+  expect(existsSync(env.AGENT_BRIDGE_HOME)).toBe(false);
+  const child = spawnSync(process.execPath, [bundle, "storage", "audit", "--root", repo, "--json"], { encoding: "utf8", env, timeout: 10_000, windowsHide: true });
+  console.log(`Owned fallback CLI PID ${child.pid}, exited ${child.status}`);
+  expect(child.status, child.stderr).toBe(0);
+  expect(existsSync(env.AGENT_BRIDGE_HOME)).toBe(false);
+  const result = JSON.parse(child.stdout);
+  expect(result.directories[0].project).toMatchObject({ canonicalRoot: null, nestedUnderSameGitRoot: null });
+  expect(result.directories[0].project.reason).toMatch(/unavailable|unknown/i);
+  expect(snapshot(repo)).toEqual(before);
+});
+
+it.each(["missing", "file"])("validates an explicit %s root even after its parent was scanned", kind => {
+  const root = fixture(), explicit = join(root, kind);
+  if (kind === "file") writeFileSync(explicit, "payload");
+  const result = audit(root, ["--root", explicit]);
+  const code = kind === "missing" ? "ENOENT" : "ROOT_NOT_DIRECTORY";
+  expect(result.code).toBe(1);
+  expect(result.value.roots.find((r: any) => r.path === explicit)).toMatchObject({ complete: false, problems: [{ path: explicit, code }] });
+  expect(result.value.problems).toContainEqual({ path: explicit, code });
+});
+
+it("gives a deep explicit root its own depth budget after a shallow ancestor scan", () => {
+  const root = fixture(), folder = join(root, "a", "b", ".agent-bridge"); mkdirSync(folder, { recursive: true });
+  writeFileSync(join(folder, "payload"), "1234567");
+  const result = audit(root, ["--root", folder, "--max-depth", "1"]);
+  expect(result.code).toBe(1); // Ancestor discovery is still partial.
+  expect(result.value.roots.find((r: any) => r.path === folder)).toMatchObject({ complete: true, problems: [] });
+  expect(result.value.directories).toEqual([expect.objectContaining({ path: folder, bytes: 7, directBytes: 7, files: 1, complete: true })]);
+});
+
+it("extends partial storage coverage without double-counting recursive totals or attribution", () => {
+  const root = fixture(), folder = join(root, ".agent-bridge"), child = join(folder, "child"), nested = join(child, ".agent-bridge");
+  mkdirSync(nested, { recursive: true });
+  writeFileSync(join(folder, "direct"), "123");
+  writeFileSync(join(child, "payload"), "1234567");
+  const metadata = JSON.stringify([{ name: "job-1" }]); writeFileSync(join(nested, "jobs.json"), metadata);
+  const result = audit(folder, ["--root", child, "--root", nested, "--root", folder, "--max-depth", "1"]);
+  expect(result.code).toBe(1);
+  expect(result.value.directories).toHaveLength(2);
+  expect(result.value.directories.find((d: any) => d.path === folder)).toMatchObject({ bytes: 10 + metadata.length, directBytes: 3, files: 3, complete: false });
+  expect(result.value.directories.find((d: any) => d.path === nested)).toMatchObject({ bytes: metadata.length, directBytes: metadata.length, files: 1, attribution: { records: [{ source: join(nested, "jobs.json"), job: "job-1" }] } });
+  expect(result.value.roots.find((r: any) => r.path === nested)).toMatchObject({ complete: true, problems: [] });
 });
 
 it("marks unreadable storage partial without leaking raw exception messages", () => {

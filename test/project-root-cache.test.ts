@@ -1,4 +1,4 @@
-import { mkdirSync, realpathSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, realpathSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { delimiter, join, relative, resolve } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { canonicalProjectRoot, conversationProject, migrateProjectJobs, projectKey } from "../src/core/project-identity.js";
@@ -102,6 +102,23 @@ it("bounds malformed pointer reads and preserves unusual-layout fallback", () =>
   const unusual = join(env.home, "unusual"); repository(unusual); writeFileSync(join(unusual, ".git", "config"), "[core]\n bare = false\n worktree = ../elsewhere\n");
   git.mockImplementation((_file: string, args: string[]) => args.at(-1) === "--git-common-dir" ? join(unusual, ".git") : unusual);
   expect(canonicalProjectRoot(unusual)).toBe(realpathSync.native(unusual)); expect(git).toHaveBeenCalledTimes(2);
+});
+
+it.each([true, false])("isolates discovery-only identity caches from the safe Git fallback (discovery first: %s)", discoveryFirst => {
+  const root = join(env.home, "included"), home = join(env.home, "missing-bridge-home"); repository(root);
+  writeFileSync(join(root, ".git", "config"), "[core]\n bare = false\n[include]\n path = extra-config\n");
+  vi.stubEnv("AGENT_BRIDGE_HOME", home);
+  git.mockImplementation((_file: string, args: string[]) => args.at(-1) === "--git-common-dir" ? join(root, ".git") : root);
+  if (discoveryFirst) {
+    expect(canonicalProjectRoot(root, { discoveryOnly: true })).toBeNull();
+    expect(git).not.toHaveBeenCalled(); expect(existsSync(home)).toBe(false);
+  }
+  expect(canonicalProjectRoot(root)).toBe(realpathSync.native(root));
+  expect(git).toHaveBeenCalledTimes(2);
+  expect(existsSync(join(home, "git-hooks-empty"))).toBe(true);
+  for (const call of git.mock.calls) expect(call[1]).toContain(`core.hooksPath=${join(home, "git-hooks-empty").replace(/\\/g, "/")}`);
+  expect(canonicalProjectRoot(root, { discoveryOnly: true })).toBeNull();
+  expect(git).toHaveBeenCalledTimes(2);
 });
 
 it('matches Git ceilings for nested repositories, plain children and cwd at the ceiling', () => {

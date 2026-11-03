@@ -25,7 +25,9 @@ agent-bridge storage audit --help
 There is no implicit current-directory, home-directory or whole-drive scan.
 Supply 1–32 roots; relative roots resolve against the current working directory.
 An explicit `.agent-bridge` root is included. `.git` entries are excluded during
-descent. Overlapping roots/drive aliases are deduplicated. Directory enumeration
+descent. Every explicit root is validated and starts its own depth budget, even
+under another root. Fully covered subtrees and file accounting are deduplicated;
+an earlier partial scan remains reported as partial. Directory enumeration
 is incremental, and discovery and size collection share these bounds:
 
 | Option | Default | Allowed range |
@@ -47,6 +49,9 @@ not proof of the original creation time after a copy or restore.
 `project.canonicalRoot` uses the existing current project resolver: ordinary Git
 subdirectories share their repository root, and linked worktrees normally share
 the main checkout's identity. The resolver honors `GIT_CEILING_DIRECTORIES`.
+The audit uses filesystem discovery only: included Git configuration, separate
+Git directories and other layouts needing a Git subprocess have unknown identity.
+It never invokes the fallback that provisions a hooks directory for writable callers.
 `nestedUnderSameGitRoot` distinguishes a directory below that root from a separate
 repository that happens to live inside another folder. It is `null` when no Git
 root is established. A no-Git directory uses the current directory fallback;
@@ -74,8 +79,8 @@ Links/junctions (including linked roots or ancestors) are refused rather than
 followed; special files, permission failures, disappearing entries and limit hits
 are reported with paths and codes. There is no atomic filesystem snapshot or
 protection against a hostile process swapping paths between checks. The time
-budget is checked between operations: an individual filesystem call, existing
-project-resolution fallback or SQLite query may exceed it on a stalled device.
+budget is checked between operations: an individual filesystem call or SQLite
+query may exceed it on a stalled device.
 The scan does not take a storage lease or block running writers.
 
 Text and `--json` describe the same observations. JSON has `schemaVersion: 1`,

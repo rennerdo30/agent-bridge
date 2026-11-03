@@ -17,7 +17,11 @@ interface AuditDirectory {
   attribution: { status: "unknown" | "observed" | "partial"; records: AttributionRecord[]; complete: boolean; problems: Problem[]; meaning: string };
 }
 const display = (path: string) => path.replace(/^\\\\\?\\/, "").replace(/^D:([\\/])/i, "E:$1");
-const same = (a: string, b: string) => projectKey(a) === projectKey(b);
+const same = (a: string, b: string) => projectKey(display(a)) === projectKey(display(b));
+const contains = (parent: string, child: string) => {
+  const rel = relative(display(parent), display(child));
+  return !isAbsolute(rel) && rel !== ".." && !rel.startsWith("../") && !rel.startsWith("..\\");
+};
 const problemCode = (error: unknown) => {
   const code = (error as NodeJS.ErrnoException)?.code;
   return typeof code === "string" && /^[A-Z0-9_]+$/.test(code) ? code : "UNAVAILABLE";
@@ -59,7 +63,8 @@ export function auditStorage(roots: string[], options: Partial<Limits> = {}) {
     if (!Number.isSafeInteger(limits[key]) || limits[key] < (key === "maxDepth" ? 0 : 1) || limits[key] > AUDIT_MAXIMUMS[key]) throw new Error(`Invalid ${key}.`);
   }
   const started = performance.now(), directories: AuditDirectory[] = [], problems: Problem[] = [];
-  const seen = new Set<string>(), rootResults: { path: string; complete: boolean; problems: Problem[] }[] = [];
+  const covered = new Set<string>(), counted = new Set<string>(), found = new Map<string, AuditDirectory>();
+  const rootResults: { path: string; complete: boolean; problems: Problem[] }[] = [];
   let entries = 0, records = 0, metadataFiles = 0;
   const timedOut = () => performance.now() - started >= limits.maxMs;
   const exhausted = () => entries >= limits.maxEntries || timedOut();
@@ -105,7 +110,7 @@ export function auditStorage(roots: string[], options: Partial<Limits> = {}) {
     } catch { report("METADATA_UNAVAILABLE_OR_UNSAFE"); }
   }
   function project(parent: string): AuditDirectory["project"] {
-    const root = canonicalProjectRoot(parent);
+    const root = canonicalProjectRoot(parent, { discoveryOnly: true });
     if (!root) return { canonicalRoot: null, reason: "Current resolver unavailable or excluded; historical cause unknown.", nestedUnderSameGitRoot: null };
     const gitRoot = (() => { try { const st = lstatSync(join(root, ".git")); return st.isDirectory() || st.isFile(); } catch { return false; } })();
     const rel = relative(root, realpathSync.native(parent));
@@ -120,26 +125,31 @@ export function auditStorage(roots: string[], options: Partial<Limits> = {}) {
     try { unlinked(path); return { input, physical: realpathSync.native(path) }; }
     catch { return { input, physical: path }; }
   }).sort((a, b) => a.physical.split(/[\\/]/).length - b.physical.split(/[\\/]/).length);
-  const coveredRoots: { physical: string; result: typeof rootResults[number] }[] = [];
   for (const { input, physical } of orderedRoots) {
     const root = resolve(input), result = { path: display(root), complete: true, problems: [] as Problem[] }; rootResults.push(result);
-    const covered = coveredRoots.find(prior => {
-      const rel = relative(prior.physical, physical);
-      return !isAbsolute(rel) && rel !== ".." && !rel.startsWith("../") && !rel.startsWith("..\\");
-    });
-    if (covered) { result.complete = covered.result.complete; result.problems.push(...covered.result.problems); continue; }
     const fail = (path: string, code: string, active: AuditDirectory[]) => {
       const p = { path: display(path), code }; result.complete = false; result.problems.push(p); problems.push(p);
       for (const item of active) { item.complete = false; item.problems.push(p); }
     };
+    // Every explicit root is validated, even if an ancestor covered its contents or exhausted a budget.
+    try {
+      unlinked(root);
+      if (!lstatSync(root).isDirectory()) { fail(root, "ROOT_NOT_DIRECTORY", []); continue; }
+    } catch (error) { fail(root, problemCode(error), []); continue; }
     function visit(path: string, depth: number, active: AuditDirectory[]): void {
-      if (exhausted()) { fail(path, timedOut() ? "TIME_LIMIT" : "ENTRY_LIMIT", active); return; }
-      entries++;
+      if (timedOut()) { fail(path, "TIME_LIMIT", active); return; }
       try {
         unlinked(path);
         const st = lstatSync(path, { bigint: true });
+        const key = projectKey(realpathSync.native(path));
+        // Validate the physical entry before reuse, but do not charge proven coverage twice.
+        if (st.isDirectory() && covered.has(key)) return;
+        if (st.isFile() && depth !== 0 && counted.has(key)) return;
+        if (exhausted()) { fail(path, timedOut() ? "TIME_LIMIT" : "ENTRY_LIMIT", active); return; }
+        entries++;
         if (st.isFile()) {
           if (depth === 0) { fail(path, "ROOT_NOT_DIRECTORY", active); return; }
+          counted.add(key);
           for (const item of active) {
             if (st.size > BigInt(Number.MAX_SAFE_INTEGER - item.bytes)) { fail(path, "SIZE_LIMIT", [item]); continue; }
             item.bytes += Number(st.size); item.files++;
@@ -149,15 +159,18 @@ export function auditStorage(roots: string[], options: Partial<Limits> = {}) {
           return;
         }
         if (!st.isDirectory()) { fail(path, "SPECIAL_FILE_SKIPPED", active); return; }
-        const physical = realpathSync.native(path), key = projectKey(physical);
-        if (seen.has(key)) return;
-        seen.add(key);
+        // Success proves every descendant was visited, without a depth/budget/error stop.
+        const before = result.problems.length;
         if (basename(path) === ".agent-bridge") {
-          if (directories.length >= 128) { fail(path, "DIRECTORY_LIMIT", active); return; }
-          const item: AuditDirectory = { path: display(path), createdAt: st.birthtimeMs > 0n ? new Date(Number(st.birthtimeMs)).toISOString() : null,
-            modifiedAt: new Date(Number(st.mtimeMs)).toISOString(), bytes: 0, directBytes: 0, files: 0, complete: true, problems: [], historicalCause: "unknown",
-            project: project(dirname(path)), attribution: { status: "unknown", records: [], complete: true, problems: [], meaning: "Observed metadata associations, not directory creators; absent or incomplete evidence is unknown." } };
-          directories.push(item); active = [...active, item];
+          let item = found.get(key);
+          if (!item) {
+            if (directories.length >= 128) { fail(path, "DIRECTORY_LIMIT", active); return; }
+            item = { path: display(path), createdAt: st.birthtimeMs > 0n ? new Date(Number(st.birthtimeMs)).toISOString() : null,
+              modifiedAt: new Date(Number(st.mtimeMs)).toISOString(), bytes: 0, directBytes: 0, files: 0, complete: true, problems: [], historicalCause: "unknown",
+              project: project(dirname(path)), attribution: { status: "unknown", records: [], complete: true, problems: [], meaning: "Observed metadata associations, not directory creators; absent or incomplete evidence is unknown." } };
+            directories.push(item); found.set(key, item);
+          }
+          active = [...active, item];
         }
         // Incremental enumeration avoids allocating an unbounded directory listing.
         unlinked(path);
@@ -172,10 +185,12 @@ export function auditStorage(roots: string[], options: Partial<Limits> = {}) {
             visit(child, depth + 1, active);
           }
         } finally { dir.closeSync(); }
+        if (result.problems.length === before) covered.add(key);
       } catch (error) { fail(path, problemCode(error), active); }
     }
-    visit(root, 0, []);
-    coveredRoots.push({ physical, result });
+    // A deeper explicit root can extend an already discovered storage directory's recursive total.
+    const ancestors = directories.filter(item => !same(item.path, physical) && contains(item.path, physical));
+    visit(root, 0, ancestors);
   }
   directories.sort((a, b) => a.path.localeCompare(b.path));
   for (const item of directories) item.attribution.status = !item.attribution.complete || !item.complete ? "partial" : item.attribution.records.length ? "observed" : "unknown";

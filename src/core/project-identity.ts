@@ -44,7 +44,10 @@ export function physicalPath(path: string, real: (path: string) => string = real
 }
 
 /** The common Git directory identifies linked worktrees; physical paths unify subst aliases. */
-export function canonicalProjectRoot(cwd: string): string | null {
+export function canonicalProjectRoot(cwd: string): string | null;
+/** Filesystem discovery only: unknown layouts stay unresolved without provisioning Git safety directories. */
+export function canonicalProjectRoot(cwd: string, options: { discoveryOnly: boolean }): string | null;
+export function canonicalProjectRoot(cwd: string, options: { discoveryOnly?: boolean } = {}): string | null {
   if (isPluginCacheCwd(cwd)) return null;
   const visibleRoot = (root: string): string | null => isPluginCacheCwd(root) ? null : root;
   try {
@@ -52,13 +55,15 @@ export function canonicalProjectRoot(cwd: string): string | null {
     if (isPluginCacheCwd(physical)) return null;
     const stat = statSync(physical);
     if (!stat.isDirectory()) return null;
-    const key = JSON.stringify([physical, process.env.GIT_CEILING_DIRECTORIES ?? null]), dir = `${stat.dev}:${stat.ino}`;
+    // Discovery-only callers must neither invoke the provisioning Git fallback nor reuse its cached identity.
+    const key = JSON.stringify([physical, process.env.GIT_CEILING_DIRECTORIES ?? null, options.discoveryOnly === true]), dir = `${stat.dev}:${stat.ino}`;
     const cached = projectRoots.get(key), now = Date.now();
     if (cached && cached.expiresAt > now && cached.dir === dir && cached.probes.every(([path, identity]) => probe(path) === identity)) {
       projectRoots.delete(key); projectRoots.set(key, cached); return cached.root;
     }
     const discovery = discoverProjectRoot(physical);
-    const root = discovery.fallback ? resolveProjectRoot(physical, visibleRoot) : discovery.root === null ? null : visibleRoot(discovery.root);
+    const root = discovery.fallback ? options.discoveryOnly ? null : resolveProjectRoot(physical, visibleRoot)
+      : discovery.root === null ? null : visibleRoot(discovery.root);
     projectRoots.delete(key);
     if (projectRoots.size >= PROJECT_ROOT_MEMO_MAX) projectRoots.delete(projectRoots.keys().next().value!);
     projectRoots.set(key, { dir, root, probes: discovery.probes, expiresAt: now + (discovery.fallback ? PROJECT_ROOT_CACHE_MS : PROJECT_ROOT_MEMO_MS) });
