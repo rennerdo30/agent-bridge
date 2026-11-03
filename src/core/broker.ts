@@ -1508,11 +1508,13 @@ export class Broker {
     // A pending session may act as main while it is alone, but the role is recorded only once its T3 place is
     // known: otherwise a T3 child that connected first would keep it after T3 recorded it (AB-460).
     if (!main) { main = members[0]; if (main && this.t3Lineages.role(main) !== "pending") this.recordProjectMain(key, `project:${basename(decorated.projectRoot!)}`, main); }
-    return { ...decorated, projectMain: main?.id === peer.id, projectAddress: `project:${basename(decorated.projectRoot!)}`, projectRoute: this.projectRoutes.get(key) };
+    return { ...decorated, projectMain: main?.id === peer.id, projectAddress: `project:${basename(decorated.projectRoot!)}`, projectRoute: this.projectRoutes.get(key),
+      ...(this.t3Pending(peer) ? { t3Pending: true } : {}) };
   }
 
   private switchProjectMain(source: PeerInfo | null | undefined, target: PeerInfo | undefined): PeerInfo {
     if (!target || target.host || !this.projectMember(target)) throw new BridgeError("bad_request", "Choose a live local project master.");
+    if (this.t3Pending(target)) throw new BridgeError("bad_request", "This session's T3 chat is not known yet; retry in a moment.");
     const peer = this.projectPeer(target);
     if (!peer.projectGroup || source && (source.jobAgent || this.projectPeer(source).projectGroup !== peer.projectGroup)) throw new BridgeError("unauthorized", "Only a master of this project may switch its main session.");
     this.retiredProjectMains.delete(peer.projectGroup);

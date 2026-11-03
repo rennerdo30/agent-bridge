@@ -104,5 +104,8 @@ describe("AB-460 T3 delegated children", () => {
     const sent = await sender.request("send", { to: address, body: "for the team", conversationId: "ab460" });
     expect(sent.deliveredTo).toContain("claude-lead");
     expect(sent.deliveredTo).not.toContain("codex-t3-child");
+    // Nor can it take the role explicitly before T3 has recorded it.
+    const child = clients[0]!;
+    await expect(child.request("projectMain", { to: "codex-t3-child" })).rejects.toThrow(/not known yet/);
   });
 });
