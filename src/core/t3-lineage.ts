@@ -91,6 +91,8 @@ export class T3Lineages {
     }
     if (hit.answer === "child") return "child";
     if (hit.answer === "top" || hit.answer === "absent") return "member";
+    // Past the window an unmatched or unreadable session counts as ordinary, deliberately: a store T3 changed so
+    // Bridge cannot read it must not hold every session pending, which would stop recording project mains.
     return at - hit.firstAt < T3_LINEAGE_PENDING_MS ? "pending" : "member";
   }
 

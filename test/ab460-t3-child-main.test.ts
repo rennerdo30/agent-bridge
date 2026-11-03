@@ -96,8 +96,13 @@ describe("AB-460 T3 delegated children", () => {
     const now = Date.now();
     await session({ id: "child", name: "codex-t3-child", agent: "codex", startedAt: now - 60_000 });
     const lead = await session({ id: "lead", name: "claude-lead", agent: "claude", startedAt: now });
+    const sender = await session({ id: "other", name: "claude-other", agent: "claude", startedAt: now + 1 });
     const peers = await lead.request("peers", {});
     expect(peers.find((p) => p.name === "claude-lead")?.projectMain).toBe(true);
     expect(peers.find((p) => p.name === "codex-t3-child")?.projectMain).toBe(false);
+    const address = peers.find((p) => p.name === "claude-lead")!.projectAddress!;
+    const sent = await sender.request("send", { to: address, body: "for the team", conversationId: "ab460" });
+    expect(sent.deliveredTo).toContain("claude-lead");
+    expect(sent.deliveredTo).not.toContain("codex-t3-child");
   });
 });

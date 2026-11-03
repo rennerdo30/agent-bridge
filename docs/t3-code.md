@@ -197,8 +197,10 @@ project-wide job control, is not an owner-answer fallback and does not change th
 lists and the dashboard mark it `t3Child` ("T3 subagent"). A `fork` the user made stays an ordinary member.
 
 A session whose place T3 has not recorded yet (no session id, or no matching chat within two minutes) is
-pending: it is elected main only while no resolved member is available, and that role is not recorded until
-its place is known. Answers are cached; unknown sessions are looked up every 5 seconds while pending, then
+pending: it is elected main and gets `project:` mail only while no resolved member is available, holds no
+project-wide job control, and a main role it holds is not recorded until its place is known. Past the window an
+unmatched or unreadable session counts as ordinary on purpose, so a T3 store Bridge cannot read never stops
+project mains from being recorded. Answers are cached; unknown sessions are looked up every 5 seconds while pending, then
 with backoff to 10 minutes. On a PC without a T3 store nothing is pending.
 
 ### Bridge messages visible in T3 chats (AB-481)

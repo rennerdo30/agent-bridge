@@ -12,7 +12,9 @@ export class ProjectGroups {
   private readonly dispatchRoots = new Map<Record<string, unknown>, string | null>();
   constructor(private readonly home?: string,
     /** AB-460: sessions that are no project members although they look like sessions (T3 delegated tasks). */
-    private readonly excluded: (peer: PeerInfo) => boolean = () => false) {}
+    private readonly excluded: (peer: PeerInfo) => boolean = () => false,
+    /** Sessions that stay members but hold no project-wide job control yet (T3 place still pending). */
+    private readonly unproven: (peer: PeerInfo) => boolean = () => false) {}
 
   private enabled(root: string, agent?: string): boolean {
     const key = JSON.stringify([root, agent]);
@@ -79,7 +81,7 @@ export class ProjectGroups {
     if (peer.jobAgent && peer.name === job.parentJob) return true;
     if (peer.jobAgent || peer.subagent) return false;
     if (canControlJob(job, peer.name)) return true;
-    if (!this.shareable(job) || this.excluded(peer)) return false;
+    if (!this.shareable(job) || this.excluded(peer) || this.unproven(peer)) return false;
     return this.members(job, local).some((p) => p.name === peer.name);
   }
 

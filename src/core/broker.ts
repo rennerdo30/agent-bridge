@@ -477,7 +477,7 @@ export class Broker {
     private readonly networking?: { home: string; config: NetworkConfig },
     private readonly dashboardHost?: { ensure(force: boolean, port?: number): Promise<import("../cli/dashboard.js").DashboardInfo | null> },
   ) {
-    this.groups = new ProjectGroups(jobsPath ? dirname(jobsPath) : undefined, (p) => this.t3Lineages.isChild(p));
+    this.groups = new ProjectGroups(jobsPath ? dirname(jobsPath) : undefined, (p) => this.t3Lineages.isChild(p), (p) => this.t3Pending(p));
     this.nativeChildren = new NativeChildren(this.store);
     this.handlers = {
       coreStatus: () => ({ version: APP_VERSION, pid: process.pid, uptimeSeconds: Math.floor(process.uptime()), ...this.hosting,
@@ -616,7 +616,7 @@ export class Broker {
           const peer = caller();
           current = this.currentChecklistAuthority(recovered);
           if (!current || current.name !== name || current.remote || !this.jobsPath ||
-              !new ChecklistProjectGroups(dirname(this.jobsPath), (p) => this.t3Lineages.isChild(p)).canControl(peer, current, this.localPeers()))
+              !new ChecklistProjectGroups(dirname(this.jobsPath), (p) => this.t3Lineages.isChild(p), (p) => this.t3Pending(p)).canControl(peer, current, this.localPeers()))
             throw new BridgeError("unauthorized", "Current authority does not allow this checklist operation.");
         };
         authorize();
@@ -1335,6 +1335,8 @@ export class Broker {
   private projectMember(p: PeerInfo): boolean {
     return !p.jobAgent && !p.subagent && !this.t3Lineages.isChild(p);
   }
+  /** A member whose T3 place is not known yet: it may be a delegated task T3 has not recorded (AB-460). */
+  private t3Pending(p: PeerInfo): boolean { return this.t3Lineages.role(p) === "pending"; }
 
   private freezeAgentHost(peer: PeerInfo): void {
     // Only retirable sessions need a frozen host; others would only cycle the bounded map.
@@ -2415,7 +2417,10 @@ export class Broker {
       if (!target) throw new BridgeError("unknown_target", "No project master is available; use an exact session name to queue mail.");
       // Project conversations belong to the whole live team. A secondary coordinating a topic
       // must see incoming proposals without spending a supervisor turn on a manual relay.
-      const recipients = members.filter((p) => !p.unavailable && p.id !== sender.id);
+      // AB-460: a pending session (possibly a T3 delegated task not recorded yet) gets project mail only while
+      // no resolved member is available, so project mail never stops working on a fresh start.
+      const available = members.filter((p) => !p.unavailable && p.id !== sender.id), resolved = available.filter((p) => !this.t3Pending(p));
+      const recipients = resolved.length ? resolved : available;
       if (!recipients.length) throw new BridgeError("unknown_target", "No other available project session; use an exact name to queue mail.");
       return { live: recipients
         .sort((a, b) => Number(Boolean(b.projectMain)) - Number(Boolean(a.projectMain)))
