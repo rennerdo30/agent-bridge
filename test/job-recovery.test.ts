@@ -42,7 +42,7 @@ it.each(CODING_AGENTS)("continues an interrupted %s run with its retained native
 
 it("recovers a 0.29.10 backup with current handoff authority and preserves unknown data", async () => {
   const old = env.node("claude-old"), next = env.node("codex-next", "codex"), outsider = env.node("other", "other");
-  await old.start(); await next.start(); await outsider.start();
+  // Import legacy fixtures before starting archive migration workers (AB-420).
   const name = "codex-job-11223344", snapshot = JSON.stringify({ version: 2, custom: "keep", jobs: [{ id: "11223344", name, agent: "codex", owner: old.name, status: "running", sessionId: "native-29-10", startedAt: 1, workdir: env.home, prompt: "original", args: { access: "ask" }, custom: { future: "keep" } }] });
   writeFileSync(join(env.home, "jobs.json.backup-v2-1"), snapshot);
   // A later handoff snapshot must win over original launch/run ownership.
@@ -50,10 +50,11 @@ it("recovers a 0.29.10 backup with current handoff authority and preserves unkno
   writeFileSync(join(env.home, "archive", "jobs-2-new.json"), JSON.stringify({ version: 3, jobs: [{ id: "11223344", name, agent: "codex", owner: next.name, rootName: next.name, status: "interrupted", sessionId: "native-29-10", startedAt: 1, prompt: "original", custom: { future: "keep" } }] }));
   // readHistoryJobs orders by timestamp, so use a genuinely newer backup for the handoff.
   writeFileSync(join(env.home, "jobs.json.backup-v3-3"), JSON.stringify({ jobs: [{ id: "11223344", name, owner: next.name, rootName: next.name, masters: [next.name], ownershipHistory: [{ from: old.name, to: next.name }], agent: "codex", sessionId: "native-29-10", startedAt: 1, status: "interrupted", prompt: "original", custom: { future: "keep" } }] }));
-  expect(await outsider.jobAuthority(name)).toBeNull();
   indexFixtureFile(join(env.home, "jobs.json.backup-v2-1"));
   indexFixtureFile(join(env.home, "archive", "jobs-2-new.json"));
   indexFixtureFile(join(env.home, "jobs.json.backup-v3-3"));
+  await old.start(); await next.start(); await outsider.start();
+  expect(await outsider.jobAuthority(name)).toBeNull();
   const jobs = manager(next); jobs.restore(() => (_body, session) => async () => ({ sessionId: session, text: "done", isError: false, details: {} }));
   expect((await jobs.share(name))?.owner).toBe(next.name);
   expect(jobs.followUp(name, "recover").outcome).toBe("started");
