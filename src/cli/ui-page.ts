@@ -1957,6 +1957,8 @@ function renderOverview() {
     ? live.length + " session" + (live.length === 1 ? "" : "s") + (pcCount > 1 ? " on " + pcCount + " PCs" : "") + (working ? " · " + working + " subagent" + (working === 1 ? "" : "s") + " working" : " · nothing working right now")
     : "No sessions connected. Start Claude Code, Codex, opencode or Antigravity with agent-bridge installed.";
   const c = countGroups(model.sorted);
+  // T3 delegated chats under a session are working subagents too (they are no Bridge runs).
+  c.working += live.reduce((n, x) => n + (x.t3Kids || []).filter((k) => k.peer.activity === "busy").length, 0);
   const stat = (n, label, cls) => '<div class="stat ' + (cls || "") + '"><b>' + n + "</b><span>" + label + "</span></div>";
   $("ovStats").innerHTML =
     stat(live.length, "sessions connected") +
@@ -1971,7 +1973,7 @@ function renderOverview() {
     const head = p
       ? '<div class="head">' + av(p.agent) + '<div style="min-width:0;flex:1"><div class="title ell">' + titled(peerTitle(p), p) + '</div><div class="small muted ell">' + esc(chatLine(p) || x.name) + t3Asks(p) + "</div></div>" + dot(p.activity) + "</div>"
       : '<div class="head">' + av("other") + '<div style="min-width:0;flex:1"><div class="title ell">' + esc(x.name) + '</div><div class="small muted">not connected</div></div></div>';
-    const stats = '<div class="stats"><span><b>' + x.groups.length + "</b>subagents</span>" + (x.running ? '<span style="color:var(--busy)"><b style="color:inherit">' + x.running + "</b>working</span>" : "") +
+    const stats = '<div class="stats"><span><b>' + (x.groups.length + (x.t3Kids || []).length) + "</b>subagents</span>" + (x.running ? '<span style="color:var(--busy)"><b style="color:inherit">' + x.running + "</b>working</span>" : "") +
       (p ? "<span><b>" + up(p.startedAt) + "</b>connected</span>" : x.groups[0] ? "<span>last " + ago(x.groups[0].updatedAt) + "</span>" : "") + "</div>";
     const kids = kidsBlock(x, false);
     return '<a class="card' + (x.live ? "" : " ended") + '" href="' + href(x.name) + '">' + head + (p ? versionChip(p) : "") + kids + stats + "</a>";
@@ -2004,7 +2006,8 @@ function renderSession() {
       "<span>folder</span><span>" + esc(p.cwd) + "</span><span>connected</span><span>" + up(p.startedAt) + " ago</span>" +
       (p.sessionId ? "<span>session</span><span>" + esc(p.sessionId) + "</span>" : "") + "<span>version</span><span>" + esc(p.version || "?") + " " + versionChip(p) + "</span></div>" +
       // Quiet secondary actions; being the project main is a state (a chip), not a disabled button.
-      kidsBlock(x, true) + (!pcOf(x.name) ? '<div class="sess-actions">' +
+      // T3 delegated chats have their own rows in the column below; the header lists the other subagent sessions.
+      kidsBlock({ ...x, children: x.children.filter((c) => !(x.t3Kids || []).some((k) => k.peer === c)) }, true) + (!pcOf(x.name) ? '<div class="sess-actions">' +
         (p.projectGroup && p.projectMain ? '<span class="chip main-chip" title="Messages to the project reach this session first">Project main</span>' : "") +
         '<button type="button" class="ghost sm" data-coordinator="' + esc(x.name) + '" data-unavailable="' + (p.unavailable ? "false" : "true") + '">' + (p.unavailable ? "Make available" : "Hand jobs to project") + "</button>" +
         (p.projectGroup && !p.projectMain ? '<button type="button" class="ghost sm" data-project-main="' + esc(x.name) + '">Make project main</button>' : "") + "</div>" : "")
@@ -2082,7 +2085,7 @@ function renderSessionList(x, selKey) {
   const t3Row = (k) => { const c = k.peer;
     return '<a href="' + href(k.name) + '">' + av(c.agent || "other") +
       '<div style="min-width:0"><div class="line1"><b class="ell">' + esc(chatLine(c) || k.name) + '</b><span class="chip t3">T3</span></div><div class="task">' +
-      esc((c.agent || "") + (c.t3.model ? " · " + c.t3.model : "") + " · " + t3Status(c)) + "</div></div>" +
+      esc((c.agent || "") + (c.t3.model ? " · " + c.t3.model : "") + " · " + (c.unavailable ? "unavailable" : c.activity || "connected")) + t3Asks(c) + "</div></div>" +
       '<div class="side">' + dot(c.activity) + "</div></a>"; };
   const t3Rows = t3Kids.length ? '<div class="rows-head">T3 subagents <span class="faint">' + t3Kids.length + "</span></div>" + t3Kids.map(t3Row).join("") : "";
   const html = chatRow + t3Rows + bridgeRows + nativeRows + loadOlderButton();
