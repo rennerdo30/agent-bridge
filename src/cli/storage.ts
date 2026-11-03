@@ -1,14 +1,17 @@
 import { planFinalize, rollbackHistoryStore, runFinalize } from "../core/storage-finalize.js";
 import { runAbsorb } from "../core/storage-absorb.js";
+import { AUDIT_USAGE, runStorageAudit } from "./storage-audit.js";
 
 const USAGE = "Usage: agent-bridge storage finalize [--check | --yes] [--json] | storage absorb [--yes] [--json] | storage rollback-history\n" +
   "finalize lists the old-format data that the verified new storage replaces (quick: nothing is read row by row); --check proves every item\n" +
   "and retains everything; --yes runs the same checks under maintenance admission and retains all originals without compaction.\n" +
-  "absorb copies into archive.db with --yes, retaining all originals; an existing archive requiring migration is refused.";
+  "absorb copies into archive.db with --yes, retaining all originals; an existing archive requiring migration is refused.\n" + AUDIT_USAGE;
 
 const gib = (bytes: number) => `${(bytes / 1024 ** 3).toFixed(2)} GiB`;
 
 export function runStorage(rest: string[], home: string, out: (text: string) => void): number {
+  if (rest[0] === "audit") return runStorageAudit(rest.slice(1), out);
+  if (rest.length === 1 && ["--help", "-h"].includes(rest[0]!)) { out(USAGE); return 0; }
   if (rest[0] === "rollback-history" && rest.length === 1) {
     try { out(rollbackHistoryStore(home)); return 0; } catch (err) { out(String((err as Error).message)); return 1; }
   }

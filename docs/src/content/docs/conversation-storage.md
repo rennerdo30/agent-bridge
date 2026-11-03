@@ -9,6 +9,90 @@ live in **`~/.agent-bridge/history.db`**, with independent schema version **1**.
 Ingestion opens the broker database read-only with `query_only=ON`; it cannot
 take the broker database's write lock. Both databases set a busy timeout.
 
+## Read-only storage audit
+
+Use `agent-bridge storage audit` to find `.agent-bridge` directories under roots
+you explicitly choose. It does not start or contact the broker, create a home or
+log, load credentials, migrate databases, clean up files, or change mirror placement.
+
+```powershell
+agent-bridge storage audit --root E:/AI --root E:/Development
+agent-bridge storage audit --root E:/AI --json --max-depth 12 --max-entries 20000
+agent-bridge storage audit --root C:/Users/me/.agent-bridge --max-records 50
+agent-bridge storage audit --help
+```
+
+There is no implicit current-directory, home-directory or whole-drive scan.
+Supply 1–32 roots; relative roots resolve against the current working directory.
+An explicit `.agent-bridge` root is included. `.git` entries are excluded during
+descent. Overlapping roots/drive aliases are deduplicated. Directory enumeration
+is incremental, and discovery and size collection share these bounds:
+
+| Option | Default | Allowed range |
+| --- | --- | --- |
+| `--max-depth` | 8 | 0–64 (root is depth 0) |
+| `--max-entries` | 10000 | 1–100000, across all roots |
+| `--max-ms` | 5000 | 1–60000, cooperative elapsed-time budget |
+| `--max-records` | 100 | 1–1000 metadata rows, across all directories |
+
+The report includes UTC filesystem creation and modification dates (creation is
+`null` where unavailable), direct file bytes, recursive logical file bytes, file
+counts, current canonical project root and its resolution reason. Bytes are
+**logical lengths, not allocated disk space**; sparse files, compression and
+hard links can differ. Partial totals are lower bounds, never a full disk-usage
+claim. A directory's recursive bytes include nested storage directories too;
+do not sum overlapping directory totals. Timestamps are filesystem observations,
+not proof of the original creation time after a copy or restore.
+
+`project.canonicalRoot` uses the existing current project resolver: ordinary Git
+subdirectories share their repository root, and linked worktrees normally share
+the main checkout's identity. The resolver honors `GIT_CEILING_DIRECTORIES`.
+`nestedUnderSameGitRoot` distinguishes a directory below that root from a separate
+repository that happens to live inside another folder. It is `null` when no Git
+root is established. A no-Git directory uses the current directory fallback;
+unavailable or excluded project identities remain unknown. This describes current
+resolution only. **`historicalCause` is always `unknown`.** Neither a job association,
+a filesystem path nor a creation-time cluster proves who created a directory.
+
+Available attribution comes only from allowlisted metadata: conversation
+`job/session/agent/project` columns in `conversations-<hex>.db`, `history.db` or
+`bridge.db`; selected fields in `job-archive.db`'s `job_records`; bounded
+`jobs.json` records and `runs/*.json` metadata. JSON metadata reads stop at
+256 KiB per file, database attribution stops at 32 MiB per database, and at most
+128 metadata files and 128 storage directories are inspected. Run metadata must
+have the bridge's timestamp-prefixed filename; other JSON files in `runs` are
+size-only observations. The existing preserved read-only SQLite
+mechanism refuses WAL-mode databases, databases with sidecars, unsafe links/hard
+links and unsupported inputs. Such attribution is explicitly partial/unknown;
+inventory sizes remain independently useful. No transcript/log/body columns are
+queried, and prompt/result fields are never included in output. Secret, auth,
+token and configuration files are counted by size only, never opened for content.
+Missing metadata means unknown attribution, not evidence that no jobs existed.
+Metadata associations do not identify directory creators.
+
+Links/junctions (including linked roots or ancestors) are refused rather than
+followed; special files, permission failures, disappearing entries and limit hits
+are reported with paths and codes. There is no atomic filesystem snapshot or
+protection against a hostile process swapping paths between checks. The time
+budget is checked between operations: an individual filesystem call, existing
+project-resolution fallback or SQLite query may exceed it on a stalled device.
+The scan does not take a storage lease or block running writers.
+
+Text and `--json` describe the same observations. JSON has `schemaVersion: 1`,
+`roots`, `directories`, `limits`, `entries`, `problems` and overall `complete`.
+Each directory has its own size `complete` and attribution `status`
+(`observed`, `unknown`, `partial`) with independent problems. Exit **0** means
+the filesystem inventory completed within the declared policy; attribution can
+still be unknown/partial. Exit **1** means a partial/error inventory, including
+link refusal; exit **2** means invalid arguments. Nothing is removed in any case.
+
+Project mirrors were introduced on October 7 in AB-136 (`47ca0713`). AB-160
+(`d4eb3a4e`) subsequently isolated custom/test homes under their own
+`project-mirrors` directory. This history explains the feature and isolation
+policy, not the cause of any particular existing directory. Different subagent
+working directories alone do not explain nested mirrors within an ordinary Git
+repository under today's resolver.
+
 ### Lossless split migration (AB-167)
 
 The elected worker snapshots only the legacy history/conversation tables into
