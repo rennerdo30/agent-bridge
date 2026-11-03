@@ -1,8 +1,14 @@
 {
   "base": "0fed680017e823197b1fb3344598632f5cd219ed",
   "uiSha256": "876fbc073c419e55a05c806b75c4993d254510c444cbd81d70098efbd22fb98c",
-  "pageSha256": "b052e1b7c58699910346a7a400bd9bd51bbac399d9ac9e0f162f7a77ad145192",
+  "pageSha256": "a638ef81fb3b9cf64970643c929789898d2bc55b91b2499ca0605f0111f21b70",
   "updates": {
+    "AB-487-t3-child-nesting": {
+      "base": "42be48ee",
+      "previousPageSha256": "b052e1b7c58699910346a7a400bd9bd51bbac399d9ac9e0f162f7a77ad145192",
+      "reason": "AB-487: buildModel lists a session whose T3 chat has a parentId (new optional peers[].t3.parentId) under the connected session of that parent chat on the same PC: sideGroups and the overview skip it (x.under), the parent gets T3 subagent rows in its session column (escaped chat title, agent, model and activity, linking to the child session page), its overview card and the working counts include it, and the child page links back to its parent. Sessions without a connected parent chat render as before. Owner reviewed screenshots before merge. Page re-pinned. The mobileDashboardPage addition, the optional mobile page and default mobile activation behavior are unchanged.",
+      "commit": "same commit as this pin (first commit after 0260f088)"
+    },
     "AB-460-t3-subagent-label": {
       "base": "37b9ec55",
       "previousPageSha256": "ed81d93641077997d99d2b04a373a7d062c4bed4ead7aace75a68555e8b3e8e3",

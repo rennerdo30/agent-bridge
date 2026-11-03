@@ -70,7 +70,7 @@ describe("T3 chats behind Bridge sessions (AB-468)", () => {
       { key: "codex-t3-aaaa1111", cwd: "E:\\AgentData\\game\\t3-aaaa1111\\", agent: "codex" },
       { key: "claude-asks", cwd: "E:/AgentData/game/t3-bbbb2222", agent: "claude" },
     ], 1_000);
-    expect(info.get("codex-t3-aaaa1111")).toEqual({ id: "chat", title: "Dungeon epic round 2", provider: "codex", model: "gpt-6.1-sol", projectRoot: "E:/Development/game", status: "done", parentTitle: "Game main thread", harness: "current" });
+    expect(info.get("codex-t3-aaaa1111")).toEqual({ id: "chat", title: "Dungeon epic round 2", provider: "codex", model: "gpt-6.1-sol", projectRoot: "E:/Development/game", status: "done", parentTitle: "Game main thread", parentId: "main", harness: "current" });
     expect(info.get("claude-asks")).toMatchObject({ title: "Needs an answer", status: "waiting", parentTitle: null });
     db.close();
   });
@@ -201,6 +201,26 @@ describe("T3 chats behind Bridge sessions (AB-468)", () => {
     const info = t3SessionInfo(root, both, t0 + T3_INDEX_MISS_MS);
     expect(info.get("codex")).toMatchObject({ title: "Switching chat", harness: "current" });
     expect(info.get("claude")).toMatchObject({ harness: "earlier" });
+  });
+
+  it("links a session by the provider session id T3 recorded, also in the shared project root where folders cannot decide", () => {
+    const { root, db } = store();
+    thread(db, "main", { title: "Game main thread", provider: "claudeAgent" });
+    thread(db, "other", { title: "Another root chat", provider: "claudeAgent" });
+    thread(db, "kid", { title: "Muse task", provider: "muse", folder: WT, parent: "main" });
+    origin(db, "kid", "main", "app_owned");
+    const native = (thread: string, provider: string, sid: string) => db.prepare(`INSERT INTO orchestration_v2_projection_provider_threads(provider_thread_id,thread_id,provider,driver,payload_json) VALUES(?,?,?,?,?)`)
+      .run(`${thread}:${provider}`, thread, provider, provider, JSON.stringify({ nativeThreadRef: { driver: provider, nativeId: sid } }));
+    native("main", "claudeAgent", "sid-main"); native("other", "claudeAgent", "sid-other"); native("kid", "muse", "sid-kid");
+    const info = t3SessionInfo(root, [
+      { key: "claude", cwd: "E:/Development/game", agent: "claude", sessionId: "sid-main" },
+      { key: "muse", cwd: WT, agent: "muse", sessionId: "sid-kid" },
+      // The id belongs to a Claude chat: a session of another agent with that id is not it.
+      { key: "codex", cwd: "E:/Development/game", agent: "codex", sessionId: "sid-other" },
+    ], 1_000);
+    expect(info.get("claude")).toMatchObject({ id: "main", parentId: null });
+    expect(info.get("muse")).toMatchObject({ id: "kid", parentId: "main", parentTitle: "Game main thread" });
+    expect(info.has("codex")).toBe(false);
   });
 
   it("links by T3's driver kind: a custom instance name still links, an unknown driver never matches any agent", () => {
@@ -470,6 +490,21 @@ describe("T3 chats on the normal session entries (AB-468)", () => {
     expect(cur.children.map((c: { name: string }) => c.name)).toEqual(["kid"]);
     expect(cur.running).toBe(1);
     expect(m.byName.get("claude-old").foldedInto).toBe("codex-new"); // still reachable by its own page
+  });
+
+  it("lists a T3 delegated chat's session under the session of its parent chat, not beside it", () => {
+    const ui = page();
+    const m = ui.load({ peers: [
+      { name: "claude-main", agent: "claude", cwd: "E:/Development/game", activity: "idle", startedAt: 1, t3: { ...t3, id: "main", harness: "current", parentId: null } },
+      { name: "muse-kid", agent: "muse", cwd: "E:/AgentData/game/t3-b5a0c9a7", activity: "busy", startedAt: 2, t3: { ...t3, id: "kid", harness: "current", parentId: "main", parentTitle: "Main" } },
+      { name: "codex-orphan", agent: "codex", cwd: "E:/AgentData/game/t3-cc", activity: "idle", startedAt: 3, t3: { ...t3, id: "orphan", harness: "current", parentId: "gone" } },
+    ], runs: [], jobs: {}, messages: [] });
+    expect(listed(ui)).toEqual(["claude-main", "codex-orphan"]); // a child without a connected parent stays visible
+    const main = m.byName.get("claude-main");
+    expect(main.t3Kids.map((x: { name: string }) => x.name)).toEqual(["muse-kid"]);
+    expect(main.running).toBe(1);
+    expect(m.byName.get("muse-kid").under).toBe("claude-main"); // still reachable by its own page
+    expect(ui.sideGroups("muse").flatMap((g: { items: { name: string }[] }) => g.items.map((x) => x.name))).toEqual(["claude-main"]);
   });
 
   it("folds sessions of earlier providers into the newest one while the current provider's session is not connected", () => {

@@ -29,6 +29,8 @@ export interface T3SessionInfo {
   projectRoot: string | null;
   status: "running" | "queued" | "waiting" | "done" | "failed" | "interrupted" | "cancelled" | "idle";
   parentTitle: string | null;
+  /** The parent chat's T3 id (a delegated task's or fork's parent), so the dashboard can list it under that chat. */
+  parentId: string | null;
   /** T3 can switch a chat between providers: `current` runs the chat now, `earlier` ran it before the switch. */
   harness: "current" | "earlier";
 }
@@ -106,7 +108,9 @@ function open(root: string): DatabaseSync | undefined {
 interface FolderEntry { owners: FolderChat[]; shared: FolderChat[] }
 /** `folders`: chats with a folder of their own. `roots`: per project root, the chats working there (no folder of
  * their own), except provider-native subagents, which never are a session of their own. */
-interface T3Index { folders: Map<string, FolderEntry>; roots: Map<string, FolderChat[]> }
+interface T3Index { folders: Map<string, FolderEntry>; roots: Map<string, FolderChat[]>;
+  /** `<agent>|<provider session id>` → the one chat T3 recorded it for (null: several chats, never guessed). */
+  natives: Map<string, string | null>; chats: Map<string, FolderChat> }
 function buildIndex(input: DatabaseSync): T3Index {
   const roots = new Map((input.prepare(`SELECT project_id,substr(workspace_root,1,4097) root FROM projection_projects`).all() as { project_id: unknown; root: unknown }[])
     .filter(r => typeof r.root === "string" && r.root.length > 0 && r.root.length <= 4096).map(r => [String(r.project_id), r.root as string]));
@@ -128,14 +132,23 @@ function buildIndex(input: DatabaseSync): T3Index {
       model: typeof row.model === "string" ? row.model.slice(0, 120) : null, parentId: id(row.parent) ? row.parent : null,
       projectRoot: roots.get(String(row.project_id)) ?? null, folder: folderOf.get(row.id) ?? null });
   }
-  // Every provider a chat has run on (one row per provider harness the chat used).
-  for (const r of input.prepare(`SELECT DISTINCT thread_id,coalesce(driver,provider) driver FROM orchestration_v2_projection_provider_threads`).all() as { thread_id: unknown; driver: unknown }[]) {
+  // Every provider a chat has run on (one row per provider harness the chat used), and the provider's own session id
+  // T3 recorded for it: an exact link that needs neither the folder nor the prompts (a main chat in the project root).
+  const natives = new Map<string, string | null>();
+  for (const r of input.prepare(`SELECT DISTINCT thread_id,coalesce(driver,provider) driver,
+      CASE WHEN octet_length(payload_json)<=${MAX_PAYLOAD} AND json_valid(payload_json) THEN json_extract(payload_json,'$.nativeThreadRef.nativeId') END native
+    FROM orchestration_v2_projection_provider_threads`).all() as { thread_id: unknown; driver: unknown; native: unknown }[]) {
     const agent = AGENTS[String(r.driver)];
-    if (typeof r.thread_id === "string" && agent) chats.get(r.thread_id)?.agents.add(agent);
+    if (typeof r.thread_id !== "string" || !agent) continue;
+    const chat = chats.get(r.thread_id);
+    chat?.agents.add(agent);
+    if (!chat || !id(r.native)) continue;
+    const key = `${agent}|${r.native}`;
+    natives.set(key, natives.has(key) && natives.get(key) !== chat.id ? null : chat.id);
   }
   const origin = new Map((input.prepare(`SELECT child_thread_id,origin FROM orchestration_v2_projection_subagents`).all() as { child_thread_id: unknown; origin: unknown }[])
     .map(r => [String(r.child_thread_id), String(r.origin)]));
-  const index: T3Index = { folders: new Map(), roots: new Map() };
+  const index: T3Index = { folders: new Map(), roots: new Map(), natives, chats };
   for (const chat of chats.values()) {
     // A chat without a folder of its own, or whose "worktree" is the project root itself, works in the root.
     if (chat.folder === null || (chat.projectRoot !== null && chat.folder === t3FolderKey(chat.projectRoot))) {
@@ -194,7 +207,7 @@ export function t3SessionInfo(root: string | undefined, sessions: { key: string;
       if (cached?.seen.has(tag(s))) return false;
       const key = t3FolderKey(s.cwd), entry = cached?.index.folders.get(key);
       const chats = [...(entry ? [...entry.owners, ...entry.shared] : []), ...(cached?.index.roots.get(key) ?? [])];
-      return !chats.some(c => c.agents.has(s.agent));
+      return !chats.some(c => c.agents.has(s.agent)) || Boolean(s.sessionId && !cached?.index.natives.has(`${s.agent}|${s.sessionId}`));
     });
     const age = cached ? now - cached.at : Infinity;
     if (!cached || (cached.failed ? age >= T3_INDEX_MISS_MS : age >= T3_INDEX_MS || (fresh && age >= T3_INDEX_MISS_MS))) {
@@ -202,7 +215,7 @@ export function t3SessionInfo(root: string | undefined, sessions: { key: string;
       const seen = new Set(sessions.map(tag));
       // A store that cannot be indexed (busy, unknown schema) is retried after the short window, not every poll.
       try { cached = { at: now, index: buildIndex(input), seen, failed: false }; }
-      catch { cached = { at: now, index: { folders: new Map(), roots: new Map() }, seen, failed: true }; }
+      catch { cached = { at: now, index: { folders: new Map(), roots: new Map(), natives: new Map(), chats: new Map() }, seen, failed: true }; }
       indexes.set(root, cached);
     }
     if (cached.failed) return out;
@@ -257,13 +270,15 @@ export function t3SessionInfo(root: string | undefined, sessions: { key: string;
     const linked = new Map<string, { chat: FolderChat; status: T3SessionInfo["status"] }>();
     for (const s of sessions) {
       const key = t3FolderKey(s.cwd), entry = cached.index.folders.get(key);
-      let chat: FolderChat | undefined;
-      if (entry) {
+      // The provider session id T3 recorded for exactly one chat is that chat, wherever the session runs.
+      const exact = s.sessionId ? cached.index.natives.get(`${s.agent}|${s.sessionId}`) : undefined;
+      let chat: FolderChat | undefined = exact ? cached.index.chats.get(exact) : undefined;
+      if (!chat && entry) {
         const candidates = [...entry.owners.filter(c => fits(c, s.agent)),
           ...entry.shared.filter(c => fits(c, s.agent)).filter(c => ["running", "queued", "waiting"].includes(statusOf(c)))];
         // A prompt match already made for this session wins over "the only candidate left".
         chat = known([...entry.owners, ...entry.shared].filter(c => fits(c, s.agent)), s) ?? (candidates.length === 1 ? candidates[0] : byPrompt(candidates, s));
-      } else {
+      } else if (!chat) {
         // A project root: plenty of sessions there are not T3 chats, so only a prompt match links.
         chat = byPrompt((cached.index.roots.get(key) ?? []).filter(c => fits(c, s.agent)), s);
       }
@@ -279,7 +294,7 @@ export function t3SessionInfo(root: string | undefined, sessions: { key: string;
       const parent = chat.parentId ? title.get(chat.parentId) as { title?: unknown } | undefined : undefined;
       out.set(s.key, { id: chat.id, title: chat.title, provider: chat.provider, model: chat.model, projectRoot: chat.projectRoot,
         status: l.status,
-        parentTitle: typeof parent?.title === "string" ? parent.title : null, harness: chat.agent === s.agent ? "current" : "earlier" });
+        parentTitle: typeof parent?.title === "string" ? parent.title : null, parentId: chat.parentId, harness: chat.agent === s.agent ? "current" : "earlier" });
     }
     return out;
   } catch {
