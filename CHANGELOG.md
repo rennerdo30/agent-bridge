@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.32.3
+
+- **T3 delegated chats sit under their parent session (AB-487).** A chat T3 started with `delegate_task` (for example a Muse task) connects as a Bridge session of its own and used to be listed beside its parent in the dashboard. A session is now linked to its T3 chat by the provider session id T3 records for that chat (`nativeThreadRef.nativeId`), before folder or prompt matching, so a main chat working in the shared project root is linked too; peers' `t3` info gains `parentId`. The dashboard lists such a child under the session of its parent chat: "T3 subagents" rows on the parent's page, its overview card and the working counts. The child leaves the top-level sidebar and overview, and its own page links back to the parent. If the parent chat's session is not connected, the child stays a top-level entry. T3's store is still read read-only.
+
 ## 0.32.2
 
 - **Read-only storage audit (AB-485).** `agent-bridge storage audit --root <path>` finds `.agent-bridge` directories under explicitly selected roots and reports observed logical file sizes, timestamps, canonical Git project identity and bounded attribution from allowlisted job/session metadata. It skips links and `.git` entries, leaves unknown historical causes unknown, and marks incomplete scans and attribution. Totals are not allocated disk space or a consistent snapshot; partial totals are lower bounds. The command performs no cleanup, migration or storage changes and does not open secret, authentication, configuration or log files for attribution.
