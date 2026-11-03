@@ -30,6 +30,7 @@ async function main(argv: string[]): Promise<number> {
   const home = resolveHome();
   // State inspection must not create logs or repair malformed configuration/stores.
   if (command === "job-state") return (await import("./job-close.js")).runJobClose(command, rest, home, DEFAULT_CONFIG, nullLogger, out);
+  if (command === "storage" && rest[0] === "audit") return (await import("./storage-audit.js")).runStorageAudit(rest.slice(1), out);
   const pipe = resolvePipePath(home);
   const log = command === "core" ? nullLogger : createLogger({ home, component: "cli" });
   const brokerDaemon = (): BridgeNodeOptions["daemon"] => loadConfig(home, "other", log).daemon.enabled ? { cli: join(bundleDirectory(import.meta.url), "cli.mjs"), dashboard: () => loadConfig(home, "other", log).dashboard,
@@ -273,6 +274,7 @@ async function main(argv: string[]): Promise<number> {
       out(t("cli.usage"));
       out("Network: connect [--yes] [--non-interactive --create | --address <host:port> --code <code>] | network | pair | link <host:port> <code> | unlink <instance-id>");
       out("Storage: doctor --migration-plan [--json], or doctor [--json] [--backup | --fix | --archive | --restore <backup>] [--yes]");
+      out("Storage audit (read-only): storage audit --root <path> [--root <path> ...] [--json]; storage audit --help for bounds");
       out("Database viewer: db tables | db query \"<sql>\" [--db history] | db export --decompressed <table> <file.sqlite>");
       return 0;
     default:
