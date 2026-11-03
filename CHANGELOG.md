@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.32.1
+
+- **T3 delegated tasks are subagents, not project sessions (AB-460).** A task started with T3's `delegate_task` loads the Bridge plugin and used to connect as an ordinary project member, so the oldest one could become the project main and receive `project:` mail (seen live: `project:strategy-game` routed to a delegated Codex task). The broker now looks each session up in T3's store (read-only: provider session id, then the chat's `lineage.relationshipToParent`). A `subagent` chat has no project group, is never main, gets no project mail or project-wide job control, is not an owner-answer fallback and cannot change the project checklist; peers mark it `t3Child` and the dashboard says "T3 subagent". Forks you make stay ordinary sessions. A session T3 has not recorded yet is pending for up to two minutes: it gets these roles only while no confirmed session is available.
+
 ## 0.32.0
 
 - **Bridge messages show up in T3 Code chats (AB-481).** In a T3 Code chat, an idle Claude session is no longer woken by a turn T3 does not show: Bridge finds the session's T3 chat (`nativeThreadRef` in T3's store, read-only) and sends the wake-up text into it with T3's own CLI (`T3CODE_CLI_PATH thread send`). T3 starts the turn and keeps the message in the chat's history. The messages are read once that turn's prompt shows them; a refused send, or one whose prompt does not show up within 20 seconds of idle time, hands them back to the mod or Stop hooks (as repeats when T3 may have shown them). Busy chats are unchanged; other providers follow.
