@@ -2317,6 +2317,9 @@ ${res.text || t("delegate.empty")}`, res.isError);
       const changing = Boolean(a.set || a.add || a.remove);
       if (changing) {
         if (projectChecklistKey(ctx.cwd()) !== key) throw new BridgeError("bad_request", "This session's working folder and its registered project differ; the project checklist was not changed.");
+        // AB-460: a T3 delegated task is a subagent; it asks its parent chat instead of changing the project list.
+        if (self.t3Child) throw new BridgeError("bad_request", "A T3 delegated task does not change the project checklist. Ask the T3 chat that started it.");
+        if (self.t3Pending) throw new BridgeError("bad_request", "This session's T3 chat is not known yet; the project checklist was not changed. Retry in a moment.");
         // A project group for this key: only its main changes the list. Groups off: the session registered in the folder does.
         const grouped = peers.some((p) => p.projectGroup === key);
         if (grouped && !(self.projectGroup === key && self.projectMain)) throw new BridgeError("bad_request", "Only the project main changes the project checklist (the owner through the main). Ask the project main.");

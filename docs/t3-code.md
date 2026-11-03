@@ -187,6 +187,22 @@ job started from a T3 chat is not taken for one. A plain CLI started from T3's b
 the variable too and counts as a T3 chat. The plugin, skill and relay-agent descriptions carry the same
 "T3's own tools first" note, since they cannot see the environment.
 
+### T3 delegated tasks are subagents (AB-460)
+
+A task started with T3's `delegate_task` runs in its own chat, often in its own worktree, and its provider
+loads the Bridge plugin like any session. The broker looks the session up in T3's store (read-only: the
+provider session id in `nativeThreadRef`, then the chat's `lineage.relationshipToParent`). A `subagent` chat is
+a T3 delegated task: it has no project group, is never its project's main, gets no `project:` mail, holds no
+project-wide job control, is not an owner-answer fallback and does not change the project checklist. Peer
+lists and the dashboard mark it `t3Child` ("T3 subagent"). A `fork` the user made stays an ordinary member.
+
+A session whose place T3 has not recorded yet (no session id, or no matching chat within two minutes) is
+pending: it is elected main and gets `project:` mail only while no resolved member is available, holds no
+project-wide job control, and a main role it holds is not recorded until its place is known. Past the window an
+unmatched or unreadable session counts as ordinary on purpose, so a T3 store Bridge cannot read never stops
+project mains from being recorded. Answers are cached; unknown sessions are looked up every 5 seconds while pending, then
+with backoff to 10 minutes. On a PC without a T3 store nothing is pending.
+
 ### Bridge messages visible in T3 chats (AB-481)
 
 T3 shows a chat's user and assistant messages, reasoning and tool calls. It does not show what a Claude

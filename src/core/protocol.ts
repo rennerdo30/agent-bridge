@@ -105,6 +105,10 @@ export interface PeerInfo {
   rootSession?: string;
   rootName?: string;
   subagent?: boolean;
+  /** AB-460: a session T3 Code started for a delegated task; never a project main or project-mail recipient. */
+  t3Child?: boolean;
+  /** AB-460: a member whose T3 place is not known yet; no explicit main switch, checklist writes or fallback preference. */
+  t3Pending?: boolean;
   title?: string;
   host?: string;
   jobParent?: string;

@@ -75,6 +75,8 @@ import { z } from "zod";
 import { basename, dirname, isAbsolute, join } from "node:path";
 import { platform as hostPlatform } from "node:process";
 import { ProjectGroups } from "./project-groups.js";
+import { T3Lineages } from "./t3-lineage.js";
+import { localT3HistoryRoot } from "./transcripts/common.js";
 import { accessJobChecklist, jobChecklistRequestSchema, readChecklistAuthority } from "./checklists.js";
 import { recoverJobRecordAsync, type RecoveryRefusal } from "./job-recovery.js";
 import { findHistoryJob, selectHistoryJobs } from "./run-history.js";
@@ -428,6 +430,8 @@ export class Broker {
     });
   }
   private readonly groups: ProjectGroups;
+  /** AB-460: sessions T3 Code started for a delegated task are subagents, never project members. */
+  private t3Lineages = new T3Lineages(localT3HistoryRoot());
   /** Live role selection, recomputed after broker restart; no durable ownership is rewritten. */
   private readonly projectMains = new Map<string, ProjectMainIdentity>();
   private readonly projectRoutes = new Map<string, import("./protocol.js").ProjectRoute>();
@@ -473,7 +477,7 @@ export class Broker {
     private readonly networking?: { home: string; config: NetworkConfig },
     private readonly dashboardHost?: { ensure(force: boolean, port?: number): Promise<import("../cli/dashboard.js").DashboardInfo | null> },
   ) {
-    this.groups = new ProjectGroups(jobsPath ? dirname(jobsPath) : undefined);
+    this.groups = new ProjectGroups(jobsPath ? dirname(jobsPath) : undefined, (p) => this.t3Lineages.isChild(p), (p) => this.t3Pending(p));
     this.nativeChildren = new NativeChildren(this.store);
     this.handlers = {
       coreStatus: () => ({ version: APP_VERSION, pid: process.pid, uptimeSeconds: Math.floor(process.uptime()), ...this.hosting,
@@ -612,7 +616,7 @@ export class Broker {
           const peer = caller();
           current = this.currentChecklistAuthority(recovered);
           if (!current || current.name !== name || current.remote || !this.jobsPath ||
-              !new ChecklistProjectGroups(dirname(this.jobsPath)).canControl(peer, current, this.localPeers()))
+              !new ChecklistProjectGroups(dirname(this.jobsPath), (p) => this.t3Lineages.isChild(p), (p) => this.t3Pending(p)).canControl(peer, current, this.localPeers()))
             throw new BridgeError("unauthorized", "Current authority does not allow this checklist operation.");
         };
         authorize();
@@ -1324,6 +1328,15 @@ export class Broker {
 
   /** Test seam: the batch creation-identity reader used by the background liveness sweep. */
   setIdentityReader(reader: (pids: number[]) => Promise<Map<number, string>>): void { this.identityReader = reader; }
+  /** Tests point the T3 lineage lookup at a synthetic T3 home. */
+  setT3Home(t3Home: string | undefined): void { this.t3Lineages = new T3Lineages(t3Home, this.now); }
+
+  /** A local session that may be a project member: no Bridge job, native subagent or T3 delegated child (AB-460). */
+  private projectMember(p: PeerInfo): boolean {
+    return !p.jobAgent && !p.subagent && !this.t3Lineages.isChild(p);
+  }
+  /** A member whose T3 place is not known yet: it may be a delegated task T3 has not recorded (AB-460). */
+  private t3Pending(p: PeerInfo): boolean { return this.t3Lineages.role(p) === "pending"; }
 
   private freezeAgentHost(peer: PeerInfo): void {
     // Only retirable sessions need a frozen host; others would only cycle the bounded map.
@@ -1477,9 +1490,15 @@ export class Broker {
 
   private projectPeer(peer: PeerInfo): PeerInfo {
     const decorated = this.groups.decorate(peer), key = decorated.projectGroup;
-    if (!key || peer.jobAgent || peer.subagent) return decorated;
-    const members = this.localPeers().filter((p) => !p.jobAgent && !p.subagent && this.groups.decorate(p).projectGroup === key)
-      .sort((a, b) => a.startedAt - b.startedAt || a.name.localeCompare(b.name));
+    // Like a Bridge job, a T3 delegated child is no member of its project group (decorate leaves it ungrouped):
+    // no main, no project mail, no project-wide job control.
+    if (this.t3Lineages.isChild(peer)) return { ...decorated, t3Child: true };
+    // Pending is reported with project groups off too: checklist writes and the owner-answer fallback read it.
+    if (!key || peer.jobAgent || peer.subagent) return this.t3Pending(peer) ? { ...decorated, t3Pending: true } : decorated;
+    // A session whose T3 place is still pending is elected only when no resolved member is available.
+    const members = this.localPeers().filter((p) => this.projectMember(p) && this.groups.decorate(p).projectGroup === key)
+      .sort((a, b) => Number(this.t3Lineages.role(a) === "pending") - Number(this.t3Lineages.role(b) === "pending") ||
+        a.startedAt - b.startedAt || a.name.localeCompare(b.name));
     // Remembered retired mains are in-memory state only; past the grace window the current main keeps its role.
     const at = this.now();
     for (const [group, entry] of this.retiredProjectMains) if (at - entry.at > RETIRED_MAIN_GRACE_MS || at < entry.at) this.retiredProjectMains.delete(group);
@@ -1487,12 +1506,16 @@ export class Broker {
     // A retired main whose session reconnects soon (a resumed CLI) takes its role back, as after a broker restart.
     if (back) { this.retiredProjectMains.delete(key); this.recordProjectMain(key, `project:${basename(decorated.projectRoot!)}`, back); }
     let main = members.find(p => this.projectMains.has(key) && ownsProjectMain(this.projectMains.get(key)!, p));
-    if (!main) { main = members[0]; if (main) this.recordProjectMain(key, `project:${basename(decorated.projectRoot!)}`, main); }
-    return { ...decorated, projectMain: main?.id === peer.id, projectAddress: `project:${basename(decorated.projectRoot!)}`, projectRoute: this.projectRoutes.get(key) };
+    // A pending session may act as main while it is alone, but the role is recorded only once its T3 place is
+    // known: otherwise a T3 child that connected first would keep it after T3 recorded it (AB-460).
+    if (!main) { main = members[0]; if (main && this.t3Lineages.role(main) !== "pending") this.recordProjectMain(key, `project:${basename(decorated.projectRoot!)}`, main); }
+    return { ...decorated, projectMain: main?.id === peer.id, projectAddress: `project:${basename(decorated.projectRoot!)}`, projectRoute: this.projectRoutes.get(key),
+      ...(this.t3Pending(peer) ? { t3Pending: true } : {}) };
   }
 
   private switchProjectMain(source: PeerInfo | null | undefined, target: PeerInfo | undefined): PeerInfo {
-    if (!target || target.jobAgent || target.subagent || target.host) throw new BridgeError("bad_request", "Choose a live local project master.");
+    if (!target || target.host || !this.projectMember(target)) throw new BridgeError("bad_request", "Choose a live local project master.");
+    if (this.t3Pending(target)) throw new BridgeError("bad_request", "This session's T3 chat is not known yet; retry in a moment.");
     const peer = this.projectPeer(target);
     if (!peer.projectGroup || source && (source.jobAgent || this.projectPeer(source).projectGroup !== peer.projectGroup)) throw new BridgeError("unauthorized", "Only a master of this project may switch its main session.");
     this.retiredProjectMains.delete(peer.projectGroup);
@@ -2390,14 +2413,18 @@ export class Broker {
     // Broadcasts and agent kinds address sessions; job runners only get mail sent to them by name.
     const others = all.filter((c) => !c.peer!.jobAgent);
     if (to.startsWith("project:")) {
-      const members = this.localPeers().filter((p) => !p.jobAgent && !p.subagent).map((p) => this.projectPeer(p)).filter((p) => p.projectAddress === to);
+      const members = this.localPeers().filter((p) => this.projectMember(p)).map((p) => this.projectPeer(p)).filter((p) => p.projectAddress === to);
       const keys = new Set(members.map((p) => p.projectGroup));
       if (keys.size !== 1) throw new BridgeError(keys.size > 1 ? "ambiguous_target" : "unknown_target", "Use a unique live local project address from peers.");
       const target = members.filter((p) => !p.unavailable).sort((a, b) => Number(Boolean(b.projectMain)) - Number(Boolean(a.projectMain)) || a.startedAt - b.startedAt || a.name.localeCompare(b.name))[0];
       if (!target) throw new BridgeError("unknown_target", "No project master is available; use an exact session name to queue mail.");
       // Project conversations belong to the whole live team. A secondary coordinating a topic
       // must see incoming proposals without spending a supervisor turn on a manual relay.
-      const recipients = members.filter((p) => !p.unavailable && p.id !== sender.id);
+      // AB-460: a pending session (possibly a T3 delegated task not recorded yet) gets project mail only while
+      // no resolved member is available, so project mail never stops working on a fresh start.
+      // The sender counts: a resolved coordinator's own mail does not reach pending sessions either.
+      const available = members.filter((p) => !p.unavailable), resolved = available.some((p) => !this.t3Pending(p));
+      const recipients = available.filter((p) => p.id !== sender.id && (!resolved || !this.t3Pending(p)));
       if (!recipients.length) throw new BridgeError("unknown_target", "No other available project session; use an exact name to queue mail.");
       return { live: recipients
         .sort((a, b) => Number(Boolean(b.projectMain)) - Number(Boolean(a.projectMain)))
@@ -2772,7 +2799,7 @@ export class Broker {
     };
     let remoteAddress = to.includes("/") ? to : undefined;
     if (to.startsWith("project:")) {
-      const local = this.localPeers().filter((p) => !p.jobAgent && !p.subagent).map((p) => this.projectPeer(p)).filter((p) => p.projectAddress === to);
+      const local = this.localPeers().filter((p) => this.projectMember(p)).map((p) => this.projectPeer(p)).filter((p) => p.projectAddress === to);
       const remote = this.network?.projectPeers(to) ?? [];
       const groups = new Set([...local.map((p) => `local/${p.projectGroup}`), ...remote.map((p) => `${p.host}/${p.projectGroup}`)]);
       if (groups.size > 1) throw new BridgeError("ambiguous_target", "Several projects use this address; use an exact session or host/project address.");

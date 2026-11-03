@@ -10,7 +10,11 @@ export class ProjectGroups {
   private readonly jobRoots = new Map<string, string>();
   private readonly settings = new Map<string, boolean>();
   private readonly dispatchRoots = new Map<Record<string, unknown>, string | null>();
-  constructor(private readonly home?: string) {}
+  constructor(private readonly home?: string,
+    /** AB-460: sessions that are no project members although they look like sessions (T3 delegated tasks). */
+    private readonly excluded: (peer: PeerInfo) => boolean = () => false,
+    /** Sessions that stay members but hold no project-wide job control yet (T3 place still pending). */
+    private readonly unproven: (peer: PeerInfo) => boolean = () => false) {}
 
   private enabled(root: string, agent?: string): boolean {
     const key = JSON.stringify([root, agent]);
@@ -33,7 +37,7 @@ export class ProjectGroups {
 
   decorate(peer: PeerInfo): PeerInfo {
     const root = this.root(peer.cwd);
-    return { ...peer, projectRoot: root ?? undefined, projectGroup: root && peer.agent !== "other" && !peer.jobAgent && !peer.subagent && this.enabled(root, peer.agent) ? projectKey(root) : undefined };
+    return { ...peer, projectRoot: root ?? undefined, projectGroup: root && peer.agent !== "other" && !peer.jobAgent && !peer.subagent && this.enabled(root, peer.agent) && !this.excluded(peer) ? projectKey(root) : undefined };
   }
 
   /** Paired-PC jobs remain outside local group authority. */
@@ -77,7 +81,7 @@ export class ProjectGroups {
     if (peer.jobAgent && peer.name === job.parentJob) return true;
     if (peer.jobAgent || peer.subagent) return false;
     if (canControlJob(job, peer.name)) return true;
-    if (!this.shareable(job)) return false;
+    if (!this.shareable(job) || this.excluded(peer) || this.unproven(peer)) return false;
     return this.members(job, local).some((p) => p.name === peer.name);
   }
 
@@ -86,7 +90,7 @@ export class ProjectGroups {
     const root = this.jobRoot(job, local);
     if (!root) return [];
     return local.filter((p) => {
-      if (p.agent === "other" || p.jobAgent || p.subagent || p.host) return false;
+      if (p.agent === "other" || p.jobAgent || p.subagent || p.host || this.excluded(p)) return false;
       const candidate = this.root(p.cwd);
       return Boolean(candidate && projectKey(candidate) === projectKey(root) && this.enabled(root, p.agent));
     });
