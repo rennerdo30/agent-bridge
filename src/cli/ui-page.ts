@@ -1508,6 +1508,18 @@ function buildModel(s) {
     const order = new Map(sorted.map((g, i) => [g.key, i]));
     rep.groups.sort((a, b) => order.get(a.key) - order.get(b.key));
   }
+  // A T3 delegated chat (delegate_task) connects as a session of its own; it belongs under the session of its parent
+  // chat on the same PC, like any subagent, not beside it. Without a connected parent it stays a top-level entry.
+  const byT3 = new Map();
+  for (const x of sessions) if (x.live && !x.foldedInto && x.peer && x.peer.t3) byT3.set(pcOf(x.name) + "|" + x.peer.t3.id, x);
+  for (const x of sessions) {
+    const pid = x.live && !x.foldedInto && x.peer && x.peer.t3 && x.peer.t3.parentId;
+    const parent = pid && byT3.get(pcOf(x.name) + "|" + pid);
+    if (!parent || parent === x) continue;
+    x.under = parent.name; (parent.t3Kids = parent.t3Kids || []).push(x);
+    parent.children.push(x.peer);
+    if (x.peer.activity === "busy") parent.running += 1;
+  }
   return { sessions, byName, groups, sorted, orphans };
 }
 
@@ -1565,8 +1577,8 @@ const t3Asks = (p) => p && p.t3 && p.t3.status === "waiting" ? ' · <span class=
 
 /** Live sessions grouped by PC (this PC first, busiest first), then ended sessions that have subagents. */
 function sideGroups(q) {
-  const keep = (x) => !q || sessionMatches(x, q) || x.groups.some((g) => groupMatches(g, q));
-  const live = model.sessions.filter((x) => x.live && !x.foldedInto && keep(x));
+  const keep = (x) => !q || sessionMatches(x, q) || x.groups.some((g) => groupMatches(g, q)) || (x.t3Kids || []).some((k) => keep(k));
+  const live = model.sessions.filter((x) => x.live && !x.foldedInto && !x.under && keep(x));
   const pcs = [...new Set(live.map((x) => pcOf(x.name)))].sort((a, b) => (a === "") !== (b === "") ? (a === "" ? -1 : 1) : a.localeCompare(b));
   const out = pcs.map((pc) => ({ title: pc || LOCAL_PC, items: live.filter((x) => pcOf(x.name) === pc).sort((a, b) => b.running - a.running || sessionTitle(a).localeCompare(sessionTitle(b))) }));
   const ended = model.sessions.filter((x) => !x.live && x.groups.length && keep(x));
@@ -1938,7 +1950,7 @@ function renderOverview() {
   if (cmpVersion(state.version, newestVersion()) < 0) retained.push({ name: "dashboard host", version: state.version });
   $("ovVersions").innerHTML = retained.length ? '<div class="attn-banner"><span><b>Version skew: sessions still run retained code.</b> ' + retained.map((p) => esc(p.name) + " (v" + esc(p.version || "unknown") + ")").join(", ") + ". Sessions keep working; shared format upgrades wait for compatible readers.</span></div>" : "";
   renderApprovalBanner();
-  const live = model.sessions.filter((x) => x.live && !x.foldedInto), ended = model.sessions.filter((x) => !x.live && x.groups.length);
+  const live = model.sessions.filter((x) => x.live && !x.foldedInto && !x.under), ended = model.sessions.filter((x) => !x.live && x.groups.length);
   $("ovCount").textContent = live.length || "";
   const pcCount = new Set(live.map((x) => pcOf(x.name))).size, working = live.reduce((n, x) => n + (x.running || 0), 0);
   $("ovLead").textContent = live.length
@@ -1987,6 +1999,7 @@ function renderSession() {
       '<div class="kv"><span>status</span><span>' + esc(p.activity || "unknown") + "</span>" +
       (p.t3 ? "<span>T3 chat</span><span>" + esc(p.t3.title + " · " + t3Status(p) + (p.t3.model ? " · " + p.t3.model : "") + (p.t3.parentTitle ? " · subagent of " + p.t3.parentTitle : "") +
         (p.t3.harness === "earlier" ? " · ran this chat before T3 switched it to " + p.t3.provider : "")) + "</span>" : "") +
+      (x.under ? '<span>subagent of</span><span><a href="' + href(x.under) + '">' + esc(sessionTitle(model.byName.get(x.under))) + "</a></span>" : "") +
       (x.folded && x.folded.length ? "<span>also this chat</span><span>" + x.folded.map((n) => '<a href="' + href(n) + '">' + esc(n) + "</a>").join(", ") + "</span>" : "") +
       "<span>folder</span><span>" + esc(p.cwd) + "</span><span>connected</span><span>" + up(p.startedAt) + " ago</span>" +
       (p.sessionId ? "<span>session</span><span>" + esc(p.sessionId) + "</span>" : "") + "<span>version</span><span>" + esc(p.version || "?") + " " + versionChip(p) + "</span></div>" +
@@ -2063,8 +2076,16 @@ function renderSessionList(x, selKey) {
   const bridgeRows = x.groups.length
     ? (active.length ? nested(active) : '<div class="empty">Nothing running or recent.</div>') +
       (archived.length ? '<details class="archive" data-open="archive:' + esc(x.name) + '"' + (archiveOpen ? " open" : "") + "><summary>Archive · " + archived.length + " older subagent" + (archived.length === 1 ? "" : "s") + "</summary>" + nested(archived) + "</details>" : "")
-    : chat ? "" : '<div class="empty">No subagents started from this session yet.</div>';
-  const html = chatRow + bridgeRows + nativeRows + loadOlderButton();
+    : chat || (x.t3Kids || []).length ? "" : '<div class="empty">No subagents started from this session yet.</div>';
+  // T3 delegated chats of this session's chat, each a session of its own (its page shows its conversation).
+  const t3Kids = x.t3Kids || [];
+  const t3Row = (k) => { const c = k.peer;
+    return '<a href="' + href(k.name) + '">' + av(c.agent || "other") +
+      '<div style="min-width:0"><div class="line1"><b class="ell">' + esc(chatLine(c) || k.name) + '</b><span class="chip t3">T3</span></div><div class="task">' +
+      esc((c.agent || "") + (c.t3.model ? " · " + c.t3.model : "") + " · " + t3Status(c)) + "</div></div>" +
+      '<div class="side">' + dot(c.activity) + "</div></a>"; };
+  const t3Rows = t3Kids.length ? '<div class="rows-head">T3 subagents <span class="faint">' + t3Kids.length + "</span></div>" + t3Kids.map(t3Row).join("") : "";
+  const html = chatRow + t3Rows + bridgeRows + nativeRows + loadOlderButton();
   if ($("sGroups").innerHTML !== html) $("sGroups").innerHTML = html;
 }
 
