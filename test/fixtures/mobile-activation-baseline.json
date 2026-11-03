@@ -1,8 +1,14 @@
 {
   "base": "0fed680017e823197b1fb3344598632f5cd219ed",
   "uiSha256": "876fbc073c419e55a05c806b75c4993d254510c444cbd81d70098efbd22fb98c",
-  "pageSha256": "ed81d93641077997d99d2b04a373a7d062c4bed4ead7aace75a68555e8b3e8e3",
+  "pageSha256": "b052e1b7c58699910346a7a400bd9bd51bbac399d9ac9e0f162f7a77ad145192",
   "updates": {
+    "AB-460-t3-subagent-label": {
+      "base": "37b9ec55",
+      "previousPageSha256": "ed81d93641077997d99d2b04a373a7d062c4bed4ead7aace75a68555e8b3e8e3",
+      "reason": "AB-460: the desktop sidebar row of a session the broker marks t3Child (a T3 delegated task) says \"T3 subagent\" where it said main/secondary. One expression in sideSession; other sessions render as before. The mobileDashboardPage addition, the optional mobile page and default mobile activation behavior are unchanged.",
+      "commit": "same commit as this pin"
+    },
     "AB-474-chat-titles": {
       "base": "26f0f404",
       "previousPageSha256": "f7d8e3d7cb1cc6dc33628277d12b0b5967a8a1fbf0f4517f0c735c8ce5f0de41",
