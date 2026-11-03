@@ -1493,7 +1493,8 @@ export class Broker {
     // Like a Bridge job, a T3 delegated child is no member of its project group (decorate leaves it ungrouped):
     // no main, no project mail, no project-wide job control.
     if (this.t3Lineages.isChild(peer)) return { ...decorated, t3Child: true };
-    if (!key || peer.jobAgent || peer.subagent) return decorated;
+    // Pending is reported with project groups off too: checklist writes and the owner-answer fallback read it.
+    if (!key || peer.jobAgent || peer.subagent) return this.t3Pending(peer) ? { ...decorated, t3Pending: true } : decorated;
     // A session whose T3 place is still pending is elected only when no resolved member is available.
     const members = this.localPeers().filter((p) => this.projectMember(p) && this.groups.decorate(p).projectGroup === key)
       .sort((a, b) => Number(this.t3Lineages.role(a) === "pending") - Number(this.t3Lineages.role(b) === "pending") ||
@@ -2421,8 +2422,9 @@ export class Broker {
       // must see incoming proposals without spending a supervisor turn on a manual relay.
       // AB-460: a pending session (possibly a T3 delegated task not recorded yet) gets project mail only while
       // no resolved member is available, so project mail never stops working on a fresh start.
-      const available = members.filter((p) => !p.unavailable && p.id !== sender.id), resolved = available.filter((p) => !this.t3Pending(p));
-      const recipients = resolved.length ? resolved : available;
+      // The sender counts: a resolved coordinator's own mail does not reach pending sessions either.
+      const available = members.filter((p) => !p.unavailable), resolved = available.some((p) => !this.t3Pending(p));
+      const recipients = available.filter((p) => p.id !== sender.id && (!resolved || !this.t3Pending(p)));
       if (!recipients.length) throw new BridgeError("unknown_target", "No other available project session; use an exact name to queue mail.");
       return { live: recipients
         .sort((a, b) => Number(Boolean(b.projectMain)) - Number(Boolean(a.projectMain)))

@@ -104,6 +104,8 @@ describe("AB-460 T3 delegated children", () => {
     const sent = await sender.request("send", { to: address, body: "for the team", conversationId: "ab460" });
     expect(sent.deliveredTo).toContain("claude-lead");
     expect(sent.deliveredTo).not.toContain("codex-t3-child");
+    // The resolved lead's own project mail does not reach pending sessions either (here: everyone else).
+    await expect(lead.request("send", { to: address, body: "from the lead", conversationId: "ab460" })).rejects.toThrow(/No other available project session/);
     // Nor can it take the role explicitly before T3 has recorded it.
     const child = clients[0]!;
     await expect(child.request("projectMain", { to: "codex-t3-child" })).rejects.toThrow(/not known yet/);
