@@ -6,14 +6,14 @@ import {
 import {
   HISTORY_TICK_MS,
   HistoryIndex
-} from "./chunks/chunk-W4SSIT7C.mjs";
-import "./chunks/chunk-FC26X7NK.mjs";
+} from "./chunks/chunk-HIFCQPAS.mjs";
+import "./chunks/chunk-QN5CT634.mjs";
 import {
   ConversationIngestor,
   ownsProjectMirrors,
   projectDatabasePath
-} from "./chunks/chunk-IIPG6NSD.mjs";
-import "./chunks/chunk-X56HDV5C.mjs";
+} from "./chunks/chunk-VBKNX3FP.mjs";
+import "./chunks/chunk-TGAPMDEH.mjs";
 import {
   HISTORY_IO_BYTES_PER_SECOND,
   copyLegacyConversationTail,
@@ -22,20 +22,21 @@ import {
   migrateHistoryStore,
   openHistoryStore,
   readHistoryMigrationProgress
-} from "./chunks/chunk-2VXJZIEE.mjs";
-import "./chunks/chunk-KQJV6YU3.mjs";
-import "./chunks/chunk-XZ475COY.mjs";
+} from "./chunks/chunk-6NRQAZR6.mjs";
+import "./chunks/chunk-2DSTMRNG.mjs";
+import "./chunks/chunk-66HNYVSE.mjs";
 import {
   reconcileAskCompletions
-} from "./chunks/chunk-ZNK2PPN3.mjs";
+} from "./chunks/chunk-HANNGLX4.mjs";
 import {
   loadConfig
-} from "./chunks/chunk-ILTKWOC4.mjs";
-import "./chunks/chunk-AAI35QKV.mjs";
-import "./chunks/chunk-MICPYU3I.mjs";
+} from "./chunks/chunk-I2XRBOSH.mjs";
+import "./chunks/chunk-URHJJMOH.mjs";
+import "./chunks/chunk-7SIT4IHS.mjs";
+import "./chunks/chunk-NSCIYA7M.mjs";
 import {
   readHistoryJson
-} from "./chunks/chunk-TSXRAYDD.mjs";
+} from "./chunks/chunk-ZDGQRIZF.mjs";
 import {
   transcriptPaths
 } from "./chunks/chunk-UEE6Z4PJ.mjs";
@@ -44,15 +45,17 @@ import "./chunks/chunk-IYJ5P7ML.mjs";
 import {
   checkpointOwnedMetadataConnections,
   closeMetadataDbs,
-  fileSignature,
   isRecord,
   nullLogger,
   writeJsonStore
-} from "./chunks/chunk-F2RFTLGV.mjs";
-import "./chunks/chunk-P4CW6EX2.mjs";
+} from "./chunks/chunk-ABUT2FNZ.mjs";
+import {
+  fileSignature
+} from "./chunks/chunk-7NCHHXYD.mjs";
+import "./chunks/chunk-XRHYDGVO.mjs";
 import {
   CONFIG_FILE_NAME
-} from "./chunks/chunk-5YJKJBJW.mjs";
+} from "./chunks/chunk-4DJV76SS.mjs";
 import "./chunks/chunk-AAH2UEC3.mjs";
 import "./chunks/chunk-6RNADTH4.mjs";
 
