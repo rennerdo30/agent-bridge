@@ -75,6 +75,8 @@ import { z } from "zod";
 import { basename, dirname, isAbsolute, join } from "node:path";
 import { platform as hostPlatform } from "node:process";
 import { ProjectGroups } from "./project-groups.js";
+import { T3Lineages } from "./t3-lineage.js";
+import { localT3HistoryRoot } from "./transcripts/common.js";
 import { accessJobChecklist, jobChecklistRequestSchema, readChecklistAuthority } from "./checklists.js";
 import { recoverJobRecordAsync, type RecoveryRefusal } from "./job-recovery.js";
 import { findHistoryJob, selectHistoryJobs } from "./run-history.js";
@@ -428,6 +430,8 @@ export class Broker {
     });
   }
   private readonly groups: ProjectGroups;
+  /** AB-460: sessions T3 Code started for a delegated task are subagents, never project members. */
+  private t3Lineages = new T3Lineages(localT3HistoryRoot());
   /** Live role selection, recomputed after broker restart; no durable ownership is rewritten. */
   private readonly projectMains = new Map<string, ProjectMainIdentity>();
   private readonly projectRoutes = new Map<string, import("./protocol.js").ProjectRoute>();
@@ -1324,6 +1328,13 @@ export class Broker {
 
   /** Test seam: the batch creation-identity reader used by the background liveness sweep. */
   setIdentityReader(reader: (pids: number[]) => Promise<Map<number, string>>): void { this.identityReader = reader; }
+  /** Tests point the T3 lineage lookup at a synthetic T3 home. */
+  setT3Home(t3Home: string | undefined): void { this.t3Lineages = new T3Lineages(t3Home, this.now); }
+
+  /** A local session that may be a project member: no Bridge job, native subagent or T3 delegated child (AB-460). */
+  private projectMember(p: PeerInfo): boolean {
+    return !p.jobAgent && !p.subagent && !this.t3Lineages.isChild(p);
+  }
 
   private freezeAgentHost(peer: PeerInfo): void {
     // Only retirable sessions need a frozen host; others would only cycle the bounded map.
@@ -1478,7 +1489,9 @@ export class Broker {
   private projectPeer(peer: PeerInfo): PeerInfo {
     const decorated = this.groups.decorate(peer), key = decorated.projectGroup;
     if (!key || peer.jobAgent || peer.subagent) return decorated;
-    const members = this.localPeers().filter((p) => !p.jobAgent && !p.subagent && this.groups.decorate(p).projectGroup === key)
+    // Like a Bridge job, a T3 delegated child is no member of its project group: no main, no project mail.
+    if (this.t3Lineages.isChild(peer)) return { ...decorated, projectGroup: undefined, t3Child: true };
+    const members = this.localPeers().filter((p) => this.projectMember(p) && this.groups.decorate(p).projectGroup === key)
       .sort((a, b) => a.startedAt - b.startedAt || a.name.localeCompare(b.name));
     // Remembered retired mains are in-memory state only; past the grace window the current main keeps its role.
     const at = this.now();
@@ -1492,7 +1505,7 @@ export class Broker {
   }
 
   private switchProjectMain(source: PeerInfo | null | undefined, target: PeerInfo | undefined): PeerInfo {
-    if (!target || target.jobAgent || target.subagent || target.host) throw new BridgeError("bad_request", "Choose a live local project master.");
+    if (!target || target.host || !this.projectMember(target)) throw new BridgeError("bad_request", "Choose a live local project master.");
     const peer = this.projectPeer(target);
     if (!peer.projectGroup || source && (source.jobAgent || this.projectPeer(source).projectGroup !== peer.projectGroup)) throw new BridgeError("unauthorized", "Only a master of this project may switch its main session.");
     this.retiredProjectMains.delete(peer.projectGroup);
@@ -2390,7 +2403,7 @@ export class Broker {
     // Broadcasts and agent kinds address sessions; job runners only get mail sent to them by name.
     const others = all.filter((c) => !c.peer!.jobAgent);
     if (to.startsWith("project:")) {
-      const members = this.localPeers().filter((p) => !p.jobAgent && !p.subagent).map((p) => this.projectPeer(p)).filter((p) => p.projectAddress === to);
+      const members = this.localPeers().filter((p) => this.projectMember(p)).map((p) => this.projectPeer(p)).filter((p) => p.projectAddress === to);
       const keys = new Set(members.map((p) => p.projectGroup));
       if (keys.size !== 1) throw new BridgeError(keys.size > 1 ? "ambiguous_target" : "unknown_target", "Use a unique live local project address from peers.");
       const target = members.filter((p) => !p.unavailable).sort((a, b) => Number(Boolean(b.projectMain)) - Number(Boolean(a.projectMain)) || a.startedAt - b.startedAt || a.name.localeCompare(b.name))[0];
@@ -2772,7 +2785,7 @@ export class Broker {
     };
     let remoteAddress = to.includes("/") ? to : undefined;
     if (to.startsWith("project:")) {
-      const local = this.localPeers().filter((p) => !p.jobAgent && !p.subagent).map((p) => this.projectPeer(p)).filter((p) => p.projectAddress === to);
+      const local = this.localPeers().filter((p) => this.projectMember(p)).map((p) => this.projectPeer(p)).filter((p) => p.projectAddress === to);
       const remote = this.network?.projectPeers(to) ?? [];
       const groups = new Set([...local.map((p) => `local/${p.projectGroup}`), ...remote.map((p) => `${p.host}/${p.projectGroup}`)]);
       if (groups.size > 1) throw new BridgeError("ambiguous_target", "Several projects use this address; use an exact session or host/project address.");

@@ -1796,7 +1796,7 @@ async function showNative(x, key) {
 /** One session in the sidebar: folder, name and state, with how many subagents work. Subagents are listed on its page. */
 function sideSession(x) {
   const p = x.peer, cur = x.name === route.session;
-  const sub = (chatLine(p) || shortName(x.name)) + (p ? " · " + (p.projectGroup ? (p.projectMain ? "main · " : "secondary · ") : "") + (p.unavailable ? "unavailable" : p.activity || "connected") : " · ended");
+  const sub = (chatLine(p) || shortName(x.name)) + (p ? " · " + (p.t3Child ? "T3 subagent · " : p.projectGroup ? (p.projectMain ? "main · " : "secondary · ") : "") + (p.unavailable ? "unavailable" : p.activity || "connected") : " · ended");
   return '<div class="tree-sess' + (cur ? " cur" : "") + (x.live ? "" : " ended") + '">' +
     '<a href="' + href(x.name) + '" title="' + esc(x.name + (p ? " · " + p.cwd : "")) + '"' + (cur ? ' aria-current="page"' : "") + ">" + (p ? dot(p.activity) : '<span class="dot off"></span>') +
     '<span class="lbl ell">' + titled(sessionTitle(x), p) + '<small class="ell">' + esc(sub) + t3Asks(p) + "</small></span>" +

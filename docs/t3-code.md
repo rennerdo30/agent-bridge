@@ -187,6 +187,15 @@ job started from a T3 chat is not taken for one. A plain CLI started from T3's b
 the variable too and counts as a T3 chat. The plugin, skill and relay-agent descriptions carry the same
 "T3's own tools first" note, since they cannot see the environment.
 
+### T3 delegated tasks are subagents (AB-460)
+
+A task started with T3's `delegate_task` runs in its own chat, often in its own worktree, and its provider
+loads the Bridge plugin like any session. The broker looks the session up in T3's store (read-only: the
+provider session id in `nativeThreadRef`, then the chat's `lineage.parentThreadId`). A chat with a parent is a
+T3 subagent: it is never its project's main, gets no `project:` mail and has no project group; peer lists and
+the dashboard mark it `t3Child` ("T3 subagent"). A top-level chat is cached for good; a session T3 does not
+know yet is looked up again with backoff (15 seconds, doubling to 10 minutes).
+
 ### Bridge messages visible in T3 chats (AB-481)
 
 T3 shows a chat's user and assistant messages, reasoning and tool calls. It does not show what a Claude
