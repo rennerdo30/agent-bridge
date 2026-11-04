@@ -11,7 +11,7 @@ import { MAX_NETWORK_FRAME_BYTES, MAX_NETWORK_LINKS, MAX_NETWORK_PEERS, MAX_NETW
 import { NetworkDiscovery, type DiscoveredInstance, type DiscoveryDiagnostics } from "./discovery.js";
 import { decodePairingCode, keyFingerprint, PairingStore, publicIdentitySchema, type NetworkIdentity, type NetworkPair } from "./pairing.js";
 import { receiveTransfer, transferResultSchema, transferSchema, type FileTransfer, type TransferResult } from "./files.js";
-import { DEFAULT_DOWNLOADS, FILE_STREAM_CAPABILITY, FILE_STREAM_DESTINATION_CAPABILITY, FILE_STREAM_WINDOW_CAPABILITY, TRANSFER_WINDOW_CHUNKS, TransferManager, type TransferDestination, type TransferStarted } from "./transfers.js";
+import { DEFAULT_DOWNLOADS, FILE_STREAM_CAPABILITY, FILE_STREAM_WINDOW_CAPABILITY, TRANSFER_WINDOW_CHUNKS, TransferManager, type TransferDestination, type TransferStarted } from "./transfers.js";
 import { REMOTE_JOB_USAGE_CAPABILITY } from "./remote-job-protocol.js";
 
 const MAX_METADATA_CHARS = 4_096;
@@ -393,7 +393,7 @@ export class NetworkService {
   }
 
   extensionCapabilities(): string[] {
-    return [...this.extensions.values()].flatMap((extension) => [extension.capability, ...extension.aliases]).concat([FILE_STREAM_WINDOW_CAPABILITY, FILE_STREAM_DESTINATION_CAPABILITY], this.broker.recipientReceipts ? ["recipient-receipts-v1"] : []);
+    return [...this.extensions.values()].flatMap((extension) => [extension.capability, ...extension.aliases]).concat([FILE_STREAM_WINDOW_CAPABILITY], this.broker.recipientReceipts ? ["recipient-receipts-v1"] : []);
   }
 
   extensionHelloCapabilities(): { capabilities: string[]; additionalCapabilities: string[]; t3ThreadRouting: boolean } {
@@ -694,7 +694,7 @@ export class NetworkService {
     if (!link.peers.some((peer) => peer.name === target)) throw new Error("file recipient is not online");
     const streaming = link.supports(FILE_STREAM_CAPABILITY);
     if (pull && !streaming) throw new Error("remote broker does not support fetch_files; update its hosting sessions");
-    if (destination && !link.supports(FILE_STREAM_DESTINATION_CAPABILITY)) throw new Error("the paired PC's agent-bridge cannot place files in a destination yet; the owner updates it there, or send without destination");
+    if (destination && !streaming) throw new Error("the paired PC's agent-bridge cannot place files in a destination; the owner updates it there, or send without destination");
     return this.transfers.start(link.remote!.id, `${link.remote!.name}/${target}`, target, paths, cwd, from, pull, undefined, !streaming, destination);
   }
 

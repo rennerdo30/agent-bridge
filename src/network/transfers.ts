@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { constants, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
-import { open, link, unlink, statfs, lstat, opendir, copyFile, mkdir, readdir, realpath, rename, rm, stat, writeFile, type FileHandle } from "node:fs/promises";
+import { open, link, unlink, statfs, lstat, opendir, copyFile, mkdir, realpath, rename, stat, writeFile, type FileHandle } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -33,8 +33,6 @@ const TERMINAL = new Set<TransferStatus>(["completed", "cancelled", "failed"]);
 /** AB-498: named places on the receiving PC a sender may ask for; the receiver maps each to a folder it allows. */
 export const TRANSFER_DESTINATIONS = ["downloads"] as const;
 export type TransferDestination = typeof TRANSFER_DESTINATIONS[number];
-/** AB-498: a paired broker that honours an offer's destination advertises this; older ones would drop it silently. */
-export const FILE_STREAM_DESTINATION_CAPABILITY = "file-stream-destination-v1";
 /** AB-498: "the user's own Downloads folder", resolved when used (Windows known folder, XDG on Linux, ~/Downloads). */
 export const DEFAULT_DOWNLOADS = "<downloads>";
 export type TransferStatus = "queued" | "preparing" | "running" | "paused" | "completed" | "cancelled" | "failed";
@@ -62,7 +60,7 @@ export const fileStreamRequestSchema = z.discriminatedUnion("op", [
   z.object({ ...base, op: z.literal("fetch"), from: senderSchema, source: z.string().regex(NETWORK_NAME_PATTERN), paths: z.array(z.string().min(1).max(MAX_PATH_CHARS)).min(1).max(MAX_STREAM_ENTRIES) }),
 ]);
 type Request = z.infer<typeof fileStreamRequestSchema>;
-const responseSchema = z.object({ kind: z.literal("response"), rid: z.uuid(), id: z.uuid(), error: z.string().max(MAX_ERROR_CHARS).optional(), data: z.object({ offsets: z.array(z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)).max(MAX_STREAM_ENTRIES).optional(), status: z.enum(["queued", "preparing", "running", "paused", "completed", "cancelled", "failed"]).optional() }).default({}) });
+const responseSchema = z.object({ kind: z.literal("response"), rid: z.uuid(), id: z.uuid(), error: z.string().max(MAX_ERROR_CHARS).optional(), data: z.object({ offsets: z.array(z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)).max(MAX_STREAM_ENTRIES).optional(), status: z.enum(["queued", "preparing", "running", "paused", "completed", "cancelled", "failed"]).optional(), destination: z.enum(["accepted", "refused"]).optional() }).default({}) });
 type Reply = z.infer<typeof responseSchema>["data"];
 interface State {
   version: 1; id: string; direction: "send" | "receive"; remote: string; peer: string;
@@ -73,6 +71,8 @@ interface State {
   destination?: TransferDestination; placed?: string; placeError?: string;
   /** AB-498: placement still has to run (set with completion, so a restart resumes it). */
   placingPending?: boolean;
+  /** AB-498: where each top-level item was placed so far (by item index), so a restart never places one twice. */
+  placedItems?: (string | null)[];
 }
 interface TransferTransport {
   supports(remote: string): boolean;
@@ -155,17 +155,22 @@ async function writeAll(file: FileHandle, data: Buffer, position: number): Promi
 }
 
 /** Bounded negotiated chunks in flight. Chunk digests live on disk, never in an expanding RAM array. */
-/** AB-498: the user's Downloads folder: Windows known folder (it may be moved), XDG on Linux, else ~/Downloads. */
-async function downloadsFolder(): Promise<string> {
+/** AB-498: the user's Downloads folder, looked up once per process (Windows known folder, XDG on Linux, ~/Downloads). */
+let downloadsLookup: Promise<string> | undefined;
+function downloadsFolder(): Promise<string> {
+  return downloadsLookup ??= findDownloadsFolder().then((dir) => dir, () => join(homedir(), "Downloads"));
+}
+async function findDownloadsFolder(): Promise<string> {
   const fallback = join(homedir(), "Downloads");
   if (process.platform === "win32") {
     // The shell resolves the Downloads known folder, moved or not; UTF-8 output (reg would print the OEM code page).
     const value = await new Promise<string | undefined>((resolve) => {
       execFile("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command",
         "[Console]::OutputEncoding=[Text.Encoding]::UTF8; (New-Object -ComObject Shell.Application).NameSpace('shell:Downloads').Self.Path"],
-        { windowsHide: true, timeout: 10_000, encoding: "utf8" }, (error, stdout) => resolve(error ? undefined : String(stdout).trim()));
+        { windowsHide: true, timeout: 20_000, encoding: "utf8" }, (error, stdout) => resolve(error ? undefined : String(stdout).trim()));
     });
     if (value && isAbsolute(value) && existsSync(value)) return value;
+    downloadsLookup = undefined; // not cached: a slow first lookup is tried again next time
     return fallback;
   }
   if (process.platform === "linux") {
@@ -178,9 +183,12 @@ async function downloadsFolder(): Promise<string> {
   return fallback;
 }
 
-/** AB-498: an independent copy (a clone where supported), never replacing; on Windows marked as downloaded. */
+/**
+ * AB-498: an independent copy (a clone where supported) into this transfer's own temporary name. A leftover from an
+ * interrupted attempt is simply overwritten. On Windows the copy is marked as downloaded from another computer.
+ */
 async function placeFile(source: string, target: string): Promise<void> {
-  await copyFile(source, target, constants.COPYFILE_EXCL | constants.COPYFILE_FICLONE);
+  await copyFile(source, target, constants.COPYFILE_FICLONE);
   if (process.platform === "win32") await writeFile(`${target}:Zone.Identifier`, "[ZoneTransfer]\r\nZoneId=3\r\n").catch(() => {});
 }
 
@@ -189,33 +197,27 @@ async function taken(path: string): Promise<boolean> {
   try { await lstat(path); return true; } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return false; throw error; }
 }
 
-/** AB-498: move a finished temporary copy to the first free name, never replacing anything. */
+/**
+ * AB-498: move a finished temporary copy to the first free name. Free is checked right before the move; a name that
+ * appears in between (only this user can write here) makes the move fail or is the rare case it could replace.
+ */
 async function settleUnderFreeName(temp: string, root: string, top: string, file: boolean): Promise<string> {
   const dot = file ? top.lastIndexOf(".") : -1;
   const stem = dot > 0 ? top.slice(0, dot) : top, ext = dot > 0 ? top.slice(dot) : "";
   for (let n = 1; n < 10_000; n++) {
     const final = join(root, n === 1 ? top : `${stem} (${n})${ext}`);
     if (await taken(final)) continue;
-    if (file) {
-      // A hard link fails if the name appeared meanwhile; the temporary name is this transfer's own.
-      try { await link(temp, final); }
-      catch (error) {
-        const code = (error as NodeJS.ErrnoException).code;
-        if (code === "EEXIST") continue;
-        if (code !== "EPERM" && code !== "ENOTSUP" && code !== "EXDEV" && code !== "ENOSYS") throw error;
-        // No hard links here (FAT, exFAT, some shares): copy, never replacing.
-        try { await copyFile(temp, final, constants.COPYFILE_EXCL); }
-        catch (copyError) { if ((copyError as NodeJS.ErrnoException).code === "EEXIST") continue; throw copyError; }
-      }
-      await unlink(temp);
-    } else {
-      // Checked free just above; a name that appeared meanwhile makes the rename fail, so try the next one.
-      try { await rename(temp, final); }
-      catch (error) { if (["EEXIST", "ENOTEMPTY", "ENOTDIR", "EPERM", "EISDIR"].includes((error as NodeJS.ErrnoException).code ?? "")) continue; throw error; }
-    }
+    try { await rename(temp, final); }
+    catch (error) { if (["EEXIST", "ENOTEMPTY", "ENOTDIR", "EPERM", "EISDIR", "EACCES"].includes((error as NodeJS.ErrnoException).code ?? "")) continue; throw error; }
     return final;
   }
   throw new Error(`no free name for ${top}`);
+}
+
+/** AB-498: one line, bounded, for a notice that crosses to the paired PC. */
+function oneLine(text: string, max: number): string {
+  const flat = text.replace(/[\r\n]+/g, " ");
+  return flat.length <= max ? flat : `${flat.slice(0, max - 1)}…`;
 }
 
 export class TransferManager {
@@ -484,6 +486,10 @@ export class TransferManager {
       const reply = await this.rpc(state.remote, state.id, { op: "offer", from: state.from, to: state.to, entries: state.entries.map(({ path, kind, size }) => ({ path, kind, size })),
         ...(state.destination ? { destination: state.destination } : {}) });
       if (this.stopped(state)) return;
+      if (state.destination && !reply.destination && !state.placeError) {
+        state.placeError = "the paired PC's agent-bridge is too old to place files; they stay in its inbox until the owner updates it there";
+        this.save(state);
+      }
       if (reply.status === "completed") { state.status = "completed"; for (const entry of state.entries) { entry.offset = entry.size; entry.complete = true; } this.save(state); this.report(state, true); return; }
       if (!reply.offsets || reply.offsets.length !== state.entries.length) throw new RemoteTransferError("invalid resume offsets");
       state.status = "running"; delete state.error; this.save(state); this.report(state, true);
@@ -597,37 +603,39 @@ export class TransferManager {
   }
   /**
    * AB-498: also put a completed received transfer where its sender asked (an allowed place on this PC), off the
-   * request path: the event loop stays free (async copies), and a restart resumes it (state.placing).
-   * - Each top-level file or folder is copied (a clone where the file system supports it) under a temporary name in
-   *   the place, then moved to a free final name (" (2)" ...) without replacing anything: a crash never leaves a
-   *   truncated file under a real name, and nothing existing is overwritten. Only this transfer's own temporary
-   *   names are ever removed. On Windows each placed file gets the "downloaded from another computer" mark.
-   * - The inbox copy always stays. The receiving session is told once placement ends, and so is the sender.
+   * request path (async copies; the event loop stays free). Progress is saved per top-level item, so a restart
+   * resumes after the items already placed. Each item is copied to this transfer's own temporary name in the place
+   * (a leftover from an interrupted attempt is overwritten, never left as a real name) and then moved to a free
+   * final name (" (2)" ...). Nothing is ever removed: if placement fails, the temporary copy stays and the notice
+   * names it. The inbox copy always stays. The receiving session and the sender are told once placement ends.
    */
   private async place(state: State): Promise<void> {
+    if (!state.placingPending || this.placing.has(state.id)) return;
     const configured = state.destination && this.options.destinations?.[state.destination];
-    if (!configured || state.placed || state.placeError || this.placing.has(state.id)) return;
     this.placing.add(state.id);
-    const placed: string[] = [];
-    let rootForCleanup: string | undefined;
+    let temp: string | undefined;
     try {
-      const root = rootForCleanup = await realpath(configured === DEFAULT_DOWNLOADS ? await downloadsFolder() : configured);
+      if (!configured) throw new Error(`destination "${state.destination}" is not allowed on this PC (network.transferDestinations)`);
+      const root = await realpath(configured === DEFAULT_DOWNLOADS ? await downloadsFolder() : configured);
       if (!(await stat(root)).isDirectory()) throw new Error(`${root} is not a folder`);
       const inbox = join(this.home, "inbox", state.id), prefix = `.agent-bridge-${state.id}-`;
-      for (const name of await readdir(root)) if (name.startsWith(prefix) && name.endsWith(".partial")) await rm(join(root, name), { recursive: true, force: true });
       const tops = new Map<string, Entry[]>();
       for (const entry of state.entries) { const top = entry.path.split("/")[0]!; tops.set(top, [...(tops.get(top) ?? []), entry]); }
-      const bytes = state.entries.reduce((sum, entry) => sum + (entry.kind === "file" ? entry.size : 0), 0);
+      state.placedItems ??= [];
+      const remaining = [...tops].filter((_, index) => !state.placedItems![index]);
+      const bytes = remaining.flatMap(([, entries]) => entries).reduce((sum, entry) => sum + (entry.kind === "file" ? entry.size : 0), 0);
       const space = await statfs(root).catch(() => undefined);
       if (space && space.bavail * space.bsize < bytes + MIN_TRANSFER_FREE_BYTES) throw new Error(`not enough free space in ${root}`);
-      let index = 0;
+      let index = -1;
       for (const [top, entries] of tops) {
-        if (this.closed) throw new Error("transfer manager closed");
-        const temp = join(root, `${prefix}${index++}.partial`);
+        index++;
+        if (state.placedItems[index]) continue;
+        if (this.closed) return;
+        temp = join(root, `${prefix}${index}.partial`);
         const single = entries.length === 1 && entries[0]!.kind === "file" && entries[0]!.path === top;
         if (single) await placeFile(join(inbox, top), temp);
         else {
-          await mkdir(temp, { mode: OWNER_DIR_MODE });
+          await mkdir(temp, { recursive: true, mode: OWNER_DIR_MODE });
           for (const entry of [...entries].sort((a, b) => a.path.length - b.path.length)) {
             if (entry.path === top) continue;
             const target = join(temp, ...entry.path.split("/").slice(1));
@@ -635,23 +643,26 @@ export class TransferManager {
             else { await mkdir(dirname(target), { recursive: true, mode: OWNER_DIR_MODE }); await placeFile(join(inbox, ...entry.path.split("/")), target); }
           }
         }
-        placed.push(await settleUnderFreeName(temp, root, top, single));
+        if (this.closed) return;
+        state.placedItems[index] = await settleUnderFreeName(temp, root, top, single);
+        temp = undefined;
+        this.save(state);
       }
     } catch (error) {
-      state.placeError = `could not place ${placed.length ? "everything" : "it"} in ${state.destination}: ${(error as Error).message}`;
+      state.placeError = oneLine(`could not place ${state.placedItems?.some(Boolean) ? "everything" : "it"} in ${state.destination}: ${(error as Error).message}` +
+        (temp ? ` (an unfinished copy remains at ${temp})` : ""), MAX_ERROR_CHARS);
       this.log.warn("received files stay in the inbox", { id: state.id, error: state.placeError });
-      // Only this transfer's own unfinished temporary copies; placed items stay.
-      if (rootForCleanup) for (const name of await readdir(rootForCleanup).catch(() => [] as string[]))
-        if (name.startsWith(`.agent-bridge-${state.id}-`) && name.endsWith(".partial")) await rm(join(rootForCleanup, name), { recursive: true, force: true }).catch(() => {});
     } finally {
       this.placing.delete(state.id);
     }
-    if (placed.length) state.placed = placed.join(", ");
-    // Closed mid-way: still pending, so the next start places it again (its own temporary copies are cleaned first).
+    // Closed mid-way: still pending, so the next start resumes after the items already placed.
     if (this.closed) return;
+    const placed = (state.placedItems ?? []).filter(Boolean);
+    if (placed.length) state.placed = placed.join(", ");
     state.placingPending = false;
     this.save(state); this.report(state, true);
-    void this.rpc(state.remote, state.id, { op: "placed", ...(state.placed ? { placed: state.placed } : {}), ...(state.placeError ? { placeError: state.placeError } : {}) })
+    void this.rpc(state.remote, state.id, { op: "placed", ...(state.placed ? { placed: oneLine(state.placed, 8_192) } : {}),
+      ...(state.placeError ? { placeError: oneLine(state.placeError, MAX_ERROR_CHARS) } : {}) })
       .catch((error) => this.log.debug("sender not told about placement", { id: state.id, error: String(error) }));
   }
   private initialize(state: State): void {
@@ -750,7 +761,9 @@ export class TransferManager {
         if (this.stopped(state)) throw new Error("transfer cancelled");
         if (state.status !== "completed") { state.status = "running"; delete state.error; }
         this.save(state); this.report(state, true);
-        return { offsets: state.entries.map((entry) => entry.offset), status: state.status };
+        return { offsets: state.entries.map((entry) => entry.offset), status: state.status,
+          // AB-498: an older receiver drops the destination silently; this reply tells the sender it was seen.
+          ...(request.destination ? { destination: state.destination ? "accepted" as const : "refused" as const } : {}) };
       } finally { this.receiving.delete(request.id); }
     }
     if (request.op === "placed") {
