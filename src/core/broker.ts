@@ -438,10 +438,10 @@ export class Broker {
   /**
    * AB-488: a T3 Code chat has no running session between turns, yet to its user it is open and reachable. Mail
    * queued for such a chat's session wakes the chat with a visible message through T3's own CLI, once per offline
-   * stretch. Undefined without a T3 store or CLI on this PC.
+   * stretch (repeated for new mail after T3_OFFLINE_WAKE_REPEAT_MS). Undefined without a T3 store or CLI on this PC.
    */
   private t3OfflineWake = this.t3OfflineWakeFor(localT3HistoryRoot());
-  /** Offline names whose T3 chat was already woken (name -> time); cleared when the name connects again. */
+  /** Offline names whose T3 chat was sent a wake-up (name -> time): new mail repeats it only after T3_OFFLINE_WAKE_REPEAT_MS; cleared when the name connects again. */
   private readonly t3Woken = new Map<string, number>();
   /** Live role selection, recomputed after broker restart; no durable ownership is rewritten. */
   private readonly projectMains = new Map<string, ProjectMainIdentity>();
@@ -1345,8 +1345,10 @@ export class Broker {
   setT3OfflineWake(wake: Broker["t3OfflineWake"]): void { this.t3OfflineWake = wake; }
 
   private t3OfflineWakeFor(t3Home: string | undefined): { chat(sessionId: string): string | undefined; send(threadId: string, text: string): Promise<T3SendOutcome> } | undefined {
+    // Only an absolute T3 home: a relative one would resolve against the broker's working folder.
+    if (!t3Home || !isAbsolute(t3Home)) return undefined;
     const cli = t3CliForHome(t3Home);
-    if (!t3Home || !cli) return undefined;
+    if (!cli) return undefined;
     return { chat: (sessionId) => t3ChatForNativeSession(t3Home, sessionId), send: (threadId, text) => t3SendMessage(cli, threadId, text) };
   }
 
@@ -1369,6 +1371,8 @@ export class Broker {
       try {
         const session = this.store.lastSessionForName(name);
         if (!session || (session.agent !== "claude" && session.agent !== "codex")) continue;
+        // A T3 delegated task is a subagent (AB-460): mail to it never starts a new turn in its chat.
+        if (this.t3Lineages.isChild({ agent: session.agent, sessionId: session.sessionId })) continue;
         thread = wake.chat(session.sessionId);
       } catch (err) { this.log.debug("T3 chat lookup failed", { name, err: String(err) }); continue; }
       if (!thread) continue;

@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, expect, it } from "vitest";
+import { mkdirSync } from "node:fs";
+import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { makeEnv, type TestEnv } from "./helpers.js";
 import { BridgeClient } from "../src/core/client.js";
 import { nullLogger } from "../src/core/logger.js";
@@ -54,7 +57,7 @@ it("wakes the T3 chat of an offline recipient once per offline stretch, and says
   const first = await sender.request("send", { to: "claude-coordinator", body: "P0: queue holder is dead" });
   expect(first.queuedFor).toEqual(["claude-coordinator"]);
   expect(first.t3WakeFor).toEqual(["claude-coordinator"]);
-  expect(formatDelivery(first).join("\n")).toContain("Woke the T3 Code chat of: claude-coordinator");
+  expect(formatDelivery(first).join("\n")).toContain("Sent a wake-up into the T3 Code chat of: claude-coordinator");
   await new Promise((r) => setTimeout(r, 20));
   expect(sent).toHaveLength(1);
   expect(sent[0]!.thread).toBe("coordinator-chat");
@@ -79,6 +82,27 @@ it("does not wake for a note or for an offline session that is no T3 chat", asyn
 
   expect((await sender.request("send", { to: "claude-coordinator", body: "fyi", conversationId: "status:note" })).t3WakeFor).toBeUndefined();
   expect((await sender.request("send", { to: "claude-plain", body: "hello" })).t3WakeFor).toBeUndefined();
+  await new Promise((r) => setTimeout(r, 20));
+  expect(sent).toEqual([]);
+});
+
+it("never wakes the chat of a T3 delegated task (a subagent, AB-460)", async () => {
+  // A synthetic T3 store: the child's session is a chat whose lineage names a parent as a subagent.
+  const home = join(env.home, "t3"); mkdirSync(join(home, "userdata"), { recursive: true });
+  const db = new DatabaseSync(join(home, "userdata", "statev2.sqlite"));
+  db.exec(`CREATE TABLE orchestration_v2_projection_threads (thread_id TEXT PRIMARY KEY, payload_json TEXT, deleted_at TEXT);
+    CREATE TABLE orchestration_v2_projection_provider_threads (thread_id TEXT, payload_json TEXT)`);
+  db.prepare("INSERT INTO orchestration_v2_projection_threads VALUES (?, ?, NULL)").run("child-chat", JSON.stringify({ lineage: { parentThreadId: "lead", relationshipToParent: "subagent" } }));
+  db.prepare("INSERT INTO orchestration_v2_projection_provider_threads VALUES (?, ?)").run("child-chat", JSON.stringify({ nativeThreadRef: { nativeId: "coordinator-session" } }));
+  db.close();
+  broker.setT3Home(home);
+  broker.setT3OfflineWake({
+    chat: () => "child-chat",
+    send: async (thread, text) => { sent.push({ thread, text }); return { state: "accepted", delivery: "queued", runId: null }; },
+  });
+  const sender = await session("claude-sender", "sender-session");
+  await goOffline(await session("claude-coordinator", "coordinator-session"), sender, "claude-coordinator");
+  expect((await sender.request("send", { to: "claude-coordinator", body: "status?" })).t3WakeFor).toBeUndefined();
   await new Promise((r) => setTimeout(r, 20));
   expect(sent).toEqual([]);
 });
