@@ -75,7 +75,7 @@ import { z } from "zod";
 import { basename, dirname, isAbsolute, join } from "node:path";
 import { platform as hostPlatform } from "node:process";
 import { ProjectGroups } from "./project-groups.js";
-import { T3Lineages } from "./t3-lineage.js";
+import { T3Lineages, t3SessionLineage } from "./t3-lineage.js";
 import { t3ChatForNativeSession, t3CliForHome, t3SendMessage, type T3SendOutcome } from "./t3-chat.js";
 import { localT3HistoryRoot } from "./transcripts/common.js";
 import { accessJobChecklist, jobChecklistRequestSchema, readChecklistAuthority } from "./checklists.js";
@@ -188,6 +188,8 @@ const PID_REUSE_SLACK_MS = 2_000;
 const MAX_AGENT_HOSTS = 4_096;
 /** A retired project main gets its role back only when its session reconnects within this window (AB-399). */
 const RETIRED_MAIN_GRACE_MS = 5 * 60_000;
+/** AB-488: equals WAKE_HEADER in mcp/rewake.ts (core does not import mcp; a test keeps them equal). */
+export const T3_OFFLINE_WAKE_HEADER = "[agent-bridge] New actionable message(s) arrived:";
 /** AB-488: a T3 chat that stays offline after a wake-up is woken again for new mail after this long. */
 const T3_OFFLINE_WAKE_REPEAT_MS = 10 * 60_000;
 
@@ -1349,7 +1351,9 @@ export class Broker {
     if (!t3Home || !isAbsolute(t3Home)) return undefined;
     const cli = t3CliForHome(t3Home);
     if (!cli) return undefined;
-    return { chat: (sessionId) => t3ChatForNativeSession(t3Home, sessionId), send: (threadId, text) => t3SendMessage(cli, threadId, text) };
+    // Only a chat T3 positively records as top-level: a delegated task, or a store that cannot be read now, is skipped.
+    return { chat: (sessionId) => t3SessionLineage(t3Home, sessionId) === "top" ? t3ChatForNativeSession(t3Home, sessionId) : undefined,
+      send: (threadId, text) => t3SendMessage(cli, threadId, text) };
   }
 
   /**
@@ -1378,7 +1382,9 @@ export class Broker {
       if (!thread) continue;
       this.t3Woken.set(name, at);
       woken.push(name);
-      const text = `[agent-bridge] Bridge mail from ${message.from.name} is waiting for ${name} (message ${message.id}). ` +
+      // Starts with the session's wake header (WAKE_HEADER in mcp/rewake.ts): the turn it starts is a wake-up turn,
+      // not a user turn, so reply waits armed in it keep the hop guard (AB-494).
+      const text = `${T3_OFFLINE_WAKE_HEADER} Bridge mail from ${message.from.name} is waiting for ${name} (message ${message.id}). ` +
         "This chat's session was not running when it arrived, so it was queued. Read it with the agent-bridge inbox tool.";
       void wake.send(thread, text).then((outcome) => {
         if (outcome.state === "accepted") this.log.info("woke offline T3 chat for queued mail", { name, thread, id: message.id });

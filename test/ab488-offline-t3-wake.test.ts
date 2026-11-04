@@ -8,7 +8,8 @@ import { nullLogger } from "../src/core/logger.js";
 import { PROTOCOL_VERSION } from "../src/core/constants.js";
 import { loadOrCreateToken } from "../src/core/token.js";
 import { MessageStore } from "../src/core/store.js";
-import { Broker } from "../src/core/broker.js";
+import { Broker, T3_OFFLINE_WAKE_HEADER } from "../src/core/broker.js";
+import { WAKE_HEADER } from "../src/mcp/rewake.js";
 import { formatDelivery } from "../src/mcp/format.js";
 import type { AgentKind } from "../src/core/protocol.js";
 
@@ -63,6 +64,9 @@ it("wakes the T3 chat of an offline recipient once per offline stretch, and says
   expect(sent[0]!.thread).toBe("coordinator-chat");
   expect(sent[0]!.text).toContain(first.messages[0]!.id);
   expect(sent[0]!.text).toContain("claude-sender");
+  // The woken turn is a wake-up turn for the session's hooks, not a user turn.
+  expect(T3_OFFLINE_WAKE_HEADER).toBe(WAKE_HEADER);
+  expect(sent[0]!.text.startsWith(WAKE_HEADER)).toBe(true);
 
   // More mail while the chat is still waking: queued, no second chat message.
   expect((await sender.request("send", { to: "claude-coordinator", body: "follow-up" })).t3WakeFor).toBeUndefined();
