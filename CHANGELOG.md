@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.33.0
+
+- **Files can also land in the receiving PC's Downloads folder (AB-498).** `send_files` takes `destination: "downloads"` for a paired PC.
+  - **What the receiver does:** after the transfer completes and every file passed its SHA-256 check, it places each top-level file or folder in its Downloads folder.
+    - The folder is the Windows Downloads known folder (moved or linked), XDG on Linux, else `~/Downloads`.
+    - Each item goes under a free name (`app (2).aab`); nothing existing is overwritten.
+    - Copies are independent (a clone where the file system supports it) and, on Windows, carry the "downloaded from another computer" mark.
+  - **The inbox copy always stays,** and nothing is ever removed.
+  - **Restarts and failures:** placement runs off the request path, resumes per item after a restart, and leaves an unfinished copy in place (named in the notice) if it fails.
+  - **Notices:** both the receiving session and the sender are told where the files went, or why not.
+  - **Defaults and compatibility:**
+    - It is on by default; `network.transferDestinations: {}` turns it off on a PC.
+    - A paired PC too old to place files makes the sender say so; the files stay in its inbox.
+- **Mail to a T3 Code chat between turns wakes it (AB-488).** T3 stops a chat's process between turns, so the Bridge saw the chat as offline and only queued its mail.
+  - Direct mail queued for a name whose last session is a top-level T3 chat now sends one wake-up into that chat through T3's own CLI; new mail repeats it after 10 minutes.
+  - The receipt says so. Delegated T3 tasks are never woken.
+- **A T3-queued wake-up reaches the turn already running (AB-497).** When T3 queues a wake-up behind a running turn, that turn's tool hooks show the messages at its next tool call (marked as repeats), instead of holding them until the turn ends.
+- **An awaited reply wakes the session past the hop limit (AB-494).** A reply that a session armed `wait_for_message(reply_to=…)` for, in a turn its user started, wakes it at any hop. Waits armed in wake-up turns keep the limit, so agents cannot keep waking each other. `maxHops: 0` still means replies never wake.
+- **The peer list shows how to reach T3 chats (AB-496).**
+  - Peers that run in a T3 chat carry `t3Chat` (the thread id from their PC's T3 store, read-only), also across paired PCs.
+  - Their rows say to use `t3_thread_send`; on a paired PC only if this PC's T3 is linked to it.
+- **Version skew, explained (AB-490, AB-499).**
+  - A local peer's label says which side is older and which runs retained code.
+  - A paired PC on another version gets one line in the peer list instead of a tag on each of its sessions: its version, that messages and files keep working, and which PC the owner updates.
+- **Sessions are told their real Bridge name (AB-491).**
+  - The SessionStart notice names the session by its session id and no longer claims the folder's default name when another live session holds it.
+  - `project_main` for a name with no live session says which name and gives the caller's own.
+- **No "main changed from X to X" notices (AB-489).** A new session that takes over the main's name no longer notifies anyone.
+- **Look up a send that was interrupted (AB-493).** `send_status to=<address>` lists your own latest stored sends to that address with read receipts, so an interrupted send can be confirmed before retrying.
+- **History search finds near matches (AB-492).** When nothing matches every word of a query of three or more words, documents matching all words but one are returned, marked `partial: true`. Mail, decisions, reports and questions rank above transcript and run-log echoes.
+
 ## 0.32.3
 
 - **T3 delegated chats sit under their parent session (AB-487).** A chat T3 started with `delegate_task` (for example a Muse task) connects as a Bridge session of its own and used to be listed beside its parent in the dashboard. A session is now linked to its T3 chat by the provider session id T3 records for that chat (`nativeThreadRef.nativeId`), before folder or prompt matching, so a main chat working in the shared project root is linked too; peers' `t3` info gains `parentId`. The dashboard lists such a child under the session of its parent chat: "T3 subagents" rows on the parent's page, its overview card and the working counts. The child leaves the top-level sidebar and overview, and its own page links back to the parent. If the parent chat's session is not connected, the child stays a top-level entry. T3's store is still read read-only.

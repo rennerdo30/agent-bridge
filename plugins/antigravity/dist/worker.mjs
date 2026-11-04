@@ -11,30 +11,35 @@ import {
   selectForDelivery,
   shouldWakeClaudeMessage,
   sliceWhole,
-  unshownMessageNotes
-} from "./chunks/chunk-X6Z2YKMV.mjs";
+  unshownMessageNotes,
+  wakeMessageIds
+} from "./chunks/chunk-IZMS45TC.mjs";
 import {
   guardServerErrors,
   readJobReport,
   resultDeliveryLabel
-} from "./chunks/chunk-4MMXMZOE.mjs";
+} from "./chunks/chunk-UAONGH2O.mjs";
 import {
   MAX_STREAM_ENTRIES,
-  NATIVE_AGENT_ID
-} from "./chunks/chunk-OHI5TRVJ.mjs";
+  NATIVE_AGENT_ID,
+  t3ChatForNativeSession,
+  t3CliFromEnv,
+  t3HomeFromEnv,
+  t3SendMessage
+} from "./chunks/chunk-YYAS3GZ5.mjs";
 import {
   isBridgeWorktree,
   isInside,
   resumeArgs,
   runDelegate
-} from "./chunks/chunk-BKBUVCYT.mjs";
+} from "./chunks/chunk-HAR4KOYM.mjs";
 import {
   closeJobWorktree
-} from "./chunks/chunk-6Q56X3L7.mjs";
+} from "./chunks/chunk-YC7EFV2R.mjs";
 import {
   readWorktreeState
-} from "./chunks/chunk-AKS4E5QL.mjs";
-import "./chunks/chunk-L5PQRB3P.mjs";
+} from "./chunks/chunk-AGYIJ74Y.mjs";
+import "./chunks/chunk-6SQS7L3A.mjs";
 import {
   museBridgeTool,
   museHookOutput,
@@ -42,12 +47,12 @@ import {
 } from "./chunks/chunk-HTTJQ2TB.mjs";
 import {
   antigravityHookOutput
-} from "./chunks/chunk-QXKOFAB5.mjs";
+} from "./chunks/chunk-R2NPKGX6.mjs";
 import {
   readSlotSnapshot,
   slotWaitFor,
   waitingText
-} from "./chunks/chunk-QCAWEFYL.mjs";
+} from "./chunks/chunk-XW44EQEI.mjs";
 import {
   CHECKLIST_LIMITS,
   JOB_ITEM_STATUSES,
@@ -66,13 +71,13 @@ import {
   seedJobChecklist,
   summaryText,
   supervisorRevision
-} from "./chunks/chunk-GOW4I27N.mjs";
+} from "./chunks/chunk-WRJUFWXZ.mjs";
 import "./chunks/chunk-QETSCJMA.mjs";
 import {
   describeModels,
   modelParameterDescription,
   readModels
-} from "./chunks/chunk-CKU7JUBW.mjs";
+} from "./chunks/chunk-MKJ6U3WC.mjs";
 import "./chunks/chunk-KNKN5CEU.mjs";
 import "./chunks/chunk-IOGZQ3DT.mjs";
 import {
@@ -84,30 +89,36 @@ import {
 import {
   BridgeNode,
   DASHBOARD_JOB_CONVERSATION
-} from "./chunks/chunk-5F3UGBBD.mjs";
+} from "./chunks/chunk-LPCS4BSN.mjs";
 import {
+  NODE_STOP_MS,
+  SHUTDOWN_DEADLINE_MS,
   formatDelivery,
   formatDuration,
   formatInboxMessages,
+  formatMachineSkew,
   formatMessage,
   formatMessages,
   formatParentMessages,
   formatPeer,
   formatProjectRoute,
   formatReplyRestrictions,
-  formatVersionSkew
-} from "./chunks/chunk-RXPZANP5.mjs";
+  formatVersionSkew,
+  runShutdownSteps,
+  shouldYieldTo,
+  watchParent
+} from "./chunks/chunk-66MNTOC2.mjs";
 import {
   formatHealth,
   probeBrokerHealth
-} from "./chunks/chunk-7IHACLUH.mjs";
-import "./chunks/chunk-EL23KPY6.mjs";
+} from "./chunks/chunk-RBFZTZVV.mjs";
+import "./chunks/chunk-TVZHDTV3.mjs";
 import "./chunks/chunk-RQUYBZWF.mjs";
 import "./chunks/chunk-VWICCY7R.mjs";
 import {
   HISTORY_SEARCH_TOOL_DESCRIPTION,
   historySearchToolInput
-} from "./chunks/chunk-QFPXIW3K.mjs";
+} from "./chunks/chunk-NCN47JW3.mjs";
 import {
   conversationPageSchema
 } from "./chunks/chunk-66HNYVSE.mjs";
@@ -117,11 +128,11 @@ import {
   readOutcomeDecision,
   readResultDelivery,
   setJobOutcome
-} from "./chunks/chunk-B46MLNNL.mjs";
-import "./chunks/chunk-35FNNQHH.mjs";
+} from "./chunks/chunk-VSAHUESD.mjs";
+import "./chunks/chunk-OG6DAXGS.mjs";
 import {
   RESULT_HEADER
-} from "./chunks/chunk-7RRT2PZJ.mjs";
+} from "./chunks/chunk-6OP34R3Y.mjs";
 import {
   ACCESS_LEVELS,
   AjvJsonSchemaValidator,
@@ -201,17 +212,17 @@ import {
   usageAdmissionText,
   usageProbeFor,
   verifiedGoneJobOwners
-} from "./chunks/chunk-JXNLMFTJ.mjs";
+} from "./chunks/chunk-JK3TYY7G.mjs";
 import "./chunks/chunk-6KTEQAZ2.mjs";
 import {
   ResourceSlots,
   describeResourceSlots,
   formatResourceSlots
-} from "./chunks/chunk-RKMKHOL4.mjs";
+} from "./chunks/chunk-DWQBRZGB.mjs";
 import {
   REMOTE_JOB_POLL_MS,
   remoteSpawnArgsSchema
-} from "./chunks/chunk-6GDF27AR.mjs";
+} from "./chunks/chunk-S34KX23Z.mjs";
 import {
   MAX_JOB_SEND_TARGETS,
   isJobSendTarget,
@@ -225,7 +236,7 @@ import {
   resolveDbPath,
   resolveHome,
   resolvePipePath
-} from "./chunks/chunk-7MIBCW54.mjs";
+} from "./chunks/chunk-4VXELNJD.mjs";
 import {
   MUSE_ACCESS_ENV,
   antigravityAncestor,
@@ -244,7 +255,7 @@ import {
   sameFrontend,
   t3BindingSchema
 } from "./chunks/chunk-NM74FW74.mjs";
-import "./chunks/chunk-IPFZL227.mjs";
+import "./chunks/chunk-KQ7NKBC4.mjs";
 import {
   CLAUDE_PERMISSION_MODES,
   CODEX_APPROVALS_REVIEWERS,
@@ -256,7 +267,7 @@ import {
   parseAgentKind,
   saveConfigValue,
   watchConfig
-} from "./chunks/chunk-TAWBNHBT.mjs";
+} from "./chunks/chunk-YOEUT2KG.mjs";
 import {
   MAX_DECISION_TEXT_CHARS,
   MAX_DECISION_TOPIC_CHARS,
@@ -264,7 +275,7 @@ import {
   decisionApplies,
   decisionScopeSchema,
   formatDecisionSummary
-} from "./chunks/chunk-KZUHAZ7F.mjs";
+} from "./chunks/chunk-QQ5RWAUC.mjs";
 import {
   ZodOptional,
   external_exports
@@ -273,8 +284,8 @@ import {
   canonicalProjectRoot,
   isInternalBridgeProcess,
   isPluginCacheCwd
-} from "./chunks/chunk-KPDIPL3S.mjs";
-import "./chunks/chunk-ZKCGUVI7.mjs";
+} from "./chunks/chunk-GRM4AKTE.mjs";
+import "./chunks/chunk-MOQBNRQQ.mjs";
 import {
   TRANSCRIPT_ID,
   directory,
@@ -302,9 +313,9 @@ import {
   metadataFileLease,
   readJsonStore,
   writeJsonStore
-} from "./chunks/chunk-UZSY4QA2.mjs";
+} from "./chunks/chunk-KG7DR45B.mjs";
 import "./chunks/chunk-7NCHHXYD.mjs";
-import "./chunks/chunk-KGMXWURK.mjs";
+import "./chunks/chunk-6LM3CELI.mjs";
 import {
   APP_NAME,
   APP_VERSION,
@@ -318,16 +329,15 @@ import {
   MAX_JOBS_LIMIT,
   MAX_JOB_TIMEOUT_SEC,
   MAX_WAIT_SEC
-} from "./chunks/chunk-3MVB7JRO.mjs";
+} from "./chunks/chunk-BSOFWTS3.mjs";
 import {
   parentProcessIdentity,
-  processIdentity,
-  readProcessIdentity
+  processIdentity
 } from "./chunks/chunk-AAH2UEC3.mjs";
 import "./chunks/chunk-6RNADTH4.mjs";
 
 // src/mcp/server.ts
-import { isAbsolute as isAbsolute2, join as join7, resolve } from "node:path";
+import { isAbsolute, join as join6, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/server.js
@@ -1857,7 +1867,9 @@ var waitSchema = external_exports.object({
     reply_to: external_exports.string().optional(),
     conversation_id: external_exports.string().optional(),
     read_receipt_of: external_exports.string().optional()
-  })
+  }),
+  /** AB-494: armed in a turn the user started (not a wake-up), so its reply may wake the session past the hop limit. */
+  userTurn: external_exports.boolean().optional()
 });
 function matchesWait(filters, m) {
   return !filters.read_receipt_of && (!isQuietMessage(m) || Boolean(filters.from || filters.conversation_id || filters.reply_to)) && (!filters.from || m.from.name === filters.from || m.from.agent === filters.from) && (!filters.reply_to || m.replyTo === filters.reply_to) && (!filters.conversation_id || m.conversationId === filters.conversation_id);
@@ -1876,10 +1888,10 @@ var MessageWaitStore = class {
   owns(node, record) {
     return record.sessionId && node.currentSessionId ? record.sessionId === node.currentSessionId : record.owner === node.name;
   }
-  save(node, filters, mode = "block") {
+  save(node, filters, mode = "block", userTurn = false) {
     const existing = mode === "notify" ? this.pending(node).find((r) => r.mode === mode && ["from", "reply_to", "conversation_id", "read_receipt_of"].every((k) => r.filters[k] === filters[k])) : void 0;
     if (existing) return existing;
-    const record = { id: randomUUID(), owner: node.name, sessionId: node.currentSessionId, filters, mode };
+    const record = { id: randomUUID(), owner: node.name, sessionId: node.currentSessionId, filters, mode, ...userTurn ? { userTurn: true } : {} };
     writeJsonStore(this.path(record.id), record, null);
     return record;
   }
@@ -1916,7 +1928,10 @@ var MessageWaitStore = class {
         for (const r of this.pending(node)) {
           if (r.mode === "notify" && messages.some((m) => matchesNotificationWait(r.filters, m))) this.remove(r.id);
         }
-      }
+      },
+      // AB-494: only a reply_to wait armed in a turn the user started. Waits armed in wake-up turns keep the hop
+      // guard, so two sessions that each arm a reply wait after every send cannot wake each other forever.
+      (m) => m.replyTo !== null && this.pending(node).some((r) => r.mode === "notify" && r.userTurn === true && Boolean(r.filters.reply_to) && matchesNotificationWait(r.filters, m))
     );
   }
 };
@@ -2083,9 +2098,12 @@ function formatHookMessages(ctx, msgs, opts = {}) {
 function hookDeliverable(ctx, m) {
   return !completionAwaitingReceipt(ctx, m.id) && !ctx.wakeDelivery?.inFlight?.(m.id) && !oversizedMessageNoted(ctx, m.id);
 }
+function withinWakeHops(ctx, m) {
+  return m.hop < ctx.cfg.maxHops || ctx.cfg.maxHops > 0 && Boolean(ctx.node?.isReplyWaitAwaited?.(m));
+}
 function claudeWakeCandidate(ctx, m) {
   const node = ctx.node;
-  return node != null && !ctx.channelActive() && m.hop < ctx.cfg.maxHops && // Running-job notes remain in explicit inbox reads and history (see JobManager.fromSubagent).
+  return node != null && !ctx.channelActive() && withinWakeHops(ctx, m) && // Running-job notes remain in explicit inbox reads and history (see JobManager.fromSubagent).
   !ctx.jobs?.isNote(m) && !completionAwaitingReceipt(ctx, m.id) && shouldWakeClaudeMessage(node, ctx.cfg, m);
 }
 function confirmCompletionDelivery(ctx, input) {
@@ -2171,7 +2189,7 @@ function boundedDelivery(ctx, candidates, format, wrap, options = {}) {
 function take(ctx, wakeOnly, notesOnly, hold, format, wrap, footer) {
   const node = ctx.node;
   discardFinishedNotes(ctx);
-  const candidates = node.unread().filter((m) => !isQuietMessage(m)).filter((m) => hookDeliverable(ctx, m)).filter((m) => !notesOnly || ctx.jobs?.isNote(m) || !shouldWakeClaudeMessage(node, ctx.cfg, m)).filter((m) => !wakeOnly || m.hop < ctx.cfg.maxHops && !ctx.jobs?.isNote(m));
+  const candidates = node.unread().filter((m) => !isQuietMessage(m)).filter((m) => hookDeliverable(ctx, m)).filter((m) => !notesOnly || ctx.jobs?.isNote(m) || !shouldWakeClaudeMessage(node, ctx.cfg, m)).filter((m) => !wakeOnly || withinWakeHops(ctx, m) && !ctx.jobs?.isNote(m));
   const delivery = boundedDelivery(ctx, candidates, format, wrap, { footer });
   holdOrMarkRead(ctx, delivery.msgs.map((m) => m.id), hold);
   return delivery;
@@ -2338,7 +2356,9 @@ async function runHook(ctx, input, current, busyAtIngress) {
   if (!current()) return {};
   const wakeTurn = input.event === "UserPromptSubmit" && Boolean(input.prompt?.includes(WAKE_HEADER));
   if (wakeTurn) ctx.wakeDelivery?.confirmPrompt?.(input.prompt);
-  if (input.event === "PostToolUse" || input.event === "Stop" || wakeTurn) ctx.wakeDelivery?.confirm();
+  if (input.event === "UserPromptSubmit") ctx.userTurn = !wakeTurn;
+  else if (input.event === "Stop") ctx.userTurn = false;
+  if (input.event === "PostToolUse" || input.event === "Stop" || wakeTurn && wakeMessageIds(input.prompt).length > 0) ctx.wakeDelivery?.confirm();
   else ctx.wakeDelivery?.release();
   if (input.event === "PostToolUse" || input.event === "UserPromptSubmit") ctx.wakeDelivery?.active();
   const channel = ctx.channelActive();
@@ -2351,7 +2371,8 @@ async function runHook(ctx, input, current, busyAtIngress) {
       const lines = [
         `[agent-bridge] You are connected to agent-bridge as "${node.name}".`,
         peers.length ? `Peers online:
-${peers.map((p) => formatPeer(p)).join("\n")}` : "No other agents are online right now."
+${peers.map((p) => formatPeer(p)).join("\n")}` : "No other agents are online right now.",
+        ...formatMachineSkew(peers)
       ];
       lines.push(...new MessageWaitStore(ctx.home).pending(node).map(resumeWaitHint));
       const unread = node.unread().filter((m) => !isQuietMessage(m) && !completionAwaitingReceipt(ctx, m.id) && !ctx.wakeDelivery?.inFlight?.(m.id)).length;
@@ -2383,7 +2404,7 @@ ${peers.map((p) => formatPeer(p)).join("\n")}` : "No other agents are online rig
       const jobsRunning = stopJobsRunning;
       const inConversation = lingerRemaining > 0 || jobsRunning > 0;
       if (!node.autoWakeEnabled && !inConversation) {
-        const awaited = node.unread().filter((m) => hookDeliverable(ctx, m) && (node.isNotificationAwaited(m) || m.from.id.startsWith("job:") && shouldWakeClaudeMessage(node, ctx.cfg, m) || (ctx.agent === "opencode" || ctx.agent === "antigravity") && m.to !== BROADCAST && !AGENT_KINDS.includes(m.to) && shouldWakeClaudeMessage(node, ctx.cfg, m)) && m.hop < ctx.cfg.maxHops && !isQuietMessage(m) && !m.conversationId.endsWith(":note"));
+        const awaited = node.unread().filter((m) => hookDeliverable(ctx, m) && (node.isNotificationAwaited(m) || m.from.id.startsWith("job:") && shouldWakeClaudeMessage(node, ctx.cfg, m) || (ctx.agent === "opencode" || ctx.agent === "antigravity") && m.to !== BROADCAST && !AGENT_KINDS.includes(m.to) && shouldWakeClaudeMessage(node, ctx.cfg, m)) && withinWakeHops(ctx, m) && !isQuietMessage(m) && !m.conversationId.endsWith(":note"));
         const delivery2 = boundedDelivery(ctx, awaited, (msgs2) => formatHookMessages(ctx, msgs2, { replyHint: false }), (text2) => stopMail(ctx, text2));
         if (delivery2.text) {
           holdOrMarkRead(ctx, delivery2.msgs.map((m) => m.id), holdStop);
@@ -3633,130 +3654,6 @@ function saveAutoWake(home, name, enabled) {
   }
 }
 
-// src/core/t3-chat.ts
-import { spawn } from "node:child_process";
-import { existsSync, realpathSync } from "node:fs";
-import { isAbsolute, join as join6 } from "node:path";
-import { DatabaseSync } from "node:sqlite";
-var THREAD_ID = /^[A-Za-z0-9._:-]{1,128}$/;
-var MAX_ID = 512;
-var T3_SEND_TIMEOUT_MS = 3e4;
-var MAX_OUTPUT = 64 * 1024;
-function t3CliFromEnv(env = process.env) {
-  const cli = env.T3CODE_CLI_PATH?.trim();
-  if (!cli || !isAbsolute(cli) || /["%^&|<>!\r\n\0]/.test(cli)) return void 0;
-  return existsSync(cli) ? cli : void 0;
-}
-function t3HomeFromEnv(env, home) {
-  return env.T3CODE_HOME?.trim() || join6(home, ".t3");
-}
-function t3ChatForNativeSession(t3Home, nativeId) {
-  if (!nativeId || nativeId.length > MAX_ID) return void 0;
-  let db;
-  try {
-    db = new DatabaseSync(realpathSync.native(join6(t3Home, "userdata", "statev2.sqlite")), { readOnly: true, timeout: 25 });
-    const rows = db.prepare(`SELECT p.thread_id AS thread_id FROM orchestration_v2_projection_provider_threads p
-      JOIN orchestration_v2_projection_threads t ON t.thread_id = p.thread_id
-      WHERE json_extract(p.payload_json, '$.nativeThreadRef.nativeId') = ? AND t.deleted_at IS NULL AND t.archived_at IS NULL
-      ORDER BY p.updated_at DESC LIMIT 2`).all(nativeId);
-    const ids = [...new Set(rows.map((r) => r.thread_id).filter((v) => typeof v === "string" && THREAD_ID.test(v)))];
-    return ids.length === 1 ? ids[0] : void 0;
-  } catch {
-    return void 0;
-  } finally {
-    try {
-      db?.close();
-    } catch {
-    }
-  }
-}
-function t3SendMessage(cli, threadId, message, options = {}) {
-  if (!THREAD_ID.test(threadId)) return Promise.resolve({ state: "failed", reason: "invalid thread id" });
-  if (!message.trim()) return Promise.resolve({ state: "failed", reason: "empty message" });
-  if (options.signal?.aborted) return Promise.resolve({ state: "failed", reason: "stopped" });
-  const platform = options.platform ?? process.platform;
-  const run = options.spawnFn ?? spawn;
-  const args = ["thread", "send", "--json", threadId, "-"];
-  return new Promise((resolve2) => {
-    let child;
-    try {
-      child = platform === "win32" ? run(process.env.ComSpec || "cmd.exe", ["/d", "/s", "/c", `""${cli}" ${args.join(" ")}"`], { env: options.env, windowsHide: true, windowsVerbatimArguments: true, stdio: ["pipe", "pipe", "pipe"] }) : run(cli, args, { env: options.env, stdio: ["pipe", "pipe", "pipe"] });
-    } catch (error) {
-      resolve2({ state: "failed", reason: `could not start the T3 CLI: ${error.message}` });
-      return;
-    }
-    let out = "", settled = false;
-    const onAbort = () => {
-      killTree(child, platform, run);
-      finish({ state: "unknown", reason: "stopped" });
-    };
-    const finish = (outcome) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      options.signal?.removeEventListener("abort", onAbort);
-      resolve2(outcome);
-    };
-    const timer = setTimeout(() => {
-      killTree(child, platform, run);
-      finish({ state: "unknown", reason: "the T3 CLI did not answer in time" });
-    }, options.timeoutMs ?? T3_SEND_TIMEOUT_MS);
-    timer.unref();
-    options.signal?.addEventListener("abort", onAbort, { once: true });
-    child.stdout?.on("data", (chunk) => {
-      if (out.length < MAX_OUTPUT) out += chunk.toString("utf8");
-    });
-    child.stderr?.resume();
-    child.on("error", (error) => finish({ state: "failed", reason: `could not start the T3 CLI: ${error.message}` }));
-    child.on("close", (code) => {
-      const receipt2 = parseReceipt(out, threadId);
-      if (code === 0 && receipt2) finish({ state: "accepted", ...receipt2 });
-      else finish({ state: "unknown", reason: code === 0 ? "the T3 CLI gave no receipt" : `the T3 CLI exited with ${code}` });
-    });
-    child.stdin?.on("error", () => {
-    });
-    child.stdin?.end(message, "utf8");
-  });
-}
-function killTree(child, platform, run) {
-  if (platform === "win32" && child.pid) {
-    try {
-      const killer = run("taskkill", ["/pid", String(child.pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
-      killer.on("error", () => {
-        try {
-          child.kill();
-        } catch {
-        }
-      });
-      const bound = setTimeout(() => {
-        try {
-          killer.kill();
-        } catch {
-        }
-      }, 1e4);
-      bound.unref();
-      killer.on("close", () => clearTimeout(bound));
-      return;
-    } catch {
-    }
-  }
-  try {
-    child.kill();
-  } catch {
-  }
-}
-function parseReceipt(out, threadId) {
-  const line = out.trim().split(/\r?\n/).reverse().find((l) => l.startsWith("{"));
-  if (!line) return void 0;
-  try {
-    const r = JSON.parse(line);
-    if (r.threadId !== threadId || typeof r.delivery !== "string") return void 0;
-    return { delivery: r.delivery, runId: typeof r.runId === "string" ? r.runId : null };
-  } catch {
-    return void 0;
-  }
-}
-
 // src/mcp/server.ts
 import { homedir } from "node:os";
 
@@ -3854,108 +3751,6 @@ function deriveJobTitle(prompt, maxChars = 80) {
   const line = prompt.split(/\r?\n/).find((line2) => line2.trim())?.trim() ?? "";
   const title = line.replace(/^(?:#{1,6}\s+|[-*]\s+)/, "").split(/\s+/).slice(0, 7).join(" ");
   return title.slice(0, maxChars).trim() || "Background task";
-}
-
-// src/mcp/server-lifecycle.ts
-var SHUTDOWN_STEP_MS = 3e3;
-var NODE_STOP_MS = 8e3;
-var SHUTDOWN_DEADLINE_MS = 3 * SHUTDOWN_STEP_MS + NODE_STOP_MS + 1e3;
-var PARENT_CHECK_MS = 5e3;
-var PARENT_IDENTITY_CHECK_MS = 10 * 6e4;
-function comparePrerelease(a, b) {
-  const x = a.split("."), y = b.split(".");
-  for (let i = 0; i < Math.min(x.length, y.length); i++) {
-    const p = x[i], q = y[i];
-    const pn = /^\d+$/.test(p), qn = /^\d+$/.test(q);
-    if (pn && qn) {
-      const d = Number(p) - Number(q);
-      if (d) return Math.sign(d);
-      continue;
-    }
-    if (pn !== qn) return pn ? -1 : 1;
-    if (p !== q) return p < q ? -1 : 1;
-  }
-  return Math.sign(x.length - y.length);
-}
-function compareVersions(a, b) {
-  const parse = (v) => {
-    const m = /^v?(\d+(?:\.\d+)*)(?:-([0-9A-Za-z.-]+))?(?:\+.*)?$/.exec(v.trim());
-    return m ? { nums: m[1].split(".").map(Number), pre: m[2] ?? null } : null;
-  };
-  const x = parse(a), y = parse(b);
-  if (!x || !y) return null;
-  for (let i = 0; i < Math.max(x.nums.length, y.nums.length); i++) {
-    const d = (x.nums[i] ?? 0) - (y.nums[i] ?? 0);
-    if (d) return Math.sign(d);
-  }
-  if (x.pre === y.pre) return 0;
-  if (x.pre === null) return 1;
-  if (y.pre === null) return -1;
-  return comparePrerelease(x.pre, y.pre);
-}
-function shouldYieldTo(replacement, own) {
-  if (!replacement?.version || compareVersions(replacement.version, own.version) !== 1) return false;
-  if (!own.parentIdentity || !replacement.agentStartedAt || !Number.isSafeInteger(replacement.agentPid)) return false;
-  return replacement.agentPid === own.ppid && replacement.agentStartedAt === own.parentIdentity;
-}
-async function runShutdownSteps(steps, opts = {}) {
-  for (const step of steps) {
-    opts.onStep?.(step.name);
-    const budgetMs = step.budgetMs ?? SHUTDOWN_STEP_MS;
-    let timer;
-    const timedOut = /* @__PURE__ */ Symbol("timeout");
-    const outcome = await Promise.race([
-      Promise.resolve().then(step.run).catch(() => void 0),
-      new Promise((resolve2) => {
-        timer = setTimeout(() => resolve2(timedOut), budgetMs);
-        timer.unref();
-      })
-    ]);
-    if (timer) clearTimeout(timer);
-    if (outcome === timedOut) opts.onTimeout?.(step.name, budgetMs);
-  }
-}
-function pidExists(pid) {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return error.code === "ESRCH" ? false : void 0;
-  }
-}
-function watchParent(opts) {
-  const checkMs = opts.checkMs ?? PARENT_CHECK_MS;
-  const identityEvery = Math.max(1, Math.round((opts.identityCheckMs ?? PARENT_IDENTITY_CHECK_MS) / checkMs));
-  const currentPpid = opts.currentPpid ?? (() => process.ppid);
-  const alive = opts.alive ?? pidExists;
-  const readIdentity = opts.readIdentity ?? ((pid) => readProcessIdentity(pid));
-  let ticks = 0, busy = false, done = false;
-  const gone = (reason) => {
-    if (done) return;
-    done = true;
-    clearInterval(timer);
-    opts.onGone(reason);
-  };
-  const timer = setInterval(() => {
-    if (done || busy || !Number.isSafeInteger(opts.ppid) || opts.ppid <= 1) return;
-    if (process.platform !== "win32" && currentPpid() !== opts.ppid) return gone(`parent ${opts.ppid} ended (re-parented)`);
-    const exists = alive(opts.ppid);
-    if (exists === false) return gone(`parent ${opts.ppid} ended`);
-    if (exists === void 0 || ++ticks % identityEvery) return;
-    busy = true;
-    void (async () => {
-      const [expected, current] = await Promise.all([opts.identity, readIdentity(opts.ppid)]);
-      if (expected && current && current !== expected) gone(`parent ${opts.ppid} ended (PID reused)`);
-    })().catch(() => {
-    }).finally(() => {
-      busy = false;
-    });
-  }, checkMs);
-  timer.unref();
-  return () => {
-    done = true;
-    clearInterval(timer);
-  };
 }
 
 // src/mcp/claude-mail-scope.ts
@@ -4128,7 +3923,7 @@ function pathFromUriOrPath(v) {
       return null;
     }
   }
-  return isAbsolute2(v) ? v : null;
+  return isAbsolute(v) ? v : null;
 }
 function text(s, isError = false) {
   return { content: [{ type: "text", text: s }], ...isError ? { isError: true } : {} };
@@ -4264,7 +4059,7 @@ async function startServer(argv = process.argv.slice(2)) {
     token: loadOrCreateToken(home),
     dbPath: resolveDbPath(home),
     daemon: cfg.daemon.enabled ? {
-      cli: join7(bundleDirectory(import.meta.url), "cli.mjs"),
+      cli: join6(bundleDirectory(import.meta.url), "cli.mjs"),
       dashboard: () => cfg.dashboard && !ctx.headless,
       config: () => ({ network: cfg.network, mobile: mobileAtStartup, dashboardPort: mobilePortAtStartup })
     } : void 0,
@@ -4289,7 +4084,7 @@ async function startServer(argv = process.argv.slice(2)) {
     const parentJob = process.env[PARENT_JOB_ENV];
     const rootSession = process.env[ROOT_SESSION_ENV];
     const coordinator = ctx.childInbox = new LocalCoordinator(parentJob, rootSession);
-    ctx.jobs = new JobManager(coordinator, log.child("jobs"), join7(home, JOBS_FILE), cfg.maxJobs, {
+    ctx.jobs = new JobManager(coordinator, log.child("jobs"), join6(home, JOBS_FILE), cfg.maxJobs, {
       parentJob,
       rootSession,
       rootName: process.env[ROOT_NAME_ENV] || ctx.parent.name,
@@ -4302,7 +4097,7 @@ async function startServer(argv = process.argv.slice(2)) {
       const id3 = museEnvSessionId();
       if (id3) await node.setSessionId(id3);
     }
-    ctx.jobs = new JobManager(node, log.child("jobs"), join7(home, JOBS_FILE), cfg.maxJobs, void 0, {
+    ctx.jobs = new JobManager(node, log.child("jobs"), join6(home, JOBS_FILE), cfg.maxJobs, void 0, {
       canRestore: () => node.isConnected && (agent !== "claude" || ctx.restoreEligible === true),
       canReceiveHandoff: () => node.isConnected
     });
@@ -4426,7 +4221,7 @@ async function startServer(argv = process.argv.slice(2)) {
       }
       if (mobileAtStartup && node) {
         try {
-          mobileDashboard ??= import("./chunks/activation-TTCOPTHL.mjs").then(({ configuredMobileDashboard }) => configuredMobileDashboard(
+          mobileDashboard ??= import("./chunks/activation-BCDOFEWY.mjs").then(({ configuredMobileDashboard }) => configuredMobileDashboard(
             node,
             mobileAtStartup,
             { home, pipe: resolvePipePath(home), port: mobilePortAtStartup, log: log.child("mobile") }
@@ -4438,9 +4233,9 @@ async function startServer(argv = process.argv.slice(2)) {
           mobileUnavailable = () => "restart_required";
         }
       }
-      dashboard ??= import("./chunks/dashboard-CJDVXLKV.mjs").then(({ DashboardController }) => new DashboardController({ home, pipe: resolvePipePath(home), port: cfg.dashboardPort, log: log.child("dashboard"), ...mobileUnavailable ? { mobileStatus: () => mobileUnavailable() } : {} }));
+      dashboard ??= import("./chunks/dashboard-3L4DKRBY.mjs").then(({ DashboardController }) => new DashboardController({ home, pipe: resolvePipePath(home), port: cfg.dashboardPort, log: log.child("dashboard"), ...mobileUnavailable ? { mobileStatus: () => mobileUnavailable() } : {} }));
       const info = await (await dashboard).ensure();
-      return mobileUnavailable ? (await import("./chunks/dashboard-CJDVXLKV.mjs")).withMobileUnavailable(info, mobileUnavailable()) : info;
+      return mobileUnavailable ? (await import("./chunks/dashboard-3L4DKRBY.mjs")).withMobileUnavailable(info, mobileUnavailable()) : info;
     } catch (err) {
       log.warn("could not start the dashboard", { err: err.message, port: cfg.dashboardPort });
       return null;
@@ -4555,11 +4350,11 @@ async function startServer(argv = process.argv.slice(2)) {
       adopt();
       setTimeout(adopt, STAND_IN_RECHECK_MS).unref();
     });
-    const join8 = () => node.start().catch((err) => log.error("could not join the bridge", { err: err.message }));
+    const join7 = () => node.start().catch((err) => log.error("could not join the bridge", { err: err.message }));
     if (ctx.headless) {
       log.info("headless claude -p run: not joining the bridge unless a bridge tool is used");
     } else if (cwdKnown && agent !== "codex") {
-      void join8();
+      void join7();
     } else {
       log.info("project directory unknown yet; waiting for host metadata before bridge join");
     }
@@ -4848,8 +4643,8 @@ ${JSON.stringify(result)}`);
     },
     guarded("search_history", async (a) => {
       const { answer, ...args } = a;
-      const result = ctx.node ? await ctx.node.searchHistory(args) : (await import("./chunks/history-6CXNFSYY.mjs")).readHistory(resolveDbPath(ctx.home), args);
-      return text(JSON.stringify(answer ? { ...result, answer: await (await import("./chunks/history-answer-5QCDG35Y.mjs")).answerHistory(a.query, result, cfg, ctx.home, log) } : result));
+      const result = ctx.node ? await ctx.node.searchHistory(args) : (await import("./chunks/history-KVSZIBHW.mjs")).readHistory(resolveDbPath(ctx.home), args);
+      return text(JSON.stringify(answer ? { ...result, answer: await (await import("./chunks/history-answer-CPODZEC6.mjs")).answerHistory(a.query, result, cfg, ctx.home, log) } : result));
     })
   );
   register("get_conversation", {
@@ -4857,7 +4652,7 @@ ${JSON.stringify(result)}`);
     description: "Read a locally retained conversation by the id from search_history, in pages: exact raw bytes (base64) plus text chunks with source offsets. Pass returned next as after; concatenate chunks per source/generation to rebuild JSONL or a SQLite snapshot. No model calls, no network export.",
     inputSchema: { ...conversationPageSchema.shape, ...mailScopeSchema },
     annotations: { readOnlyHint: true }
-  }, guarded("get_conversation", async (args) => text(JSON.stringify(ctx.node ? await ctx.node.getConversation(args) : (await import("./chunks/conversations-M5VUODFX.mjs")).readConversationFile(resolveDbPath(ctx.home), args)))));
+  }, guarded("get_conversation", async (args) => text(JSON.stringify(ctx.node ? await ctx.node.getConversation(args) : (await import("./chunks/conversations-PZBQ2HL2.mjs")).readConversationFile(resolveDbPath(ctx.home), args)))));
   register(
     "decide",
     {
@@ -5066,6 +4861,7 @@ ${JSON.stringify(result)}`);
           others.length ? { header: t("peers.header", { count: others.length }), category: "peers" } : { info: filtered ? "No other peers match the filters." : t("peers.none") },
           ...sorted(sort, others, (p) => p.name).map((p) => ({ category: "peers", entry: formatPeer(p) + (p.frontend ? `; T3 thread ${p.frontend.threadId} (provider instance ${p.frontend.providerInstanceId})` : "") }))
         ];
+        for (const info of formatMachineSkew(others)) lines.push({ info });
         if (ctx.t3Host) lines.push({ info: `T3 host binding: ${JSON.stringify(ctx.t3Host.binding)}. Provider session: ${n.currentSessionId ?? "unknown"}.` });
         if (nativeChildren.length) lines.push({ header: nativeChildren[0], category: "native" }, ...nativeChildren.slice(1).map((entry) => ({ category: "native", entry })));
         if (health) lines.push({ info: formatHealth(health) });
@@ -5241,11 +5037,17 @@ ${jobLines.join("\n")}`);
     "send_status",
     {
       title: "Look up sent message",
-      description: 'Look up your sent message by UUID in broker storage and archives (no wait for history indexing). "stored" proves persistence only - not delivery or consumption. "pending"/"not_stored" describe this instant; an in-flight send may still store. Retry with the same message_id to avoid duplicates.',
-      inputSchema: { message_id: external_exports.uuid() },
+      description: 'Look up your sent message by UUID in broker storage and archives (no wait for history indexing), or with to=<address> list your latest stored sends to it (for a send interrupted before it returned an id). "stored" proves persistence only - not delivery or consumption. "pending"/"not_stored" describe this instant; an in-flight send may still store. Retry with the same message_id to avoid duplicates.',
+      inputSchema: {
+        message_id: external_exports.uuid().optional(),
+        to: external_exports.string().min(1).max(256).optional().describe("Instead of message_id: list your latest stored sends to this address among recent mail (for a send that was interrupted before it returned an id)")
+      },
       annotations: { readOnlyHint: true }
     },
-    guarded("send_status", async (a) => text(JSON.stringify(await requireNode().sendState(a.message_id), null, 2)))
+    guarded("send_status", async (a) => {
+      if (Boolean(a.message_id) === Boolean(a.to)) throw new BridgeError("bad_request", "Give either message_id or to.");
+      return text(JSON.stringify(a.message_id ? await requireNode().sendState(a.message_id) : await requireNode().sentTo(a.to), null, 2));
+    })
   );
   if (node && ctx.agent === "claude") register("native_child_grant", {
     title: "Grant native child message access",
@@ -5286,10 +5088,11 @@ ${jobLines.join("\n")}`);
       description: "Deliver files/folders to an online peer's inbox. Paired PCs: bounded chunks, SHA-256, restart resume; returns a transfer id at once. Progress is in the dashboard and inbox on request; only completed/failed/cancelled results arrive automatically. Limit: network.maxTransferBytes (default 8 GiB); older brokers and local delivery: 1 MiB / 128 entries. Symlinks/junctions rejected; received files are never executed.",
       inputSchema: {
         to: external_exports.string().min(1).describe("Peer name, including host/peer for a paired instance"),
-        paths: external_exports.array(external_exports.string().min(1)).min(1).max(MAX_STREAM_ENTRIES).describe("Files/folders: absolute, or relative to this session's cwd")
+        paths: external_exports.array(external_exports.string().min(1)).min(1).max(MAX_STREAM_ENTRIES).describe("Files/folders: absolute, or relative to this session's cwd"),
+        destination: external_exports.enum(["downloads"]).optional().describe("Paired PC only: also place the received files in that PC's Downloads folder (new names, never overwriting; the inbox copy stays). On by default; a PC turns it off with network.transferDestinations: {}. Both sides are told where the files went")
       }
     },
-    guarded("send_files", async (args) => text(JSON.stringify(await requireNode().sendFiles(args.to, args.paths), null, 2)))
+    guarded("send_files", async (args) => text(JSON.stringify(await requireNode().sendFiles(args.to, args.paths, args.destination), null, 2)))
   );
   register(
     "fetch_files",
@@ -5412,7 +5215,7 @@ ${jobLines.join("\n")}`);
         reply_to: a.reply_to,
         conversation_id: a.conversation_id,
         read_receipt_of: a.read_receipt_of
-      }, mode);
+      }, mode, ctx.userTurn === true);
       const filters = record.filters;
       if (mode === "notify") {
         const existing = n.unread().find((m) => !completionAwaitingReceipt(ctx, m.id) && !oversizedMessageNoted(ctx, m.id) && matchesNotificationWait(filters, m));
@@ -5967,7 +5770,7 @@ Saved settings: ${Object.entries(settings).map(([key, value]) => `${key}=${value
         if (!privateChecklistLineage) throw new BridgeError("unauthorized", "Checklist access requires an authenticated broker or this job's private delegated coordinator.");
         const owned = await findJob(a.job);
         if (!owned || owned.name !== a.job) throw new BridgeError("unauthorized", "No direct child with that exact identity is owned by this coordinator.");
-        const path = join7(home, JOBS_FILE), lineage = privateChecklistLineage;
+        const path = join6(home, JOBS_FILE), lineage = privateChecklistLineage;
         let durableJob;
         const authorize = () => {
           const row = readChecklistAuthority(path, owned);
