@@ -404,7 +404,10 @@ async function runHook(ctx: ServerContext, input: HookInput, current: () => bool
   const wakeTurn = input.event === "UserPromptSubmit" && Boolean(input.prompt?.includes(WAKE_HEADER));
   // The mod's wake prompt carries its message ids: shown now, wherever they were handed out (AB-396).
   if (wakeTurn) ctx.wakeDelivery?.confirmPrompt?.(input.prompt!);
+  // AB-494: a user turn lasts until its Stop. Whatever continues after a Stop (a Stop hook that delivers mail and
+  // blocks, an async rewake) is a wake-up, not the user's turn, so reply waits armed there keep the hop guard.
   if (input.event === "UserPromptSubmit") ctx.userTurn = !wakeTurn;
+  else if (input.event === "Stop") ctx.userTurn = false;
   if (input.event === "PostToolUse" || input.event === "Stop" || wakeTurn) ctx.wakeDelivery?.confirm();
   else ctx.wakeDelivery?.release();
   if (input.event === "PostToolUse" || input.event === "UserPromptSubmit") ctx.wakeDelivery?.active();
