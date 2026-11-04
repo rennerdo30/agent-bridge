@@ -96,6 +96,20 @@ describe("durable notification waits", () => {
     expect(store.pending(node)).toEqual([]);
   });
 
+  it("AB-494: an awaited reply wakes the session past the hop limit; other mail at that hop does not", async () => {
+    const client = await clientFor();
+    const filters = { from: "mac/peer", reply_to: randomUUID() };
+    expect(textOf(await call(client, filters))).toContain("is armed");
+    const answer = mail({ replyTo: filters.reply_to, hop: cfg.maxHops + 40 });
+    const unrelated = mail({ hop: cfg.maxHops + 40 });
+    node.deliverLocal(answer); node.deliverLocal(unrelated);
+    expect(shouldWakeClaudeMessage(node, cfg, answer)).toBe(true);
+    expect(shouldWakeClaudeMessage(node, cfg, unrelated)).toBe(false);
+    expect(shouldWakeClaudeMessage(node, cfg, { ...answer, conversationId: `${answer.conversationId}:note` })).toBe(false);
+    const out = JSON.stringify(await buildHookResponse(ctx, { event: "Stop", sessionId: null, stopHookActive: false }));
+    expect(out).toContain(answer.id); expect(out).not.toContain(unrelated.id);
+  });
+
   it("keeps a handed-out reply and its subscription when wake delivery is lost", async () => {
     const client = await clientFor(); await call(client, { from: "mac/peer" });
     const endpoint = new RewakeEndpoint(env.home, node, (m) => shouldWakeClaudeMessage(node, cfg, m), nullLogger);

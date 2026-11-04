@@ -149,6 +149,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   private readonly asked = new Set<string>();
   private notificationMatch: (m: BridgeMessage) => boolean = () => false;
   private notificationConsumed: (messages: BridgeMessage[]) => void = () => {};
+  private replyWaitMatch: (m: BridgeMessage) => boolean = () => false;
   private activity: PeerActivity | null = null;
   private unavailable = false;
   private readonly log: Logger;
@@ -1102,12 +1103,16 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     catch (err) { this.log.warn("could not archive completed notification wait", { err: String(err) }); }
   }
 
-  setNotificationWaitHandlers(matches: (m: BridgeMessage) => boolean, consumed: (messages: BridgeMessage[]) => void): void {
+  setNotificationWaitHandlers(matches: (m: BridgeMessage) => boolean, consumed: (messages: BridgeMessage[]) => void,
+    replyWaitMatches: (m: BridgeMessage) => boolean = () => false): void {
     this.notificationMatch = matches;
     this.notificationConsumed = consumed;
+    this.replyWaitMatch = replyWaitMatches;
   }
 
   isNotificationAwaited(m: BridgeMessage): boolean { return this.notificationMatch(m); }
+  /** AB-494: an armed notify wait scoped to replies to one message (reply_to) matches this message. */
+  isReplyWaitAwaited(m: BridgeMessage): boolean { return this.replyWaitMatch(m); }
   notificationWaitsChanged(): void { this.emit("notification_waits_changed"); }
 
   private restoreReadState(identity: string): void {

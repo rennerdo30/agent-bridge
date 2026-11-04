@@ -88,6 +88,7 @@ export class MessageWaitStore {
           if (r.mode === "notify" && messages.some((m) => matchesNotificationWait(r.filters, m))) this.remove(r.id);
         }
       },
+      (m) => m.replyTo !== null && this.pending(node).some((r) => r.mode === "notify" && Boolean(r.filters.reply_to) && matchesNotificationWait(r.filters, m)),
     );
   }
 }

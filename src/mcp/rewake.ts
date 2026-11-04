@@ -100,7 +100,12 @@ export function sessionFile(home: string, sessionId: string): string {
 
 /** Remote envelopes preserve host/name in to; recipient is the receiving PC's local name. */
 export function shouldWakeClaudeMessage(node: BridgeNode, cfg: BridgeConfig, m: BridgeMessage): boolean {
-  if (m.hop >= cfg.maxHops || isQuietMessage(m) || m.conversationId.endsWith(":note")) return false;
+  if (isQuietMessage(m) || m.conversationId.endsWith(":note")) return false;
+  // AB-494: the reply to one of this session's messages that it armed a reply_to wait for wakes it at any hop.
+  // The hop limit stops agents replying to each other forever; such a wait names one reply and is consumed by its
+  // delivery, so it cannot loop. Broader waits (from, conversation) keep the hop guard.
+  if (node.isReplyWaitAwaited(m)) return true;
+  if (m.hop >= cfg.maxHops) return false;
   const direct = m.to === node.name ||
     (m.recipient === node.name && m.to !== BROADCAST && !(AGENT_KINDS as readonly string[]).includes(m.to)) ||
     (m.from.id.includes("/") && m.to.slice(m.to.indexOf("/") + 1) === node.name);
