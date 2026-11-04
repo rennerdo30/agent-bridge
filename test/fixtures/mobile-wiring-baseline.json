@@ -1,7 +1,7 @@
 {
   "base": "8deb0286773a6b61243caaae237e16227dc2f591",
   "methods": {
-    "src/core/broker.ts:constructor": "cf5d6f03176b1b78dfd3c9d5f93f4e7d166c58d18121240c94c5d3092f1ffd1f",
+    "src/core/broker.ts:constructor": "e8f3265ae9cad0a891a45f0b190dd43be28914b082d698e2763adf598a24b5a1",
     "src/core/broker.ts:listen": "bd39e0afecb5a74d76161f26d5923f2c1e41da8cc490ed1448a9260b850ce4b0",
     "src/core/broker.ts:startServices": "a494d2cfac0d0fa9710ac60d5cf0e029e12f40fa17194c79021225f06a539a24",
     "src/core/broker.ts:abortStartup": "6132967fa78fd39cff064a581f4f49bb9c1c75b644fba78b291708c58733118c",
@@ -19,7 +19,7 @@
   "updates": {
     "AB-493-sent-lookup": {
       "base": "722d6dda",
-      "changes": [{ "method": "src/core/broker.ts:constructor", "previous": "e3c1d7faa42531dee82124fa1309c78003e4719718b32ced1d16525d15c285b6", "current": "cf5d6f03176b1b78dfd3c9d5f93f4e7d166c58d18121240c94c5d3092f1ffd1f" }],
+      "changes": [{ "method": "src/core/broker.ts:constructor", "previous": "e3c1d7faa42531dee82124fa1309c78003e4719718b32ced1d16525d15c285b6", "current": "e8f3265ae9cad0a891a45f0b190dd43be28914b082d698e2763adf598a24b5a1" }],
       "reason": "AB-493: the constructor's handler table gains a read-only sentTo request (the caller's own latest stored sends to one address, via MessageStore.sentBy and receipts). No mobile resources, routes, timers, listeners, listen, startServices, abortStartup or close control flow change; those pins are unchanged.",
       "commit": "same commit as this pin"
     },

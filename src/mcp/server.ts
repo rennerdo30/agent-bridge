@@ -1450,7 +1450,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
     { title: "Look up sent message", description: "Look up your sent message by UUID in broker storage and archives (no wait for history indexing), or with to=<address> list your latest stored sends to it (for a send interrupted before it returned an id). \"stored\" proves persistence only - not delivery or consumption. \"pending\"/\"not_stored\" describe this instant; an in-flight send may still store. Retry with the same message_id to avoid duplicates.",
       inputSchema: {
         message_id: z.uuid().optional(),
-        to: z.string().min(1).max(256).optional().describe("Instead of message_id: list your latest stored sends to this address (for a send that was interrupted before it returned an id)"),
+        to: z.string().min(1).max(256).optional().describe("Instead of message_id: list your latest stored sends to this address among recent mail (for a send that was interrupted before it returned an id)"),
       }, annotations: { readOnlyHint: true } },
     guarded("send_status", async (a: { message_id?: string; to?: string }) => {
       if (Boolean(a.message_id) === Boolean(a.to)) throw new BridgeError("bad_request", "Give either message_id or to.");

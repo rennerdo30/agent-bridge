@@ -190,6 +190,9 @@ export function messageStoreHandleObservation(db: DatabaseSync) {
  * Durable message store. Only the broker process opens it, so there is a single writer at a time.
  * All statements are prepared once and bound with parameters.
  */
+/** AB-493: how many of the newest message rows a sent-message lookup reads. */
+const SENT_LOOKUP_ROWS = 20_000;
+
 export class MessageStore {
   #producerSealed = false;
   // No setter/retirement entry is exposed: actual committed-intent/joint-owner
@@ -521,16 +524,20 @@ export class MessageStore {
     });
   }
 
-  /** Eligibility never removes history or old queued messages. Unknown old names are skipped. */
-  /** AB-493: one sender's latest stored messages to one address (one row per message id), newest first. */
+  /**
+   * AB-493: one sender's latest stored messages to one address (one row per message id), newest first. No index
+   * covers sender and target, so only the newest SENT_LOOKUP_ROWS rows (by rowid, which costs nothing) are read:
+   * the lookup is for a send that just got interrupted, and it must never scan the whole table on the broker thread.
+   */
   sentBy(from: string, to: string, limit: number): BridgeMessage[] {
     return this.acceptedOperation("direct", () => {
-    const ids = this.statement(this.db, `SELECT id FROM messages WHERE from_name = ? AND to_target = ?
-      GROUP BY id ORDER BY MAX(created_at) DESC LIMIT ?`).all(from, to, limit).map((r) => String(r.id));
+    const ids = this.statement(this.db, `SELECT id FROM (SELECT id, from_name, to_target, created_at FROM messages ORDER BY rowid DESC LIMIT ?)
+      WHERE from_name = ? AND to_target = ? GROUP BY id ORDER BY MAX(created_at) DESC LIMIT ?`).all(SENT_LOOKUP_ROWS, from, to, limit).map((r) => String(r.id));
     return ids.flatMap((id) => { const m = this.byId(id); return m ? [m] : []; });
     });
   }
 
+  /** Eligibility never removes history or old queued messages. Unknown old names are skipped. */
   recentProjectSenders(address: string, previous: string, since: number): string[] {
     return this.acceptedOperation("direct", () => {
     return this.statement(this.db, `SELECT from_name FROM deliverable_messages WHERE to_target=? AND recipient=? AND created_at>=?

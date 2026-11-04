@@ -694,7 +694,7 @@ export class Broker {
       sentTo: (c, a) => {
         const args = z.object({ to: z.string().trim().min(1).max(256), limit: z.number().int().min(1).max(20).optional() }).strict().parse(a);
         const sender = this.requirePeer(c);
-        // Only the caller's own sends (by its current name), so nobody reads another session's outgoing mail.
+        // Only sends under the caller's current name (a session that took over a name also sees that name's sends).
         const messages = this.store.sentBy(sender.name, args.to, args.limit ?? 5).map((m) => ({ id: m.id, createdAt: m.createdAt,
           conversationId: m.conversationId, replyTo: m.replyTo, preview: m.body.slice(0, 160), receipts: this.store.receipts(m.id) }));
         return { to: args.to, checkedAt: this.now(), messages };
