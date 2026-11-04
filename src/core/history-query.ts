@@ -21,7 +21,7 @@ export const historyFiltersSchema = z.object({
 export const HISTORY_SEARCH_TOOL_DESCRIPTION =
   "Search local history: bridge messages and archives, owner decisions/questions, delegated run logs and job reports, and native claude/codex/opencode/antigravity/muse transcripts. " +
   "Use before starting or resuming work, after handoff/restart, and for any reference to an earlier decision, job, branch or message - search, do not guess or read log files. " +
-  "The query splits into at most 32 literal word/number tokens; hits must all match, in any order; only when nothing matches every word, the best partial matches are returned (partial: true); punctuation/quotes are dropped and OR or AND are searched as ordinary words. " +
+  "The query splits into at most 32 literal word/number tokens; hits must all match, in any order; only when nothing matches every word of a 3+ word query, documents matching all words but one are returned (partial: true); punctuation/quotes are dropped and OR or AND are searched as ordinary words. " +
   "Mail, decisions, reports and questions rank above transcript and run-log echoes; filter by kind to see only one source. " +
   "Put scoping ids (job, session, project) in filters, not only in the query. " +
   "Returns bounded snippets with stable ids/links; read a whole thread with get_conversation. " +
@@ -30,7 +30,7 @@ export const HISTORY_SEARCH_TOOL_DESCRIPTION =
 /** Published search_history input shape (the MCP SDK takes a raw shape). */
 export const historySearchToolInput = {
   query: z.string().trim().min(1).max(HISTORY_MAX_QUERY_CHARS)
-    .describe("Words that must all appear, in any order (if none match all, best partial matches are returned); punctuation/quotes dropped, OR/AND are ordinary words. Scope with filters (job, session, project)"),
+    .describe("Words that must all appear, in any order (if none match all of 3+ words, matches missing one word are returned); punctuation/quotes dropped, OR/AND are ordinary words. Scope with filters (job, session, project)"),
   filters: historyFiltersSchema.optional(),
   limit: z.number().int().min(1).max(HISTORY_MAX_LIMIT).optional().describe(`Maximum hits (1-${HISTORY_MAX_LIMIT}); raise it for broad questions`),
   answer: z.boolean().optional().describe("Also summarize hits with a cheap model (spends tokens); default false"),
@@ -45,7 +45,7 @@ export interface HistoryHit {
   id: string; kind: "message" | "run" | "decision" | "transcript" | "approval" | "progress" | "report" | "question"; agent: string; at: number;
   snippet: string; link: string; sourceLink: string; message: string | null; job: string | null; run: string | null;
   session: string | null; cursor: string | null; conversation?: string | null; project?: string | null;
-  /** AB-492: matches only some of the query's words (returned only when no document matches all of them). */
+  /** AB-492: matches all of the query's words but one (returned only when no document matches all of them). */
   partial?: true;
 }
 export interface HistoryResult {

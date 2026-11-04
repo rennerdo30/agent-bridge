@@ -725,19 +725,20 @@ export class HistoryIndex {
     const args = historySearchSchema.parse(input), tokens = terms(args.query);
     if (!tokens.length) return { engine: this.engine, hits: [] };
     const durable = this.statement(this.db, "SELECT name FROM sqlite_master WHERE name='conversation_records'").get();
-    // AB-492: when nothing matches every word, the best partial matches (any word, ranked by how well they
-    // match) are returned instead, marked partial. A natural-language query then still finds the discussion
-    // even when one of its words was never written.
+    // AB-492: when nothing matches every word, documents matching all words but one are returned instead,
+    // marked partial. A natural-language query then still finds the discussion when one of its words was never
+    // written. Each alternative is still an intersection led by its rarest word, so this never turns into a scan
+    // of every document that has one common word (history stores are tens of GB). Needs three or more words.
     const limit = args.limit ?? HISTORY_DEFAULT_LIMIT, seen = new Set<string>();
     const hits = this.searchRows(args, tokens, "all", durable, seen, limit);
-    if (!hits.length && tokens.length > 1) return { engine: this.engine, hits: this.searchRows(args, tokens, "any", durable, seen, limit).map((h) => ({ ...h, partial: true as const })) };
+    if (!hits.length && new Set(tokens).size > 2) return { engine: this.engine, hits: this.searchRows(args, [...new Set(tokens)], "all-but-one", durable, seen, limit).map((h) => ({ ...h, partial: true as const })) };
     return { engine: this.engine, hits };
   }
-  private searchRows(args: ReturnType<typeof historySearchSchema.parse>, tokens: string[], mode: "all" | "any", durable: unknown, seen: Set<string>, limit: number): HistoryHit[] {
+  private searchRows(args: ReturnType<typeof historySearchSchema.parse>, tokens: string[], mode: "all" | "all-but-one", durable: unknown, seen: Set<string>, limit: number): HistoryHit[] {
     const where: string[] = [], values: SQLInputValue[] = [];
-    if (this.engine === "fts5") { where.push("history_fts MATCH ?"); values.push(tokens.map((t) => `"${t}"`).join(mode === "all" ? " AND " : " OR ")); }
-    else if (mode === "all") for (const token of tokens) { where.push("instr(d.folded,?)>0"); values.push(token); }
-    else { where.push(`(${tokens.map(() => "instr(d.folded,?)>0").join(" OR ")})`); values.push(...tokens); }
+    const groups = mode === "all" ? [tokens] : tokens.map((_, skip) => tokens.filter((_, i) => i !== skip));
+    if (this.engine === "fts5") { where.push("history_fts MATCH ?"); values.push(groups.map((g) => `(${g.map((t) => `"${t}"`).join(" AND ")})`).join(" OR ")); }
+    else { where.push(`(${groups.map((g) => `(${g.map(() => "instr(d.folded,?)>0").join(" AND ")})`).join(" OR ")})`); for (const g of groups) values.push(...g); }
     for (const [key, value] of Object.entries(args.filters ?? {})) {
       if (key === "project") { where.push(durable ? "(EXISTS (SELECT 1 FROM conversation_records r JOIN conversations c ON c.id=r.conversation WHERE r.id=CAST(substr(d.id,9) AS INTEGER) AND d.id LIKE 'durable:%' AND c.project=?) OR EXISTS(SELECT 1 FROM history_tags t WHERE t.id=d.id AND t.type='project' AND t.value=?))" : "EXISTS (SELECT 1 FROM history_tags t WHERE t.id=d.id AND t.type='project' AND t.value=?)"); values.push(value); if(durable) values.push(value); }
       else if (["session", "job"].includes(key)) { where.push(`(EXISTS (SELECT 1 FROM history_tags t WHERE t.id=d.id AND
