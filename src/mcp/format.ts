@@ -124,10 +124,32 @@ function versionSkewNote(peer: string | undefined, own: string): string {
   return " · version skew (retained code)";
 }
 
+/**
+ * AB-499: one line per paired PC whose sessions run another agent-bridge version than this session: which side is
+ * behind, that cross-PC messages and files keep working, and that the owner updates that PC there.
+ */
+export function formatMachineSkew(peers: Pick<PeerInfo, "host" | "version">[], own: string = APP_VERSION): string[] {
+  const hosts = new Map<string, Set<string>>();
+  for (const p of peers) if (p.host) hosts.set(p.host, (hosts.get(p.host) ?? new Set()).add(p.version ?? "unknown"));
+  const lines: string[] = [];
+  for (const [host, set] of [...hosts].sort(([a], [b]) => a.localeCompare(b))) {
+    const versions = [...set].filter((v) => v !== own);
+    if (!versions.length) continue;
+    const listed = versions.map((v) => `v${v}`).join(", ");
+    const behind = versions.every((v) => compareVersions(v, own) === -1), ahead = versions.every((v) => compareVersions(v, own) === 1);
+    lines.push(`Paired PC ${host} runs agent-bridge ${listed}; this session runs v${own}. Messages and file transfers between them keep working. ` +
+      (behind ? `Features newer than ${listed} are missing on ${host} until the owner updates agent-bridge there (npx -y github:rennerdo30/agent-bridge update on that PC).`
+        : ahead ? `This session runs older code than ${host}; it gets the newer features after the owner updates this PC and the session restarts.`
+          : "Versions differ in both directions; the owner updates each PC to the same release."));
+  }
+  return lines;
+}
+
 export function formatPeer(p: PeerInfo, selfId?: string, now: number = Date.now(), version: string = APP_VERSION): string {
   const flags = [
     p.agent,
-    `v${p.version ?? "unknown"}${versionSkewNote(p.version, version)}`,
+    // AB-499: a paired PC's skew is one machine line (formatMachineSkew), not a tag on each of its sessions.
+    `v${p.version ?? "unknown"}${p.host ? "" : versionSkewNote(p.version, version)}`,
     p.activity ?? "activity unknown (no busy/idle report)",
     p.wakeOnDirect && p.wakeAvailable ? "direct messages wake this session" : null,
     p.autoWake ? "auto-wake" : p.activity === "idle" && !(p.wakeOnDirect && p.wakeAvailable) ? "auto-wake off: will be read on its next turn" : null,

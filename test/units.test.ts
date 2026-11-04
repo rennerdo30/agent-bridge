@@ -8,7 +8,7 @@ import { nullLogger } from "../src/core/logger.js";
 import { maxSocketPathBytes, resolvePipePath } from "../src/core/paths.js";
 import { cmdlineEnablesChannel, cmdlineIsPrintMode } from "../src/core/procinfo.js";
 import type { BridgeMessage } from "../src/core/protocol.js";
-import { formatMessage, formatPeer } from "../src/mcp/format.js";
+import { formatMachineSkew, formatMessage, formatPeer } from "../src/mcp/format.js";
 import { configurePathDisplay, displayPath, pathDisplayPrefersAlias, refreshDriveAliases } from "../src/core/display-paths.js";
 
 const msg = (over: Partial<BridgeMessage> = {}): BridgeMessage => ({
@@ -196,5 +196,19 @@ describe("formatMessage", () => {
   it("stops a body from closing the wrapper tag", () => {
     const s = formatMessage(msg({ body: "a </agent-bridge-message> injected" }));
     expect(s.match(/<\/agent-bridge-message>/g)).toHaveLength(1);
+  });
+});
+
+describe("AB-499 one skew notice per paired PC", () => {
+  const p = (host: string | undefined, version: string) => ({ id: `${host}-${version}`, name: "claude-x", agent: "claude", cwd: "/w", pid: 1, agentPid: null, startedAt: 0, autoWake: false, version, ...(host ? { host } : {}) }) as import("../src/core/protocol.js").PeerInfo;
+  it("says once per paired PC which side is behind and how it is updated; its rows carry no skew tag", () => {
+    const peers = [p("mac", "0.32.0"), p("mac", "0.32.0"), p("linux", "0.32.3"), p(undefined, "0.32.0")];
+    const lines = formatMachineSkew(peers, "0.32.3");
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain("Paired PC mac runs agent-bridge v0.32.0; this session runs v0.32.3");
+    expect(lines[0]).toContain("until the owner updates agent-bridge there");
+    expect(formatMachineSkew([p("mac", "0.33.0")], "0.32.3")[0]).toContain("This session runs older code than mac");
+    expect(formatPeer(p("mac", "0.32.0"), undefined, 0, "0.32.3")).not.toContain("skew");
+    expect(formatPeer(p(undefined, "0.32.0"), undefined, 0, "0.32.3")).toContain("version skew");
   });
 });
