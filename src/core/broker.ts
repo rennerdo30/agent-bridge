@@ -437,6 +437,9 @@ export class Broker {
   private readonly groups: ProjectGroups;
   /** AB-460: sessions T3 Code started for a delegated task are subagents, never project members. */
   private t3Lineages = new T3Lineages(localT3HistoryRoot());
+  /** AB-496: T3 home for chat lookups, and found chats per provider session (a chat's session id never changes). */
+  private t3Home = localT3HistoryRoot();
+  private readonly t3Chats = new Map<string, { thread: string | undefined; at: number }>();
   /**
    * AB-488: a T3 Code chat has no running session between turns, yet to its user it is open and reachable. Mail
    * queued for such a chat's session wakes the chat with a visible message through T3's own CLI, once per offline
@@ -1321,7 +1324,8 @@ export class Broker {
 
   /** Local sessions and paired remote peers; local job runners stay hidden (see job-host.ts). */
   private livePeers(): PeerInfo[] {
-    return this.localPeers().filter((p) => !p.jobAgent).map((p) => this.projectPeer(p)).concat(this.network?.peers() ?? []).filter((p) => !isPluginCacheCwd(p.cwd)).map(peer => this.publicPeer(peer));
+    return this.localPeers().filter((p) => !p.jobAgent).map((p) => { const peer = this.projectPeer(p), t3Chat = this.t3ChatOf(p); return t3Chat ? { ...peer, t3Chat } : peer; })
+      .concat(this.network?.peers() ?? []).filter((p) => !isPluginCacheCwd(p.cwd)).map(peer => this.publicPeer(peer));
   }
 
   /** The node's own registration is authoritative. Legacy observers must not
@@ -1353,7 +1357,26 @@ export class Broker {
   /** Test seam: the batch creation-identity reader used by the background liveness sweep. */
   setIdentityReader(reader: (pids: number[]) => Promise<Map<number, string>>): void { this.identityReader = reader; }
   /** Tests point the T3 lineage lookup at a synthetic T3 home. */
-  setT3Home(t3Home: string | undefined): void { this.t3Lineages = new T3Lineages(t3Home, this.now); this.t3OfflineWake = this.t3OfflineWakeFor(t3Home); }
+  setT3Home(t3Home: string | undefined): void {
+    this.t3Lineages = new T3Lineages(t3Home, this.now); this.t3OfflineWake = this.t3OfflineWakeFor(t3Home);
+    this.t3Home = t3Home; this.t3Chats.clear();
+  }
+
+  /**
+   * AB-496: the T3 chat a local session runs in. A miss is looked up again after a minute (T3 records it late), a
+   * hit after ten (an archived or deleted chat stops being advertised).
+   */
+  private t3ChatOf(peer: PeerInfo): string | undefined {
+    if (peer.frontend) return peer.frontend.threadId;
+    if (!this.t3Home || !isAbsolute(this.t3Home) || !peer.sessionId || peer.jobAgent || peer.host) return undefined;
+    const key = `${peer.agent}|${peer.sessionId}`, at = this.now(), hit = this.t3Chats.get(key);
+    if (hit && at >= hit.at && at - hit.at < (hit.thread ? 10 * 60_000 : 60_000)) return hit.thread;
+    let thread: string | undefined;
+    try { thread = t3ChatForNativeSession(this.t3Home, peer.sessionId); } catch { thread = undefined; }
+    if (this.t3Chats.size >= 4_096) this.t3Chats.delete(this.t3Chats.keys().next().value!);
+    this.t3Chats.set(key, { thread, at });
+    return thread;
+  }
   /** Test seam: replace how an offline session's T3 chat is found and messaged. */
   setT3OfflineWake(wake: Broker["t3OfflineWake"]): void { this.t3OfflineWake = wake; }
 
@@ -1656,7 +1679,8 @@ export class Broker {
     return peers.flatMap((peer) => {
       const job = jobs.find((j) => j.name === peer.name || `job:${j.id}` === peer.id);
       const field = (key: string): string | undefined => typeof job?.[key] === "string" ? job[key] as string : undefined;
-      return [{ ...this.projectPeer(peer), agent: peer.jobAgent ?? peer.agent, parentJob: field("parentJob") ?? peer.parentJob, rootSession: field("rootSession") ?? peer.rootSession ?? peer.jobOwner,
+      const t3Chat = peer.jobAgent ? undefined : this.t3ChatOf(peer);
+      return [{ ...this.projectPeer(peer), ...(t3Chat ? { t3Chat } : {}), agent: peer.jobAgent ?? peer.agent, parentJob: field("parentJob") ?? peer.parentJob, rootSession: field("rootSession") ?? peer.rootSession ?? peer.jobOwner,
         rootName: field("rootName") ?? peer.rootName ?? peer.jobParent, title: peer.jobTitle, subagent: Boolean(peer.jobAgent) }];
     });
   }
