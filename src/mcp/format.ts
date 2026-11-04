@@ -117,8 +117,8 @@ function formatUptime(ms: number): string {
  */
 function reachNote(p: PeerInfo): string | null {
   if (!p.t3Chat) return null;
-  if (p.host) return `T3 chat ${p.t3Chat} on ${p.host}: t3_thread_send only with a T3 environment link to that PC (t3_environment_links), else agent-bridge send`;
-  return `T3 chat ${p.t3Chat}: reach it with t3_thread_send`;
+  if (p.host) return `T3 chat ${p.t3Chat} on ${p.host} (T3 sessions: t3_thread_send only if this PC's T3 is linked to that PC; else agent-bridge send)`;
+  return `T3 chat ${p.t3Chat} (T3 sessions: reach it with t3_thread_send)`;
 }
 
 export function formatPeer(p: PeerInfo, selfId?: string, now: number = Date.now()): string {

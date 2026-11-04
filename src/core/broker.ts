@@ -1336,12 +1336,15 @@ export class Broker {
   /** Tests point the T3 lineage lookup at a synthetic T3 home. */
   setT3Home(t3Home: string | undefined): void { this.t3Lineages = new T3Lineages(t3Home, this.now); this.t3Home = t3Home; this.t3Chats.clear(); }
 
-  /** AB-496: the T3 chat a local session runs in; a miss is looked up again after a minute (T3 records it late). */
+  /**
+   * AB-496: the T3 chat a local session runs in. A miss is looked up again after a minute (T3 records it late), a
+   * hit after ten (an archived or deleted chat stops being advertised).
+   */
   private t3ChatOf(peer: PeerInfo): string | undefined {
     if (peer.frontend) return peer.frontend.threadId;
     if (!this.t3Home || !isAbsolute(this.t3Home) || !peer.sessionId || peer.jobAgent || peer.host) return undefined;
     const key = `${peer.agent}|${peer.sessionId}`, at = this.now(), hit = this.t3Chats.get(key);
-    if (hit && (hit.thread || at - hit.at < 60_000)) return hit.thread;
+    if (hit && at >= hit.at && at - hit.at < (hit.thread ? 10 * 60_000 : 60_000)) return hit.thread;
     let thread: string | undefined;
     try { thread = t3ChatForNativeSession(this.t3Home, peer.sessionId); } catch { thread = undefined; }
     if (this.t3Chats.size >= 4_096) this.t3Chats.delete(this.t3Chats.keys().next().value!);
