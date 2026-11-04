@@ -109,6 +109,8 @@ export interface PeerInfo {
   t3Child?: boolean;
   /** AB-460: a member whose T3 place is not known yet; no explicit main switch, checklist writes or fallback preference. */
   t3Pending?: boolean;
+  /** AB-496: the T3 Code chat (thread id) this session runs in, as its own PC's T3 store records it. */
+  t3Chat?: string;
   title?: string;
   host?: string;
   jobParent?: string;

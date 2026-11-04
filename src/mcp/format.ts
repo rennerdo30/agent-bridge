@@ -111,6 +111,16 @@ function formatUptime(ms: number): string {
   return h < 48 ? `${h}h${min % 60 ? ` ${min % 60}m` : ""}` : `${Math.floor(h / 24)}d`;
 }
 
+/**
+ * AB-496: how to reach a peer that is a T3 chat. One on this PC takes T3's own chat tools; one on a paired PC only
+ * through a T3 environment link to that PC. A row without this note is reachable only through the Bridge.
+ */
+function reachNote(p: PeerInfo): string | null {
+  if (!p.t3Chat) return null;
+  if (p.host) return `T3 chat ${p.t3Chat} on ${p.host}: t3_thread_send only with a T3 environment link to that PC (t3_environment_links), else agent-bridge send`;
+  return `T3 chat ${p.t3Chat}: reach it with t3_thread_send`;
+}
+
 export function formatPeer(p: PeerInfo, selfId?: string, now: number = Date.now()): string {
   const flags = [
     p.agent,
@@ -119,6 +129,7 @@ export function formatPeer(p: PeerInfo, selfId?: string, now: number = Date.now(
     p.wakeOnDirect && p.wakeAvailable ? "direct messages wake this session" : null,
     p.autoWake ? "auto-wake" : p.activity === "idle" && !(p.wakeOnDirect && p.wakeAvailable) ? "auto-wake off: will be read on its next turn" : null,
     `up ${formatUptime(now - p.startedAt)}`,
+    reachNote(p),
     p.id === selfId ? "you" : null,
   ]
     .filter(Boolean)

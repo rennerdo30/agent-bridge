@@ -192,3 +192,12 @@ describe("formatMessage", () => {
     expect(s.match(/<\/agent-bridge-message>/g)).toHaveLength(1);
   });
 });
+
+describe("AB-496 peer reach", () => {
+  const base = { id: "x", name: "claude-app", agent: "claude", cwd: "/w/app", pid: 1, agentPid: null, startedAt: 0, autoWake: false, version: "1.0.0" } as import("../src/core/protocol.js").PeerInfo;
+  it("names a local T3 chat and t3_thread_send, a paired PC's chat only with an environment link, and nothing for other sessions", () => {
+    expect(formatPeer({ ...base, t3Chat: "chat-1" })).toContain("T3 chat chat-1: reach it with t3_thread_send");
+    expect(formatPeer({ ...base, t3Chat: "chat-2", host: "mac" })).toContain("T3 chat chat-2 on mac: t3_thread_send only with a T3 environment link to that PC (t3_environment_links), else agent-bridge send");
+    expect(formatPeer(base)).not.toContain("T3 chat");
+  });
+});
