@@ -7,7 +7,7 @@ import type { Logger } from "../core/logger.js";
 import { resolveDbPath, resolveHome, resolvePipePath } from "../core/paths.js";
 import type { PeerInfo } from "../core/protocol.js";
 import { loadOrCreateToken } from "../core/token.js";
-import { formatPeer } from "../mcp/format.js";
+import { formatMachineSkew, formatPeer } from "../mcp/format.js";
 import { formatDecisionSummary, readDecisions, type OwnerDecision } from "../core/decisions.js";
 
 /**
@@ -63,6 +63,7 @@ export function sessionStartContext(name: string, peers: PeerInfo[] | null, deci
       : `[agent-bridge] Another live session already uses "${name}", so this session gets a suffixed agent-bridge name (for example "${name}-2"). ` +
         "Check your own name with the agent-bridge peers tool before using it (project_main, replies).",
     others.length ? `Peers online:\n${others.map((p) => formatPeer(p)).join("\n")}` : "No other agents are online right now.",
+    ...formatMachineSkew(others),
     formatDecisionSummary(decisions),
   ].filter(Boolean).join("\n");
 }

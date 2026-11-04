@@ -53,7 +53,7 @@ import { inspectClaudeLaunch } from "../core/procinfo.js";
 import { verifiedGoneJobOwners } from "../core/job-restoration.js";
 import { loadOrCreateToken } from "../core/token.js";
 import { BridgeError, BROADCAST, CODING_AGENTS, isQuietMessage, isUnsupportedOperation, SIBLING_CONVERSATION_PREFIX, TRANSFER_PROGRESS_PREFIX, type AgentKind, type BridgeMessage, type CodingAgent, type SendMode, type SendModeReport } from "../core/protocol.js";
-import { formatInboxMessages, formatProjectRoute, formatReplyRestrictions, formatDelivery, formatDuration, formatMessage, formatMessages, formatPeer, formatVersionSkew } from "./format.js";
+import { formatInboxMessages, formatProjectRoute, formatReplyRestrictions, formatDelivery, formatDuration, formatMessage, formatMessages, formatMachineSkew, formatPeer, formatVersionSkew } from "./format.js";
 import { CodexWaker, type Activity } from "./codex-wake.js";
 import { reportModActivity } from "./hook-ownership.js";
 import { codexCallIdentity, codexMainThreadAdmission, type CodexCallIdentity } from "./codex-lineage.js";
@@ -1288,6 +1288,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
             : { info: filtered ? "No other peers match the filters." : t("peers.none") },
           ...sorted(sort, others, (p) => p.name).map((p) => ({ category: "peers", entry: formatPeer(p) + (p.frontend ? `; T3 thread ${p.frontend.threadId} (provider instance ${p.frontend.providerInstanceId})` : "") })),
         ];
+        for (const info of formatMachineSkew(others)) lines.push({ info });
         if (ctx.t3Host) lines.push({ info: `T3 host binding: ${JSON.stringify(ctx.t3Host.binding)}. Provider session: ${n.currentSessionId ?? "unknown"}.` });
         if (nativeChildren.length) lines.push({ header: nativeChildren[0]!, category: "native" }, ...nativeChildren.slice(1).map((entry) => ({ category: "native", entry })));
         if (health) lines.push({ info: formatHealth(health) });

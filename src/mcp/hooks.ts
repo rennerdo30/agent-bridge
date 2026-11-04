@@ -1,7 +1,7 @@
 import { HOOK_MAX_MESSAGES, HOOK_BUDGET_MS } from "../core/constants.js";
 import { siblingMaxHops } from "../core/job-messaging.js";
 import { AGENT_KINDS, BROADCAST, isQuietMessage, type BridgeMessage } from "../core/protocol.js";
-import { formatMessage, formatMessages, formatParentMessages, formatPeer } from "./format.js";
+import { formatMessage, formatMessages, formatParentMessages, formatMachineSkew, formatPeer } from "./format.js";
 import { selectForDelivery, unshownMessageNotes } from "./output-bounds.js";
 import { MessageWaitStore, resumeWaitHint } from "./message-wait.js";
 import { shouldWakeClaudeMessage, WAKE_HEADER, wakeMessageIds } from "./rewake.js";
@@ -424,6 +424,7 @@ async function runHook(ctx: ServerContext, input: HookInput, current: () => bool
       const lines = [
         `[agent-bridge] You are connected to agent-bridge as "${node.name}".`,
         peers.length ? `Peers online:\n${peers.map((p) => formatPeer(p)).join("\n")}` : "No other agents are online right now.",
+        ...formatMachineSkew(peers),
       ];
       lines.push(...new MessageWaitStore(ctx.home).pending(node).map(resumeWaitHint));
       // AB-404: oversized messages listed by id before still count: they stay unread, and after /clear or a

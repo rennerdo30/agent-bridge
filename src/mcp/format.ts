@@ -134,10 +134,35 @@ function versionSkewNote(peer: string | undefined, own: string): string {
   return " · version skew (retained code)";
 }
 
+/**
+ * AB-499: one line per paired PC whose sessions run another agent-bridge version than this session: which side is
+ * behind, that cross-PC messages and files keep working, and that the owner updates that PC there.
+ */
+export function formatMachineSkew(peers: Pick<PeerInfo, "host" | "version">[], own: string = APP_VERSION): string[] {
+  const hosts = new Map<string, Set<string>>();
+  for (const p of peers) if (p.host) hosts.set(p.host, (hosts.get(p.host) ?? new Set()).add(p.version ?? "unknown"));
+  const lines: string[] = [];
+  for (const [host, set] of [...hosts].sort(([a], [b]) => a.localeCompare(b))) {
+    const versions = [...set].filter((v) => v !== own);
+    if (!versions.length) continue;
+    const listed = versions.map((v) => v === "unknown" ? "an unknown version" : `v${v}`).join(", ");
+    const order = versions.map((v) => compareVersions(v, own));
+    const behind = order.every((o) => o === -1), ahead = order.every((o) => o === 1);
+    lines.push(`Paired PC ${host} runs agent-bridge ${listed}; this session runs v${own}. Messages and file transfers between them keep working. ` +
+      (behind ? `Features newer than ${listed} are missing on ${host} until the owner updates agent-bridge there (npx -y github:rennerdo30/agent-bridge update on that PC).`
+        : ahead ? `This session runs older code than ${host}: restarting this session picks up a newer agent-bridge already installed here; if this PC's install is older too, the owner updates it.`
+          : order.some((o) => o === null || o === 0)
+            ? `The versions cannot be compared (unknown or different builds); the owner updates both PCs to the same release.`
+            : `Its sessions run both older and newer code than this session; the owner updates both PCs to the same release.`));
+  }
+  return lines;
+}
+
 export function formatPeer(p: PeerInfo, selfId?: string, now: number = Date.now(), version: string = APP_VERSION): string {
   const flags = [
     p.agent,
-    `v${p.version ?? "unknown"}${versionSkewNote(p.version, version)}`,
+    // AB-499: a paired PC's skew is one machine line (formatMachineSkew), not a tag on each of its sessions.
+    `v${p.version ?? "unknown"}${p.host ? "" : versionSkewNote(p.version, version)}`,
     p.activity ?? "activity unknown (no busy/idle report)",
     p.wakeOnDirect && p.wakeAvailable ? "direct messages wake this session" : null,
     p.autoWake ? "auto-wake" : p.activity === "idle" && !(p.wakeOnDirect && p.wakeAvailable) ? "auto-wake off: will be read on its next turn" : null,
