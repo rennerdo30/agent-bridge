@@ -482,6 +482,15 @@ export class MessageStore {
     });
   }
 
+  /** AB-488: the provider session that last owned a name, to find its T3 Code chat while it is offline. */
+  lastSessionForName(name: string): { agent: string; sessionId: string } | undefined {
+    return this.acceptedOperation("direct", () => {
+    const row = this.statement(this.db, `SELECT pn.agent AS agent, pn.session_id AS session_id FROM peer_name_owners o
+      JOIN peer_names pn ON pn.name = o.name AND pn.identity = o.identity WHERE o.name = ? AND pn.session_id IS NOT NULL LIMIT 1`).get(name);
+    return row && typeof row.agent === "string" && typeof row.session_id === "string" ? { agent: row.agent, sessionId: row.session_id } : undefined;
+    });
+  }
+
   /** Presence updates never change the identity that currently owns a name. */
   markPeerSeen(name: string, at: number): void {
     return this.acceptedOperation("direct", () => {
