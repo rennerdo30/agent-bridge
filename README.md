@@ -11,8 +11,8 @@
 </p>
 
 <p align="center">
-  <a href="https://rennerdo30.github.io/agent-bridge/"><b>Website</b></a> ·
-  <a href="https://rennerdo30.github.io/agent-bridge/overview/">Documentation</a> ·
+  <a href="https://agent-bridge.renner.dev/"><b>Website</b></a> ·
+  <a href="https://agent-bridge.renner.dev/overview/">Documentation</a> ·
   <a href="#install">Install</a> ·
   <a href="CHANGELOG.md">Changelog</a> ·
   <a href="https://github.com/rennerdo30/agent-bridge/issues">Issues</a> ·
@@ -73,7 +73,7 @@ It runs entirely on your machines. There is no account and no server of ours: on
 | Paired-PC messaging and jobs | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Set up by `install` / `update` | ✅ | ✅ | ✅ | ✅ | ✅ |
 
-⚠️ means partial support that depends on the CLI's version and settings. The **[full support matrix](https://rennerdo30.github.io/agent-bridge/reference/support-matrix/)** lists every feature with its exact limits.
+⚠️ means partial support that depends on the CLI's version and settings. The **[full support matrix](https://agent-bridge.renner.dev/reference/support-matrix/)** lists every feature with its exact limits.
 
 Experimental: [T3 Code session messaging and MCP profiles](docs/t3-code.md). Injected scoped ACP transport is detected automatically; validated T3 sessions default to reduced tools with remote Bridge delegation kept. Set `AGENT_BRIDGE_MCP_PROFILE=full` for the full surface. Native Codex without injected transport is not supported.
 
@@ -85,7 +85,7 @@ Requires **Node.js 24+** (the current LTS); older versions refuse to start. Inst
 npx -y github:rennerdo30/agent-bridge install
 ```
 
-It shows its plan per tool and asks first; add `--yes` to skip the questions, or name tools: `install claude codex opencode antigravity muse`. In Codex, open `/hooks` once and trust the agent-bridge hooks. Per-CLI details: [Installation](https://rennerdo30.github.io/agent-bridge/getting-started/install/).
+It shows its plan per tool and asks first; add `--yes` to skip the questions, or name tools: `install claude codex opencode antigravity muse`. In Codex, open `/hooks` once and trust the agent-bridge hooks. Per-CLI details: [Installation](https://agent-bridge.renner.dev/getting-started/install/).
 
 ## Update
 
@@ -94,7 +94,7 @@ npx -y github:rennerdo30/agent-bridge update
 npx -y github:rennerdo30/agent-bridge status   # which sessions still run an older version
 ```
 
-You can update while sessions run. New sessions start on the new version, and running ones switch at their next plugin reload. Mixed versions keep working together. See [Updating](https://rennerdo30.github.io/agent-bridge/getting-started/update/).
+You can update while sessions run. New sessions start on the new version, and running ones switch at their next plugin reload. Mixed versions keep working together. See [Updating](https://agent-bridge.renner.dev/getting-started/update/).
 
 ## First steps
 
@@ -108,7 +108,7 @@ Just ask your agent in plain language:
 
 > Open the agent-bridge dashboard.
 
-All tools, parameters and behavior are in the [MCP tools reference](https://rennerdo30.github.io/agent-bridge/reference/tools/).
+All tools, parameters and behavior are in the [MCP tools reference](https://agent-bridge.renner.dev/reference/tools/).
 
 ## How it works
 
@@ -131,7 +131,7 @@ All tools, parameters and behavior are in the [MCP tools reference](https://renn
 - **Detached jobs.** Subagents run in their own job runners, so they survive plugin reloads.
 - **Approvals go up, not around.** A job's permission requests go to the session that started it, or to you. An identical repeat request in the same job turn can reuse a grant under strict conditions; denials are never reused.
 
-Details: [How it works](https://rennerdo30.github.io/agent-bridge/concepts/how-it-works/) and [Configuration](https://rennerdo30.github.io/agent-bridge/configuration/).
+Details: [How it works](https://agent-bridge.renner.dev/concepts/how-it-works/) and [Configuration](https://agent-bridge.renner.dev/configuration/).
 
 ## ⚠️ WHAT AGENT-BRIDGE MAY DELETE ON YOUR DISK
 
@@ -153,7 +153,7 @@ Details: [How it works](https://rennerdo30.github.io/agent-bridge/concepts/how-i
 - Messages from other agents are marked as such, and agents are told not to act destructively only because a peer asked.
 - Pairing uses TLS 1.3 with a one-time code; discovery never connects on its own.
 
-Details: [Security](https://rennerdo30.github.io/agent-bridge/reference/security/).
+Details: [Security](https://agent-bridge.renner.dev/reference/security/).
 
 ## Development
 

@@ -4,8 +4,8 @@ import starlightThemeGalaxy from "starlight-theme-galaxy";
 
 // CI overrides these defaults using actions/configure-pages, like the owner's other sites.
 export default defineConfig({
-  site: "https://rennerdo30.github.io",
-  base: "/agent-bridge",
+  site: "https://agent-bridge.renner.dev",
+  base: "/",
   integrations: [starlight({
     title: "agent-bridge",
     description: "Messaging, delegation and a local dashboard for coding agents across CLIs and paired PCs.",
