@@ -725,9 +725,20 @@ export class HistoryIndex {
     const args = historySearchSchema.parse(input), tokens = terms(args.query);
     if (!tokens.length) return { engine: this.engine, hits: [] };
     const durable = this.statement(this.db, "SELECT name FROM sqlite_master WHERE name='conversation_records'").get();
+    // AB-492: when nothing matches every word, documents matching all words but one are returned instead,
+    // marked partial. A natural-language query then still finds the discussion when one of its words was never
+    // written. Each alternative is still an intersection led by its rarest word, so this never turns into a scan
+    // of every document that has one common word (history stores are tens of GB). Needs three or more words.
+    const limit = args.limit ?? HISTORY_DEFAULT_LIMIT, seen = new Set<string>();
+    const hits = this.searchRows(args, tokens, "all", durable, seen, limit);
+    if (!hits.length && new Set(tokens).size > 2) return { engine: this.engine, hits: this.searchRows(args, [...new Set(tokens)], "all-but-one", durable, seen, limit).map((h) => ({ ...h, partial: true as const })) };
+    return { engine: this.engine, hits };
+  }
+  private searchRows(args: ReturnType<typeof historySearchSchema.parse>, tokens: string[], mode: "all" | "all-but-one", durable: unknown, seen: Set<string>, limit: number): HistoryHit[] {
     const where: string[] = [], values: SQLInputValue[] = [];
-    if (this.engine === "fts5") { where.push("history_fts MATCH ?"); values.push(tokens.map((t) => `"${t}"`).join(" AND ")); }
-    else for (const token of tokens) { where.push("instr(d.folded,?)>0"); values.push(token); }
+    const groups = mode === "all" ? [tokens] : tokens.map((_, skip) => tokens.filter((_, i) => i !== skip));
+    if (this.engine === "fts5") { where.push("history_fts MATCH ?"); values.push(groups.map((g) => `(${g.map((t) => `"${t}"`).join(" AND ")})`).join(" OR ")); }
+    else { where.push(`(${groups.map((g) => `(${g.map(() => "instr(d.folded,?)>0").join(" AND ")})`).join(" OR ")})`); for (const g of groups) values.push(...g); }
     for (const [key, value] of Object.entries(args.filters ?? {})) {
       if (key === "project") { where.push(durable ? "(EXISTS (SELECT 1 FROM conversation_records r JOIN conversations c ON c.id=r.conversation WHERE r.id=CAST(substr(d.id,9) AS INTEGER) AND d.id LIKE 'durable:%' AND c.project=?) OR EXISTS(SELECT 1 FROM history_tags t WHERE t.id=d.id AND t.type='project' AND t.value=?))" : "EXISTS (SELECT 1 FROM history_tags t WHERE t.id=d.id AND t.type='project' AND t.value=?)"); values.push(value); if(durable) values.push(value); }
       else if (["session", "job"].includes(key)) { where.push(`(EXISTS (SELECT 1 FROM history_tags t WHERE t.id=d.id AND
@@ -737,12 +748,13 @@ export class HistoryIndex {
     }
     const joinFts = this.engine === "fts5" ? "JOIN history_fts ON history_fts.rowid=d.rowid" : "";
     const snippet = this.engine === "fts5" ? "snippet(history_fts,0,'','',' … ',40)" : this.encoded ? "ab_text(d.body,d.body_codec)" : "d.body";
-    const order = this.engine === "fts5" ? "bm25(history_fts),d.at DESC,d.id" : "d.at DESC,d.id";
+    // AB-492: native transcripts and run logs echo whole files and tool output; at equal relevance, mail,
+    // decisions, reports and questions rank first (bm25 is negative: a smaller factor ranks lower).
+    const order = this.engine === "fts5" ? "bm25(history_fts)*(CASE WHEN d.kind IN ('transcript','run') THEN 0.5 ELSE 1.0 END),d.at DESC,d.id" : "d.at DESC,d.id";
     const retained = durable ? ", (SELECT r.conversation FROM conversation_records r WHERE r.id=CAST(substr(d.id,9) AS INTEGER) AND d.id LIKE 'durable:%') AS conversation, (SELECT c.project FROM conversation_records r JOIN conversations c ON c.id=r.conversation WHERE r.id=CAST(substr(d.id,9) AS INTEGER) AND d.id LIKE 'durable:%') AS project" : "";
     const rows = this.statement(this.db, `SELECT d.id,d.kind,d.agent,d.at,d.link,d.message,coalesce(d.job,${durable ? "(SELECT c.job FROM conversation_records r JOIN conversations c ON c.id=r.conversation WHERE r.id=CAST(substr(d.id,9) AS INTEGER) AND d.id LIKE 'durable:%')," : ""}(SELECT job FROM history_sessions s WHERE (s.session=d.session OR s.alias=d.session) AND s.job IS NOT NULL LIMIT 1)) AS job,d.run,coalesce((SELECT session FROM history_sessions s WHERE s.alias=d.session),d.session) AS session,d.cursor${retained},${snippet} AS snippet
-      FROM history_documents d ${joinFts} WHERE ${where.join(" AND ")} ORDER BY ${order} LIMIT ?`).all(...values, (args.limit ?? HISTORY_DEFAULT_LIMIT)*2+8);
-    const seen=new Set<string>();
-    return { engine: this.engine, hits: rows.flatMap((r) => {
+      FROM history_documents d ${joinFts} WHERE ${where.join(" AND ")} ORDER BY ${order} LIMIT ?`).all(...values, limit*2+8);
+    return rows.flatMap((r) => {
       if (durable && r.kind === "message") {
         const record=String(r.id).startsWith("durable:") ? this.statement(this.db, "SELECT r.part,r.conversation,c.project FROM conversation_records r JOIN conversations c ON c.id=r.conversation WHERE r.id=?").get(Number(String(r.id).slice(8))) : this.statement(this.db, "SELECT r.part,r.conversation,c.project FROM conversation_records r JOIN conversations c ON c.id=r.conversation WHERE r.part=? LIMIT 1").get(`messages:${r.message}`);
         if(record) { r.message=String(record.part).slice("messages:".length); r.conversation=record.conversation!; r.project=record.project!; }
@@ -752,7 +764,7 @@ export class HistoryIndex {
       let snippet = String(r.snippet).replace(/\s+/g, " ");
       if (this.engine === "plain") { const position = folded(snippet).indexOf(tokens[0]!); snippet = snippet.slice(Math.max(0, position - HISTORY_SNIPPET_CONTEXT_CHARS)); }
       return [{ ...r, sourceLink: `/api/history/${enc(String(r.id))}`, snippet: snippet.slice(0, HISTORY_SNIPPET_CHARS) } as unknown as HistoryHit];
-    }).slice(0,args.limit ?? HISTORY_DEFAULT_LIMIT) };
+    }).slice(0, limit);
   }
 
   reset(): void {
