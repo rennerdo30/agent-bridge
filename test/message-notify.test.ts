@@ -98,6 +98,16 @@ describe("durable notification waits", () => {
 
   it("AB-494: an awaited reply wakes the session past the hop limit; other mail at that hop does not", async () => {
     const client = await clientFor();
+    // A wait armed in a wake-up turn keeps the hop guard: two sessions that each arm one after every reply
+    // would otherwise wake each other forever.
+    const looped = { from: "mac/peer", reply_to: randomUUID() };
+    ctx.userTurn = false; expect(textOf(await call(client, looped))).toContain("is armed");
+    const loopReply = mail({ replyTo: looped.reply_to, hop: cfg.maxHops + 40 });
+    node.deliverLocal(loopReply);
+    expect(shouldWakeClaudeMessage(node, cfg, loopReply)).toBe(false);
+    node.markRead([loopReply.id]);
+    // Armed in a turn the user started: its reply wakes the session at any hop.
+    ctx.userTurn = true;
     const filters = { from: "mac/peer", reply_to: randomUUID() };
     expect(textOf(await call(client, filters))).toContain("is armed");
     const answer = mail({ replyTo: filters.reply_to, hop: cfg.maxHops + 40 });
@@ -108,6 +118,12 @@ describe("durable notification waits", () => {
     expect(shouldWakeClaudeMessage(node, cfg, { ...answer, conversationId: `${answer.conversationId}:note` })).toBe(false);
     const out = JSON.stringify(await buildHookResponse(ctx, { event: "Stop", sessionId: null, stopHookActive: false }));
     expect(out).toContain(answer.id); expect(out).not.toContain(unrelated.id);
+    // maxHops 0 means replies never wake the session, even an awaited one.
+    const again = { from: "mac/peer", reply_to: randomUUID() };
+    expect(textOf(await call(client, again))).toContain("is armed");
+    const late = mail({ replyTo: again.reply_to, hop: 50 });
+    expect(shouldWakeClaudeMessage(node, cfg, late)).toBe(true);
+    expect(shouldWakeClaudeMessage(node, { ...cfg, maxHops: 0 }, late)).toBe(false);
   });
 
   it("keeps a handed-out reply and its subscription when wake delivery is lost", async () => {

@@ -284,6 +284,8 @@ export interface ServerContext {
   t3Host?: T3Host;
   /** AB-483: an ordinary chat inside the T3 Code app (no injected transport); selects the reduced tool set. */
   nativeT3?: boolean;
+  /** AB-494: the current turn was started by the user's prompt, not by a wake-up (set by the prompt hook). */
+  userTurn?: boolean;
   /** In-memory, authenticated Claude host-mod mail capabilities. */
   claudeMailScopes?: ClaudeMailScopes;
   childInbox?: LocalCoordinator;
@@ -1626,7 +1628,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
       if (mode === "notify" && (saved?.filters.read_receipt_of || a.read_receipt_of)) return text('read_receipt_of supports mode="block" only; notification waits are for incoming messages.', true);
       const record = saved ? (saved.mode === mode ? saved : waits.setMode(n, saved.id, mode)) : waits.save(n, {
         from: a.from, reply_to: a.reply_to, conversation_id: a.conversation_id, read_receipt_of: a.read_receipt_of,
-      }, mode);
+      }, mode, ctx.userTurn === true);
       const filters = record.filters;
       if (mode === "notify") {
         const existing = n.unread().find((m) => !completionAwaitingReceipt(ctx, m.id) && !oversizedMessageNoted(ctx, m.id) && matchesNotificationWait(filters, m));

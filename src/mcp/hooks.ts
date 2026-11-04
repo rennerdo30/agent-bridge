@@ -109,7 +109,7 @@ function hookDeliverable(ctx: ServerContext, m: BridgeMessage): boolean {
 
 /** Under the hop limit, or the reply to a message this session armed a reply_to wait for (AB-494). */
 function withinWakeHops(ctx: ServerContext, m: BridgeMessage): boolean {
-  return m.hop < ctx.cfg.maxHops || Boolean(ctx.node?.isReplyWaitAwaited(m));
+  return m.hop < ctx.cfg.maxHops || (ctx.cfg.maxHops > 0 && Boolean(ctx.node?.isReplyWaitAwaited(m)));
 }
 
 /**
@@ -404,6 +404,7 @@ async function runHook(ctx: ServerContext, input: HookInput, current: () => bool
   const wakeTurn = input.event === "UserPromptSubmit" && Boolean(input.prompt?.includes(WAKE_HEADER));
   // The mod's wake prompt carries its message ids: shown now, wherever they were handed out (AB-396).
   if (wakeTurn) ctx.wakeDelivery?.confirmPrompt?.(input.prompt!);
+  if (input.event === "UserPromptSubmit") ctx.userTurn = !wakeTurn;
   if (input.event === "PostToolUse" || input.event === "Stop" || wakeTurn) ctx.wakeDelivery?.confirm();
   else ctx.wakeDelivery?.release();
   if (input.event === "PostToolUse" || input.event === "UserPromptSubmit") ctx.wakeDelivery?.active();

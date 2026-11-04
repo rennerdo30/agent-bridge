@@ -21,6 +21,8 @@ const waitSchema = z.object({
     from: z.string().optional(), reply_to: z.string().optional(),
     conversation_id: z.string().optional(), read_receipt_of: z.string().optional(),
   }),
+  /** AB-494: armed in a turn the user started (not a wake-up), so its reply may wake the session past the hop limit. */
+  userTurn: z.boolean().optional(),
 });
 export type WaitFilters = z.infer<typeof waitSchema>["filters"];
 export type SavedWait = z.infer<typeof waitSchema>;
@@ -47,12 +49,12 @@ export class MessageWaitStore {
     return record.sessionId && node.currentSessionId
       ? record.sessionId === node.currentSessionId : record.owner === node.name;
   }
-  save(node: BridgeNode, filters: WaitFilters, mode: SavedWait["mode"] = "block"): SavedWait {
+  save(node: BridgeNode, filters: WaitFilters, mode: SavedWait["mode"] = "block", userTurn = false): SavedWait {
     // Re-arming the same notification does not create another subscription or wake-up.
     const existing = mode === "notify" ? this.pending(node).find((r) => r.mode === mode &&
       ["from", "reply_to", "conversation_id", "read_receipt_of"].every((k) => r.filters[k as keyof WaitFilters] === filters[k as keyof WaitFilters])) : undefined;
     if (existing) return existing;
-    const record = { id: randomUUID(), owner: node.name, sessionId: node.currentSessionId, filters, mode };
+    const record = { id: randomUUID(), owner: node.name, sessionId: node.currentSessionId, filters, mode, ...(userTurn ? { userTurn: true } : {}) };
     writeJsonStore(this.path(record.id), record, null);
     return record;
   }
@@ -88,7 +90,9 @@ export class MessageWaitStore {
           if (r.mode === "notify" && messages.some((m) => matchesNotificationWait(r.filters, m))) this.remove(r.id);
         }
       },
-      (m) => m.replyTo !== null && this.pending(node).some((r) => r.mode === "notify" && Boolean(r.filters.reply_to) && matchesNotificationWait(r.filters, m)),
+      // AB-494: only a reply_to wait armed in a turn the user started. Waits armed in wake-up turns keep the hop
+      // guard, so two sessions that each arm a reply wait after every send cannot wake each other forever.
+      (m) => m.replyTo !== null && this.pending(node).some((r) => r.mode === "notify" && r.userTurn === true && Boolean(r.filters.reply_to) && matchesNotificationWait(r.filters, m)),
     );
   }
 }
