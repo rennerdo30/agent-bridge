@@ -220,6 +220,8 @@ export interface SendResult {
   projectRoute?: ProjectRoute;
   /** Wake requested according to advertised policy, not proof a native turn started. */
   wakeRequestedFor?: string[];
+  /** AB-488: offline recipients whose T3 Code chat was sent a wake-up message (not proof a turn started). */
+  t3WakeFor?: string[];
   /** Retained offline registrations excluded from this broadcast. */
   skippedFor?: string[];
   /** Recipient jobs without a reverse reply grant need their current supervisor to relay. */
