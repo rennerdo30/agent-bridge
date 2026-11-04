@@ -250,6 +250,8 @@ describe("RewakeEndpoint with T3 delivery", () => {
     // Its next tool call shows the message: it is not held back for T3's own (queued) turn.
     const shown = await buildHookResponse(ctx, { event: "PostToolUse", sessionId: "sess-1", stopHookActive: false });
     expect(JSON.stringify(shown)).toContain("P0: queue holder is dead");
+    // T3's queued turn shows it again: the hook copy says so, so the model acts on it once.
+    expect(JSON.stringify(shown)).toContain('repeat=\\"true\\"');
     // The turn ends: T3's queued turn carries the wake-up, so no second T3 send goes out.
     ctx.wakeDelivery!.idle!();
     await new Promise((r) => setTimeout(r, 2_000));

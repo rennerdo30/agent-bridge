@@ -28,6 +28,8 @@ export interface T3Delivery {
 const T3_COALESCE_MS = 1_500;
 /** A T3 delivery whose prompt did not show up within this much idle time: T3 delivery stops and the mod or hooks take over. */
 export const T3_TURN_CONFIRM_MS = 20_000;
+/** AB-497: how long a T3-queued wake-up holds its messages for T3's queued turn before an ordinary wake-up may take them. */
+const T3_QUEUED_HOLD_MS = 10 * 60_000;
 /** A session whose chat was not found is looked up again at most this often. */
 const T3_LOOKUP_RETRY_MS = 60_000;
 /** Abort reason that tells a waiting Stop hook to wake the session: T3 delivery handed its messages back. */
@@ -168,9 +170,11 @@ export class RewakeEndpoint {
   /**
    * AB-497: messages whose T3 delivery T3 queued behind a turn already running in the chat. The running turn's
    * tool hooks show them (they are not in flight); T3's queued turn shows them otherwise. No other wake-up and no
-   * second T3 send takes them. Cleared when T3's queued turn shows them or they are read.
+   * second T3 send takes them. Cleared when T3's queued turn shows them; if T3 never runs that turn (the user
+   * removed it), the hold ends after T3_QUEUED_HOLD_MS and an ordinary wake-up takes them (id -> hold time).
    */
-  private readonly t3Queued = new Set<string>();
+  private readonly t3Queued = new Map<string, number>();
+  private t3QueuedTimer: NodeJS.Timeout | undefined;
   /** Every CLI send still running, also after its prompt settled the delivery: stop() ends them all. */
   private readonly t3Sends = new Set<AbortController>();
   private t3Timer: NodeJS.Timeout | undefined;
@@ -206,8 +210,16 @@ export class RewakeEndpoint {
    */
   private readonly deliverable = (m: BridgeMessage): boolean =>
     this.shouldWake(m) && !this.oversized?.noted(m.id) && !this.modNoteInFlight(m.id) && !this.t3Pending?.ids.has(m.id) && !this.t3Pending?.notes.has(m.id) &&
-    !this.t3Queued.has(m.id);
+    !this.t3QueuedHeld(m.id);
   /** A message a Stop-hook waiter may wake for: not while T3 delivers this session's wake-ups (AB-481). */
+  /** AB-497: held for a turn T3 queued; the hold ends after T3_QUEUED_HOLD_MS. */
+  private t3QueuedHeld(id: string): boolean {
+    const at = this.t3Queued.get(id);
+    if (at === undefined) return false;
+    if (Date.now() - at < T3_QUEUED_HOLD_MS) return true;
+    this.t3Queued.delete(id);
+    return false;
+  }
   private readonly hookWakeable = (m: BridgeMessage): boolean => this.wakeable(m) && !this.t3Active;
   /** A message that should start a wake-up: deliverable, and not a note this endpoint handed out and awaits (AB-404). */
   private readonly wakeable = (m: BridgeMessage): boolean => this.deliverable(m) && !this.handedNotes.has(m.id);
@@ -472,10 +484,15 @@ export class RewakeEndpoint {
       // AB-497: T3 queued the wake-up behind a turn already running in the chat (a session whose process T3 just
       // started for that turn looks idle here). That turn must not wait for its end: its tool hooks show the
       // messages now. T3's queued turn still carries them, so nothing is lost if the turn makes no tool call.
-      for (const id of pending.ids) this.t3Queued.add(id);
-      while (this.t3Queued.size > MAX_REPEATS) this.t3Queued.delete(this.t3Queued.values().next().value!);
+      const at = Date.now();
+      for (const id of pending.ids) this.t3Queued.set(id, at);
+      while (this.t3Queued.size > MAX_REPEATS) this.t3Queued.delete(this.t3Queued.keys().next().value!);
+      // The hook copy and T3's queued turn show the same message: both say so, so it is handled once.
+      this.markRepeat(pending.ids);
       this.t3Pending = null;
-      this.setBusy(true);
+      clearTimeout(this.t3QueuedTimer);
+      this.t3QueuedTimer = setTimeout(() => { this.t3QueuedTimer = undefined; this.scheduleT3(); }, T3_QUEUED_HOLD_MS + 1_000);
+      this.t3QueuedTimer.unref();
       this.log.info("T3 chat is mid-turn; its tool hooks deliver the queued wake-up's messages now", { count: pending.ids.size });
       return;
     }
@@ -716,6 +733,7 @@ export class RewakeEndpoint {
     if (this.t3) this.node.off("message", this.onT3Message);
     clearTimeout(this.t3Timer);
     clearTimeout(this.t3ConfirmTimer);
+    clearTimeout(this.t3QueuedTimer);
     for (const send of this.t3Sends) send.abort();
     this.waiter?.abort("superseded");
     this.modWaiter?.abort("superseded");
