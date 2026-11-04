@@ -79,6 +79,8 @@ export function collectNotices(inputPaths) {
 }
 
 export function renderNotices(notices) {
+  // License files come with mixed line endings; the committed file is normalized to LF.
+  notices = notices.map((n) => ({ ...n, text: n.text.replace(/\r\n?/g, "\n") }));
   const head = [
     "# Third-party notices",
     "",

@@ -59,5 +59,5 @@ const page = [
   ...entries.flatMap((e) => [`### ${e.name} ${e.version}`, "", "```text", e.text, "```", ""]),
 ].join("\n");
 
-writeFileSync("src/content/docs/licenses.md", page);
+writeFileSync("src/content/docs/licenses.md", page.replace(/\r\n?/g, "\n"));
 console.log(`wrote src/content/docs/licenses.md (${entries.length} components)`);
