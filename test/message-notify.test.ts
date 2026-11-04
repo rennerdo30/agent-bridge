@@ -96,6 +96,47 @@ describe("durable notification waits", () => {
     expect(store.pending(node)).toEqual([]);
   });
 
+  it("AB-494: an awaited reply wakes the session past the hop limit; other mail at that hop does not", async () => {
+    const client = await clientFor();
+    // A wait armed in a wake-up turn keeps the hop guard: two sessions that each arm one after every reply
+    // would otherwise wake each other forever.
+    const looped = { from: "mac/peer", reply_to: randomUUID() };
+    ctx.userTurn = false; expect(textOf(await call(client, looped))).toContain("is armed");
+    const loopReply = mail({ replyTo: looped.reply_to, hop: cfg.maxHops + 40 });
+    node.deliverLocal(loopReply);
+    expect(shouldWakeClaudeMessage(node, cfg, loopReply)).toBe(false);
+    node.markRead([loopReply.id]);
+    // A user's turn ends at its Stop; a turn the Stop hook continues with mail is a wake-up, not the user's.
+    ctx.userTurn = true;
+    await buildHookResponse(ctx, { event: "Stop", sessionId: null, stopHookActive: false });
+    const afterStop = { from: "mac/peer", reply_to: randomUUID() };
+    expect(textOf(await call(client, afterStop))).toContain("is armed");
+    const afterStopReply = mail({ replyTo: afterStop.reply_to, hop: cfg.maxHops + 40 });
+    node.deliverLocal(afterStopReply);
+    expect(shouldWakeClaudeMessage(node, cfg, afterStopReply)).toBe(false);
+    node.markRead([afterStopReply.id]);
+    // Armed in a turn the user started: its reply wakes the session at any hop.
+    await buildHookResponse(ctx, { event: "UserPromptSubmit", sessionId: "session", promptId: "p-user", stopHookActive: false, prompt: "please ask the mac" });
+    expect(ctx.userTurn).toBe(true);
+    const filters = { from: "mac/peer", reply_to: randomUUID() };
+    expect(textOf(await call(client, filters))).toContain("is armed");
+    const answer = mail({ replyTo: filters.reply_to, hop: cfg.maxHops + 40 });
+    const unrelated = mail({ hop: cfg.maxHops + 40 });
+    node.deliverLocal(answer); node.deliverLocal(unrelated);
+    expect(shouldWakeClaudeMessage(node, cfg, answer)).toBe(true);
+    expect(shouldWakeClaudeMessage(node, cfg, unrelated)).toBe(false);
+    expect(shouldWakeClaudeMessage(node, cfg, { ...answer, conversationId: `${answer.conversationId}:note` })).toBe(false);
+    const out = JSON.stringify(await buildHookResponse(ctx, { event: "Stop", sessionId: null, stopHookActive: false }));
+    expect(out).toContain(answer.id); expect(out).not.toContain(unrelated.id);
+    // maxHops 0 means replies never wake the session, even an awaited one.
+    await buildHookResponse(ctx, { event: "UserPromptSubmit", sessionId: "session", promptId: "p-user-2", stopHookActive: false, prompt: "ask again" });
+    const again = { from: "mac/peer", reply_to: randomUUID() };
+    expect(textOf(await call(client, again))).toContain("is armed");
+    const late = mail({ replyTo: again.reply_to, hop: 50 });
+    expect(shouldWakeClaudeMessage(node, cfg, late)).toBe(true);
+    expect(shouldWakeClaudeMessage(node, { ...cfg, maxHops: 0 }, late)).toBe(false);
+  });
+
   it("keeps a handed-out reply and its subscription when wake delivery is lost", async () => {
     const client = await clientFor(); await call(client, { from: "mac/peer" });
     const endpoint = new RewakeEndpoint(env.home, node, (m) => shouldWakeClaudeMessage(node, cfg, m), nullLogger);

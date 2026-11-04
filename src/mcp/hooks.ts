@@ -107,13 +107,18 @@ function hookDeliverable(ctx: ServerContext, m: BridgeMessage): boolean {
   return !completionAwaitingReceipt(ctx, m.id) && !ctx.wakeDelivery?.inFlight?.(m.id) && !oversizedMessageNoted(ctx, m.id);
 }
 
+/** Under the hop limit, or the reply to a message this session armed a reply_to wait for (AB-494). */
+function withinWakeHops(ctx: ServerContext, m: BridgeMessage): boolean {
+  return m.hop < ctx.cfg.maxHops || (ctx.cfg.maxHops > 0 && Boolean(ctx.node?.isReplyWaitAwaited?.(m)));
+}
+
 /**
  * Messages the Claude wake path (mod or Stop hooks) may submit as their own turn. A completion a hook already
  * handed out is delivered: it waits for its receipt at a later boundary and never starts a second turn (AB-396).
  */
 export function claudeWakeCandidate(ctx: ServerContext, m: BridgeMessage): boolean {
   const node = ctx.node;
-  return node != null && !ctx.channelActive() && m.hop < ctx.cfg.maxHops &&
+  return node != null && !ctx.channelActive() && withinWakeHops(ctx, m) &&
     // Running-job notes remain in explicit inbox reads and history (see JobManager.fromSubagent).
     !ctx.jobs?.isNote(m) && !completionAwaitingReceipt(ctx, m.id) && shouldWakeClaudeMessage(node, ctx.cfg, m);
 }
@@ -226,7 +231,7 @@ function take(ctx: ServerContext, wakeOnly: boolean, notesOnly: boolean, hold: b
     .filter((m) => hookDeliverable(ctx, m))
     .filter((m) => !notesOnly || ctx.jobs?.isNote(m) || !shouldWakeClaudeMessage(node, ctx.cfg, m))
     // Ending a turn: a running subagent's status note does not keep it going; it comes with the next prompt.
-    .filter((m) => !wakeOnly || (m.hop < ctx.cfg.maxHops && !ctx.jobs?.isNote(m)));
+    .filter((m) => !wakeOnly || (withinWakeHops(ctx, m) && !ctx.jobs?.isNote(m)));
   const delivery = boundedDelivery(ctx, candidates, format, wrap, { footer });
   holdOrMarkRead(ctx, delivery.msgs.map((m) => m.id), hold);
   return delivery;
@@ -399,6 +404,10 @@ async function runHook(ctx: ServerContext, input: HookInput, current: () => bool
   const wakeTurn = input.event === "UserPromptSubmit" && Boolean(input.prompt?.includes(WAKE_HEADER));
   // The mod's wake prompt carries its message ids: shown now, wherever they were handed out (AB-396).
   if (wakeTurn) ctx.wakeDelivery?.confirmPrompt?.(input.prompt!);
+  // AB-494: a user turn lasts until its Stop. Whatever continues after a Stop (a Stop hook that delivers mail and
+  // blocks, an async rewake) is a wake-up, not the user's turn, so reply waits armed there keep the hop guard.
+  if (input.event === "UserPromptSubmit") ctx.userTurn = !wakeTurn;
+  else if (input.event === "Stop") ctx.userTurn = false;
   // A wake prompt without message ids (the broker's offline T3 wake-up, AB-488) shows nothing handed out before.
   if (input.event === "PostToolUse" || input.event === "Stop" || (wakeTurn && wakeMessageIds(input.prompt!).length > 0)) ctx.wakeDelivery?.confirm();
   else ctx.wakeDelivery?.release();
@@ -456,7 +465,7 @@ async function runHook(ctx: ServerContext, input: HookInput, current: () => bool
         const awaited = node.unread().filter((m) => hookDeliverable(ctx, m) && (node.isNotificationAwaited(m) ||
           (m.from.id.startsWith("job:") && shouldWakeClaudeMessage(node, ctx.cfg, m)) ||
           ((ctx.agent === "opencode" || ctx.agent === "antigravity") && m.to !== BROADCAST && !(AGENT_KINDS as readonly string[]).includes(m.to) &&
-            shouldWakeClaudeMessage(node, ctx.cfg, m))) && m.hop < ctx.cfg.maxHops &&
+            shouldWakeClaudeMessage(node, ctx.cfg, m))) && withinWakeHops(ctx, m) &&
           !isQuietMessage(m) && !m.conversationId.endsWith(":note"));
         const delivery = boundedDelivery(ctx, awaited, (msgs) => formatHookMessages(ctx, msgs, { replyHint: false }), (text) => stopMail(ctx, text));
         if (delivery.text) {

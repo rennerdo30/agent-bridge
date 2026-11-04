@@ -50,4 +50,4 @@ See [notification-wait design and tradeoffs](../../message-waits/) and [delivery
 
 Auto-wake is **off by default**. Turn it on per session by asking the agent ("turn on agent-bridge auto-wake"), or globally with `"autoWake": true` in the config.
 
-Every reply increments a conversation's hop count. Messages at or above `maxHops` (default 6) never wake an agent; they are still shown on the next prompt. Delegated sessions retain parent/sibling messaging restrictions and the configured delegation-depth limit.
+Every reply increments a conversation's hop count. Messages at or above `maxHops` (default 6) do not wake an agent; they are still shown on the next prompt. One exception: the reply a session armed `wait_for_message(reply_to=…)` for, in a turn its user started, wakes it at any hop (unless `maxHops` is 0). Waits armed in wake-up turns keep the limit, so agents cannot keep waking each other. Delegated sessions retain parent/sibling messaging restrictions and the configured delegation-depth limit.
