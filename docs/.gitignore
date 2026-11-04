@@ -4,3 +4,4 @@ node_modules/
 public/images/
 public/favicon.svg
 src/assets/logo.svg
+src/content/docs/licenses.md

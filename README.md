@@ -166,4 +166,6 @@ npm run check   # typecheck, tests and build
 
 ## License
 
-[MIT](LICENSE). A project by [rennerdo30](https://github.com/rennerdo30).
+[MIT](LICENSE). A project by [rennerdo30](https://github.com/rennerdo30). The plugin bundles include third-party libraries under their own licenses; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+agent-bridge is an independent open-source project. It is not affiliated with, endorsed by or sponsored by Anthropic, OpenAI, Google or the makers of the other tools it works with. Claude Code, OpenAI Codex, Google Antigravity, opencode, Muse, T3 Code and other product names are trademarks or names of their respective owners and are used only to describe compatibility.

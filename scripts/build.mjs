@@ -5,6 +5,8 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from "
 import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { ENTRIES, OPENCODE_ENTRY, EXTERNAL } from "./bundle-entries.mjs";
+import { writeNoticesFor } from "./third-party-notices.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const PLUGIN_DIRS = ["plugins/claude", "plugins/codex", "plugins/opencode", "plugins/antigravity", "plugins/muse"];
@@ -17,9 +19,6 @@ const MANIFESTS = [
   "plugins/muse/.muse-plugin/plugin.json",
   ".claude-plugin/marketplace.json",
 ];
-const ENTRIES = { server: "src/mcp/launcher.ts", worker: "src/mcp/main.ts", cli: "src/cli/main.ts", "history-worker": "src/core/history-worker.ts", "backup-worker": "src/core/backup-worker.ts" };
-ENTRIES["outcome-worker"] = "src/core/outcome-worker.ts";
-ENTRIES["job-archive-worker"] = "src/core/job-archive-worker.ts";
 const NODE_TARGET = "node24";
 const SHEBANG = "#!/usr/bin/env node\n";
 const REQUIRE_SHIM = "import { createRequire as __abCreateRequire } from 'node:module'; const require = __abCreateRequire(import.meta.url);";
@@ -39,6 +38,7 @@ for (const rel of MANIFESTS) {
   writeFileSync(path, JSON.stringify(json, null, 2) + "\n");
 }
 
+const metafiles = new Map();
 for (const dir of PLUGIN_DIRS) {
   // Retain prior chunks, including hashes no longer referenced by the new entrypoints.
   // Build only mutates generated output in this checkout; no installed runtime is touched.
@@ -49,7 +49,7 @@ for (const dir of PLUGIN_DIRS) {
     renameSync(chunks, join(archive, "chunks"));
   }
   {
-    await build({
+    const result = await build({
       absWorkingDir: ROOT,
       // Shared read-only dependencies must have the same logical paths as CI's local cache.
       preserveSymlinks: true,
@@ -62,13 +62,15 @@ for (const dir of PLUGIN_DIRS) {
       platform: "node",
       format: "esm",
       target: NODE_TARGET,
-      external: ["node:*"],
+      external: EXTERNAL,
       legalComments: "eof",
+      metafile: true,
       logLevel: "warning",
       // Some bundled CommonJS dependencies call require(); give them one in ESM output.
       // The CLI also gets a shebang so it works as the package's bin (npx github:...).
       banner: { js: REQUIRE_SHIM },
     });
+    metafiles.set(dir, [result.metafile]);
   }
   const cli = join(ROOT, dir, "dist", "cli.mjs");
   writeFileSync(cli, SHEBANG + readFileSync(cli, "utf8"));
@@ -76,17 +78,23 @@ for (const dir of PLUGIN_DIRS) {
 }
 
 // The opencode plugin runs inside opencode (Bun) and spawns dist/server.mjs with Node.
-await build({
+const opencode = await build({
   absWorkingDir: ROOT,
   preserveSymlinks: true,
-  entryPoints: [join(ROOT, "src/opencode/plugin.ts")],
+  entryPoints: [join(ROOT, OPENCODE_ENTRY)],
   outfile: join(ROOT, "plugins/opencode/dist/agent-bridge.js"),
   bundle: true,
   platform: "node",
   format: "esm",
   target: NODE_TARGET,
-  external: ["node:*", "@opencode-ai/plugin"],
+  external: [...EXTERNAL, "@opencode-ai/plugin"],
   legalComments: "eof",
+  metafile: true,
   logLevel: "warning",
 });
 console.log(`built plugins/opencode/dist/agent-bridge.js (v${version})`);
+metafiles.get("plugins/opencode").push(opencode.metafile);
+
+// The bundles contain third-party code; its licenses must ship with every copy.
+for (const [dir, files] of metafiles) writeNoticesFor(join(ROOT, dir, "dist"), files);
+console.log("wrote dist/THIRD_PARTY_NOTICES.md for every plugin");

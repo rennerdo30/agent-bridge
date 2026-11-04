@@ -98,6 +98,9 @@ jobs:
       - run: npm run typecheck
       - run: npm run build
         id: build
+      - name: Third-party notices match the bundled dependencies
+        if: matrix.os == 'ubuntu-latest'
+        run: node scripts/third-party-notices.mjs --check
       - name: Fast tests
         run: npm test -- --reporter=default --reporter=json --reporter=./scripts/ci-reporter.mjs --outputFile.json=.agent-bridge-test/ci/fast-results.json
       # Each file creates native processes and durable SQLite fixtures. Avoid

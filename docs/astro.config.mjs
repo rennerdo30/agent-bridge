@@ -213,6 +213,10 @@ export default defineConfig({
             {
                 "label": "Security",
                 "slug": "reference/security"
+            },
+            {
+                "label": "Licenses and trademarks",
+                "slug": "licenses"
             }
         ]
     },
