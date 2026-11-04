@@ -691,6 +691,14 @@ export class Broker {
       send: (c, a) => this.onSend(c, { ...a, messageId: undefined }),
       trackedSend: (c, a) => this.onTrackedSend(c, a),
       sendState: (c, a) => this.sendState(c, z.uuid().parse(a.id).toLowerCase()),
+      sentTo: (c, a) => {
+        const args = z.object({ to: z.string().trim().min(1).max(256), limit: z.number().int().min(1).max(20).optional() }).strict().parse(a);
+        const sender = this.requirePeer(c);
+        // Only sends under the caller's current name (a session that took over a name also sees that name's sends).
+        const messages = this.store.sentBy(sender.name, args.to, args.limit ?? 5).map((m) => ({ id: m.id, createdAt: m.createdAt,
+          conversationId: m.conversationId, replyTo: m.replyTo, preview: m.body.slice(0, 160), receipts: this.store.receipts(m.id) }));
+        return { to: args.to, checkedAt: this.now(), messages };
+      },
       decide: (c, a) => this.onDecide(c, a),
       decisions: (c, a) => this.onDecisions(c, a),
       searchHistory: (_, a) => {
