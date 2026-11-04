@@ -20,30 +20,33 @@ async function wait(check: () => boolean, timeout = 30_000): Promise<void> {
   while (!check()) { if (Date.now() >= deadline) throw new Error("timed out"); await new Promise((r) => setTimeout(r, 20)); }
 }
 async function paired(config: Partial<NetworkConfig>) {
-  const sender = peer("sender"), receiver = peer("receiver"), bMessages: BridgeMessage[] = [];
+  const sender = peer("sender"), receiver = peer("receiver"), aMessages: BridgeMessage[] = [], bMessages: BridgeMessage[] = [];
   const mk = (name: string, peers: PeerInfo[], messages: BridgeMessage[], extra: Partial<NetworkConfig> = {}) => {
     const s = new NetworkService(join(home, name), { ...DEFAULT_NETWORK_CONFIG, enabled: true, name, bind: LOOPBACK, port: 0, discovery: false, ...extra },
       { peers: () => peers, receive: (m) => { messages.push(m); return { delivered: true }; } }, nullLogger);
     services.push(s); return s;
   };
-  const a = mk("pc", [sender], []), b = mk("mac", [receiver], bMessages, config);
+  const a = mk("pc", [sender], aMessages), b = mk("mac", [receiver], bMessages, config);
   await a.start(); await b.start(); await a.link(b.keys.invite(), LOOPBACK, b.port);
-  return { a, b, sender, bMessages };
+  return { a, b, sender, aMessages, bMessages };
 }
-async function send(a: NetworkService, sender: PeerInfo, bMessages: BridgeMessage[], paths: string[]) {
+const settled = (m: BridgeMessage, id: string) => m.body.includes(id) && / completed /.test(m.body) && /placed in|place in|not allowed/.test(m.body);
+async function send(a: NetworkService, sender: PeerInfo, aMessages: BridgeMessage[], bMessages: BridgeMessage[], paths: string[]) {
   const started = a.startFiles("mac/receiver", paths, home, sender, false, "downloads");
-  await wait(() => bMessages.some((m) => m.body.includes(started.id) && / completed /.test(m.body)));
-  return bMessages.find((m) => m.body.includes(started.id) && / completed /.test(m.body))!.body;
+  // Both sides are told where the files went (or why not).
+  await wait(() => bMessages.some((m) => settled(m, started.id)) && aMessages.some((m) => settled(m, started.id)));
+  return { receiver: bMessages.find((m) => settled(m, started.id))!.body, sender: aMessages.find((m) => settled(m, started.id))!.body };
 }
 
 it("places a completed transfer in the allowed Downloads folder under a free name and keeps the inbox copy", async () => {
   const downloads = join(home, "Downloads"); mkdirSync(downloads);
   writeFileSync(join(downloads, "app.aab"), "already here");
-  const { a, sender, bMessages } = await paired({ transferDestinations: { downloads } });
+  const { a, sender, aMessages, bMessages } = await paired({ transferDestinations: { downloads } });
   const source = join(home, "app.aab"); writeFileSync(source, "new build");
   const folder = join(home, "assets"); mkdirSync(join(folder, "sub"), { recursive: true }); writeFileSync(join(folder, "sub", "a.txt"), "a");
 
-  const body = await send(a, sender, bMessages, [source, folder]);
+  const { receiver: body, sender: told } = await send(a, sender, aMessages, bMessages, [source, folder]);
+  expect(told).toContain(join(downloads, "app (2).aab"));
   expect(body).toContain("also placed in"); expect(body).toContain(join(downloads, "app (2).aab")); expect(body).toContain(join(downloads, "assets"));
   expect(readFileSync(join(downloads, "app.aab"), "utf8")).toBe("already here");
   expect(readFileSync(join(downloads, "app (2).aab"), "utf8")).toBe("new build");
@@ -52,14 +55,22 @@ it("places a completed transfer in the allowed Downloads folder under a free nam
   const inbox = join(home, "mac", "inbox");
   const [id] = readdirSync(inbox);
   expect(readFileSync(join(inbox, id!, "app.aab"), "utf8")).toBe("new build");
+  // Windows: placed files carry the "downloaded from another computer" mark.
+  if (process.platform === "win32") expect(readFileSync(`${join(downloads, "app (2).aab")}:Zone.Identifier`, "utf8")).toContain("ZoneId=3");
+  // An independent copy: changing the placed file leaves the inbox copy as received.
+  writeFileSync(join(downloads, "app (2).aab"), "edited");
+  expect(readFileSync(join(inbox, id!, "app.aab"), "utf8")).toBe("new build");
+  // No temporary names are left behind.
+  expect(readdirSync(downloads).filter((n) => n.endsWith(".partial"))).toEqual([]);
 });
 
 it("keeps files only in the inbox when the receiving PC does not allow the place", async () => {
   const downloads = join(home, "Downloads"); mkdirSync(downloads);
-  const { a, sender, bMessages } = await paired({ transferDestinations: {} });
+  const { a, sender, aMessages, bMessages } = await paired({ transferDestinations: {} });
   const source = join(home, "report.txt"); writeFileSync(source, "x");
-  const body = await send(a, sender, bMessages, [source]);
+  const { receiver: body, sender: told } = await send(a, sender, aMessages, bMessages, [source]);
   expect(body).toContain('destination "downloads" is not allowed on this PC');
+  expect(told).toContain('destination "downloads" is not allowed on this PC');
   expect(readdirSync(downloads)).toEqual([]);
   expect(existsSync(join(home, "mac", "inbox"))).toBe(true);
 });
