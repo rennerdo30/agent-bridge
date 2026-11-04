@@ -179,6 +179,12 @@ describe("formatPeer", () => {
     );
     expect(line).toBe("- codex-app (codex, vunknown · version skew (retained code), idle, auto-wake, up 1h 30m) cwd=/w/app session=t-9");
   });
+  it("AB-490: says which side of a version skew runs retained code", () => {
+    const peer = (version: string) => ({ id: "x", name: "claude-app", agent: "claude", cwd: "/w/app", pid: 1, agentPid: null, startedAt: 0, autoWake: false, version } as import("../src/core/protocol.js").PeerInfo);
+    expect(formatPeer(peer("0.32.3"), undefined, 0, "0.32.3")).not.toContain("skew");
+    expect(formatPeer(peer("0.32.3"), undefined, 0, "0.32.0")).toContain("v0.32.3 · version skew: newer than this session (v0.32.0), which runs retained code");
+    expect(formatPeer(peer("0.32.0"), undefined, 0, "0.32.3")).toContain("v0.32.0 · version skew (retained code): older than this session (v0.32.3)");
+  });
 });
 
 describe("formatMessage", () => {
