@@ -18,7 +18,7 @@ export default defineConfig({
     sidebar: [
     {
         "label": "Overview",
-        "slug": "index"
+        "slug": "overview"
     },
     {
         "label": "Getting started",
@@ -40,6 +40,10 @@ export default defineConfig({
     {
         "label": "Concepts",
         "items": [
+            {
+                "label": "How it works",
+                "slug": "concepts/how-it-works"
+            },
             {
                 "label": "Sessions and project groups",
                 "slug": "concepts/sessions"
@@ -192,6 +196,10 @@ export default defineConfig({
             {
                 "label": "Commands",
                 "slug": "reference/cli"
+            },
+            {
+                "label": "CLI support matrix",
+                "slug": "reference/support-matrix"
             }
         ]
     },

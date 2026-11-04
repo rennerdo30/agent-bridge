@@ -1,0 +1,308 @@
+---
+import "../styles/landing.css";
+import pkg from "../../../package.json";
+
+const base = import.meta.env.BASE_URL.replace(/\/?$/, "/");
+const docs = (path: string) => `${base}${path}`;
+const repo = "https://github.com/rennerdo30/agent-bridge";
+const version = pkg.version;
+const install = "npx -y github:rennerdo30/agent-bridge install";
+
+const nodes = [
+  { id: "claude", name: "Claude Code", addr: "claude-shop", initial: "C", x: 21, y: 15 },
+  { id: "codex", name: "Codex", addr: "codex-shop", initial: "X", x: 79, y: 15 },
+  { id: "opencode", name: "opencode", addr: "opencode-shop", initial: "O", x: 17, y: 50 },
+  { id: "antigravity", name: "Antigravity", addr: "agy-docs", initial: "A", x: 83, y: 50 },
+  { id: "muse", name: "Muse", addr: "muse-shop", initial: "M", x: 21, y: 85 },
+  { id: "pc", name: "studio-pc", addr: "other PC", initial: "PC", x: 79, y: 85 },
+  { id: "you", name: "You", addr: "dashboard", initial: "★", x: 50, y: 90 },
+];
+
+const scenes = [
+  { id: "review", label: "Ask for a review" },
+  { id: "split", label: "Split the work" },
+  { id: "ask", label: "An agent asks you" },
+  { id: "handoff", label: "Hand off and close" },
+  { id: "remote", label: "Run on another PC" },
+];
+
+const features = [
+  { title: "Agents message each other", body: "Sessions send questions, reviews and results. Mail to an idle or offline agent waits and wakes it when the CLI allows." },
+  { title: "Any CLI delegates to any CLI", body: "Claude, Codex, opencode, Antigravity and Muse each spawn subagents of every kind, including their own, with depth, slot and hop guards." },
+  { title: "Talk to running subagents", body: "Steer a job mid-run, continue a finished one with its full context, cancel it, or hand all of them to another session." },
+  { title: "Worktrees for edits", body: "Subagents are read-only by default. Raise access per job and give editing jobs their own git worktree." },
+  { title: "A main and a secondary", body: "A Claude and a Codex session in one folder share the project's jobs. If the main closes or runs out of usage, the secondary takes over." },
+  { title: "Checklists with a definition of done", body: "Give a job a to-do list. It ticks items, proposes new ones for your approval and says when required items are still open." },
+  { title: "Questions come to you", body: "Agents ask decisions in one place. A chime or a desktop notification brings you there, and your answer goes back to the agent that asked." },
+  { title: "Nothing gets lost", body: "Every message, job, chat and decision is stored and searchable. History is archived, never deleted, and upgrades migrate with a backup first." },
+];
+
+const shots = [
+  { id: "session", label: "Session", src: "images/dashboard-session-dark.png", alt: "A session with its subagent tree, live progress with ETA, messages between agents and the session's own chat", caption: "One session: its subagent tree with progress and ETA, agent-to-agent mail and the live chat you can write into." },
+  { id: "overview", label: "Overview", src: "images/dashboard-overview-dark.png", alt: "Overview with counters, usage left per CLI and the sessions on this PC and a paired laptop", caption: "Every session on every paired PC, what is running, and how much usage each CLI has left." },
+  { id: "waiting", label: "Waiting for you", src: "images/dashboard-waiting.png", alt: "An owner question with two suggested answers, a free-text answer field and the option to pin it as a decision", caption: "Questions and permission requests wait here. Answer once, or pin the answer as a lasting decision." },
+  { id: "search", label: "Search", src: "images/dashboard-search.png", alt: "History search for settings across decisions, subagent runs and messages", caption: "Search messages, subagent runs, decisions and the CLIs' own conversations, archived ones included." },
+  { id: "network", label: "Paired PCs", src: "images/dashboard-network.png", alt: "Network page with a pairing code, a discovered PC and a paired laptop", caption: "Pair another PC once with a one-time code. Its agents can then message, share files and run jobs." },
+];
+
+const prompts = [
+  "Ask Codex to review the diff in src/auth and tell me what it finds.",
+  "Start two Codex subagents in worktrees: one writes the tests, one fixes the bug.",
+  "Hand all your subagents to codex-myproject, I'm closing this session.",
+  "Open the agent-bridge dashboard.",
+];
+---
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>agent-bridge: your coding agents, working as one team</title>
+  <meta name="description" content="agent-bridge lets Claude Code, OpenAI Codex, opencode, Google Antigravity CLI and Muse message each other, delegate work as subagents and share history, on one PC or several. Follow everything in one local dashboard. Free and open source.">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#0b0a1c">
+  <link rel="icon" href={`${base}favicon.svg`} type="image/svg+xml">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="agent-bridge">
+  <meta property="og:description" content="Your coding agents, working as one team: messaging, delegation and one local dashboard for Claude Code, Codex, opencode, Antigravity and Muse.">
+  <meta property="og:image" content={new URL(`${base}images/dashboard-session-dark.png`, Astro.site ?? "https://rennerdo30.github.io").href}>
+</head>
+<body class="landing">
+  <a class="skip" href="#main">Skip to content</a>
+
+  <header class="top">
+    <div class="wrap top-row">
+      <a class="brand" href={base} aria-label="agent-bridge home">
+        <img src={`${base}favicon.svg`} alt="" width="30" height="30">
+        <span>agent-bridge</span>
+      </a>
+      <nav aria-label="Main">
+        <a href="#features">Features</a>
+        <a href="#dashboard">Dashboard</a>
+        <a href="#safety">Safety</a>
+        <a href={docs("overview/")}>Docs</a>
+        <a class="nav-gh" href={repo}>GitHub</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="hero" aria-labelledby="hero-title">
+      <div class="wrap hero-grid">
+        <div class="hero-copy">
+          <p class="eyebrow"><span class="pill">v{version}</span> Free and open source · MIT</p>
+          <h1 id="hero-title">Your coding agents,<br><span class="grad">working as one team.</span></h1>
+          <p class="lede">
+            agent-bridge connects Claude Code, OpenAI Codex, opencode, Google Antigravity CLI and Muse,
+            on this PC and on PCs you pair. They message each other, hand each other work as subagents
+            and share their history. You follow and steer it all from one local dashboard.
+          </p>
+          <div class="cmd" data-copy={install}>
+            <span class="prompt" aria-hidden="true">$</span>
+            <code>{install}</code>
+            <button type="button" class="copy" aria-label="Copy the install command">Copy</button>
+          </div>
+          <div class="cta">
+            <a class="btn primary" href={docs("getting-started/install/")}>Install guide</a>
+            <a class="btn" href={docs("overview/")}>Read the docs</a>
+          </div>
+          <ul class="badges" aria-label="Highlights">
+            <li>Local-first</li>
+            <li>No account</li>
+            <li>Read-only subagents by default</li>
+          </ul>
+        </div>
+
+        <figure class="board" aria-labelledby="board-caption">
+          <div class="board-stage" data-board>
+            <svg class="wires" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+              {nodes.map((n) => (
+                <line x1={n.x} y1={n.y} x2="50" y2="50" data-wire={n.id} class={n.id === "pc" ? "remote" : undefined} vector-effect="non-scaling-stroke" />
+              ))}
+            </svg>
+            <div class="hub" style="left:50%;top:50%" aria-hidden="true">
+              <img src={`${base}favicon.svg`} alt="" width="40" height="40">
+              <span>broker</span>
+            </div>
+            {nodes.map((n) => (
+              <div class={`node node-${n.id}`} data-node={n.id} style={`left:${n.x}%;top:${n.y}%`}>
+                <span class="avatar" aria-hidden="true">{n.initial}</span>
+                <span class="who">
+                  <strong>{n.name}</strong>
+                  <span class="addr">{n.addr}</span>
+                  <span class="state" data-state>idle</span>
+                </span>
+              </div>
+            ))}
+            <div class="packets" data-packets aria-hidden="true"></div>
+          </div>
+          <div class="scenes" role="group" aria-label="Show what agent-bridge does when you">
+            {scenes.map((s, i) => (
+              <button type="button" data-scene={s.id} aria-pressed={i === 0 ? "true" : "false"}>{s.label}</button>
+            ))}
+          </div>
+          <ol class="feed" data-feed aria-live="polite" aria-label="What happens"></ol>
+          <figcaption id="board-caption" class="sr-only">An animated diagram of coding agents sending messages and jobs to each other through the agent-bridge broker.</figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <section class="works" aria-label="Supported CLIs">
+      <div class="wrap works-row">
+        <span>Works with</span>
+        <ul>
+          <li>Claude Code</li><li>OpenAI Codex</li><li>opencode</li><li>Google Antigravity CLI</li><li>Muse</li>
+        </ul>
+        <a href={docs("reference/support-matrix/")}>Support matrix →</a>
+      </div>
+    </section>
+
+    <section id="features" class="section" aria-labelledby="features-title">
+      <div class="wrap">
+        <p class="kicker">What it does</p>
+        <h2 id="features-title">One team, not five terminals</h2>
+        <p class="section-lede">Each CLI keeps its own strengths. agent-bridge gives them a shared address book, a mailroom and a job board.</p>
+        <div class="cards">
+          {features.map((f, i) => (
+            <article class="card" style={`--i:${i}`}>
+              <h3>{f.title}</h3>
+              <p>{f.body}</p>
+            </article>
+          ))}
+        </div>
+      </div>
+    </section>
+
+    <section id="dashboard" class="section dash" aria-labelledby="dash-title">
+      <div class="wrap">
+        <p class="kicker">The dashboard</p>
+        <h2 id="dash-title">Everything at <code class="inline">127.0.0.1:4777</code></h2>
+        <p class="section-lede">Sessions, subagent trees, live chats, progress with ETA, approvals, pinned decisions, history search and paired PCs. Local only, behind an access key.</p>
+        <div class="tabs" role="tablist" aria-label="Dashboard views">
+          {shots.map((s, i) => (
+            <button type="button" role="tab" id={`tab-${s.id}`} aria-controls={`shot-${s.id}`} aria-selected={i === 0 ? "true" : "false"} tabindex={i === 0 ? 0 : -1}>{s.label}</button>
+          ))}
+        </div>
+        <div class="window">
+          <div class="window-bar" aria-hidden="true"><i></i><i></i><i></i><span>agent-bridge dashboard</span></div>
+          {shots.map((s, i) => (
+            <figure class="shot" role="tabpanel" id={`shot-${s.id}`} aria-labelledby={`tab-${s.id}`} hidden={i !== 0}>
+              <img src={`${base}${s.src}`} alt={s.alt} width="1440" height="1000" loading={i === 0 ? "eager" : "lazy"}>
+              <figcaption>{s.caption}</figcaption>
+            </figure>
+          ))}
+        </div>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="ask-title">
+      <div class="wrap split">
+        <div>
+          <p class="kicker">First steps</p>
+          <h2 id="ask-title">Just ask your agent</h2>
+          <p class="section-lede">No new commands to learn. After installing, talk to the agent you already use, in plain language.</p>
+          <p class="more"><a href={docs("reference/tools/")}>All MCP tools and parameters →</a></p>
+        </div>
+        <ul class="chat">
+          {prompts.map((p) => (
+            <li><span class="you">You</span><p>{p}</p></li>
+          ))}
+        </ul>
+      </div>
+    </section>
+
+    <section id="how" class="section" aria-labelledby="how-title">
+      <div class="wrap">
+        <p class="kicker">How it works</p>
+        <h2 id="how-title">A small broker, on your machine</h2>
+        <div class="flow">
+          <div class="flow-col">
+            <h3>Your sessions</h3>
+            <ul class="mono-list"><li>claude-shop</li><li>codex-shop</li><li>opencode-shop</li><li>+ subagent jobs</li></ul>
+            <p>Each session starts a small agent-bridge server with hooks and channels for its CLI.</p>
+          </div>
+          <div class="flow-arrow" aria-hidden="true"><span>local pipe</span></div>
+          <div class="flow-col core">
+            <h3>Broker daemon</h3>
+            <ul class="mono-list"><li>messages · jobs · decisions</li><li>SQLite in ~/.agent-bridge</li></ul>
+            <p>The first session starts one background broker. It survives the session that started it and hands over cleanly on updates.</p>
+          </div>
+          <div class="flow-arrow" aria-hidden="true"><span>localhost · TLS</span></div>
+          <div class="flow-col">
+            <h3>You and your PCs</h3>
+            <ul class="mono-list"><li>dashboard :4777</li><li>paired PCs over TLS 1.3</li></ul>
+            <p>The dashboard reads the same store. Paired PCs exchange mail, files and jobs.</p>
+          </div>
+        </div>
+        <p class="more"><a href={docs("concepts/how-it-works/")}>The full picture →</a></p>
+      </div>
+    </section>
+
+    <section id="safety" class="section band" aria-labelledby="safety-title">
+      <div class="wrap split">
+        <div>
+          <p class="kicker">Safety</p>
+          <h2 id="safety-title">Careful by default</h2>
+          <p class="section-lede">Agents that talk to agents need clear limits. These are on before you change anything.</p>
+          <p class="more"><a href={docs("reference/security/")}>Security reference →</a></p>
+        </div>
+        <ul class="checks">
+          <li><strong>Only your processes connect.</strong> Every connection presents a secret from <code>~/.agent-bridge/token</code>.</li>
+          <li><strong>Local dashboard.</strong> It listens on <code>127.0.0.1</code> only and needs its access key.</li>
+          <li><strong>Read-only subagents.</strong> You raise access per job; edits can be isolated in worktrees.</li>
+          <li><strong>Peers are not the boss.</strong> Messages from other agents are marked, and agents are told not to act destructively just because a peer asked.</li>
+          <li><strong>Nothing of yours is deleted.</strong> Cleanup is off by default and only ever touches worktrees agent-bridge created itself. History is archived, never removed. <a href={docs("worktree-lifecycle/")}>What may be removed</a>.</li>
+          <li><strong>Explicit pairing.</strong> TLS 1.3 with a one-time code; discovery never connects on its own.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="install" class="section" aria-labelledby="install-title">
+      <div class="wrap">
+        <p class="kicker">Get started</p>
+        <h2 id="install-title">Install in one line</h2>
+        <p class="section-lede">Needs Node.js 24 or newer. The installer finds every supported CLI, shows its plan and asks before it changes anything.</p>
+        <div class="terms">
+          <div class="term">
+            <p class="term-title">Install</p>
+            <div class="cmd" data-copy={install}><span class="prompt" aria-hidden="true">$</span><code>{install}</code><button type="button" class="copy" aria-label="Copy the install command">Copy</button></div>
+            <p class="term-note">Add <code>--yes</code> to skip questions, or name CLIs: <code>install claude codex</code>. In Codex, trust the hooks once in <code>/hooks</code>.</p>
+          </div>
+          <div class="term">
+            <p class="term-title">Update</p>
+            <div class="cmd" data-copy="npx -y github:rennerdo30/agent-bridge update"><span class="prompt" aria-hidden="true">$</span><code>npx -y github:rennerdo30/agent-bridge update</code><button type="button" class="copy" aria-label="Copy the update command">Copy</button></div>
+            <p class="term-note">Safe while sessions run: new sessions start on the new version, running ones switch at their next plugin reload.</p>
+          </div>
+          <div class="term">
+            <p class="term-title">Status</p>
+            <div class="cmd" data-copy="npx -y github:rennerdo30/agent-bridge status"><span class="prompt" aria-hidden="true">$</span><code>npx -y github:rennerdo30/agent-bridge status</code><button type="button" class="copy" aria-label="Copy the status command">Copy</button></div>
+            <p class="term-note">Shows which sessions still run an older version. Mixed versions keep working together.</p>
+          </div>
+        </div>
+        <div class="cta center">
+          <a class="btn primary" href={docs("getting-started/first-steps/")}>First steps</a>
+          <a class="btn" href={`${repo}/blob/main/CHANGELOG.md`}>Changelog</a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <div class="wrap foot-row">
+      <div class="brand small"><img src={`${base}favicon.svg`} alt="" width="22" height="22"><span>agent-bridge</span></div>
+      <nav aria-label="Footer">
+        <a href={docs("overview/")}>Documentation</a>
+        <a href={docs("troubleshooting/")}>Troubleshooting</a>
+        <a href={docs("privacy/")}>Privacy</a>
+        <a href={repo}>Source code</a>
+      </nav>
+      <p>MIT licensed · made by <a href="https://renner.dev">rennerdo30</a></p>
+    </div>
+  </footer>
+
+  <script>
+    import { initLanding } from "../scripts/landing";
+    initLanding();
+  </script>
+</body>
+</html>
