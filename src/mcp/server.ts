@@ -1491,9 +1491,10 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
       inputSchema: {
         to: z.string().min(1).describe("Peer name, including host/peer for a paired instance"),
         paths: z.array(z.string().min(1)).min(1).max(MAX_STREAM_ENTRIES).describe("Files/folders: absolute, or relative to this session's cwd"),
+        destination: z.enum(["downloads"]).optional().describe("Paired PC only: also place the received files in that PC's Downloads folder (new names, never overwriting; the inbox copy stays). The receiver must allow it (network.transferDestinations)"),
       },
     },
-    guarded("send_files", async (args: { to: string; paths: string[] }) => text(JSON.stringify(await requireNode().sendFiles(args.to, args.paths), null, 2))),
+    guarded("send_files", async (args: { to: string; paths: string[]; destination?: "downloads" }) => text(JSON.stringify(await requireNode().sendFiles(args.to, args.paths, args.destination), null, 2))),
   );
 
   register(

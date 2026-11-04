@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { constants, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { constants, copyFileSync, existsSync, linkSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { open, link, unlink, statfs, lstat, opendir, type FileHandle } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { z } from "zod";
@@ -28,11 +28,16 @@ const MIN_TRANSFER_FREE_BYTES = 16 * 1024 * 1024;
 const SHA_PATTERN = /^[0-9a-f]{64}$/;
 const RETRYABLE_TRANSFER_ERROR = /^(network link closed|network write limit reached|paired instance is not connected|file transfer request timed out|sender not advertised by paired instance|file (source peer|recipient|sender) is not online|transfer operation already in progress|too many active file transfers)$/;
 const TERMINAL = new Set<TransferStatus>(["completed", "cancelled", "failed"]);
+/** AB-498: named places on the receiving PC a sender may ask for; the receiver maps each to a folder it allows. */
+export const TRANSFER_DESTINATIONS = ["downloads"] as const;
+export type TransferDestination = typeof TRANSFER_DESTINATIONS[number];
 export type TransferStatus = "queued" | "preparing" | "running" | "paused" | "completed" | "cancelled" | "failed";
 export interface TransferProgress {
   id: string; direction: "send" | "receive"; peer: string; status: TransferStatus;
   bytes: number; totalBytes: number; files: number; totalFiles: number; percent: number;
   createdAt: number; updatedAt: number; inbox?: string; error?: string;
+  /** AB-498: where a completed received transfer was also placed, or why that failed (the inbox copy stays). */
+  placed?: string; placeError?: string;
 }
 export interface TransferStarted { id: string; status: "queued" }
 const senderSchema = z.object({ id: z.string().min(1).max(MAX_SENDER_ID_CHARS), name: z.string().regex(NETWORK_NAME_PATTERN), agent: z.enum(AGENT_KINDS) });
@@ -41,7 +46,7 @@ const entrySchema = z.object({ path: z.string().min(1).max(MAX_PATH_CHARS), kind
 type Entry = z.infer<typeof entrySchema> & { source?: string; mtimeMs?: number; ino?: number; dev?: number; offset: number; sha256?: string; complete?: boolean };
 const base = { id: z.uuid(), rid: z.uuid(), kind: z.literal("request") };
 export const fileStreamRequestSchema = z.discriminatedUnion("op", [
-  z.object({ ...base, op: z.literal("offer"), from: senderSchema, to: z.string().regex(NETWORK_NAME_PATTERN), entries: z.array(entrySchema).min(1).max(MAX_STREAM_ENTRIES) }),
+  z.object({ ...base, op: z.literal("offer"), from: senderSchema, to: z.string().regex(NETWORK_NAME_PATTERN), entries: z.array(entrySchema).min(1).max(MAX_STREAM_ENTRIES), destination: z.enum(TRANSFER_DESTINATIONS).optional() }),
   z.object({ ...base, op: z.literal("chunk"), index: z.number().int().nonnegative().max(MAX_STREAM_ENTRIES - 1), offset: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER), data: z.string().max(Math.ceil(TRANSFER_CHUNK_BYTES / 3) * 4), sha256: z.string().regex(SHA_PATTERN) }),
   z.object({ ...base, op: z.literal("finish-file"), index: z.number().int().nonnegative().max(MAX_STREAM_ENTRIES - 1), sha256: z.string().regex(SHA_PATTERN) }),
   z.object({ ...base, op: z.literal("finish") }),
@@ -57,6 +62,8 @@ interface State {
   from: Sender; to: string; status: TransferStatus; createdAt: number; updatedAt: number;
   paths: string[]; cwd: string; entries: Entry[]; totalBytes: number; error?: string;
   pull?: boolean; cancelPending?: boolean; abortPending?: boolean; legacy?: boolean; legacySent?: boolean; fetched?: boolean; initialized?: boolean;
+  /** AB-498: the sender asked for this place; on the receiver set only when its config allows the place. */
+  destination?: TransferDestination; placed?: string; placeError?: string;
 }
 interface TransferTransport {
   supports(remote: string): boolean;
@@ -78,7 +85,8 @@ function transferSummary(home: string, state: State): TransferProgress {
     totalFiles: state.entries.filter((entry) => entry.kind === "file").length,
     percent: state.status === "completed" ? 100 : state.totalBytes ? Math.floor(bytes / state.totalBytes * 100) : 0,
     createdAt: state.createdAt, updatedAt: state.updatedAt,
-    ...(state.direction === "receive" ? { inbox: join(home, "inbox", state.id) } : {}), ...(state.error ? { error: state.error } : {}) };
+    ...(state.direction === "receive" ? { inbox: join(home, "inbox", state.id) } : {}), ...(state.error ? { error: state.error } : {}),
+    ...(state.placed ? { placed: state.placed } : {}), ...(state.placeError ? { placeError: state.placeError } : {}) };
 }
 function persistTransfer(root: string, state: State): void {
   assertTransferPath(root); state.updatedAt = Date.now();
@@ -150,7 +158,7 @@ export class TransferManager {
   private readonly root: string;
 
   constructor(private readonly home: string, private readonly transport: TransferTransport, private readonly log: Logger,
-    private readonly options: { maxBytes?: number; fetchRoots?: string[] } = {}) {
+    private readonly options: { maxBytes?: number; fetchRoots?: string[]; destinations?: Partial<Record<TransferDestination, string>> } = {}) {
     assertTransferPath(home);
     this.root = join(home, "network", "transfers");
     ensureTransferDirectory(this.root);
@@ -219,16 +227,18 @@ export class TransferManager {
     const from = state.direction === "receive" ? { ...state.from, id: `${state.remote}/${state.from.id}`, name: `${state.peer.split("/")[0]}/${state.from.name}` } : { id: `files-${state.id}`, name: "files", agent: "other" as const };
     this.transport.notify({ id: state.direction === "receive" && state.status === "completed" ? state.id : randomUUID(), from, to: recipient, recipient,
       conversationId: TERMINAL.has(state.status) ? state.id : `${TRANSFER_PROGRESS_PREFIX}${state.id}`, replyTo: null, hop: 0, createdAt: now, readAt: null,
-      body: `files: ${progress.percent}% · ${progress.bytes} / ${progress.totalBytes} bytes · ${state.status} · ${state.id}${progress.inbox ? ` · ${progress.inbox}` : ""}${state.error ? ` · ${state.error}` : ""}` });
+      body: `files: ${progress.percent}% · ${progress.bytes} / ${progress.totalBytes} bytes · ${state.status} · ${state.id}${progress.inbox ? ` · ${progress.inbox}` : ""}${state.error ? ` · ${state.error}` : ""}` +
+        `${TERMINAL.has(state.status) && state.placed ? ` · also placed in ${state.placed}` : ""}${TERMINAL.has(state.status) && state.placeError ? ` · ${state.placeError}` : ""}` });
     if (TERMINAL.has(state.status)) this.notified.delete(state.id);
   }
   private ensureCapacity(): void {
     if (this.states.size >= MAX_ACTIVE_TRANSFERS) throw new Error("too many active file transfers");
   }
-  start(remote: string, peer: string, to: string, paths: string[], cwd: string, from: Sender, pull = false, id: string = randomUUID(), legacy = false): TransferStarted {
+  start(remote: string, peer: string, to: string, paths: string[], cwd: string, from: Sender, pull = false, id: string = randomUUID(), legacy = false, destination?: TransferDestination): TransferStarted {
     this.ensureCapacity();
     const state: State = { version: 1, id, direction: pull ? "receive" : "send", remote, peer, to, paths, cwd, from,
-      status: "queued", entries: [], totalBytes: 0, createdAt: Date.now(), updatedAt: Date.now(), ...(pull ? { pull: true } : {}), ...(legacy ? { legacy: true } : {}) };
+      status: "queued", entries: [], totalBytes: 0, createdAt: Date.now(), updatedAt: Date.now(), ...(pull ? { pull: true } : {}), ...(legacy ? { legacy: true } : {}),
+      ...(destination ? { destination } : {}) };
     this.save(state); this.report(state, true);
     setImmediate(() => this.resume());
     return { id, status: "queued" };
@@ -395,7 +405,8 @@ export class TransferManager {
       }
       if (!state.entries.length) { state.status = "preparing"; this.save(state); state.entries = await this.collect(state); state.totalBytes = this.validateEntries(state.entries); this.save(state); }
       if (this.stopped(state)) return;
-      const reply = await this.rpc(state.remote, state.id, { op: "offer", from: state.from, to: state.to, entries: state.entries.map(({ path, kind, size }) => ({ path, kind, size })) });
+      const reply = await this.rpc(state.remote, state.id, { op: "offer", from: state.from, to: state.to, entries: state.entries.map(({ path, kind, size }) => ({ path, kind, size })),
+        ...(state.destination ? { destination: state.destination } : {}) });
       if (this.stopped(state)) return;
       if (reply.status === "completed") { state.status = "completed"; for (const entry of state.entries) { entry.offset = entry.size; entry.complete = true; } this.save(state); this.report(state, true); return; }
       if (!reply.offsets || reply.offsets.length !== state.entries.length) throw new RemoteTransferError("invalid resume offsets");
@@ -508,6 +519,38 @@ export class TransferManager {
       entry.offset = verified;
     } finally { try { await file.close(); } finally { await journal?.close(); } }
   }
+  /**
+   * AB-498: also put a completed received transfer where its sender asked (an allowed place on this PC). Every
+   * file and folder goes under a new top-level name there (" (2)" and so on when taken), so nothing existing is
+   * overwritten; files are hard-linked when the place is on the same volume, else copied. The inbox copy stays.
+   */
+  private place(state: State): void {
+    const root = state.destination && this.options.destinations?.[state.destination];
+    if (!root || state.placed) return;
+    try {
+      if (!isAbsolute(root) || !existsSync(root) || !lstatSync(root).isDirectory()) throw new Error(`${root} is not an existing folder`);
+      const inbox = join(this.home, "inbox", state.id), names = new Map<string, string>(), placed: string[] = [];
+      for (const entry of [...state.entries].sort((a, b) => a.path.length - b.path.length)) {
+        const [top, ...rest] = entry.path.split("/");
+        let name = names.get(top!);
+        if (!name) {
+          const dot = entry.kind === "file" && !rest.length ? top!.lastIndexOf(".") : -1;
+          const stem = dot > 0 ? top!.slice(0, dot) : top!, ext = dot > 0 ? top!.slice(dot) : "";
+          name = top!;
+          for (let n = 2; existsSync(join(root, name)); n++) name = `${stem} (${n})${ext}`;
+          names.set(top!, name); placed.push(join(root, name));
+        }
+        const target = join(root, name, ...rest), source = join(inbox, ...entry.path.split("/"));
+        if (entry.kind === "directory") { mkdirSync(target, { recursive: true, mode: OWNER_DIR_MODE }); continue; }
+        mkdirSync(dirname(target), { recursive: true, mode: OWNER_DIR_MODE });
+        try { linkSync(source, target); } catch { copyFileSync(source, target, constants.COPYFILE_EXCL); }
+      }
+      state.placed = placed.join(", ");
+    } catch (error) {
+      state.placeError = `could not place in ${state.destination}: ${(error as Error).message}`;
+      this.log.warn("received files stay in the inbox only", { id: state.id, error: state.placeError });
+    }
+  }
   private initialize(state: State): void {
     const inbox = join(this.home, "inbox"); ensureTransferDirectory(inbox);
     const final = join(inbox, state.id); const parts = join(this.root, state.id);
@@ -586,7 +629,11 @@ export class TransferManager {
           const inbox = join(this.home, "inbox"); ensureTransferDirectory(inbox);
           if (existsSync(join(inbox, request.id)) || existsSync(join(this.root, request.id))) throw new Error("transfer destination already exists");
           const receiving: State = { version: 1, id: request.id, direction: "receive", remote, peer: `${remoteName}/${request.from.name}`, from: request.from, to: request.to,
-            paths: [], cwd: "", status: "preparing", entries, totalBytes, createdAt: state?.createdAt ?? Date.now(), updatedAt: Date.now() };
+            paths: [], cwd: "", status: "preparing", entries, totalBytes, createdAt: state?.createdAt ?? Date.now(), updatedAt: Date.now(),
+            // AB-498: only a place this PC's config allows; any other request lands in the inbox as before.
+            ...(request.destination && this.options.destinations?.[request.destination] ? { destination: request.destination } : {}),
+            ...(request.destination && !this.options.destinations?.[request.destination]
+              ? { placeError: `destination "${request.destination}" is not allowed on this PC (network.transferDestinations)` } : {}) };
           state = state ? Object.assign(state, receiving, { pull: false }) : receiving;
           this.save(state);
           await this.freeDisk(0);
@@ -609,7 +656,7 @@ export class TransferManager {
     try {
       if (request.op === "finish") {
         if (state.entries.some((entry) => entry.kind === "file" && !entry.complete)) throw new Error("transfer has incomplete files");
-        if (state.status !== "completed") { state.status = "completed"; this.save(state); this.report(state, true); }
+        if (state.status !== "completed") { state.status = "completed"; this.place(state); this.save(state); this.report(state, true); }
         return { status: state.status };
       }
       const entry = state.entries[request.index];

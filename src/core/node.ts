@@ -1017,8 +1017,8 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     });
   }
 
-  sendFiles(to: string, paths: string[]): Promise<TransferResult | TransferStarted> {
-    return this.withClient((c) => c.request("sendFiles", { to, paths }));
+  sendFiles(to: string, paths: string[], destination?: "downloads"): Promise<TransferResult | TransferStarted> {
+    return this.withClient((c) => c.request("sendFiles", { to, paths, ...(destination ? { destination } : {}) }));
   }
 
   fetchFiles(from: string, paths: string[]): Promise<TransferStarted> {

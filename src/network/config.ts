@@ -24,6 +24,11 @@ export const networkConfigSchema = z.object({
   }).default({ enabled: false, allowRoots: [], agents: [], allowPeers: [] }),
   maxTransferBytes: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
   fetchRoots: z.array(z.string().min(1).max(MAX_FETCH_ROOT_CHARS).refine(isAbsolute, "fetch roots must be absolute paths")).max(MAX_FETCH_ROOTS).optional(),
+  /**
+   * AB-498: places on this PC a paired sender may ask received files to be put in, by name. Unset: "downloads" is the
+   * user's Downloads folder. {} turns the feature off; a path replaces the default folder.
+   */
+  transferDestinations: z.object({ downloads: z.string().min(1).max(MAX_FETCH_ROOT_CHARS).refine(isAbsolute, "destinations must be absolute paths").optional() }).strict().optional(),
 });
 
 export type NetworkConfig = z.infer<typeof networkConfigSchema>;
