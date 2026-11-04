@@ -165,6 +165,12 @@ export class RewakeEndpoint {
    * hand-out takes them and no mod acknowledgement confirms them; only that delivery's own prompt does (confirmPrompt).
    */
   private t3Pending: { ids: Set<string>; notes: Set<string>; abort: AbortController } | null = null;
+  /**
+   * AB-497: messages whose T3 delivery T3 queued behind a turn already running in the chat. The running turn's
+   * tool hooks show them (they are not in flight); T3's queued turn shows them otherwise. No other wake-up and no
+   * second T3 send takes them. Cleared when T3's queued turn shows them or they are read.
+   */
+  private readonly t3Queued = new Set<string>();
   /** Every CLI send still running, also after its prompt settled the delivery: stop() ends them all. */
   private readonly t3Sends = new Set<AbortController>();
   private t3Timer: NodeJS.Timeout | undefined;
@@ -199,7 +205,8 @@ export class RewakeEndpoint {
    * shown (AB-404) or is on its way to its own mod turn.
    */
   private readonly deliverable = (m: BridgeMessage): boolean =>
-    this.shouldWake(m) && !this.oversized?.noted(m.id) && !this.modNoteInFlight(m.id) && !this.t3Pending?.ids.has(m.id) && !this.t3Pending?.notes.has(m.id);
+    this.shouldWake(m) && !this.oversized?.noted(m.id) && !this.modNoteInFlight(m.id) && !this.t3Pending?.ids.has(m.id) && !this.t3Pending?.notes.has(m.id) &&
+    !this.t3Queued.has(m.id);
   /** A message a Stop-hook waiter may wake for: not while T3 delivers this session's wake-ups (AB-481). */
   private readonly hookWakeable = (m: BridgeMessage): boolean => this.wakeable(m) && !this.t3Active;
   /** A message that should start a wake-up: deliverable, and not a note this endpoint handed out and awaits (AB-404). */
@@ -461,6 +468,17 @@ export class RewakeEndpoint {
     }
     this.log.info(outcome.state === "accepted" ? "wake-up sent into the T3 chat" : "T3 delivery outcome unknown; not retried",
       { count: pending.ids.size, ...(outcome.state === "accepted" ? { delivery: outcome.delivery, runId: outcome.runId } : { reason: outcome.reason }) });
+    if (outcome.state === "accepted" && outcome.delivery === "queued") {
+      // AB-497: T3 queued the wake-up behind a turn already running in the chat (a session whose process T3 just
+      // started for that turn looks idle here). That turn must not wait for its end: its tool hooks show the
+      // messages now. T3's queued turn still carries them, so nothing is lost if the turn makes no tool call.
+      for (const id of pending.ids) this.t3Queued.add(id);
+      while (this.t3Queued.size > MAX_REPEATS) this.t3Queued.delete(this.t3Queued.values().next().value!);
+      this.t3Pending = null;
+      this.setBusy(true);
+      this.log.info("T3 chat is mid-turn; its tool hooks deliver the queued wake-up's messages now", { count: pending.ids.size });
+      return;
+    }
     this.armT3Confirm(pending);
   }
 
@@ -569,6 +587,7 @@ export class RewakeEndpoint {
   /** A turn's prompt: a wake-up's own prompt shows its messages, wherever they were handed out. */
   confirmPrompt(prompt: string): void {
     if (!prompt.includes(WAKE_HEADER)) return;
+    for (const id of wakeMessageIds(prompt)) this.t3Queued.delete(id);
     // AB-404: only notes this endpoint handed out and awaits; a marker for any other id is not one of its notes.
     const pending = this.t3Pending;
     const shownNotes = [...new Set([...this.handedNotes, ...this.modNotes.keys(), ...this.ackedNotes, ...(pending?.notes ?? [])])].filter((id) => prompt.includes(oversizedNoteMarker(id)));
