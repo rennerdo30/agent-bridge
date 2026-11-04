@@ -74,3 +74,27 @@ it("keeps files only in the inbox when the receiving PC does not allow the place
   expect(readdirSync(downloads)).toEqual([]);
   expect(existsSync(join(home, "mac", "inbox"))).toBe(true);
 });
+
+it("finishes a placement that a restart cut short, cleaning only its own leftover temporary copy", async () => {
+  const { TransferManager } = await import("../src/network/transfers.js");
+  const id = randomUUID(), downloads = join(home, "Downloads"), data = join(home, "receiver-home");
+  mkdirSync(downloads); mkdirSync(join(data, "network", "transfers"), { recursive: true }); mkdirSync(join(data, "inbox", id), { recursive: true });
+  writeFileSync(join(data, "inbox", id, "build.aab"), "complete build");
+  writeFileSync(join(downloads, `.agent-bridge-${id}-0.partial`), "trunc");
+  writeFileSync(join(downloads, "keep.txt"), "user file");
+  writeFileSync(join(data, "network", "transfers", `${id}.json`), JSON.stringify({ version: 1, id, direction: "receive", remote: "remote-id", peer: "pc/sender",
+    from: { id: "s", name: "sender", agent: "codex" }, to: "receiver", status: "completed", createdAt: 1, updatedAt: 1, paths: [], cwd: "", totalBytes: 14,
+    entries: [{ path: "build.aab", kind: "file", size: 14, offset: 14, complete: true }], initialized: true, destination: "downloads", placingPending: true }));
+  const notices: BridgeMessage[] = [], requests: Record<string, unknown>[] = [];
+  const manager = new TransferManager(data, {
+    supports: () => false, send: async (_remote: string, payload: Record<string, unknown>) => { requests.push(payload); }, validSender: () => true,
+    localPeer: () => ({ id: "receiver", name: "receiver", agent: "codex", cwd: data }), notify: (m: BridgeMessage) => { notices.push(m); }, legacy: async () => { throw new Error("unused"); },
+  } as never, nullLogger, { destinations: { downloads } });
+  try {
+    manager.resume();
+    await wait(() => notices.some((m) => m.body.includes("also placed in")));
+    expect(readFileSync(join(downloads, "build.aab"), "utf8")).toBe("complete build");
+    expect(readdirSync(downloads).sort()).toEqual(["build.aab", "keep.txt"]);
+    expect(requests.some((r) => r.op === "placed")).toBe(true);
+  } finally { manager.close(); }
+});
