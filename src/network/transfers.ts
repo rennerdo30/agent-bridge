@@ -208,7 +208,7 @@ async function settleUnderFreeName(temp: string, root: string, top: string, file
     const final = join(root, n === 1 ? top : `${stem} (${n})${ext}`);
     if (await taken(final)) continue;
     try { await rename(temp, final); }
-    catch (error) { if (["EEXIST", "ENOTEMPTY", "ENOTDIR", "EPERM", "EISDIR", "EACCES"].includes((error as NodeJS.ErrnoException).code ?? "")) continue; throw error; }
+    catch (error) { if (["EEXIST", "ENOTEMPTY", "ENOTDIR", "EISDIR"].includes((error as NodeJS.ErrnoException).code ?? "")) continue; throw error; }
     return final;
   }
   throw new Error(`no free name for ${top}`);
@@ -304,7 +304,7 @@ export class TransferManager {
     this.transport.notify({ id: state.direction === "receive" && state.status === "completed" ? state.id : randomUUID(), from, to: recipient, recipient,
       conversationId: TERMINAL.has(state.status) ? state.id : `${TRANSFER_PROGRESS_PREFIX}${state.id}`, replyTo: null, hop: 0, createdAt: now, readAt: null,
       body: `files: ${progress.percent}% · ${progress.bytes} / ${progress.totalBytes} bytes · ${state.status} · ${state.id}${progress.inbox ? ` · ${progress.inbox}` : ""}${state.error ? ` · ${state.error}` : ""}` +
-        `${TERMINAL.has(state.status) && state.placed ? ` · also placed in ${state.placed}` : ""}${TERMINAL.has(state.status) && state.placeError ? ` · ${state.placeError}` : ""}` });
+        `${TERMINAL.has(state.status) && state.placed ? ` · also placed in ${oneLine(state.placed, 8_192)}` : ""}${TERMINAL.has(state.status) && state.placeError ? ` · ${state.placeError}` : ""}` });
     if (TERMINAL.has(state.status)) this.notified.delete(state.id);
   }
   private ensureCapacity(): void {
@@ -633,6 +633,8 @@ export class TransferManager {
         if (this.closed) return;
         temp = join(root, `${prefix}${index}.partial`);
         const single = entries.length === 1 && entries[0]!.kind === "file" && entries[0]!.path === top;
+        const existing = await lstat(temp).catch(() => undefined);
+        if (existing && (existing.isSymbolicLink() || (single ? !existing.isFile() : !existing.isDirectory()))) throw new Error(`${temp} is in the way (not this transfer's own copy)`);
         if (single) await placeFile(join(inbox, top), temp);
         else {
           await mkdir(temp, { recursive: true, mode: OWNER_DIR_MODE });
@@ -660,7 +662,8 @@ export class TransferManager {
     const placed = (state.placedItems ?? []).filter(Boolean);
     if (placed.length) state.placed = placed.join(", ");
     state.placingPending = false;
-    this.save(state); this.report(state, true);
+    try { this.save(state); this.report(state, true); }
+    catch (error) { this.log.warn("placement outcome not reported", { id: state.id, error: String(error) }); }
     void this.rpc(state.remote, state.id, { op: "placed", ...(state.placed ? { placed: oneLine(state.placed, 8_192) } : {}),
       ...(state.placeError ? { placeError: oneLine(state.placeError, MAX_ERROR_CHARS) } : {}) })
       .catch((error) => this.log.debug("sender not told about placement", { id: state.id, error: String(error) }));
@@ -760,7 +763,8 @@ export class TransferManager {
         }
         if (this.stopped(state)) throw new Error("transfer cancelled");
         if (state.status !== "completed") { state.status = "running"; delete state.error; }
-        this.save(state); this.report(state, true);
+        // AB-498: a completed transfer still being placed reports once placement ends, with where the files went.
+        this.save(state); if (!state.placingPending) this.report(state, true);
         return { offsets: state.entries.map((entry) => entry.offset), status: state.status,
           // AB-498: an older receiver drops the destination silently; this reply tells the sender it was seen.
           ...(request.destination ? { destination: state.destination ? "accepted" as const : "refused" as const } : {}) };

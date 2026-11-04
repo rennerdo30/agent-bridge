@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, expect, it } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { nullLogger } from "../src/core/logger.js";
 import type { BridgeMessage, PeerInfo } from "../src/core/protocol.js";
 import { DEFAULT_NETWORK_CONFIG, type NetworkConfig } from "../src/network/config.js";
@@ -119,4 +119,41 @@ it("ends a pending placement whose place is no longer allowed after a restart, t
     expect(JSON.parse(readFileSync(join(data, "network", "transfers", `${id}.json`), "utf8")).placingPending).toBe(false);
     expect(readFileSync(join(data, "inbox", id, "build.aab"), "utf8")).toBe("complete build");
   } finally { manager.close(); }
+});
+
+it("resumes after the items a restart already placed, never placing one twice", async () => {
+  const { TransferManager } = await import("../src/network/transfers.js");
+  const id = randomUUID(), downloads = join(home, "Downloads"), data = join(home, "receiver-home");
+  mkdirSync(downloads); mkdirSync(join(data, "network", "transfers"), { recursive: true }); mkdirSync(join(data, "inbox", id), { recursive: true });
+  writeFileSync(join(data, "inbox", id, "a.txt"), "a"); writeFileSync(join(data, "inbox", id, "b.txt"), "b");
+  writeFileSync(join(downloads, "a.txt"), "a"); // placed before the restart
+  writeFileSync(join(data, "network", "transfers", `${id}.json`), JSON.stringify({ version: 1, id, direction: "receive", remote: "remote-id", peer: "pc/sender",
+    from: { id: "s", name: "sender", agent: "codex" }, to: "receiver", status: "completed", createdAt: 1, updatedAt: 1, paths: [], cwd: "", totalBytes: 2,
+    entries: [{ path: "a.txt", kind: "file", size: 1, offset: 1, complete: true }, { path: "b.txt", kind: "file", size: 1, offset: 1, complete: true }],
+    initialized: true, destination: "downloads", placingPending: true, placedItems: [join(downloads, "a.txt"), null] }));
+  const notices: BridgeMessage[] = [];
+  const manager = new TransferManager(data, {
+    supports: () => false, send: async () => {}, validSender: () => true,
+    localPeer: () => ({ id: "receiver", name: "receiver", agent: "codex", cwd: data }), notify: (m: BridgeMessage) => { notices.push(m); }, legacy: async () => { throw new Error("unused"); },
+  } as never, nullLogger, { destinations: { downloads } });
+  try {
+    manager.resume();
+    await wait(() => notices.some((m) => m.body.includes("also placed in")));
+    expect(readdirSync(downloads).sort()).toEqual(["a.txt", "b.txt"]);
+  } finally { manager.close(); }
+});
+
+it("tells the sender when the paired PC is too old to place files (no acknowledgement)", async () => {
+  const downloads = join(home, "Downloads"); mkdirSync(downloads);
+  const { a, b, sender, aMessages } = await paired({ transferDestinations: { downloads } });
+  // An older receiver: its offer schema drops the unknown destination field.
+  const receive = b.receiveExtension.bind(b);
+  vi.spyOn(b, "receiveExtension").mockImplementation((type, payload, remote) => {
+    if ((payload as { op?: string }).op === "offer") delete (payload as { destination?: string }).destination;
+    return receive(type, payload, remote);
+  });
+  const source = join(home, "x.txt"); writeFileSync(source, "x");
+  const started = a.startFiles("mac/receiver", [source], home, sender, false, "downloads");
+  await wait(() => aMessages.some((m) => m.body.includes(started.id) && m.body.includes("too old to place files")));
+  expect(readdirSync(downloads)).toEqual([]);
 });
