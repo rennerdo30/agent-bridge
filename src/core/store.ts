@@ -522,6 +522,15 @@ export class MessageStore {
   }
 
   /** Eligibility never removes history or old queued messages. Unknown old names are skipped. */
+  /** AB-493: one sender's latest stored messages to one address (one row per message id), newest first. */
+  sentBy(from: string, to: string, limit: number): BridgeMessage[] {
+    return this.acceptedOperation("direct", () => {
+    const ids = this.statement(this.db, `SELECT id FROM messages WHERE from_name = ? AND to_target = ?
+      GROUP BY id ORDER BY MAX(created_at) DESC LIMIT ?`).all(from, to, limit).map((r) => String(r.id));
+    return ids.flatMap((id) => { const m = this.byId(id); return m ? [m] : []; });
+    });
+  }
+
   recentProjectSenders(address: string, previous: string, since: number): string[] {
     return this.acceptedOperation("direct", () => {
     return this.statement(this.db, `SELECT from_name FROM deliverable_messages WHERE to_target=? AND recipient=? AND created_at>=?
