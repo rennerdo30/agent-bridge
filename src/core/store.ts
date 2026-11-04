@@ -190,6 +190,9 @@ export function messageStoreHandleObservation(db: DatabaseSync) {
  * Durable message store. Only the broker process opens it, so there is a single writer at a time.
  * All statements are prepared once and bound with parameters.
  */
+/** AB-493: how many of the newest message rows a sent-message lookup reads. */
+const SENT_LOOKUP_ROWS = 20_000;
+
 export class MessageStore {
   #producerSealed = false;
   // No setter/retirement entry is exposed: actual committed-intent/joint-owner
@@ -482,6 +485,15 @@ export class MessageStore {
     });
   }
 
+  /** AB-488: the provider session that last owned a name, to find its T3 Code chat while it is offline. */
+  lastSessionForName(name: string): { agent: string; sessionId: string } | undefined {
+    return this.acceptedOperation("direct", () => {
+    const row = this.statement(this.db, `SELECT pn.agent AS agent, pn.session_id AS session_id FROM peer_name_owners o
+      JOIN peer_names pn ON pn.name = o.name AND pn.identity = o.identity WHERE o.name = ? AND pn.session_id IS NOT NULL LIMIT 1`).get(name);
+    return row && typeof row.agent === "string" && typeof row.session_id === "string" ? { agent: row.agent, sessionId: row.session_id } : undefined;
+    });
+  }
+
   /** Presence updates never change the identity that currently owns a name. */
   markPeerSeen(name: string, at: number): void {
     return this.acceptedOperation("direct", () => {
@@ -518,6 +530,19 @@ export class MessageStore {
         // Historical rows remain untouched. Unknown paths and any real project path stay eligible.
         return !cwds.length || cwds.some((cwd) => !isPluginCacheCwd(cwd));
       }).map((row) => String(row.name));
+    });
+  }
+
+  /**
+   * AB-493: one sender's latest stored messages to one address (one row per message id), newest first. No index
+   * covers sender and target, so only the newest SENT_LOOKUP_ROWS rows (by rowid, which costs nothing) are read:
+   * the lookup is for a send that just got interrupted, and it must never scan the whole table on the broker thread.
+   */
+  sentBy(from: string, to: string, limit: number): BridgeMessage[] {
+    return this.acceptedOperation("direct", () => {
+    const ids = this.statement(this.db, `SELECT id FROM (SELECT id, from_name, to_target, created_at FROM messages ORDER BY rowid DESC LIMIT ?)
+      WHERE from_name = ? AND to_target = ? GROUP BY id ORDER BY MAX(created_at) DESC LIMIT ?`).all(SENT_LOOKUP_ROWS, from, to, limit).map((r) => String(r.id));
+    return ids.flatMap((id) => { const m = this.byId(id); return m ? [m] : []; });
     });
   }
 

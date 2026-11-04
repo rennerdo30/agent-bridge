@@ -46,7 +46,7 @@ function transportOperation(op: Op): TransportOperation {
     case "send": case "sendSibling": return "legacy_send";
     case "auth": case "hello": return "auth_hello";
     case "ack": return "ack";
-    case "ping": case "coreStatus": case "sendState": case "messageReceipt": return "status_read";
+    case "ping": case "coreStatus": case "sendState": case "sentTo": case "messageReceipt": return "status_read";
     default: return "other";
   }
 }

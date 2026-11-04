@@ -4,7 +4,7 @@ import { AGENT_KINDS, BROADCAST, isQuietMessage, type BridgeMessage } from "../c
 import { formatMessage, formatMessages, formatParentMessages, formatPeer } from "./format.js";
 import { selectForDelivery, unshownMessageNotes } from "./output-bounds.js";
 import { MessageWaitStore, resumeWaitHint } from "./message-wait.js";
-import { shouldWakeClaudeMessage, WAKE_HEADER } from "./rewake.js";
+import { shouldWakeClaudeMessage, WAKE_HEADER, wakeMessageIds } from "./rewake.js";
 import type { ServerContext } from "./server.js";
 import { formatDecisionSummary } from "../core/decisions.js";
 import { finishHookTurn, reserveHook } from "./hook-ownership.js";
@@ -408,7 +408,8 @@ async function runHook(ctx: ServerContext, input: HookInput, current: () => bool
   // blocks, an async rewake) is a wake-up, not the user's turn, so reply waits armed there keep the hop guard.
   if (input.event === "UserPromptSubmit") ctx.userTurn = !wakeTurn;
   else if (input.event === "Stop") ctx.userTurn = false;
-  if (input.event === "PostToolUse" || input.event === "Stop" || wakeTurn) ctx.wakeDelivery?.confirm();
+  // A wake prompt without message ids (the broker's offline T3 wake-up, AB-488) shows nothing handed out before.
+  if (input.event === "PostToolUse" || input.event === "Stop" || (wakeTurn && wakeMessageIds(input.prompt!).length > 0)) ctx.wakeDelivery?.confirm();
   else ctx.wakeDelivery?.release();
   if (input.event === "PostToolUse" || input.event === "UserPromptSubmit") ctx.wakeDelivery?.active();
   // With a live channel, Claude Code receives messages by push; hooks would only duplicate them.

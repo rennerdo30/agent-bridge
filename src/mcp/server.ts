@@ -1449,9 +1449,15 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
 
   register(
     "send_status",
-    { title: "Look up sent message", description: "Look up your sent message by UUID in broker storage and archives (no wait for history indexing). \"stored\" proves persistence only - not delivery or consumption. \"pending\"/\"not_stored\" describe this instant; an in-flight send may still store. Retry with the same message_id to avoid duplicates.",
-      inputSchema: { message_id: z.uuid() }, annotations: { readOnlyHint: true } },
-    guarded("send_status", async (a: { message_id: string }) => text(JSON.stringify(await requireNode().sendState(a.message_id), null, 2))),
+    { title: "Look up sent message", description: "Look up your sent message by UUID in broker storage and archives (no wait for history indexing), or with to=<address> list your latest stored sends to it (for a send interrupted before it returned an id). \"stored\" proves persistence only - not delivery or consumption. \"pending\"/\"not_stored\" describe this instant; an in-flight send may still store. Retry with the same message_id to avoid duplicates.",
+      inputSchema: {
+        message_id: z.uuid().optional(),
+        to: z.string().min(1).max(256).optional().describe("Instead of message_id: list your latest stored sends to this address among recent mail (for a send that was interrupted before it returned an id)"),
+      }, annotations: { readOnlyHint: true } },
+    guarded("send_status", async (a: { message_id?: string; to?: string }) => {
+      if (Boolean(a.message_id) === Boolean(a.to)) throw new BridgeError("bad_request", "Give either message_id or to.");
+      return text(JSON.stringify(a.message_id ? await requireNode().sendState(a.message_id) : await requireNode().sentTo(a.to!), null, 2));
+    }),
   );
 
   if (node && ctx.agent === "claude") register("native_child_grant", {

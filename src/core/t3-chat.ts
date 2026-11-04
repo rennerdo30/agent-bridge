@@ -37,6 +37,16 @@ export function t3CliFromEnv(env: NodeJS.ProcessEnv = process.env): string | und
   return existsSync(cli) ? cli : undefined;
 }
 
+/**
+ * AB-488: the T3 CLI for a process T3 did not start (the broker): T3CODE_CLI_PATH when set, else the launcher the
+ * T3 desktop app installs in its data directory (`<T3 home>/bin/t3`, `t3.cmd` on Windows).
+ */
+export function t3CliForHome(t3Home: string | undefined, env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): string | undefined {
+  const fromEnv = t3CliFromEnv(env);
+  if (fromEnv || !t3Home || !isAbsolute(t3Home)) return fromEnv;
+  return t3CliFromEnv({ T3CODE_CLI_PATH: join(t3Home, "bin", platform === "win32" ? "t3.cmd" : "t3") });
+}
+
 /** T3's data directory, as T3 resolves it (T3CODE_HOME, else ~/.t3). */
 export function t3HomeFromEnv(env: NodeJS.ProcessEnv, home: string): string {
   return env.T3CODE_HOME?.trim() || join(home, ".t3");

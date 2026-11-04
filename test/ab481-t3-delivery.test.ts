@@ -9,7 +9,7 @@ import { nullLogger } from "../src/core/logger.js";
 import type { BridgeNode } from "../src/core/node.js";
 import { t3ChatForNativeSession, t3SendMessage, type SpawnFn, type T3SendOutcome } from "../src/core/t3-chat.js";
 import { reportModActivity } from "../src/mcp/hook-ownership.js";
-import { claudeWakeCandidate } from "../src/mcp/hooks.js";
+import { buildHookResponse, claudeWakeCandidate } from "../src/mcp/hooks.js";
 import { JobManager } from "../src/mcp/jobs.js";
 import { RewakeEndpoint, WAKE_HEADER, sessionFile, wakeMessageIds, type T3Delivery } from "../src/mcp/rewake.js";
 import type { ServerContext } from "../src/mcp/server.js";
@@ -238,6 +238,24 @@ describe("RewakeEndpoint with T3 delivery", () => {
     expect(sent).toHaveLength(0);
     ctx.wakeDelivery!.idle!();
     await until(() => sent.length === 1, 5_000);
+  });
+
+  it("AB-497: a wake-up T3 queued behind a running turn goes to that turn's tool hooks, and is not sent again", async () => {
+    await setup();
+    outcome = { state: "accepted", delivery: "queued", runId: "run-2" };
+    await peer.send({ to: me.name, body: "P0: queue holder is dead" });
+    await until(() => sent.length === 1, 5_000);
+    // The turn T3 queued it behind keeps running (tool calls) well past the confirmation window.
+    for (let i = 0; i < 4; i++) { ctx.wakeDelivery!.active(); await new Promise((r) => setTimeout(r, 200)); }
+    // Its next tool call shows the message: it is not held back for T3's own (queued) turn.
+    const shown = await buildHookResponse(ctx, { event: "PostToolUse", sessionId: "sess-1", stopHookActive: false });
+    expect(JSON.stringify(shown)).toContain("P0: queue holder is dead");
+    // T3's queued turn shows it again: the hook copy says so, so the model acts on it once.
+    expect(JSON.stringify(shown)).toContain('repeat=\\"true\\"');
+    // The turn ends: T3's queued turn carries the wake-up, so no second T3 send goes out.
+    ctx.wakeDelivery!.idle!();
+    await new Promise((r) => setTimeout(r, 2_000));
+    expect(sent).toHaveLength(1);
   });
 
   it("without the mod, a refused send wakes the session through the waiting Stop hook", async () => {

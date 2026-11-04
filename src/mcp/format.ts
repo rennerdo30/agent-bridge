@@ -3,6 +3,7 @@ import { AGENT_KINDS, BROADCAST, isQuietMessage, type BridgeMessage, type PeerIn
 import type { LinkMessage } from "../core/parent-link.js";
 import { DEFAULT_SIBLING_MAX_HOPS } from "../core/job-messaging.js";
 import { displayPath } from "../core/display-paths.js";
+import { compareVersions } from "./server-lifecycle.js";
 
 /**
  * Text shown to the model. It is model-facing protocol text rather than UI copy, so it stays in English
@@ -111,10 +112,22 @@ function formatUptime(ms: number): string {
   return h < 48 ? `${h}h${min % 60 ? ` ${min % 60}m` : ""}` : `${Math.floor(h / 24)}d`;
 }
 
-export function formatPeer(p: PeerInfo, selfId?: string, now: number = Date.now()): string {
+/**
+ * AB-490: which side of a version skew runs retained code. The reader compares a peer with its own running
+ * version, and a reader that is itself behind would otherwise flag every up-to-date peer as "retained code".
+ */
+function versionSkewNote(peer: string | undefined, own: string): string {
+  if (peer === own) return "";
+  const order = peer ? compareVersions(peer, own) : null;
+  if (order === -1) return ` · version skew (retained code): older than this session (v${own})`;
+  if (order === 1) return ` · version skew: newer than this session (v${own}), which runs retained code`;
+  return " · version skew (retained code)";
+}
+
+export function formatPeer(p: PeerInfo, selfId?: string, now: number = Date.now(), version: string = APP_VERSION): string {
   const flags = [
     p.agent,
-    `v${p.version ?? "unknown"}${p.version !== APP_VERSION ? " · version skew (retained code)" : ""}`,
+    `v${p.version ?? "unknown"}${versionSkewNote(p.version, version)}`,
     p.activity ?? "activity unknown (no busy/idle report)",
     p.wakeOnDirect && p.wakeAvailable ? "direct messages wake this session" : null,
     p.autoWake ? "auto-wake" : p.activity === "idle" && !(p.wakeOnDirect && p.wakeAvailable) ? "auto-wake off: will be read on its next turn" : null,
@@ -188,5 +201,5 @@ export function formatDelivery(result: SendResult, maxHops = DEFAULT_MAX_HOPS): 
         : "idle; will be read on its next turn (no wake for this delivery)"
       : `${state}; ${canWake ? state === "busy" ? "wake policy enabled; idle wake waits until the current turn ends" : "wake policy enabled; native wake depends on receiving session activity" : "no wake for this delivery"}; queued for its next hook, tool call or turn`;
     return `Delivered to inbox: ${name} (${hint}). Delivery does not mean read.`;
-  }).concat(result.projectRoute ? [formatProjectRoute(result.projectRoute, result.deliveredTo[0])] : []).concat((result.failedFor ?? []).map((failed) => `Delivery not confirmed: ${failed.name} (${failed.reason}). The attempt is retained in history; retry explicitly when the paired link is available.`)).concat(result.wakeRequestedFor?.length ? [`Wake requested on the receiving PC: ${result.wakeRequestedFor.join(", ")}. Native turn start is not yet confirmed.`] : []).concat((result.skippedFor ?? []).map((name) => `Skipped offline registration: ${name} (not seen recently and not a known project master).`)).concat(result.queuedFor.map((name) => `Queued for offline session: ${name}.`)).concat(formatReplyRestrictions(result));
+  }).concat(result.projectRoute ? [formatProjectRoute(result.projectRoute, result.deliveredTo[0])] : []).concat((result.failedFor ?? []).map((failed) => `Delivery not confirmed: ${failed.name} (${failed.reason}). The attempt is retained in history; retry explicitly when the paired link is available.`)).concat(result.wakeRequestedFor?.length ? [`Wake requested on the receiving PC: ${result.wakeRequestedFor.join(", ")}. Native turn start is not yet confirmed.`] : []).concat(result.t3WakeFor?.length ? [`Sent a wake-up into the T3 Code chat of: ${result.t3WakeFor.join(", ")}. Its session was not running, so the mail is queued; the chat reads it when the wake-up starts its turn (turn start not confirmed).`] : []).concat((result.skippedFor ?? []).map((name) => `Skipped offline registration: ${name} (not seen recently and not a known project master).`)).concat(result.queuedFor.map((name) => `Queued for offline session: ${name}.`)).concat(formatReplyRestrictions(result));
 }
