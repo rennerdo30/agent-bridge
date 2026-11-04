@@ -487,7 +487,8 @@ export class RewakeEndpoint {
       const at = Date.now();
       for (const id of pending.ids) this.t3Queued.set(id, at);
       while (this.t3Queued.size > MAX_REPEATS) this.t3Queued.delete(this.t3Queued.keys().next().value!);
-      // The hook copy and T3's queued turn show the same message: both say so, so it is handled once.
+      // T3's queued turn (already rendered, unmarked) shows these messages too: the hook copy is marked repeat so the
+      // model acts on them once.
       this.markRepeat(pending.ids);
       this.t3Pending = null;
       clearTimeout(this.t3QueuedTimer);
