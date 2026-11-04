@@ -342,7 +342,7 @@ export interface RequestMap {
   networkPair: [Record<string, never>, { code: string; expiresAt: number }];
   networkLink: [{ code: string; host: string; port: number }, NetworkIdentity];
   networkUnlink: [{ id: string }, { removed: boolean }];
-  sendFiles: [{ to: string; paths: string[] }, TransferResult | TransferStarted];
+  sendFiles: [{ to: string; paths: string[]; destination?: "downloads" }, TransferResult | TransferStarted];
   fetchFiles: [{ from: string; paths: string[] }, TransferStarted];
   transfers: [Record<string, never>, { transfers: TransferProgress[] }];
   cancelTransfer: [{ id: string }, { id: string; cancelled: boolean }];

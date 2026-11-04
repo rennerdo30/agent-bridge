@@ -3106,9 +3106,12 @@ export class Broker {
 
   private async onSendFiles(conn: Conn, args: RequestMap["sendFiles"][0]): Promise<TransferResult | TransferStarted> {
     const sender = this.requirePeer(conn);
-    const parsed = z.object({ to: z.string().min(1).max(MAX_FILE_ADDRESS_CHARS), paths: z.array(z.string().min(1).max(MAX_FILE_PATH_CHARS)).min(1).max(MAX_STREAM_ENTRIES) }).parse(args);
+    const parsed = z.object({ to: z.string().min(1).max(MAX_FILE_ADDRESS_CHARS), paths: z.array(z.string().min(1).max(MAX_FILE_PATH_CHARS)).min(1).max(MAX_STREAM_ENTRIES),
+      destination: z.enum(["downloads"]).optional() }).parse(args);
     const remote = parsed.to.includes("/");
-    if (remote) return this.requireNetwork().startFiles(parsed.to, parsed.paths, sender.cwd, { id: sender.id, name: sender.name, agent: sender.jobAgent ?? sender.agent });
+    if (remote) return this.requireNetwork().startFiles(parsed.to, parsed.paths, sender.cwd, { id: sender.id, name: sender.name, agent: sender.jobAgent ?? sender.agent }, false, parsed.destination);
+    // AB-498: a destination is a place on a paired PC; on this PC the session copies the file itself.
+    if (parsed.destination) throw new BridgeError("bad_request", "destination applies to paired-PC transfers; on this PC, copy the file directly.");
     const target = parsed.to;
     const transfer = collectTransfer(parsed.paths, sender.cwd, target, { id: sender.id, name: sender.name, agent: sender.jobAgent ?? sender.agent });
     if (!this.connByName(target)) throw new BridgeError("unknown_target", "file recipient must be online");

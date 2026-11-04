@@ -11,7 +11,7 @@ import { MAX_NETWORK_FRAME_BYTES, MAX_NETWORK_LINKS, MAX_NETWORK_PEERS, MAX_NETW
 import { NetworkDiscovery, type DiscoveredInstance, type DiscoveryDiagnostics } from "./discovery.js";
 import { decodePairingCode, keyFingerprint, PairingStore, publicIdentitySchema, type NetworkIdentity, type NetworkPair } from "./pairing.js";
 import { receiveTransfer, transferResultSchema, transferSchema, type FileTransfer, type TransferResult } from "./files.js";
-import { FILE_STREAM_CAPABILITY, FILE_STREAM_WINDOW_CAPABILITY, TRANSFER_WINDOW_CHUNKS, TransferManager, type TransferStarted } from "./transfers.js";
+import { DEFAULT_DOWNLOADS, FILE_STREAM_CAPABILITY, FILE_STREAM_WINDOW_CAPABILITY, TRANSFER_WINDOW_CHUNKS, TransferManager, type TransferDestination, type TransferStarted } from "./transfers.js";
 import { REMOTE_JOB_USAGE_CAPABILITY } from "./remote-job-protocol.js";
 
 const MAX_METADATA_CHARS = 4_096;
@@ -379,7 +379,7 @@ export class NetworkService {
       },
       notify: (message) => { this.broker.receive(message); },
       legacy: (remote, transfer) => this.instanceLink(remote).files(transfer),
-    }, log, { maxBytes: cfg.maxTransferBytes, fetchRoots: cfg.fetchRoots });
+    }, log, { maxBytes: cfg.maxTransferBytes, fetchRoots: cfg.fetchRoots, destinations: cfg.transferDestinations ?? { downloads: DEFAULT_DOWNLOADS } });
     this.registerExtension("file-stream", FILE_STREAM_CAPABILITY, (payload, remote) => this.transfers.handle(payload, remote.id, remote.name));
   }
 
@@ -690,12 +690,13 @@ export class NetworkService {
     return link.files({ ...transfer, to: target });
   }
 
-  startFiles(address: string, paths: string[], cwd: string, from: FileTransfer["from"], pull = false): TransferStarted {
+  startFiles(address: string, paths: string[], cwd: string, from: FileTransfer["from"], pull = false, destination?: TransferDestination): TransferStarted {
     const { link, target } = this.target(address);
     if (!link.peers.some((peer) => peer.name === target)) throw new Error("file recipient is not online");
     const streaming = link.supports(FILE_STREAM_CAPABILITY);
     if (pull && !streaming) throw new Error("remote broker does not support fetch_files; update its hosting sessions");
-    return this.transfers.start(link.remote!.id, `${link.remote!.name}/${target}`, target, paths, cwd, from, pull, undefined, !streaming);
+    if (destination && !streaming) throw new Error("the paired PC's agent-bridge cannot place files in a destination; the owner updates it there, or send without destination");
+    return this.transfers.start(link.remote!.id, `${link.remote!.name}/${target}`, target, paths, cwd, from, pull, undefined, !streaming, destination);
   }
 
   fileTarget(address: string): string { return this.target(address).target; }
