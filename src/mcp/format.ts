@@ -141,7 +141,9 @@ export function formatMachineSkew(peers: Pick<PeerInfo, "host" | "version">[], o
     lines.push(`Paired PC ${host} runs agent-bridge ${listed}; this session runs v${own}. Messages and file transfers between them keep working. ` +
       (behind ? `Features newer than ${listed} are missing on ${host} until the owner updates agent-bridge there (npx -y github:rennerdo30/agent-bridge update on that PC).`
         : ahead ? `This session runs older code than ${host}: restarting this session picks up a newer agent-bridge already installed here; if this PC's install is older too, the owner updates it.`
-          : `The versions cannot be compared (unknown or different builds); the owner updates both PCs to the same release.`));
+          : order.some((o) => o === null || o === 0)
+            ? `The versions cannot be compared (unknown or different builds); the owner updates both PCs to the same release.`
+            : `Its sessions run both older and newer code than this session; the owner updates both PCs to the same release.`));
   }
   return lines;
 }
