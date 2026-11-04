@@ -104,7 +104,7 @@ export function shouldWakeClaudeMessage(node: BridgeNode, cfg: BridgeConfig, m: 
   // AB-494: the reply a session armed a reply_to wait for, in a turn its user started, wakes it at any hop (unless
   // maxHops is 0: never wake on replies). Waits armed in wake-up turns and broader waits (from, conversation) keep
   // the hop guard, so agents cannot keep waking each other.
-  if (cfg.maxHops > 0 && node.isReplyWaitAwaited(m)) return true;
+  if (cfg.maxHops > 0 && node.isReplyWaitAwaited?.(m)) return true;
   if (m.hop >= cfg.maxHops) return false;
   const direct = m.to === node.name ||
     (m.recipient === node.name && m.to !== BROADCAST && !(AGENT_KINDS as readonly string[]).includes(m.to)) ||

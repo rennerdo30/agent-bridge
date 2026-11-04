@@ -109,7 +109,7 @@ function hookDeliverable(ctx: ServerContext, m: BridgeMessage): boolean {
 
 /** Under the hop limit, or the reply to a message this session armed a reply_to wait for (AB-494). */
 function withinWakeHops(ctx: ServerContext, m: BridgeMessage): boolean {
-  return m.hop < ctx.cfg.maxHops || (ctx.cfg.maxHops > 0 && Boolean(ctx.node?.isReplyWaitAwaited(m)));
+  return m.hop < ctx.cfg.maxHops || (ctx.cfg.maxHops > 0 && Boolean(ctx.node?.isReplyWaitAwaited?.(m)));
 }
 
 /**
