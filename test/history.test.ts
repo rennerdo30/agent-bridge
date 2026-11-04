@@ -195,13 +195,28 @@ describe("search query and filters", () => {
   it("uses FTS terms, bounds snippets and applies every filter with inclusive time limits", async () => {
     const s = await store(); s.insert(message("one", "unique WALNUT café " + "detail ".repeat(100), "claude-main", 100)); s.insert(message("two", "walnut only", "claude-main", 200)); s.history.tick();
     expect(s.history.search({ query: "WALNUT café" }).hits.map((h) => h.message)).toEqual(["one"]);
-    expect(s.history.search({ query: 'unique " OR walnut' }).hits).toEqual([]);
+    // "OR" is a literal word, never an operator: nothing matches all three words. AB-492: the best partial
+    // matches are then returned, each marked partial (before AB-492 this query returned no hits).
+    const literalOr = s.history.search({ query: 'unique " OR walnut' }).hits;
+    expect(literalOr.filter((h) => !h.partial)).toEqual([]);
+    expect(literalOr.map((h) => h.message).sort()).toEqual(["one", "two"]);
     const result = s.history.search({ query: "walnut", filters: { session: "session-one", job: "codex-job-example", agent: "codex", kind: "message", since: 100, until: 100 } });
     expect(result.hits).toHaveLength(1); expect(result.hits[0]!.snippet.length).toBeLessThanOrEqual(320);
     expect(s.history.search({ query: "walnut", filters: { since: "1970-01-01T00:00:00.200Z" } }).hits[0]!.message).toBe("two");
     expect(() => s.history.search({ query: "walnut", filters: { since: 200, until: 100 } })).toThrow();
     expect(() => s.history.search({ query: "walnut", limit: 51 })).toThrow();
     expect(s.history.search({ query: "walnut", filters: { job: "unknown" } }).hits).toEqual([]);
+  });
+
+  it("AB-492: a natural-language query with a word nobody wrote still finds the discussion, ranked by matches", async () => {
+    const s = await store();
+    s.insert(message("gc", "incremental garbage collector disabled: stutter spikes gone", "claude-main", 100));
+    s.insert(message("other", "garbage day", "claude-main", 200));
+    s.history.tick();
+    const hits = s.history.search({ query: "garbage collector disabled test stutter" }).hits;
+    expect(hits.map((h) => h.message)).toEqual(["gc", "other"]);
+    expect(hits.every((h) => h.partial)).toBe(true);
+    expect(s.history.search({ query: "garbage collector" }).hits.map((h) => [h.message, h.partial])).toEqual([["gc", undefined]]);
   });
 });
 
