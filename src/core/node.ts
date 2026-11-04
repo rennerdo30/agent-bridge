@@ -776,6 +776,10 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     return { send, mode: { ...report, protocolSupport: "legacy", stage: "requested", reason: "old broker explicitly refused modeSend; legacy auto applied" } };
   }
 
+  sentTo(to: string, limit?: number): Promise<RequestMap["sentTo"][1]> {
+    return this.withClient(c => c.request("sentTo", { to, ...(limit ? { limit } : {}) }));
+  }
+
   sendState(id: string): Promise<RequestMap["sendState"][1]> {
     return this.withClient(c => c.request("sendState", { id }));
   }

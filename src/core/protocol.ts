@@ -287,6 +287,8 @@ export interface RequestMap {
   /** Older brokers must refuse this opcode rather than discard the durable identity. */
   trackedSend: [SendArgs & { messageId: string }, SendResult];
   sendState: [{ id: string }, { id: string; state: "stored" | "pending" | "not_stored"; checkedAt: number; message: BridgeMessage | null; receipts: MessageReceipt[] }];
+  /** AB-493: the caller's own most recent stored sends to one address, newest first, with read receipts. */
+  sentTo: [{ to: string; limit?: number }, { to: string; checkedAt: number; messages: { id: string; createdAt: number; conversationId: string; replyTo: string | null; preview: string; receipts: MessageReceipt[] }[] }];
   /** Separate opcode so an older broker refuses rather than silently ignoring the guard. */
   guardedSend: [SendArgs, SendResult];
   askOwner: [import("./owner-questions.js").AskOwnerArgs, { question: import("./owner-questions.js").OwnerQuestion; merged: boolean; similar: string[] }];

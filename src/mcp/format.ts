@@ -3,6 +3,7 @@ import { AGENT_KINDS, BROADCAST, isQuietMessage, type BridgeMessage, type PeerIn
 import type { LinkMessage } from "../core/parent-link.js";
 import { DEFAULT_SIBLING_MAX_HOPS } from "../core/job-messaging.js";
 import { displayPath } from "../core/display-paths.js";
+import { compareVersions } from "./server-lifecycle.js";
 
 /**
  * Text shown to the model. It is model-facing protocol text rather than UI copy, so it stays in English
@@ -121,10 +122,22 @@ function reachNote(p: PeerInfo): string | null {
   return `T3 chat ${p.t3Chat} (T3 sessions: reach it with t3_thread_send)`;
 }
 
-export function formatPeer(p: PeerInfo, selfId?: string, now: number = Date.now()): string {
+/**
+ * AB-490: which side of a version skew runs retained code. The reader compares a peer with its own running
+ * version, and a reader that is itself behind would otherwise flag every up-to-date peer as "retained code".
+ */
+function versionSkewNote(peer: string | undefined, own: string): string {
+  if (peer === own) return "";
+  const order = peer ? compareVersions(peer, own) : null;
+  if (order === -1) return ` · version skew (retained code): older than this session (v${own})`;
+  if (order === 1) return ` · version skew: newer than this session (v${own}), which runs retained code`;
+  return " · version skew (retained code)";
+}
+
+export function formatPeer(p: PeerInfo, selfId?: string, now: number = Date.now(), version: string = APP_VERSION): string {
   const flags = [
     p.agent,
-    `v${p.version ?? "unknown"}${p.version !== APP_VERSION ? " · version skew (retained code)" : ""}`,
+    `v${p.version ?? "unknown"}${versionSkewNote(p.version, version)}`,
     p.activity ?? "activity unknown (no busy/idle report)",
     p.wakeOnDirect && p.wakeAvailable ? "direct messages wake this session" : null,
     p.autoWake ? "auto-wake" : p.activity === "idle" && !(p.wakeOnDirect && p.wakeAvailable) ? "auto-wake off: will be read on its next turn" : null,

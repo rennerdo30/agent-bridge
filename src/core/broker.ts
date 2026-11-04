@@ -695,6 +695,14 @@ export class Broker {
       send: (c, a) => this.onSend(c, { ...a, messageId: undefined }),
       trackedSend: (c, a) => this.onTrackedSend(c, a),
       sendState: (c, a) => this.sendState(c, z.uuid().parse(a.id).toLowerCase()),
+      sentTo: (c, a) => {
+        const args = z.object({ to: z.string().trim().min(1).max(256), limit: z.number().int().min(1).max(20).optional() }).strict().parse(a);
+        const sender = this.requirePeer(c);
+        // Only sends under the caller's current name (a session that took over a name also sees that name's sends).
+        const messages = this.store.sentBy(sender.name, args.to, args.limit ?? 5).map((m) => ({ id: m.id, createdAt: m.createdAt,
+          conversationId: m.conversationId, replyTo: m.replyTo, preview: m.body.slice(0, 160), receipts: this.store.receipts(m.id) }));
+        return { to: args.to, checkedAt: this.now(), messages };
+      },
       decide: (c, a) => this.onDecide(c, a),
       decisions: (c, a) => this.onDecisions(c, a),
       searchHistory: (_, a) => {
@@ -1547,9 +1555,14 @@ export class Broker {
   private recordProjectMain(key: string, address: string, peer: PeerInfo): void {
     const old = this.projectMains.get(key);
     if (old && ownsProjectMain(old, peer)) { this.transferProjectMain(old, peer); return; }
-    const previous = old?.name, main = peer.name;
+    const main = peer.name;
+    this.projectMains.set(key, { id: peer.id, agent: peer.agent, sessionId: peer.sessionId, name: peer.name, frontend: peer.frontend });
+    // AB-489: a new session that took over the old main's name changes nothing for project-address mail or its
+    // readers: no "main changed from X to X" notice, and the address keeps its last real route.
+    if (old?.name === main) { if (!this.projectRoutes.has(key)) this.projectRoutes.set(key, { address, main, since: this.now() }); return; }
+    const previous = old?.name;
     const route = { address, main, since: this.now(), previous };
-    this.projectMains.set(key, { id: peer.id, agent: peer.agent, sessionId: peer.sessionId, name: peer.name, frontend: peer.frontend }); this.projectRoutes.set(key, route);
+    this.projectRoutes.set(key, route);
     if (previous) void this.notifyProjectMainChange(route).catch((err) => this.log.warn("project main notice deferred", { err: String(err) }));
   }
 
