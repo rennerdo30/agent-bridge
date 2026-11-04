@@ -207,7 +207,8 @@ describe("AB-499 one skew notice per paired PC", () => {
     expect(lines).toHaveLength(1);
     expect(lines[0]).toContain("Paired PC mac runs agent-bridge v0.32.0; this session runs v0.32.3");
     expect(lines[0]).toContain("until the owner updates agent-bridge there");
-    expect(formatMachineSkew([p("mac", "0.33.0")], "0.32.3")[0]).toContain("This session runs older code than mac");
+    expect(formatMachineSkew([p("mac", "0.33.0")], "0.32.3")[0]).toContain("restarting this session picks up a newer agent-bridge");
+    expect(formatMachineSkew([{ host: "mac" }], "0.32.3")[0]).toContain("runs agent-bridge an unknown version"); expect(formatMachineSkew([{ host: "mac" }], "0.32.3")[0]).toContain("cannot be compared");
     expect(formatPeer(p("mac", "0.32.0"), undefined, 0, "0.32.3")).not.toContain("skew");
     expect(formatPeer(p(undefined, "0.32.0"), undefined, 0, "0.32.3")).toContain("version skew");
   });

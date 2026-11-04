@@ -135,12 +135,13 @@ export function formatMachineSkew(peers: Pick<PeerInfo, "host" | "version">[], o
   for (const [host, set] of [...hosts].sort(([a], [b]) => a.localeCompare(b))) {
     const versions = [...set].filter((v) => v !== own);
     if (!versions.length) continue;
-    const listed = versions.map((v) => `v${v}`).join(", ");
-    const behind = versions.every((v) => compareVersions(v, own) === -1), ahead = versions.every((v) => compareVersions(v, own) === 1);
+    const listed = versions.map((v) => v === "unknown" ? "an unknown version" : `v${v}`).join(", ");
+    const order = versions.map((v) => compareVersions(v, own));
+    const behind = order.every((o) => o === -1), ahead = order.every((o) => o === 1);
     lines.push(`Paired PC ${host} runs agent-bridge ${listed}; this session runs v${own}. Messages and file transfers between them keep working. ` +
       (behind ? `Features newer than ${listed} are missing on ${host} until the owner updates agent-bridge there (npx -y github:rennerdo30/agent-bridge update on that PC).`
-        : ahead ? `This session runs older code than ${host}; it gets the newer features after the owner updates this PC and the session restarts.`
-          : "Versions differ in both directions; the owner updates each PC to the same release."));
+        : ahead ? `This session runs older code than ${host}: restarting this session picks up a newer agent-bridge already installed here; if this PC's install is older too, the owner updates it.`
+          : `The versions cannot be compared (unknown or different builds); the owner updates both PCs to the same release.`));
   }
   return lines;
 }
