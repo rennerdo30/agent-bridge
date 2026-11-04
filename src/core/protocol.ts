@@ -109,6 +109,8 @@ export interface PeerInfo {
   t3Child?: boolean;
   /** AB-460: a member whose T3 place is not known yet; no explicit main switch, checklist writes or fallback preference. */
   t3Pending?: boolean;
+  /** AB-496: the T3 Code chat (thread id) this session runs in, as its own PC's T3 store records it. */
+  t3Chat?: string;
   title?: string;
   host?: string;
   jobParent?: string;
@@ -218,6 +220,8 @@ export interface SendResult {
   projectRoute?: ProjectRoute;
   /** Wake requested according to advertised policy, not proof a native turn started. */
   wakeRequestedFor?: string[];
+  /** AB-488: offline recipients whose T3 Code chat was sent a wake-up message (not proof a turn started). */
+  t3WakeFor?: string[];
   /** Retained offline registrations excluded from this broadcast. */
   skippedFor?: string[];
   /** Recipient jobs without a reverse reply grant need their current supervisor to relay. */

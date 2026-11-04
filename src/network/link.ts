@@ -39,6 +39,7 @@ const peerSchema = z.object({
   projectGroup: z.string().min(1).max(MAX_METADATA_CHARS).optional(), projectAddress: z.string().min(1).max(MAX_METADATA_CHARS).optional(),
   projectMain: z.boolean().optional(), unavailable: z.boolean().optional(),
   frontend: t3BindingSchema.optional(),
+  t3Chat: z.string().regex(/^[A-Za-z0-9._:-]{1,128}$/).optional(),
 });
 /** The last set of left-out local peers each service logged, so a persistent one is reported once. */
 const droppedPeersLogged = new WeakMap<object, string>();

@@ -75,7 +75,8 @@ import { z } from "zod";
 import { basename, dirname, isAbsolute, join } from "node:path";
 import { platform as hostPlatform } from "node:process";
 import { ProjectGroups } from "./project-groups.js";
-import { T3Lineages } from "./t3-lineage.js";
+import { T3Lineages, t3SessionLineage } from "./t3-lineage.js";
+import { t3ChatForNativeSession, t3CliForHome, t3SendMessage, type T3SendOutcome } from "./t3-chat.js";
 import { localT3HistoryRoot } from "./transcripts/common.js";
 import { accessJobChecklist, jobChecklistRequestSchema, readChecklistAuthority } from "./checklists.js";
 import { recoverJobRecordAsync, type RecoveryRefusal } from "./job-recovery.js";
@@ -187,6 +188,10 @@ const PID_REUSE_SLACK_MS = 2_000;
 const MAX_AGENT_HOSTS = 4_096;
 /** A retired project main gets its role back only when its session reconnects within this window (AB-399). */
 const RETIRED_MAIN_GRACE_MS = 5 * 60_000;
+/** AB-488: equals WAKE_HEADER in mcp/rewake.ts (core does not import mcp; a test keeps them equal). */
+export const T3_OFFLINE_WAKE_HEADER = "[agent-bridge] New actionable message(s) arrived:";
+/** AB-488: a T3 chat that stays offline after a wake-up is woken again for new mail after this long. */
+const T3_OFFLINE_WAKE_REPEAT_MS = 10 * 60_000;
 
 /**
  * The start time (epoch ms) a process identity describes, or undefined when it cannot be read. Windows ticks and
@@ -432,6 +437,17 @@ export class Broker {
   private readonly groups: ProjectGroups;
   /** AB-460: sessions T3 Code started for a delegated task are subagents, never project members. */
   private t3Lineages = new T3Lineages(localT3HistoryRoot());
+  /** AB-496: T3 home for chat lookups, and found chats per provider session (a chat's session id never changes). */
+  private t3Home = localT3HistoryRoot();
+  private readonly t3Chats = new Map<string, { thread: string | undefined; at: number }>();
+  /**
+   * AB-488: a T3 Code chat has no running session between turns, yet to its user it is open and reachable. Mail
+   * queued for such a chat's session wakes the chat with a visible message through T3's own CLI, once per offline
+   * stretch (repeated for new mail after T3_OFFLINE_WAKE_REPEAT_MS). Undefined without a T3 store or CLI on this PC.
+   */
+  private t3OfflineWake = this.t3OfflineWakeFor(localT3HistoryRoot());
+  /** Offline names whose T3 chat was sent a wake-up (name -> time): new mail repeats it only after T3_OFFLINE_WAKE_REPEAT_MS; cleared when the name connects again. */
+  private readonly t3Woken = new Map<string, number>();
   /** Live role selection, recomputed after broker restart; no durable ownership is rewritten. */
   private readonly projectMains = new Map<string, ProjectMainIdentity>();
   private readonly projectRoutes = new Map<string, import("./protocol.js").ProjectRoute>();
@@ -536,7 +552,10 @@ export class Broker {
       },
       projectMain: (c, a) => {
         const args = z.object({ to: z.string().min(1) }).strict().parse(a);
-        return this.switchProjectMain(c.peer, this.connByName(args.to)?.peer ?? undefined);
+        const target = this.connByName(args.to)?.peer ?? undefined;
+        // AB-491: name the session that is not live, and where the caller finds its own name.
+        if (!target) throw new BridgeError("bad_request", `No live local session is named "${args.to}". Use a name from peers; your own name is "${c.peer?.name ?? "unknown"}".`);
+        return this.switchProjectMain(c.peer, target);
       },
       projectJobs: (c) => this.projectJobRecords(c),
       // AB-404: peers needs a few fields; full records with retained history can exceed one frame.
@@ -1305,7 +1324,8 @@ export class Broker {
 
   /** Local sessions and paired remote peers; local job runners stay hidden (see job-host.ts). */
   private livePeers(): PeerInfo[] {
-    return this.localPeers().filter((p) => !p.jobAgent).map((p) => this.projectPeer(p)).concat(this.network?.peers() ?? []).filter((p) => !isPluginCacheCwd(p.cwd)).map(peer => this.publicPeer(peer));
+    return this.localPeers().filter((p) => !p.jobAgent).map((p) => { const peer = this.projectPeer(p), t3Chat = this.t3ChatOf(p); return t3Chat ? { ...peer, t3Chat } : peer; })
+      .concat(this.network?.peers() ?? []).filter((p) => !isPluginCacheCwd(p.cwd)).map(peer => this.publicPeer(peer));
   }
 
   /** The node's own registration is authoritative. Legacy observers must not
@@ -1337,7 +1357,76 @@ export class Broker {
   /** Test seam: the batch creation-identity reader used by the background liveness sweep. */
   setIdentityReader(reader: (pids: number[]) => Promise<Map<number, string>>): void { this.identityReader = reader; }
   /** Tests point the T3 lineage lookup at a synthetic T3 home. */
-  setT3Home(t3Home: string | undefined): void { this.t3Lineages = new T3Lineages(t3Home, this.now); }
+  setT3Home(t3Home: string | undefined): void {
+    this.t3Lineages = new T3Lineages(t3Home, this.now); this.t3OfflineWake = this.t3OfflineWakeFor(t3Home);
+    this.t3Home = t3Home; this.t3Chats.clear();
+  }
+
+  /**
+   * AB-496: the T3 chat a local session runs in. A miss is looked up again after a minute (T3 records it late), a
+   * hit after ten (an archived or deleted chat stops being advertised).
+   */
+  private t3ChatOf(peer: PeerInfo): string | undefined {
+    if (peer.frontend) return peer.frontend.threadId;
+    if (!this.t3Home || !isAbsolute(this.t3Home) || !peer.sessionId || peer.jobAgent || peer.host) return undefined;
+    const key = `${peer.agent}|${peer.sessionId}`, at = this.now(), hit = this.t3Chats.get(key);
+    if (hit && at >= hit.at && at - hit.at < (hit.thread ? 10 * 60_000 : 60_000)) return hit.thread;
+    let thread: string | undefined;
+    try { thread = t3ChatForNativeSession(this.t3Home, peer.sessionId); } catch { thread = undefined; }
+    if (this.t3Chats.size >= 4_096) this.t3Chats.delete(this.t3Chats.keys().next().value!);
+    this.t3Chats.set(key, { thread, at });
+    return thread;
+  }
+  /** Test seam: replace how an offline session's T3 chat is found and messaged. */
+  setT3OfflineWake(wake: Broker["t3OfflineWake"]): void { this.t3OfflineWake = wake; }
+
+  private t3OfflineWakeFor(t3Home: string | undefined): { chat(sessionId: string): string | undefined; send(threadId: string, text: string): Promise<T3SendOutcome> } | undefined {
+    // Only an absolute T3 home: a relative one would resolve against the broker's working folder.
+    if (!t3Home || !isAbsolute(t3Home)) return undefined;
+    const cli = t3CliForHome(t3Home);
+    if (!cli) return undefined;
+    // Only a chat T3 positively records as top-level: a delegated task, or a store that cannot be read now, is skipped.
+    return { chat: (sessionId) => t3SessionLineage(t3Home, sessionId) === "top" ? t3ChatForNativeSession(t3Home, sessionId) : undefined,
+      send: (threadId, text) => t3SendMessage(cli, threadId, text) };
+  }
+
+  /**
+   * AB-488: wake the T3 chats of offline recipients that got mail which would wake a live session (direct, not
+   * quiet, not a note, under the hop limit). Returns the names whose chat was sent a wake-up; never throws.
+   */
+  private wakeOfflineT3Chats(names: string[], messages: BridgeMessage[]): string[] {
+    const wake = this.t3OfflineWake;
+    if (!wake || !names.length) return [];
+    const woken: string[] = [];
+    const at = this.now();
+    for (const name of names) {
+      const message = messages.find((m) => m.recipient === name);
+      if (!message || message.to !== name || isQuietMessage(message) || message.conversationId.endsWith(":note") || message.hop >= DEFAULT_MAX_HOPS) continue;
+      if (this.connByName(name)) continue;
+      const last = this.t3Woken.get(name);
+      if (last !== undefined && at >= last && at - last < T3_OFFLINE_WAKE_REPEAT_MS) continue;
+      let thread: string | undefined;
+      try {
+        const session = this.store.lastSessionForName(name);
+        if (!session || (session.agent !== "claude" && session.agent !== "codex")) continue;
+        // A T3 delegated task is a subagent (AB-460): mail to it never starts a new turn in its chat.
+        if (this.t3Lineages.isChild({ agent: session.agent, sessionId: session.sessionId })) continue;
+        thread = wake.chat(session.sessionId);
+      } catch (err) { this.log.debug("T3 chat lookup failed", { name, err: String(err) }); continue; }
+      if (!thread) continue;
+      this.t3Woken.set(name, at);
+      woken.push(name);
+      // Starts with the session's wake header (WAKE_HEADER in mcp/rewake.ts): the turn it starts is a wake-up turn,
+      // not a user turn, so reply waits armed in it keep the hop guard (AB-494).
+      const text = `${T3_OFFLINE_WAKE_HEADER} Bridge mail from ${message.from.name} is waiting for ${name} (message ${message.id}). ` +
+        "This chat's session was not running when it arrived, so it was queued. Read it with the agent-bridge inbox tool.";
+      void wake.send(thread, text).then((outcome) => {
+        if (outcome.state === "accepted") this.log.info("woke offline T3 chat for queued mail", { name, thread, id: message.id });
+        else this.log.warn("T3 chat wake for queued mail not confirmed", { name, thread, id: message.id, state: outcome.state, reason: outcome.reason });
+      }, (err) => this.log.warn("T3 chat wake for queued mail failed", { name, thread, err: String(err) }));
+    }
+    return woken;
+  }
 
   /** A local session that may be a project member: no Bridge job, native subagent or T3 delegated child (AB-460). */
   private projectMember(p: PeerInfo): boolean {
@@ -1590,7 +1679,8 @@ export class Broker {
     return peers.flatMap((peer) => {
       const job = jobs.find((j) => j.name === peer.name || `job:${j.id}` === peer.id);
       const field = (key: string): string | undefined => typeof job?.[key] === "string" ? job[key] as string : undefined;
-      return [{ ...this.projectPeer(peer), agent: peer.jobAgent ?? peer.agent, parentJob: field("parentJob") ?? peer.parentJob, rootSession: field("rootSession") ?? peer.rootSession ?? peer.jobOwner,
+      const t3Chat = peer.jobAgent ? undefined : this.t3ChatOf(peer);
+      return [{ ...this.projectPeer(peer), ...(t3Chat ? { t3Chat } : {}), agent: peer.jobAgent ?? peer.agent, parentJob: field("parentJob") ?? peer.parentJob, rootSession: field("rootSession") ?? peer.rootSession ?? peer.jobOwner,
         rootName: field("rootName") ?? peer.rootName ?? peer.jobParent, title: peer.jobTitle, subagent: Boolean(peer.jobAgent) }];
     });
   }
@@ -2194,6 +2284,7 @@ export class Broker {
     this.assertQueueRegistration(conn, peer, registration);
     conn.mailReady = registration;
     this.updateIdle();
+    this.t3Woken.delete(peer.name);
     this.log.info("peer joined", { name: peer.name, agent: peer.agent, jobAgent: peer.jobAgent, cwd: peer.cwd, claimed });
     if (!peer.jobAgent) this.broadcastEvent("peer_joined", peer, conn);
     // Deliver the backlog right after the hello response has been written.
@@ -2919,6 +3010,8 @@ export class Broker {
         (message.to === BROADCAST || message.to === peer.name || message.recipient === peer.name && !(AGENT_KINDS as readonly string[]).includes(message.to))) &&
         message.hop < (peer.wakeMaxHops ?? DEFAULT_MAX_HOPS) && !isQuietMessage(message) && !message.conversationId.endsWith(":note"));
     }).map((peer) => peer.name);
+    const t3Woken = this.wakeOfflineT3Chats(queued, messages);
+    if (t3Woken.length) result.t3WakeFor = t3Woken;
     return result;
   }
 

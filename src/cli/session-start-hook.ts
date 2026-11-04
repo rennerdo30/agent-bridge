@@ -44,11 +44,24 @@ async function startupState(home: string, cwd: string, name: string, log: Logger
   }
 }
 
-/** The startup note for the session: its bridge name and who else is online. */
-export function sessionStartContext(name: string, peers: PeerInfo[] | null, decisions: OwnerDecision[] = []): string {
-  const others = (peers ?? []).filter((p) => p.name !== name && !isPluginCacheCwd(p.cwd));
+/**
+ * The startup note for the session: its bridge name and who else is online.
+ *
+ * AB-491: the name here is the default for the folder, unless the broker already knows this session (by its
+ * session id). When another live session with a different session id holds the default name, this session will
+ * get a suffixed name, so the note must not claim the default or hide that other session as "you".
+ */
+export function sessionStartContext(name: string, peers: PeerInfo[] | null, decisions: OwnerDecision[] = [], sessionId?: string): string {
+  const live = peers ?? [];
+  const self = sessionId ? live.find((p) => p.agent === "claude" && p.sessionId === sessionId) : undefined;
+  const holder = self ? undefined : live.find((p) => p.name === name);
+  const taken = Boolean(sessionId && holder?.sessionId && holder.sessionId !== sessionId);
+  const own = self?.name ?? (taken ? undefined : name);
+  const others = live.filter((p) => p !== self && p.name !== own && !isPluginCacheCwd(p.cwd));
   return [
-    `[agent-bridge] You are connected to agent-bridge as "${name}".`,
+    own ? `[agent-bridge] You are connected to agent-bridge as "${own}".`
+      : `[agent-bridge] Another live session already uses "${name}", so this session gets a suffixed agent-bridge name (for example "${name}-2"). ` +
+        "Check your own name with the agent-bridge peers tool before using it (project_main, replies).",
     others.length ? `Peers online:\n${others.map((p) => formatPeer(p)).join("\n")}` : "No other agents are online right now.",
     ...formatMachineSkew(others),
     formatDecisionSummary(decisions),
@@ -56,10 +69,11 @@ export function sessionStartContext(name: string, peers: PeerInfo[] | null, deci
 }
 
 export async function runSessionStartHook(log: Logger, out: (text: string) => void = (text) => process.stdout.write(text), read: () => Promise<string> = readStdin): Promise<number> {
-  let cwd = process.cwd();
+  let cwd = process.cwd(), sessionId: string | undefined;
   try {
     const input = JSON.parse((await read()) || "{}");
     if (typeof input.cwd === "string" && input.cwd) cwd = input.cwd;
+    if (typeof input.session_id === "string" && input.session_id) sessionId = input.session_id;
   } catch {
     // No hook input: the process folder is the session's.
   }
@@ -70,6 +84,6 @@ export async function runSessionStartHook(log: Logger, out: (text: string) => vo
     try { return { peers: [], decisions: readDecisions(resolveDbPath(home), { scope: { project: cwd }, session: name }) }; }
     catch { return null; }
   });
-  out(JSON.stringify({ hookSpecificOutput: { hookEventName: HOOK_EVENT, additionalContext: sessionStartContext(name, state?.peers ?? null, state?.decisions) } }));
+  out(JSON.stringify({ hookSpecificOutput: { hookEventName: HOOK_EVENT, additionalContext: sessionStartContext(name, state?.peers ?? null, state?.decisions, sessionId) } }));
   return 0;
 }

@@ -113,6 +113,16 @@ function formatUptime(ms: number): string {
 }
 
 /**
+ * AB-496: how to reach a peer that is a T3 chat. One on this PC takes T3's own chat tools; one on a paired PC only
+ * through a T3 environment link to that PC. A row without this note is reachable only through the Bridge.
+ */
+function reachNote(p: PeerInfo): string | null {
+  if (!p.t3Chat) return null;
+  if (p.host) return `T3 chat ${p.t3Chat} on ${p.host} (T3 sessions: t3_thread_send only if this PC's T3 is linked to that PC; else agent-bridge send)`;
+  return `T3 chat ${p.t3Chat} (T3 sessions: reach it with t3_thread_send)`;
+}
+
+/**
  * AB-490: which side of a version skew runs retained code. The reader compares a peer with its own running
  * version, and a reader that is itself behind would otherwise flag every up-to-date peer as "retained code".
  */
@@ -157,6 +167,7 @@ export function formatPeer(p: PeerInfo, selfId?: string, now: number = Date.now(
     p.wakeOnDirect && p.wakeAvailable ? "direct messages wake this session" : null,
     p.autoWake ? "auto-wake" : p.activity === "idle" && !(p.wakeOnDirect && p.wakeAvailable) ? "auto-wake off: will be read on its next turn" : null,
     `up ${formatUptime(now - p.startedAt)}`,
+    reachNote(p),
     p.id === selfId ? "you" : null,
   ]
     .filter(Boolean)
@@ -226,5 +237,5 @@ export function formatDelivery(result: SendResult, maxHops = DEFAULT_MAX_HOPS): 
         : "idle; will be read on its next turn (no wake for this delivery)"
       : `${state}; ${canWake ? state === "busy" ? "wake policy enabled; idle wake waits until the current turn ends" : "wake policy enabled; native wake depends on receiving session activity" : "no wake for this delivery"}; queued for its next hook, tool call or turn`;
     return `Delivered to inbox: ${name} (${hint}). Delivery does not mean read.`;
-  }).concat(result.projectRoute ? [formatProjectRoute(result.projectRoute, result.deliveredTo[0])] : []).concat((result.failedFor ?? []).map((failed) => `Delivery not confirmed: ${failed.name} (${failed.reason}). The attempt is retained in history; retry explicitly when the paired link is available.`)).concat(result.wakeRequestedFor?.length ? [`Wake requested on the receiving PC: ${result.wakeRequestedFor.join(", ")}. Native turn start is not yet confirmed.`] : []).concat((result.skippedFor ?? []).map((name) => `Skipped offline registration: ${name} (not seen recently and not a known project master).`)).concat(result.queuedFor.map((name) => `Queued for offline session: ${name}.`)).concat(formatReplyRestrictions(result));
+  }).concat(result.projectRoute ? [formatProjectRoute(result.projectRoute, result.deliveredTo[0])] : []).concat((result.failedFor ?? []).map((failed) => `Delivery not confirmed: ${failed.name} (${failed.reason}). The attempt is retained in history; retry explicitly when the paired link is available.`)).concat(result.wakeRequestedFor?.length ? [`Wake requested on the receiving PC: ${result.wakeRequestedFor.join(", ")}. Native turn start is not yet confirmed.`] : []).concat(result.t3WakeFor?.length ? [`Sent a wake-up into the T3 Code chat of: ${result.t3WakeFor.join(", ")}. Its session was not running, so the mail is queued; the chat reads it when the wake-up starts its turn (turn start not confirmed).`] : []).concat((result.skippedFor ?? []).map((name) => `Skipped offline registration: ${name} (not seen recently and not a known project master).`)).concat(result.queuedFor.map((name) => `Queued for offline session: ${name}.`)).concat(formatReplyRestrictions(result));
 }
