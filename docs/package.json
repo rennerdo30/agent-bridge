@@ -7,8 +7,8 @@
     "node": ">=22.13"
   },
   "scripts": {
-    "dev": "npm run sync-tools && node scripts/sync-assets.mjs && astro dev",
-    "build": "npm run sync-tools && node scripts/sync-assets.mjs && astro build",
+    "dev": "npm run sync-tools && node scripts/sync-assets.mjs && node scripts/generate-licenses.mjs && astro dev",
+    "build": "npm run sync-tools && node scripts/sync-assets.mjs && node scripts/generate-licenses.mjs && astro build",
     "check:built": "node scripts/check-built-site.mjs",
     "preview": "astro preview",
     "sync-tools": "node scripts/generate-tools.mjs"

@@ -4,8 +4,8 @@ import starlightThemeGalaxy from "starlight-theme-galaxy";
 
 // CI overrides these defaults using actions/configure-pages, like the owner's other sites.
 export default defineConfig({
-  site: "https://rennerdo30.github.io",
-  base: "/agent-bridge",
+  site: "https://agent-bridge.renner.dev",
+  base: "/",
   integrations: [starlight({
     title: "agent-bridge",
     description: "Messaging, delegation and a local dashboard for coding agents across CLIs and paired PCs.",
@@ -18,7 +18,7 @@ export default defineConfig({
     sidebar: [
     {
         "label": "Overview",
-        "slug": "index"
+        "slug": "overview"
     },
     {
         "label": "Getting started",
@@ -40,6 +40,10 @@ export default defineConfig({
     {
         "label": "Concepts",
         "items": [
+            {
+                "label": "How it works",
+                "slug": "concepts/how-it-works"
+            },
             {
                 "label": "Sessions and project groups",
                 "slug": "concepts/sessions"
@@ -192,6 +196,10 @@ export default defineConfig({
             {
                 "label": "Commands",
                 "slug": "reference/cli"
+            },
+            {
+                "label": "CLI support matrix",
+                "slug": "reference/support-matrix"
             }
         ]
     },
@@ -205,6 +213,10 @@ export default defineConfig({
             {
                 "label": "Security",
                 "slug": "reference/security"
+            },
+            {
+                "label": "Licenses and trademarks",
+                "slug": "licenses"
             }
         ]
     },

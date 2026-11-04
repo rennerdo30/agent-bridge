@@ -47,7 +47,11 @@ jobs:
 
       - name: Build documentation
         working-directory: docs
-        run: npm run build -- --site "${{ steps.pages.outputs.origin }}" --base "${{ steps.pages.outputs.base_path }}"
+        env:
+          PAGES_ORIGIN: ${{ steps.pages.outputs.origin }}
+          PAGES_BASE: ${{ steps.pages.outputs.base_path }}
+        # The custom domain is served over HTTPS by its proxy, but Pages reports the origin as http.
+        run: npm run build -- --site "${PAGES_ORIGIN/#http:/https:}" --base "$PAGES_BASE"
 
       - name: Verify generated links and assets
         working-directory: docs

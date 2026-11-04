@@ -1,99 +1,91 @@
-<img src="assets/logo.svg" alt="" width="72" height="72">
+<p align="center">
+  <img src="assets/logo.svg" width="96" alt="agent-bridge logo: a bridge arch with a coral and a mint pillar">
+</p>
 
-# agent-bridge
+<h1 align="center">agent-bridge</h1>
 
-**Let Claude Code, OpenAI Codex, opencode, Google Antigravity CLI and Muse work together.**
+<p align="center">
+  <b>Your coding agents, working as one team.</b><br>
+  Claude Code, OpenAI Codex, opencode, Google Antigravity CLI and Muse message each other,<br>
+  hand each other work as subagents and share their history, on one PC or several.
+</p>
 
-agent-bridge connects the coding agents on your machine, and on PCs you pair, into one team. They message each other, hand each other work as subagents, and share history. You follow and steer everything from one local dashboard.
+<p align="center">
+  <a href="https://agent-bridge.renner.dev/"><b>Website</b></a> ·
+  <a href="https://agent-bridge.renner.dev/overview/">Documentation</a> ·
+  <a href="#install">Install</a> ·
+  <a href="CHANGELOG.md">Changelog</a> ·
+  <a href="https://github.com/rennerdo30/agent-bridge/issues">Issues</a> ·
+  <a href="LICENSE">MIT license</a>
+</p>
 
-**[Documentation](https://rennerdo30.github.io/agent-bridge/)** · [Install](#install) · [Update](#update) · [Changelog](CHANGELOG.md)
+<p align="center">
+  <img src="docs/images/dashboard-session-dark.png" alt="The agent-bridge dashboard: sessions grouped by project, a subagent tree with progress and ETA, messages between agents and a live chat">
+</p>
 
-Experimental host integration: [T3 Code session messaging and MCP profiles](docs/t3-code.md). Deliberately injected scoped ACP transport is detected automatically; validated T3 sessions default to reduced tools with remote Bridge delegation retained. Set `AGENT_BRIDGE_MCP_PROFILE=full` for the full surface. Native Codex without injected transport remains unsupported.
+## Why agent-bridge
 
-![The agent-bridge dashboard: sessions grouped by project, a subagent tree and a live conversation](docs/images/dashboard-session-dark.png)
+Every coding CLI is good at something, and each one runs alone in its own terminal. agent-bridge gives them a shared **address book, mailroom and job board**: a Claude session can ask Codex for a review, Codex can start two opencode subagents in worktrees, and any of them can ask **you** a question that waits in one place until you answer.
 
-## What it does
+It runs entirely on your machines. There is no account and no server of ours: one small broker per PC, SQLite under `~/.agent-bridge`, and a dashboard on `127.0.0.1`.
 
-Delegation uses `spawn` (background job by default; `wait: true` returns the answer), with required `agent`: `claude`, `codex`, `opencode`, `antigravity` or `muse`.
+## Features
 
-- **Messaging between agents.** Sessions send each other questions, reviews and results. Messages to an offline or idle agent wait and wake it when possible.
-- **Any CLI can delegate to any CLI, including itself.** Claude, Codex, opencode, Antigravity and Muse each expose `spawn` for every coding agent. Depth, slot, ownership and hop guards still apply. You can talk to a running subagent, continue a finished one with its full context, cancel it, or hand all of them to another session. Edits can run in their own git worktree.
-- **Projects with a main and a secondary.** A Claude and a Codex session in the same folder share their project's jobs. The main session is the first contact. If it closes or runs out of usage, the secondary takes over and nothing is lost.
-- **Checklists for subagents.** Give a job a to-do list at spawn; the project's definition of done is added automatically. The job ticks items and proposes new ones for your approval, and the result says when required items are still open.
-- **Questions to you.** Agents ask you decisions in one place. You hear a chime in the dashboard, or get a Windows notification that opens the question. Your answer goes straight back to the agent that asked.
-- **A dashboard for everything.** Sessions, subagent trees, chats, progress with ETA, approvals, pinned decisions, full history search and paired PCs, at `http://127.0.0.1:4777`.
-- **Paired PCs.** Two PCs pair once over TLS. Their agents then message each other, transfer files and start jobs on the other PC.
-- **Nothing gets lost.** Every message, job, chat and decision is stored and searchable. History is archived, never deleted, and upgrades migrate your data with a backup first.
+| | |
+|---|---|
+| **Messaging between agents** | Sessions send each other questions, reviews and results. Messages to an offline or idle agent wait and wake it when possible. |
+| **Any CLI delegates to any CLI** | Claude, Codex, opencode, Antigravity and Muse each expose `spawn` for every coding agent, including their own kind (`wait: true` returns the answer). Depth, slot, ownership and hop guards apply. Talk to a running subagent, continue a finished one with its full context, cancel it, or hand all of them to another session. |
+| **Worktrees and access levels** | Subagents are read-only by default. Raise access per job (`read`, `ask`, `edit`) and give editing jobs their own git worktree. |
+| **A main and a secondary** | A Claude and a Codex session in the same folder share their project's jobs. The main is the first contact; if it closes or runs out of usage, the secondary takes over and nothing is lost. |
+| **Checklists for subagents** | Give a job a to-do list at spawn; the project's definition of done is added automatically. The job ticks items and proposes new ones for your approval, and the result says when required items are still open. |
+| **Questions to you** | Agents ask you decisions in one place. You hear a chime in the dashboard, or get a Windows notification that opens the question. Your answer goes straight back to the agent that asked, and can be pinned as a lasting decision. |
+| **One dashboard** | Sessions, subagent trees, chats, progress with ETA, approvals, pinned decisions, usage left per CLI, full history search and paired PCs, at `http://127.0.0.1:4777`. |
+| **Paired PCs** | Two PCs pair once over TLS 1.3 with a one-time code. Their agents then message each other, transfer files and start jobs on the other PC. |
+| **Nothing gets lost** | Every message, job, chat and decision is stored and searchable. History is archived, never deleted, and upgrades migrate your data with a backup first. |
 
-## CLI feature support matrix
+<table>
+  <tr>
+    <td><img src="docs/images/dashboard-overview-dark.png" alt="Overview: counters, usage left per CLI and the sessions on this PC and a paired laptop"></td>
+    <td><img src="docs/images/dashboard-waiting.png" alt="Waiting for you: an owner question with suggested answers and the option to pin it as a decision"></td>
+  </tr>
+  <tr>
+    <td align="center"><b>Overview</b>: every session on every paired PC, what is running and how much usage is left.</td>
+    <td align="center"><b>Waiting for you</b>: questions and permission requests from your agents, in one place.</td>
+  </tr>
+  <tr>
+    <td><img src="docs/images/dashboard-search.png" alt="History search across decisions, subagent runs and messages"></td>
+    <td><img src="docs/images/dashboard-network.png" alt="Network page with a pairing code and a paired laptop"></td>
+  </tr>
+  <tr>
+    <td align="center"><b>Search history</b>: messages, subagent runs, decisions and the CLIs' own conversations.</td>
+    <td align="center"><b>Paired PCs</b>: pair once with a one-time code, then share mail, files and jobs.</td>
+  </tr>
+</table>
 
-This table describes **agent-bridge 0.30.17**, plus the unreleased Muse column. ✅ supported · ⚠️ partial (see footnotes) · ❌ not supported. Delegation rows describe the CLI running the job; “delegate from” describes the supervising session. Muse behavior is covered by protocol fixtures and subprocess tests; live Muse binary/provider acceptance remains pending.
+## Supported CLIs
 
-| Feature | Claude Code | Codex | opencode | Antigravity | Muse |
-| --- | --- | --- | --- | --- | --- |
-| Session connection, peers, send/receive | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Messages while busy (hooks / next tool or model step) | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Idle message delivery / auto-wake | ⚠️[^claude-wake] | ⚠️[^codex-wake] | ✅ | ⚠️[^antigravity-wake] | ⚠️[^muse-wake] |
-| Delegate **to** (`spawn` target) | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Delegate **from** (all five targets, including itself) | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Follow-ups / resume (`message_subagent`) | ✅ | ✅ | ✅ | ✅ | ✅[^muse-msp] |
-| Jobs in isolated git worktrees | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Live job steps, progress and ETA | ✅ | ✅ | ✅ | ✅ | ✅[^muse-msp] |
-| Job model and effort selection | ✅ | ✅ | ⚠️[^opencode-models] | ✅ | ✅ |
-| `list_models` for this CLI | ⚠️[^claude-models] | ✅ | ⚠️[^opencode-models] | ✅ | ✅[^muse-models] |
-| Job access: `read` / `ask` / `edit` | ⚠️[^claude-permissions] | ⚠️[^codex-permissions] | ✅ | ✅ | ✅[^muse-permissions] |
-| Job approval relay to supervisor | ⚠️[^claude-permissions] | ⚠️[^codex-permissions] | ⚠️[^opencode-permissions] | ✅[^antigravity-permissions] | ⚠️[^muse-permissions] |
-| Native job approval / sandbox options | ✅ `permission_mode` | ⚠️ `sandbox`, `approvals_reviewer`[^codex-permissions] | ✅ `auto_approve` | ✅ `terminal_sandbox`, `bypass_permissions` | ✅ `permission_profile`[^muse-permissions] |
-| Nested bridge subagents (depth limit) | ✅ | ✅ | ⚠️[^nested-opencode] | ✅ | ✅ |
-| Scoped native child bridge addresses | ⚠️[^native-addresses] | ❌ | ❌ | ❌ | ❌ |
-| Native children excluded from top-level registration | ✅ | ✅ | ✅ | ⚠️[^native-isolation] | ✅[^muse-native] |
-| `usage_limits` for this CLI | ✅ | ✅ | ⚠️[^usage] | ✅[^antigravity-usage] | ⚠️[^muse-usage] |
-| Native transcript ingestion and `search_history` | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Dashboard native chat and child transcripts | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Owner questions (`ask_owner`) | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Pinned decisions (`decisions`) | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Project main / secondary roles | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Paired-PC messaging | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Jobs on a paired PC | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Mobile app session / job visibility | ⚠️[^mobile] | ⚠️[^mobile] | ⚠️[^mobile] | ⚠️[^mobile] | ⚠️[^mobile] |
-| `install` / `update` setup | ✅ Marketplace plugin[^install] | ✅ Marketplace plugin[^install] | ✅ Native plugin[^install] | ✅ Native plugin[^install] | ✅ Native plugin[^muse-install] |
+| | Claude Code | Codex | opencode | Antigravity | Muse |
+| --- | :---: | :---: | :---: | :---: | :---: |
+| Messaging, peers, owner questions, decisions | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Delegate to and from every CLI, follow-ups, worktrees | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Wake an idle session with new mail | ⚠️ | ⚠️ | ✅ | ⚠️ | ⚠️ |
+| Transcripts in search and the dashboard | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Paired-PC messaging and jobs | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Set up by `install` / `update` | ✅ | ✅ | ✅ | ✅ | ✅ |
 
-Nested bridge delegation defaults to depth **2**, configurable up to **3**; depth, slot, ownership and hop guards apply to every CLI. Owner questions, decisions and project roles belong to top-level project sessions; delegated jobs use their supervisor. Jobs without `allow_tools` may use Pair Desk worker tools (reads, comments, progress, plans, steps, edit issues; creating issues and status, build or handoff writes are not included) without asking, in every access mode including read and ask; change or clear this with `jobs.defaultAllowTools` in the home config, or per job with `allow_tools` (a list replaces it, `[]` turns it off). Transcript views and search require the CLI's local transcript files or database. Paired-PC jobs require an enabled remote-job policy, an allowed agent and an absolute working directory within the receiving PC's allowed roots.
+⚠️ means partial support that depends on the CLI's version and settings. The **[full support matrix](https://agent-bridge.renner.dev/reference/support-matrix/)** lists every feature with its exact limits.
 
-[^claude-wake]: Idle delivery uses a channel when enabled, the wake module on Claude Code 2.1.287+, or the host's `asyncRewake` Stop hooks. It depends on an available wake transport and the session's wake settings; otherwise mail stays queued for a later prompt or inbox.
-[^codex-wake]: Requires a known main-thread ID, native `codex queue` support and a TUI consuming that queue. Queue acceptance does not confirm a started turn or read mail. Trust the bridge hooks in `/hooks` for automatic injection.
-[^antigravity-wake]: Active `PreInvocation` / Stop hooks deliver mail (retaining unread mail if a Stop continuation hits the native cap), but an already idle TUI cannot be woken. Queued mail arrives on the next turn or through inbox.
-[^claude-models]: Returns native help's model aliases and effort levels, with alias fallbacks; Claude Code has no full model-catalog query here.
-[^opencode-models]: The catalog is a non-exhaustive provider/model list and can be empty; explicit IDs still resolve at startup. Effort is a provider-specific variant. OpenCode 2 requires an explicit model when selecting effort.
-[^claude-permissions]: `access: "ask"` stays read-only, like `read`: allowed native edits cannot reliably be intercepted. In editable modes, actual native permission prompts can be relayed through a PermissionRequest hook (Claude Code 2.1.268+, bundled hook and a launch without a shell); native allow/deny rules run first.
-[^codex-permissions]: Access maps to Codex's sandbox. In app-server jobs, `approvals_reviewer` defaults to `auto_review`; choose `user` for forwarded native requests. Automatic review refusals can be escalated for a supervised retry without overriding sandbox policy. Full-access jobs and the `codex exec` fallback fix the reviewer to `user`. The exec fallback needs a trusted PermissionRequest hook for `ask`; without it, `access: "ask"` stays read-only.
-[^opencode-permissions]: `access: "ask"`, and eligible `edit` runs, relay native permission events through a private served session. Plain headless runs reject requests or auto-approve with `auto_approve=true`; those requests are not relayed.
-[^antigravity-permissions]: `access: "ask"` relays every non-reading tool through the installed PreToolUse gate. `edit` delegates workspace reads/writes (and pathless reading tools) to native policy—which still enforces native Ask/deny rules and soft-denies headless prompts—while relaying outside-workspace file actions, commands and external tools to the supervisor (`auto_approve`, preserving explicit native deny rules). `bypass_permissions` explicitly overrides the read/ask/edit access policy; `terminal_sandbox` is separate.
-[^nested-opencode]: Read-only opencode jobs' tool allowlist enables delegation to the other four CLIs, including Muse, but omits opencode self-delegation, `list_models` and `decide`. Top-level opencode sessions expose all five targets.
-[^native-addresses]: Claude only: a live native child gets `<parent>/sub:<agent_id>` on its registered parent's connection. It may use only `peers`, `inbox` and `send`, with explicit child identity, ownership and hop limits; recipients are its parent, the parent's owned jobs and exact local recipient grants. No independent registration, delegation, broadcast or remote address; remaining mail returns to the parent when the child ends.
-[^native-isolation]: Antigravity ignores hooks for a child conversation on the parent's shared server. It has no equivalent MCP caller-lineage admission check, so separate child-server registration is not established by this implementation.
-[^usage]: opencode reports today's spend/tokens and free-model information, not remaining provider quotas.
-[^antigravity-usage]: Reads structured model quota buckets and reset times from `agy -p /usage --output-format json` (requires `agy` 1.1.11+; older versions report unknown without starting a model turn).
-[^remote-antigravity]: Paired jobs accept `terminal_sandbox` and `bypass_permissions`, preserve explicit false settings on continuation, and reject these options for other agents before launch.
-[^mobile]: With the mobile gateway enabled and a phone paired, each enrolled PC exposes local registered sessions and retained jobs, with chats/steps where available. Paired-PC peer projections are excluded and native child hierarchy is not projected.
-[^install]: `npx -y github:rennerdo30/agent-bridge install` sets up detected CLIs; `update` publishes their next runtime while retaining old versions. Claude gets MCP/channel support, hooks, the wake module, skills, commands and agent definitions. Codex gets MCP, skills and hooks (trust them in `/hooks`). opencode gets the native plugin with `bridge_*` tools, its runtime, skill and agent definitions for both plugin API generations. Antigravity gets the native plugin, MCP configuration, skill, delivery/permission hooks and a bridge MCP grant. Running integrations adopt updates on reload or restart; an existing broker keeps its version until its host closes or reloads.
-[^muse-wake]: Native command hooks deliver active-turn mail and can continue a stopping turn. Native idle-TUI wake is not confirmed; queued mail waits for another turn or inbox.
-[^muse-msp]: Stable MSP v1 over `muse serve` is the default job transport, including live steering and native item progress. `AGENT_BRIDGE_MUSE_EXEC=1` explicitly selects the exec compatibility path without MSP steering/approval relay. A failed MSP turn is never automatically replayed through exec. Resumed profile selection opts into the experimental, Muse-version-dependent `session/setPermissionProfile` only after initialize negotiates it, and verifies the resulting profile before a turn. Unsupported or rejected changes fail closed; diagnostics pin SDK 1.4.7 and report the served version/capability. Other jobs keep experimental APIs disabled.
-[^muse-models]: MSP `model/list` reports catalog IDs, defaults and effort variants without starting a session/turn. Empty or failed catalog reads mean unknown availability; explicit IDs still go to Muse for resolution.
-[^muse-permissions]: MSP jobs require an enabled, approved native Bridge permission hook before turn submission, including edit jobs where it isolates native children. Read denies mutations; ask forwards mutation approvals even under native allow rules. An unavailable gate/supervisor cannot approve them. Edit retains native policy. Named profiles must match served session state before any turn. In explicit exec compatibility mode, ask behaves as read.
-[^muse-native]: Native children share their root's MCP server. Their PreToolUse gate denies Bridge tool calls to prevent root impersonation, and their delivery hooks cannot consume root mail or change root identity/activity. Sanitized delegated MCP processes restore owned parent/depth context and publish no top-level peer. Muse has no separate scoped native child Bridge address.
-[^muse-usage]: MSP session usage does not establish account quotas. Account limit availability is reported as unknown, without invented quota percentages or reset times.
-[^muse-install]: Uses Muse's native plugin manager and explicit capability approval on install. Update inspects changes; renewed capability approval requires separate review. The bundle includes MCP, command hooks, a coordination skill and peer commands. See [Muse configuration](https://rennerdo30.github.io/agent-bridge/configuration/muse/) for requirements and remaining live acceptance checks.
+Experimental: [T3 Code session messaging and MCP profiles](docs/t3-code.md). Injected scoped ACP transport is detected automatically; validated T3 sessions default to reduced tools with remote Bridge delegation kept. Set `AGENT_BRIDGE_MCP_PROFILE=full` for the full surface. Native Codex without injected transport is not supported.
 
 ## Install
 
-Requires **Node.js 24+** (the current LTS); older versions refuse to start. Install for every supported CLI it finds on your machine:
+Requires **Node.js 24+** (the current LTS); older versions refuse to start. Install for every supported CLI found on your machine:
 
 ```bash
 npx -y github:rennerdo30/agent-bridge install
 ```
 
-It shows its plan per tool and asks first; add `--yes` to skip the questions, or name tools: `install claude codex opencode antigravity muse`. In Codex, open `/hooks` once and trust the agent-bridge hooks. Per-CLI details: [Installation](https://rennerdo30.github.io/agent-bridge/getting-started/install/).
+It shows its plan per tool and asks first; add `--yes` to skip the questions, or name tools: `install claude codex opencode antigravity muse`. In Codex, open `/hooks` once and trust the agent-bridge hooks. Per-CLI details: [Installation](https://agent-bridge.renner.dev/getting-started/install/).
 
 ## Update
 
@@ -102,7 +94,7 @@ npx -y github:rennerdo30/agent-bridge update
 npx -y github:rennerdo30/agent-bridge status   # which sessions still run an older version
 ```
 
-You can update while sessions run. New sessions start on the new version, and running ones switch at their next plugin reload. Mixed versions keep working together. See [Updating](https://rennerdo30.github.io/agent-bridge/getting-started/update/).
+You can update while sessions run. New sessions start on the new version, and running ones switch at their next plugin reload. Mixed versions keep working together. See [Updating](https://agent-bridge.renner.dev/getting-started/update/).
 
 ## First steps
 
@@ -116,24 +108,30 @@ Just ask your agent in plain language:
 
 > Open the agent-bridge dashboard.
 
-All tools, parameters and behavior are in the [MCP tools reference](https://rennerdo30.github.io/agent-bridge/reference/tools/).
+All tools, parameters and behavior are in the [MCP tools reference](https://agent-bridge.renner.dev/reference/tools/).
 
 ## How it works
 
-Each agent session starts its own small agent-bridge server. The first one that finds no broker starts one background broker process (the daemon) on a local pipe (a Windows named pipe or a Unix socket); every session is a client of it, and the broker and its dashboard keep running when that session exits. If the daemon dies, the next session starts a new one. After an update, the first session of the newer release makes the running daemon hand over: it finishes admitted requests and exits, and the newer release's daemon takes over the same store. A daemon with no connected session exits after 10 minutes. To keep the older behavior, where the first session hosts the broker itself and another takes over when it exits, set `AGENT_BRIDGE_DAEMON=0` or `"daemon": { "enabled": false }` (see [configuration](https://rennerdo30.github.io/agent-bridge/configuration/)). Data lives in SQLite under `~/.agent-bridge`. Subagents run in detached job runners, so they survive plugin reloads.
-
-A job that asks its supervisor again for an approval identical to one the supervisor or the owner already allowed in the same turn of the job (the exact request, every tool input field included, in the same folder, under the same access, sandbox and supervisor) reuses that grant and logs it with the original approval id. File changes are always asked, command approvals are unavailable for Codex/opencode (CLI-run MCP write safety is unverified), and otherwise reused only in read-only jobs that cannot spawn subagents and have no MCP server but the Pair Desk allowed (and only until a file change, another command, a write-capable MCP call, a sibling send or a spawn is allowed), and denials are never reused. Turn it off with `"jobs": { "reuseIdenticalApprovals": false }` (see [configuration](https://rennerdo30.github.io/agent-bridge/configuration/)).
-
-The daemon has no stop or restart command: `agent-bridge core status` is read-only, and handover, idle exit or `SIGTERM` end it. It does not claim full state authority (no lifetime-held lock or receiver fencing); see the [daemon launcher notes](docs/runtime/DAEMON-LAUNCHER.md) and the [lifecycle contract](docs/runtime/DAEMON-LIFECYCLE-PREREQUISITE.md) for the remaining limits.
-
 ```
- Claude Code session                          Codex session
-┌───────────────────────┐                    ┌───────────────────────┐
-│ agent-bridge server   │◄── local pipe ────►│ agent-bridge server   │
-│ hooks · channels      │                    │ hooks · app-server    │
-└───────────────────────┘         │          └───────────────────────┘
-          first server to start is the broker · messages in SQLite
+ Claude Code session     Codex session          opencode · Antigravity · Muse
+┌──────────────────┐    ┌──────────────────┐    ┌──────────────────┐
+│ agent-bridge MCP │    │ agent-bridge MCP │    │ agent-bridge MCP │
+│ hooks · channels │    │ hooks · app-srv  │    │ plugin · hooks   │
+└────────┬─────────┘    └────────┬─────────┘    └────────┬─────────┘
+         └───── local pipe (named pipe or Unix socket) ──┘
+                                 │
+                ┌────────────────┴───────────────┐
+                │ broker daemon                  ├── dashboard 127.0.0.1:4777
+                │ messages · jobs · decisions    │
+                │ SQLite in ~/.agent-bridge      ├── paired PCs over TLS 1.3
+                └────────────────────────────────┘
 ```
+
+- **One broker per PC.** The first session that finds no broker starts a background daemon. It outlives that session, hands over cleanly to a newer release after an update, and exits after 10 minutes without clients.
+- **Detached jobs.** Subagents run in their own job runners, so they survive plugin reloads.
+- **Approvals go up, not around.** A job's permission requests go to the session that started it, or to you. An identical repeat request in the same job turn can reuse a grant under strict conditions; denials are never reused.
+
+Details: [How it works](https://agent-bridge.renner.dev/concepts/how-it-works/) and [Configuration](https://agent-bridge.renner.dev/configuration/).
 
 ## ⚠️ WHAT AGENT-BRIDGE MAY DELETE ON YOUR DISK
 
@@ -155,7 +153,7 @@ The daemon has no stop or restart command: `agent-bridge core status` is read-on
 - Messages from other agents are marked as such, and agents are told not to act destructively only because a peer asked.
 - Pairing uses TLS 1.3 with a one-time code; discovery never connects on its own.
 
-Details: [Security](https://rennerdo30.github.io/agent-bridge/reference/security/).
+Details: [Security](https://agent-bridge.renner.dev/reference/security/).
 
 ## Development
 
@@ -164,8 +162,10 @@ npm install
 npm run check   # typecheck, tests and build
 ```
 
-`npm run build` bundles `src/` into `plugins/*/dist`, which is committed so the plugins install straight from Git. The documentation site lives in `docs/` (Astro Starlight).
+`npm run build` bundles `src/` into `plugins/*/dist`, which is committed in release PRs so the plugins install straight from Git. The website and documentation live in `docs/` (Astro Starlight; the homepage is `docs/src/pages/index.astro`). Contributions: [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
-MIT
+[MIT](LICENSE). A project by [rennerdo30](https://github.com/rennerdo30). The plugin bundles include third-party libraries under their own licenses; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+agent-bridge is an independent open-source project. It is not affiliated with, endorsed by or sponsored by Anthropic, OpenAI, Google or the makers of the other tools it works with. Claude Code, OpenAI Codex, Google Antigravity, opencode, Muse, T3 Code and other product names are trademarks or names of their respective owners and are used only to describe compatibility.
