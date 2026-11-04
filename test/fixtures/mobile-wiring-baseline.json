@@ -1,7 +1,7 @@
 {
   "base": "8deb0286773a6b61243caaae237e16227dc2f591",
   "methods": {
-    "src/core/broker.ts:constructor": "e8f3265ae9cad0a891a45f0b190dd43be28914b082d698e2763adf598a24b5a1",
+    "src/core/broker.ts:constructor": "0d4d186700380c792a3bc130bd2739b6a94d4f3663b64dd834e36d05575f65f7",
     "src/core/broker.ts:listen": "bd39e0afecb5a74d76161f26d5923f2c1e41da8cc490ed1448a9260b850ce4b0",
     "src/core/broker.ts:startServices": "a494d2cfac0d0fa9710ac60d5cf0e029e12f40fa17194c79021225f06a539a24",
     "src/core/broker.ts:abortStartup": "6132967fa78fd39cff064a581f4f49bb9c1c75b644fba78b291708c58733118c",
@@ -17,6 +17,12 @@
   },
   "uiSha256": "608d58f79b18c25cbd643d84db2101840455c32fda9679b283e6e16f6713029b",
   "updates": {
+    "AB-491-project-main-error": {
+      "base": "8825d877",
+      "changes": [{ "method": "src/core/broker.ts:constructor", "previous": "e8f3265ae9cad0a891a45f0b190dd43be28914b082d698e2763adf598a24b5a1", "current": "0d4d186700380c792a3bc130bd2739b6a94d4f3663b64dd834e36d05575f65f7" }],
+      "reason": "AB-491: the projectMain request handler (inside the constructor's handler table) looks up the target first and, when no live session has that name, throws a bad_request that names the target and the caller's own name. No mobile resources, routes, timers, listeners, listen, startServices, abortStartup or close control flow change; those pins are unchanged.",
+      "commit": "same commit as this pin"
+    },
     "AB-493-sent-lookup": {
       "base": "722d6dda",
       "changes": [{ "method": "src/core/broker.ts:constructor", "previous": "e3c1d7faa42531dee82124fa1309c78003e4719718b32ced1d16525d15c285b6", "current": "e8f3265ae9cad0a891a45f0b190dd43be28914b082d698e2763adf598a24b5a1" }],

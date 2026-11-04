@@ -549,7 +549,10 @@ export class Broker {
       },
       projectMain: (c, a) => {
         const args = z.object({ to: z.string().min(1) }).strict().parse(a);
-        return this.switchProjectMain(c.peer, this.connByName(args.to)?.peer ?? undefined);
+        const target = this.connByName(args.to)?.peer ?? undefined;
+        // AB-491: name the session that is not live, and where the caller finds its own name.
+        if (!target) throw new BridgeError("bad_request", `No live local session is named "${args.to}". Use a name from peers; your own name is "${c.peer?.name ?? "unknown"}".`);
+        return this.switchProjectMain(c.peer, target);
       },
       projectJobs: (c) => this.projectJobRecords(c),
       // AB-404: peers needs a few fields; full records with retained history can exceed one frame.
