@@ -2,58 +2,13 @@
   "comment": "Known-flaky tests: skipped in the normal CI lanes, run and reported in the non-blocking known-flaky lane. Each entry is re-checked weekly by its owner; see CONTRIBUTING.md \"Known-flaky tests\".",
   "entries": [
     {
-      "file": "test/daemon-backup-drain.test.ts",
-      "test": "owned automatic-backup settlement (not whole-core durability) > timeout and second observer leave the same actual capture alive; completion preserves exact accepted bytes",
-      "issue": "AB-410",
-      "owner": "claude-claude-codex-comm",
-      "added": "2026-10-16",
-      "recheckBy": "2026-11-04",
-      "seen": "AB325 lifecycle Windows Node 22 and 24 (runs 38854025643, 38855920781). Rechecked 2026-10-22: Windows Node 24 known-flaky run 38882464624 still fails settlement; see docs/ab410-known-flaky-recheck-2026-10-22.md Rechecked 2026-10-29: passed all six known-flaky lanes (Windows/macOS/Ubuntu Node 24, runs 40765722057 and 40766666879); kept because the 2026-10-22 re-check still failed."
-    },
-    {
-      "file": "test/dashboard-history-read.test.ts",
-      "test": "dashboard reads from the history store (AB-383) > serves lines appended after ingestion: a watched change is retained in the next batch",
-      "issue": "AB-410",
-      "owner": "claude-claude-codex-comm",
-      "added": "2026-10-16",
-      "recheckBy": "2026-11-04",
-      "seen": "Windows Node 24 and 22 shard 3/6 (runs 38841134793, 38850550770). Rechecked 2026-10-22: Windows Node 24 known-flaky main run 39681057277 fails the raw-read assertion; see docs/ab410-known-flaky-recheck-2026-10-22.md Rechecked 2026-10-29: passed all six known-flaky lanes (Windows/macOS/Ubuntu Node 24, runs 40765722057 and 40766666879); kept because the 2026-10-22 re-check still failed."
-    },
-    {
-      "file": "test/dashboard-history-read.test.ts",
-      "test": "dashboard reads from the history store (AB-383) > a rewritten file is never served from its stale copy > replaced by a new file whose identity cannot be told apart (Windows ino 0, simulated)",
-      "issue": "AB-410",
-      "owner": "claude-claude-codex-comm",
-      "added": "2026-10-16",
-      "recheckBy": "2026-11-04",
-      "seen": "Windows Node 22 and 24 shard 3/6 (runs 38857072165, 38858490705). Rechecked 2026-10-22: Windows Node 24 known-flaky main run 39461554223 still fails expectFileAnswer; see docs/ab410-known-flaky-recheck-2026-10-22.md Rechecked 2026-10-29: passed all six known-flaky lanes (Windows/macOS/Ubuntu Node 24, runs 40765722057 and 40766666879); kept because the 2026-10-22 re-check still failed."
-    },
-    {
-      "file": "test/history.test.ts",
-      "test": "authenticated history endpoint and broker API > wakes a backed-off history worker so a new message is searchable within about 2 s",
-      "issue": "AB-410",
-      "owner": "claude-claude-codex-comm",
-      "added": "2026-10-16",
-      "recheckBy": "2026-11-04",
-      "seen": "Windows Node 24 shard 5/6 (run 38846199958). Rechecked 2026-10-22: Windows Node 24 known-flaky run 38877815893 fails the search-hit assertion; see docs/ab410-known-flaky-recheck-2026-10-22.md Rechecked 2026-10-29: passed all six known-flaky lanes (Windows/macOS/Ubuntu Node 24, runs 40765722057 and 40766666879); kept because the 2026-10-22 re-check still failed."
-    },
-    {
       "file": "test/job-recovery-async.test.ts",
       "test": "yields throughout a cold archive/run catalog, matches offline recovery and clones only selected jobs",
       "issue": "AB-410",
       "owner": "claude-claude-codex-comm",
       "added": "2026-10-16",
-      "recheckBy": "2026-11-04",
-      "seen": "Windows Node 22 and 24 shard 4/6 (main run 38849169431, runs 38833198807, 38849984408). Rechecked 2026-10-22: Windows Node 24 known-flaky main run 39681057277 and PR140 run 39697775445 time out at 15000ms; see docs/ab410-known-flaky-recheck-2026-10-22.md Rechecked 2026-10-29: passed all six known-flaky lanes (Windows/macOS/Ubuntu Node 24, runs 40765722057 and 40766666879); kept because the 2026-10-22 re-check still failed."
-    },
-    {
-      "file": "test/job-runner.test.ts",
-      "test": "background subagents in job runners > cancel_subagent then message_subagent continues the same worktree and archives its lease",
-      "issue": "AB-410",
-      "owner": "muse-claude-codex-comm",
-      "added": "2026-10-16",
-      "recheckBy": "2026-11-04",
-      "seen": "Windows Node 24 shard 3/6 (main run 38873872600): expected message to contain 'fake answer: finished' at job-runner.test.ts:437 Rechecked 2026-10-29: passed six known-flaky lanes but failed again in blocking Windows Node 24 shard 3/6 (run 40767740734), so it stays listed."
+      "recheckBy": "2026-11-21",
+      "seen": "Windows Node 22 and 24 shard 4/6 (main run 38849169431, runs 38833198807, 38849984408). Rechecked 2026-10-22: Windows Node 24 known-flaky main run 39681057277 and PR140 run 39697775445 time out at 15000ms; see docs/ab410-known-flaky-recheck-2026-10-22.md Rechecked 2026-10-29: passed all six known-flaky lanes (Windows/macOS/Ubuntu Node 24, runs 40765722057 and 40766666879); kept because the 2026-10-22 re-check still failed. Rechecked 2026-11-14: passed 12 of 12 known-flaky runs on each of Windows, macOS and Ubuntu Node 24 (runs 41869087973 to 43639979638), but needed one in-place retry; kept."
     }
   ]
 }
