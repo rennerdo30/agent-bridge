@@ -1,11 +1,11 @@
 # Hosted CI scope
 
-Windows Node 24 runs six Vitest shards of the unchanged fast and integration
+Windows Node 24 runs twelve Vitest shards of the unchanged fast and integration
 lanes. Files are packed into shards by measured duration (`scripts/test-shards.mjs`,
 greedy longest-first over the median Windows file times in
 `scripts/test-shard-timings.json`; files without a timing get its default weight).
 Refresh the table from downloaded `tests-windows-*` artifacts with
-`scripts/update-test-shard-timings.mjs`; `node scripts/test-shards.mjs 6` prints the plan.
+`scripts/update-test-shard-timings.mjs`; `node scripts/test-shards.mjs 12` prints the plan.
 Install, typecheck, build, test and committed-bundle stages remain; Linux and macOS keep their existing lane behavior and result artifacts. CI calls the
 released generic test runner directly with shard/report arguments. No local
 Windows pretest, ACL cleanup, compiler or VHD machinery is part of this PR.

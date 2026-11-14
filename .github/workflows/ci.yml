@@ -152,7 +152,7 @@ jobs:
       - run: npm ci
       - run: npm run build
       - name: Collect unsharded cases and prove complete disjoint coverage
-        run: node scripts/check-test-shards.mjs 6 .agent-bridge-test/ci/shards.json --collect
+        run: node scripts/check-test-shards.mjs 12 .agent-bridge-test/ci/shards.json --collect
       - name: Retain shard inventory
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -162,7 +162,7 @@ jobs:
           if-no-files-found: error
 
   windows:
-    name: Windows Node ${{ matrix.node }} shard ${{ matrix.shard }}/6
+    name: Windows Node ${{ matrix.node }} shard ${{ matrix.shard }}/12
     needs: windows-collect
     # Run even when a collect job failed, so the membership verdict and results artifact still report.
     if: ${{ !cancelled() }}
@@ -170,7 +170,7 @@ jobs:
       fail-fast: false
       matrix:
         node: [24]
-        shard: [1, 2, 3, 4, 5, 6]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
     runs-on: windows-latest
     env:
       AGENT_BRIDGE_CI_RESULTS_DIR: .agent-bridge-test/ci
@@ -199,10 +199,10 @@ jobs:
         id: build
       # The released runner retains lane filters, deadlines and worker limits.
       - name: Fast tests
-        run: npm test -- --shard=${{ matrix.shard }}/6 --reporter=default --reporter=json --reporter=./scripts/ci-reporter.mjs --outputFile.json=.agent-bridge-test/ci/fast-results.json
+        run: npm test -- --shard=${{ matrix.shard }}/12 --reporter=default --reporter=json --reporter=./scripts/ci-reporter.mjs --outputFile.json=.agent-bridge-test/ci/fast-results.json
       - name: Integration tests
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-        run: npm run test:integration -- --shard=${{ matrix.shard }}/6 --reporter=default --reporter=json --reporter=./scripts/ci-reporter.mjs --outputFile.json=.agent-bridge-test/ci/integration-results.json
+        run: npm run test:integration -- --shard=${{ matrix.shard }}/12 --reporter=default --reporter=json --reporter=./scripts/ci-reporter.mjs --outputFile.json=.agent-bridge-test/ci/integration-results.json
       # Known-flaky list: "skipped by known-flaky: N" per lane in the job summary; N must equal the
       # listed tests collected in this job, and every listed test must be reported skipped.
       - name: Known-flaky skips match the list
