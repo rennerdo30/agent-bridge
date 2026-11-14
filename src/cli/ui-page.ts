@@ -3715,6 +3715,7 @@ setInterval(() => loadUsage(false), 5 * 60 * 1000);
 $("usageRefresh").addEventListener("click", () => loadUsage(true));
 $("ovModels").parentElement.addEventListener("toggle", (e) => { if (e.target.open) void loadModels(); });
 setInterval(poll, POLL_MS);
+document.addEventListener("visibilitychange", () => { if (document.visibilityState !== "hidden") void poll(); });
 
 /* ---- Push (GET /api/events, AB-383): the history store names conversations that just moved; read the shown one at once.
    Events carry no content. The interval poll above stays as the safety net when the stream is down. ---- */
@@ -3754,7 +3755,7 @@ function closeEvents() {
 }
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "hidden") closeEvents();
-  else { openEvents(); pushRender(); void poll(); }
+  else { openEvents(); pushRender(); }
 });
 if (document.visibilityState !== "hidden") openEvents();
 </script>
