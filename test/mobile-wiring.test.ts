@@ -129,7 +129,18 @@ describe("unprepared host compatibility", () => {
         "/** Recent messages (one row per message, recipients joined), newest first; not the control messages to job runners. Read-only access. */")
       .replace('import { existsSync, readFileSync, statSync } from "node:fs";', 'import { existsSync, readFileSync } from "node:fs";')
       .replace('import { dirname, join } from "node:path";\nimport { ARCHIVE_DB_NAME } from "../core/sqlite-maintenance.js";', 'import { join } from "node:path";');
-    expect(sha(withoutRecentCache)).toBe(baseline.uiSha256);
+    // Reviewed AB-505 state-poll load fix (page-only job settings, write ends a shared scan) reads no mobile state.
+    const pageOnlyJobs = "      // AB-505: read job settings only for the runs this page shows (pageRuns already adds every running run), as\n" +
+      "      // the paired-PC read in dashboard-read.ts does; older pages bring their own from /api/runs. Reading and sending\n" +
+      "      // every stored job made each 1.5 s poll grow with the whole history.\n" +
+      "      const shown = new Set(page.runs.flatMap((r) => r.job ? [r.job] : []));\n" +
+      "      const stored = await readStoredJobsResponsive(opts.home, shown), waits";
+    expect(withoutRecentCache, "AB-505 state-poll change moved; review it against the pin").toContain(pageOnlyJobs);
+    const withoutStateLoadFix = withoutRecentCache
+      .replace(pageOnlyJobs, "      const stored = await readStoredJobsResponsive(opts.home), waits")
+      .replace('    if (req.method !== "GET" && req.method !== "HEAD") forgetInFlightScans(opts.home);\n', '')
+      .replace("import { classifyPeers, forgetInFlightScans, listRunsResponsive,", "import { classifyPeers, listRunsResponsive,");
+    expect(sha(withoutStateLoadFix)).toBe(baseline.uiSha256);
   });
   it("does not open mobile stores, install timers/listeners or initialize a question service without preparation", async () => {
     const home = fixtureHome(), messages = new MessageStore(join(home, "bridge.db"), nullLogger), broker = new Broker("fixture-unused-pipe", messages, nullLogger, "fixture-token");

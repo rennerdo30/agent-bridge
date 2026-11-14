@@ -19,7 +19,16 @@ async function port() { const s = createServer(); await new Promise<void>(r => s
 describe("owner Phones readiness and unchanged default HTML", () => {
   it("pins the original complete page source and returns its bytes without configuration", () => {
     const current = readFileSync("src/cli/ui-page.ts", "utf8").replaceAll("\r\n", "\n"), addition = current.slice(current.indexOf('\n/** Default HTML is byte-identical;'), current.indexOf('\n/**', current.indexOf('export function mobileDashboardPage')));
-    expect(current).toContain(addition); expect(createHash("sha256").update(current.replace(addition, "")).digest("hex")).toBe(baseline.pageSha256);
+    // Reviewed AB-505 hidden-tab polling (no Phones markup or behavior) is removed before hashing, like the mobile addition.
+    const hiddenPoll = ["const HIDDEN_POLL_MS = 15_000;", "let polling = false, polledAt = 0;", "Date.now() - polledAt < HIDDEN_POLL_MS) return;", "pushRender(); void poll(); }"];
+    for (const part of hiddenPoll) expect(current, "AB-505 hidden-tab polling moved; review it against the pin").toContain(part);
+    const withoutHiddenPoll = current.replace(addition, "")
+      .replace("/** AB-505: a hidden tab refreshes rarely; it polls at once when shown again. */\nconst HIDDEN_POLL_MS = 15_000;\n", "")
+      .replace("let polling = false, polledAt = 0;", "let polling = false;")
+      .replace('  if (document.visibilityState === "hidden" && Date.now() - polledAt < HIDDEN_POLL_MS) return;\n', "")
+      .replace("  polling = true;\n  polledAt = Date.now();\n", "  polling = true;\n")
+      .replace("else { openEvents(); pushRender(); void poll(); }", "else { openEvents(); pushRender(); }");
+    expect(current).toContain(addition); expect(createHash("sha256").update(withoutHiddenPoll).digest("hex")).toBe(baseline.pageSha256);
     expect(mobileDashboardPage(false)).toBe(UI_PAGE); expect(mobileDashboardPage(true)).toContain('id="tabPhones"');
     expect(mobileDashboardPage(false, '<script>private material path</script>')).toContain('Phones unavailable: source_unavailable');
     expect(mobileDashboardPage(false, '<script>private material path</script>')).not.toContain('<script>private material path');
