@@ -57,7 +57,7 @@ import { answerHistory, type HistoryAnswerDependencies } from "../core/history-a
 import { readDecisions, decisionScopeSchema, MAX_DECISION_TEXT_CHARS, MAX_DECISION_TOPIC_CHARS, type DecisionsArgs } from "../core/decisions.js";
 import { answerPendingApproval, listPendingApprovals, MAX_APPROVAL_REASON_CHARS } from "../core/relay.js";
 import { questionAnswerSchema, questionAlertSettingsSchema, readOwnerQuestions } from "../core/owner-questions.js";
-import { classifyPeers, listRunsResponsive, readStoredJobsResponsive, readDashboard, readMeta, stateJobWaits } from "../core/dashboard-read.js";
+import { classifyPeers, forgetInFlightScans, listRunsResponsive, readStoredJobsResponsive, readDashboard, readMeta, stateJobWaits } from "../core/dashboard-read.js";
 import { HistoryChangeFeed, streamHistoryChanges } from "../core/history-feed.js";
 import { openJobQuestions, type JobQuestion } from "../core/job-questions.js";
 export { classifyPeers, listRuns, readStoredJobs, summarizeRun, finishedRunOutcomes } from "../core/dashboard-read.js";
@@ -348,6 +348,7 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
     const host = String(req.headers.host ?? "").replace(/:\d+$/, "");
     if (!ALLOWED_HOSTS.has(host)) return send(res, 403, { error: "forbidden host" });
     const url = new URL(req.url ?? "/", `http://${UI_HOST}`);
+    if (req.method !== "GET" && req.method !== "HEAD") forgetInFlightScans(opts.home);
     const activeSecret = opts.secret ?? currentDashboardKey(opts.home);
 
     // First visit: the secret comes in the URL once, then lives in an HttpOnly cookie.
@@ -552,7 +553,11 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
       const remote = await remoteStateNow();
       const remoteStates = Object.values(remote).filter((r) => r.status === 200).map((r) => r.body as { runs: unknown[]; jobs: Record<string, unknown> });
       const remoteErrors = Object.fromEntries(Object.entries(remote).filter(([, r]) => r.status !== 200).map(([host, r]) => [host, r.body]));
-      const stored = await readStoredJobsResponsive(opts.home), waits = stateJobWaits(opts.home, stored, opts.log);
+      // AB-505: read job settings only for the runs this page shows (pageRuns already adds every running run), as
+      // the paired-PC read in dashboard-read.ts does; older pages bring their own from /api/runs. Reading and sending
+      // every stored job made each 1.5 s poll grow with the whole history.
+      const shown = new Set(page.runs.flatMap((r) => r.job ? [r.job] : []));
+      const stored = await readStoredJobsResponsive(opts.home, shown), waits = stateJobWaits(opts.home, stored, opts.log);
       return send(res, 200, {
         version: APP_VERSION,
         brokerPid,

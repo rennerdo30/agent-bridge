@@ -1307,6 +1307,8 @@ form#send select#to {
 
 <script>
 const POLL_MS = 1500;
+/** AB-505: a hidden tab refreshes rarely; it polls at once when shown again. */
+const HIDDEN_POLL_MS = 15_000;
 const LOG_PAGES = 20;
 /** Runs of more commands than this fold into one expandable row. */
 const FOLD_STEPS = 3;
@@ -2469,10 +2471,12 @@ function usageCard(rep) {
 }
 
 /** One /api/state request at a time: a slow broker must not pile up overlapping polls (AB-233). */
-let polling = false;
+let polling = false, polledAt = 0;
 async function poll() {
   if (polling) return;
+  if (document.visibilityState === "hidden" && Date.now() - polledAt < HIDDEN_POLL_MS) return;
   polling = true;
+  polledAt = Date.now();
   try {
     const r = await fetch("/api/state");
     if (!r.ok) throw new Error(r.status === 403 ? "not authorized: open the link printed by agent-bridge ui" : "HTTP " + r.status);
@@ -3750,7 +3754,7 @@ function closeEvents() {
 }
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "hidden") closeEvents();
-  else { openEvents(); pushRender(); }
+  else { openEvents(); pushRender(); void poll(); }
 });
 if (document.visibilityState !== "hidden") openEvents();
 </script>
