@@ -110,3 +110,33 @@ it("never wakes the chat of a T3 delegated task (a subagent, AB-460)", async () 
   await new Promise((r) => setTimeout(r, 20));
   expect(sent).toEqual([]);
 });
+
+it("still wakes the chat when a restarted session took the name before it reported its session", async () => {
+  // 2026-11-15: T3 resumed the chat's process, which ran no turn, so no hook reported its session; the name's owner had none.
+  const sender = await session("claude-sender", "sender-session");
+  await goOffline(await session("claude-coordinator", "coordinator-session"), sender, "claude-coordinator");
+  const restarted = await BridgeClient.connect(env.pipe, nullLogger);
+  clients.push(restarted);
+  await restarted.request("hello", { protocol: PROTOCOL_VERSION, token: loadOrCreateToken(env.home), peer: {
+    id: "claude-coordinator-restarted", name: "claude-coordinator", agent: "claude", cwd: env.home, pid: process.pid, agentPid: null, sessionId: null, startedAt: Date.now(), autoWake: false, activity: "idle" } });
+  await goOffline(restarted, sender, "claude-coordinator");
+
+  expect((await sender.request("send", { to: "claude-coordinator", body: "handover" })).t3WakeFor).toEqual(["claude-coordinator"]);
+  await new Promise((r) => setTimeout(r, 20));
+  expect(sent.map((s) => s.thread)).toEqual(["coordinator-chat"]);
+});
+
+it("prefers the owner's own session and falls back to the newest one only when the owner has none", () => {
+  const store = new MessageStore(join(env.home, "names.db"), nullLogger);
+  try {
+    const peer = (agentPid: number, sessionId: string | null) => ({ id: `p${agentPid}`, name: "claude-os", agent: "claude" as const, cwd: env.home,
+      pid: process.pid, agentPid, agentStartedAt: `start-${agentPid}`, sessionId, startedAt: 0, autoWake: false });
+    store.rememberName(peer(1, "older-session"), 1);
+    store.rememberName(peer(2, "newer-session"), 2);
+    store.rememberName(peer(3, null), 3);
+    expect(store.lastSessionForName("claude-os")).toEqual({ agent: "claude", sessionId: "newer-session" });
+    store.rememberName(peer(1, "older-session"), 4);
+    expect(store.lastSessionForName("claude-os")).toEqual({ agent: "claude", sessionId: "older-session" });
+    expect(store.lastSessionForName("claude-unknown")).toBeUndefined();
+  } finally { store.close(); }
+});

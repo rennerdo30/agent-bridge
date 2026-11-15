@@ -485,11 +485,17 @@ export class MessageStore {
     });
   }
 
-  /** AB-488: the provider session that last owned a name, to find its T3 Code chat while it is offline. */
+  /**
+   * AB-488: the provider session that last owned a name, to find its T3 Code chat while it is offline. The owner's
+   * session comes first. A restarted process takes the name before its first hook reports the session, and a
+   * process T3 resumed without running a turn never reports it, so an owner without one falls back to the newest
+   * session another process of the same name reported (2026-11-15: mail queued for a T3 chat never woke it).
+   */
   lastSessionForName(name: string): { agent: string; sessionId: string } | undefined {
     return this.acceptedOperation("direct", () => {
-    const row = this.statement(this.db, `SELECT pn.agent AS agent, pn.session_id AS session_id FROM peer_name_owners o
-      JOIN peer_names pn ON pn.name = o.name AND pn.identity = o.identity WHERE o.name = ? AND pn.session_id IS NOT NULL LIMIT 1`).get(name);
+    const row = this.statement(this.db, `SELECT pn.agent AS agent, pn.session_id AS session_id FROM peer_names pn
+      LEFT JOIN peer_name_owners o ON o.name = pn.name AND o.identity = pn.identity WHERE pn.name = ? AND pn.session_id IS NOT NULL
+      ORDER BY o.identity IS NOT NULL DESC, pn.learned_at DESC, pn.rowid DESC LIMIT 1`).get(name);
     return row && typeof row.agent === "string" && typeof row.session_id === "string" ? { agent: row.agent, sessionId: row.session_id } : undefined;
     });
   }
