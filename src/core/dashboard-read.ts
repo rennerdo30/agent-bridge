@@ -170,9 +170,30 @@ export function listRuns(home: string, now = Date.now(), names?: Set<string>): R
   return drainScan(listRunsSteps(home, now, names));
 }
 
+/**
+ * AB-505: callers that ask for a full listing while one is already running join it instead of starting another.
+ * Every dashboard tab polls /api/state and /api/job-outcomes, and each read the whole catalog, so a slow scan let
+ * further scans pile up behind it. Nothing is kept after a scan settles: the next request always reads afresh.
+ */
+const inFlightScans = new Map<string, Promise<unknown>>();
+function joinInFlight<T>(key: string, scan: () => Promise<T>): Promise<T> {
+  const running = inFlightScans.get(key) as Promise<T> | undefined;
+  if (running) return running;
+  const started = scan().finally(() => { if (inFlightScans.get(key) === started) inFlightScans.delete(key); });
+  inFlightScans.set(key, started);
+  return started;
+}
+
+/** A write (pause, cancel, settings) must not be answered from a scan that started before it. */
+export function forgetInFlightScans(home: string): void {
+  for (const key of [...inFlightScans.keys()]) if (key.endsWith(`\0${home}`)) inFlightScans.delete(key);
+}
+
 /** Complete catalog with the same projection/cursors, yielding during traversal. */
 export function listRunsResponsive(home: string, now = Date.now(), names?: Set<string>): Promise<RunSummary[]> {
-  return drainScanResponsive(listRunsSteps(home, now, names, true));
+  if (names) return drainScanResponsive(listRunsSteps(home, now, names, true));
+  // Each caller gets its own array; the summaries are shared and read-only.
+  return joinInFlight(`runs\0${home}`, () => drainScanResponsive(listRunsSteps(home, now, undefined, true))).then((runs) => [...runs]);
 }
 
 /** Whether the job runner of a hosted job reported in recently (its state heartbeat). Inline jobs have none. */
