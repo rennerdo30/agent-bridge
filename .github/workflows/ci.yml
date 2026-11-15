@@ -23,7 +23,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
       - run: node scripts/known-flaky.mjs validate
@@ -49,7 +49,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ matrix.node }}
           cache: npm
@@ -70,7 +70,7 @@ jobs:
         run: node scripts/known-flaky.mjs report .agent-bridge-test/known-flaky
       - name: Retain known-flaky results
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: known-flaky-${{ matrix.os }}-node-${{ matrix.node }}-attempt-${{ github.run_attempt }}
           path: .agent-bridge-test/known-flaky/
@@ -90,7 +90,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ matrix.node }}
           cache: npm
@@ -123,7 +123,7 @@ jobs:
         run: git diff --exit-code -- plugins
       - name: Test results and flaky diagnostics
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: tests-${{ matrix.os }}-node-${{ matrix.node }}-attempt-${{ github.run_attempt }}
           path: .agent-bridge-test/ci/
@@ -145,7 +145,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ matrix.node }}
           cache: npm
@@ -155,7 +155,7 @@ jobs:
         run: node scripts/check-test-shards.mjs 12 .agent-bridge-test/ci/shards.json --collect
       - name: Retain shard inventory
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: shard-inventory-windows-node-${{ matrix.node }}-attempt-${{ github.run_attempt }}
           path: .agent-bridge-test/ci/shards.json
@@ -182,14 +182,14 @@ jobs:
       # Use bootstrap Node to select the newest nonfuture inventory before setup or dependencies.
       # "Re-run failed jobs" keeps a successful collect job and its exact Node patch.
       - name: Download shard inventory
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: shard-inventory-windows-node-${{ matrix.node }}-attempt-*
           path: .agent-bridge-test/inventory
       - name: Select shard inventory
         id: collect
         run: node scripts/select-shard-inventory.mjs .agent-bridge-test/inventory ${{ matrix.node }} .agent-bridge-test/ci/shards.json
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ steps.collect.outputs.node-version }}
           cache: npm
@@ -213,7 +213,7 @@ jobs:
         run: node scripts/check-shard-results.mjs .agent-bridge-test/ci ${{ matrix.shard }}
       - name: Retain shard inventory, results and failure diagnostics
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: tests-windows-node-${{ matrix.node }}-shard-${{ matrix.shard }}-attempt-${{ github.run_attempt }}
           path: .agent-bridge-test/ci/
