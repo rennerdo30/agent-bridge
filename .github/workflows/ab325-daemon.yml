@@ -59,7 +59,7 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ matrix.node }}
           cache: npm
@@ -76,7 +76,7 @@ jobs:
         env:
           AGENT_BRIDGE_DAEMON: '1'
         run: npm run test:integration -- test/daemon-lifecycle.test.ts test/daemon-readonly.test.ts test/daemon-receipt.test.ts test/daemon-journal-role.test.ts test/daemon-send-boundaries.test.ts test/daemon-endpoint.test.ts test/daemon-native-refusal.test.ts test/daemon-network.test.ts test/daemon-store-drain.test.ts test/daemon-store-final-close.test.ts test/daemon-backup-drain.test.ts test/daemon-windows-paths.test.ts test/daemon-windows-bootstrap.test.ts test/daemon-windows-path-cache.test.ts test/daemon-metadata-checkpoint.test.ts test/daemon-metadata-final-close.test.ts test/daemon-archive-drain.test.ts test/daemon-serving-capability.test.ts test/daemon-history-drain.test.ts test/ui.test.ts test/mobile-activation.test.ts test/mobile-wiring.test.ts test/mobile-owner-startup.test.ts test/job-process-scope.test.ts test/data-retention.test.ts test/mixed-release-processes.test.ts
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: ab325-${{ matrix.os }}-node${{ matrix.node }}-${{ github.event.pull_request.head.sha || github.sha }}
