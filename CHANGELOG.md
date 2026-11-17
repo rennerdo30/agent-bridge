@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.33.1
+
+- **The dashboard polls more cheaply (AB-505).**
+  - `/api/state` reads job settings only for the runs the current page shows, instead of every stored job. Each 1.5 s poll used to grow with the whole history.
+  - Run scans that overlap share one scan; any write request starts a fresh one.
+  - A hidden tab polls every 15 s instead of every 1.5 s, and polls at once when it is shown again.
+- **Mail queued for a T3 Code chat wakes it after a restart, too (AB-488).** A restarted session process takes its name before its first hook reports the session, and a process T3 resumed without running a turn never reports it. The wake-up then found no session and was skipped, so mail stayed queued. It now falls back to the newest session another process of the same name reported; the name's own session still comes first.
+- **Dependencies:**
+  - `@modelcontextprotocol/sdk` 1.32.2 and `zod` 4.6.7;
+  - bundled `hono` 4.13.19, `@hono/node-server` 2.1.8, `qs` 6.17.1 and `fast-uri` 3.1.9;
+  - third-party notices regenerated.
+- **CI:**
+  - Windows tests run in 12 shards, balanced by a refreshed timing table, so each shard takes about 6 to 8 minutes;
+  - the expired known-flaky list was rechecked;
+  - Dependabot opens one weekly grouped update.
+
 ## 0.33.0
 
 - **Files can also land in the receiving PC's Downloads folder (AB-498).** `send_files` takes `destination: "downloads"` for a paired PC.
