@@ -5,7 +5,7 @@ third-party software, each under its own license, reproduced below.
 
 | Component | Version | License |
 | --- | --- | --- |
-| [@modelcontextprotocol/sdk](https://github.com/modelcontextprotocol/typescript-sdk) | 1.32.1 | MIT |
+| [@modelcontextprotocol/sdk](https://github.com/modelcontextprotocol/typescript-sdk) | 1.32.2 | MIT |
 | [@peculiar/asn1-asym-key](https://github.com/PeculiarVentures/asn1-schema) | 2.10.0 | MIT |
 | [@peculiar/asn1-cms](https://github.com/PeculiarVentures/asn1-schema) | 2.10.0 | MIT |
 | [@peculiar/asn1-csr](https://github.com/PeculiarVentures/asn1-schema) | 2.10.0 | MIT |
@@ -28,7 +28,7 @@ third-party software, each under its own license, reproduced below.
 | [eventsource](https://github.com/EventSource/eventsource) | 3.0.7 | MIT |
 | [eventsource-parser](https://github.com/rexxars/eventsource-parser) | 3.1.1 | MIT |
 | [fast-deep-equal](https://github.com/epoberezkin/fast-deep-equal) | 3.1.3 | MIT |
-| [fast-uri](https://github.com/fastify/fast-uri) | 3.1.8 | BSD-3-Clause |
+| [fast-uri](https://github.com/fastify/fast-uri) | 3.1.9 | BSD-3-Clause |
 | [isexe](https://github.com/isaacs/isexe) | 2.0.0 | ISC |
 | [json-schema-traverse](https://github.com/epoberezkin/json-schema-traverse) | 1.0.0 | MIT |
 | [path-key](https://github.com/sindresorhus/path-key) | 3.1.1 | MIT |
@@ -43,10 +43,10 @@ third-party software, each under its own license, reproduced below.
 | [tslib](https://github.com/Microsoft/tslib) | 2.8.1 | 0BSD |
 | [tsyringe](https://github.com/Microsoft/tsyringe) | 4.10.0 | MIT |
 | [which](https://github.com/isaacs/node-which) | 2.0.2 | ISC |
-| [zod](https://github.com/colinhacks/zod) | 4.6.5 | MIT |
+| [zod](https://github.com/colinhacks/zod) | 4.6.7 | MIT |
 | [zod-to-json-schema](https://github.com/StefanTerdell/zod-to-json-schema) | 3.25.2 | ISC |
 
-## @modelcontextprotocol/sdk 1.32.1
+## @modelcontextprotocol/sdk 1.32.2
 
 ```text
 MIT License
@@ -655,7 +655,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-## fast-uri 3.1.8
+## fast-uri 3.1.9
 
 ```text
 Copyright (c) 2011-2021, Gary Court until https://github.com/garycourt/uri-js/commit/a1acf730b4bba3f1097c9f52e7d9d3aba8cdcaae
@@ -1070,7 +1070,7 @@ ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR
 IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 ```
 
-## zod 4.6.5
+## zod 4.6.7
 
 ```text
 MIT License
